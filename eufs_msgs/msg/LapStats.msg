@@ -1,0 +1,14 @@
+std_msgs/Header header
+
+int64 lap_number
+float64 lap_time
+float64 avg_speed
+float64 max_speed
+float64 speed_var
+float64 max_slip
+float64 max_lateral_accel
+float64 normalized_deviation_mse
+float64 deviation_var
+float64 max_deviation
+int64 oscillation_number
+int64 num_cones_hit

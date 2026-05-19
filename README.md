@@ -255,8 +255,10 @@ ros2 topic echo /custom_camera_info
 
 ```bash
 ros2 topic echo /velodyne_points
-ros2 topic echo /gps/fix
-ros2 topic echo /sbg_imu/data
+ros2 topic echo /gps
+ros2 topic echo /imu/data
+ros2 topic echo /camera/imu/data
+ros2 topic echo /sbg/magnetic
 ```
 
 카메라 관련 토픽은 실행 모드에 따라 다릅니다.
@@ -299,7 +301,76 @@ ros2 topic hz /zed/points
 ros2 run rqt_image_view rqt_image_view /zed/left/image_rect_color
 ```
 
-## 8. 주요 서비스
+## 8. 센서 Configuration 수정
+
+센서의 장착 위치는 차량 URDF xacro에서 바꿉니다.
+
+```bash
+eufs_sim/eufs_racecar/robots/eufs/robot.urdf.xacro
+eufs_sim/eufs_racecar/robots/ads-dv/robot.urdf.xacro
+```
+
+예를 들어 `eufs` 차량의 ZED 위치/자세는 아래 줄의 `origin`을 수정합니다.
+
+```xml
+<xacro:zed_camera parent="chassis" prefix="zed" active="$(arg simulate_perception)">
+  <origin xyz="-0.08 0.0 0.76" rpy="0 0 0"/>
+</xacro:zed_camera>
+```
+
+센서 고유 파라미터는 각 센서 xacro macro에서 수정하거나, macro 호출부에 인자로 넘깁니다.
+
+| 센서 | 설정 파일 | 주요 값 |
+| --- | --- | --- |
+| IMU | `eufs_sim/eufs_sensors/urdf/imu.urdf.xacro` | `noise`, `update_rate`, `topic_prefix` |
+| GPS | `eufs_sim/eufs_sensors/urdf/gps.urdf.xacro` | `update_rate`, position/velocity noise |
+| LiDAR VLP-16R | `eufs_sim/eufs_sensors/urdf/VLP-16R.urdf.xacro` | `hz`, `lasers`, `samples`, `min_range`, `max_range`, `noise`, `min_angle`, `max_angle`, `topic` |
+| ZED camera | `eufs_sim/eufs_sensors/urdf/zed.urdf.xacro` | `update_rate`, `horizontal_fov`, image `width/height`, clipping range, image noise, topic remapping |
+| Magnetometer | `eufs_sim/eufs_sensors/urdf/magnetometer.urdf.xacro` | topic, noise |
+
+LiDAR 예시:
+
+```xml
+<xacro:VLP-16R
+  parent="chassis"
+  name="velodyne"
+  topic="/velodyne_points"
+  hz="10"
+  lasers="40"
+  samples="350"
+  min_range="0.2"
+  max_range="100.0"
+  noise="0.008"
+  active="$(arg simulate_perception)">
+  <origin xyz="-0.15 0.0 0.79" rpy="0 ${1*M_PI/180.0} 0"/>
+</xacro:VLP-16R>
+```
+
+차량 동역학 파라미터는 센서가 아니라 vehicle model preset입니다.
+
+```bash
+eufs_sim/eufs_racecar/robots/eufs/configDry.yaml
+eufs_sim/eufs_racecar/robots/eufs/configWet.yaml
+eufs_sim/eufs_racecar/robots/ads-dv/configDry.yaml
+eufs_sim/eufs_racecar/robots/ads-dv/configWet.yaml
+```
+
+simulated perception과 ground truth plugin의 거리/FOV/noise는 아래 파일에서 수정합니다.
+
+```bash
+eufs_sim/eufs_plugins/urdf/eufs_plugins.gazebo.xacro
+```
+
+예: `/camera_0/cones`, `/camera_1/cones`의 FOV/거리/noise는 `gz_camera_0_cones`, `gz_camera_1_cones` plugin 블록에서 조정합니다.
+
+수정 후에는 관련 패키지를 다시 빌드하고 시뮬레이션을 재시작해야 합니다.
+
+```bash
+colcon build --symlink-install --packages-select eufs_sensors eufs_racecar eufs_plugins
+source install/setup.zsh
+```
+
+## 9. 주요 서비스
 
 상태 머신 리셋:
 
@@ -331,7 +402,7 @@ ros2 service call /ros_can/ebs std_srvs/srv/Trigger "{}"
 ros2 service call /race_car_model/command_mode std_srvs/srv/Trigger "{}"
 ```
 
-## 9. 상태 머신 흐름
+## 10. 상태 머신 흐름
 
 기본 상태는 다음처럼 움직입니다.
 
@@ -360,7 +431,7 @@ AS_FINISHED
 | `20` | `AMI_JOYSTICK` |
 | `21` | `AMI_MANUAL` |
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 ### Gazebo plugin을 못 찾는 경우
 
