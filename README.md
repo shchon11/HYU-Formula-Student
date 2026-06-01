@@ -1,6 +1,5 @@
-# EUFS Simulator ROS 2 Humble 사용 정리
+# Formula Student Simulator
 
-이 문서는 이 워크스페이스에서 `eufs_sim`을 ROS 2 Humble + Gazebo Classic으로 빌드하고 실행하는 기본 사용법을 정리한 것입니다.
 
 ## 0. Quick Start: 의존성 설치
 
