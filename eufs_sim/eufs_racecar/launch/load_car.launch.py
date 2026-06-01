@@ -5,8 +5,9 @@ from os.path import isfile
 import xacro
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction, TimerAction
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, RegisterEventHandler, TimerAction
 from launch.conditions import IfCondition
+from launch.event_handlers import OnProcessExit
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -66,29 +67,53 @@ def spawn_car(context, *args, **kwargs):
     with open(urdf_path, 'r') as urdf_file:
         robot_description = urdf_file.read()
 
+    spawn_robot = Node(
+        name='spawn_robot',
+        package='gazebo_ros',
+        executable='spawn_entity.py',
+        output='screen',
+        arguments=[
+            '-entity', namespace,
+            '-file', urdf_path,
+            '-x', x,
+            '-y', y,
+            '-z', z,
+            '-R', roll,
+            '-P', pitch,
+            '-Y', yaw,
+            '-timeout', '60.0',
+            '--ros-args', '--log-level', 'warn'
+        ]
+    )
+
+    rqt_perspective_file = join(get_package_share_directory('eufs_rqt'),
+                                'config', 'eufs_sim.perspective')
+    rqt_gui = Node(
+        name='eufs_sim_rqt',
+        package='rqt_gui',
+        executable='rqt_gui',
+        output='screen',
+        arguments=['--force-discover', '--perspective-file',
+                   str(rqt_perspective_file)],
+        condition=IfCondition(LaunchConfiguration('show_rqt_gui'))
+    )
+
     return [
+        RegisterEventHandler(
+            OnProcessExit(
+                target_action=spawn_robot,
+                on_exit=[
+                    TimerAction(
+                        period=1.0,
+                        actions=[rqt_gui]
+                    )
+                ]
+            )
+        ),
+
         TimerAction(
             period=5.0,
-            actions=[
-                Node(
-                    name='spawn_robot',
-                    package='gazebo_ros',
-                    executable='spawn_entity.py',
-                    output='screen',
-                    arguments=[
-                        '-entity', namespace,
-                        '-file', urdf_path,
-                        '-x', x,
-                        '-y', y,
-                        '-z', z,
-                        '-R', roll,
-                        '-P', pitch,
-                        '-Y', yaw,
-                        '-timeout', '60.0',
-                        '--ros-args', '--log-level', 'warn'
-                    ]
-                )
-            ]
+            actions=[spawn_robot]
         ),
 
         Node(
@@ -120,9 +145,6 @@ def spawn_car(context, *args, **kwargs):
 
 
 def generate_launch_description():
-    rqt_perspective_file = join(get_package_share_directory('eufs_rqt'),
-                                'config', 'eufs_sim.perspective')
-
     rviz_config_file = join(
         get_package_share_directory('eufs_launcher'), 'config', 'default.rviz')
 
@@ -195,16 +217,6 @@ def generate_launch_description():
             executable='rviz2',
             arguments=['-d', rviz_config_file],
             condition=IfCondition(LaunchConfiguration('rviz'))
-        ),
-
-        Node(
-            name='eufs_sim_rqt',
-            package='rqt_gui',
-            executable='rqt_gui',
-            output='screen',
-            arguments=['--force-discover', '--perspective-file',
-                       str(rqt_perspective_file)],
-            condition=IfCondition(LaunchConfiguration('show_rqt_gui'))
         ),
 
         # Spawn the car!!!
