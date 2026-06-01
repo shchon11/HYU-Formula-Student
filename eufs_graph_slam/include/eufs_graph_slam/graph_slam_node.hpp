@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "builtin_interfaces/msg/time.hpp"
+#include "eufs_msgs/msg/car_state.hpp"
 #include "eufs_msgs/msg/cone_array_with_covariance.hpp"
 #include "eufs_msgs/msg/cone_with_covariance.hpp"
 #include "geometry_msgs/msg/quaternion.hpp"
@@ -83,10 +84,10 @@ private:
   void configureOptimizer();
   void resetGraph();
 
-  void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
+  void stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg);
   void conesCallback(const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg);
 
-  g2o::SE2 poseFromOdometry(const nav_msgs::msg::Odometry & msg) const;
+  g2o::SE2 poseFromCarState(const eufs_msgs::msg::CarState & msg) const;
   g2o::SE2 estimateFromRawOdometry(const g2o::SE2 & raw_odom) const;
   bool shouldCreateKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & stamp) const;
   void addInitialPose(const g2o::SE2 & raw_odom, const rclcpp::Time & stamp);
@@ -140,7 +141,7 @@ private:
     std::shared_ptr<std_srvs::srv::Trigger::Response> response);
 
   static double normalizeAngle(double angle);
-  static double yawFromOdometry(const nav_msgs::msg::Odometry & msg);
+  static double yawFromQuaternion(const geometry_msgs::msg::Quaternion & q);
   static geometry_msgs::msg::Quaternion quaternionFromYaw(double yaw);
   static rclcpp::Time stampOrNow(
     const builtin_interfaces::msg::Time & stamp,
@@ -150,7 +151,7 @@ private:
 
   g2o::SparseOptimizer optimizer_;
 
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  rclcpp::Subscription<eufs_msgs::msg::CarState>::SharedPtr car_state_sub_;
   rclcpp::Subscription<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr cones_sub_;
   rclcpp::Publisher<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr map_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
@@ -165,7 +166,7 @@ private:
 
   Eigen::Matrix3d odom_information_;
 
-  std::string odom_topic_;
+  std::string car_state_topic_;
   std::string cones_topic_;
   std::string map_topic_;
   std::string slam_odom_topic_;

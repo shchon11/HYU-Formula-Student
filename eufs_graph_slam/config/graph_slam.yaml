@@ -2,7 +2,7 @@ graph_slam:
   ros__parameters:
     use_sim_time: true
 
-    odom_topic: /ground_truth/odom
+    car_state_topic: /odometry_integration/car_state
     cones_topic: /cones
 
     map_topic: /graph_slam/map

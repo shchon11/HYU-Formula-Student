@@ -1,10 +1,10 @@
 # EUFS Graph SLAM
 
-`eufs_graph_slam` is a ROS 2 Humble package that builds a 2D g2o graph from EUFS simulator odometry and cone observations.
+`eufs_graph_slam` is a ROS 2 Humble package that builds a 2D g2o graph from EUFS simulator car state and cone observations.
 
 The node subscribes to:
 
-- `/ground_truth/odom` (`nav_msgs/msg/Odometry`) for SE2 keyframe odometry
+- `/odometry_integration/car_state` (`eufs_msgs/msg/CarState`) for SE2 keyframe motion
 - `/cones` (`eufs_msgs/msg/ConeArrayWithCovariance`) for local cone observations in `base_footprint`
 
 It publishes:

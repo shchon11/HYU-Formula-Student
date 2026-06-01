@@ -15,6 +15,7 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     params_file = LaunchConfiguration("params_file")
     use_sim_time = LaunchConfiguration("use_sim_time")
+    car_state_topic = LaunchConfiguration("car_state_topic")
     map_frame = LaunchConfiguration("map_frame")
     slam_base_frame = LaunchConfiguration("slam_base_frame")
     publish_tf = LaunchConfiguration("publish_tf")
@@ -36,6 +37,11 @@ def generate_launch_description():
                 "use_sim_time",
                 default_value="true",
                 description="Use the simulator clock.",
+            ),
+            DeclareLaunchArgument(
+                "car_state_topic",
+                default_value="/odometry_integration/car_state",
+                description="CarState topic used as the graph SLAM motion input.",
             ),
             DeclareLaunchArgument(
                 "map_frame",
@@ -73,6 +79,7 @@ def generate_launch_description():
                     params_file,
                     {
                         "use_sim_time": use_sim_time,
+                        "car_state_topic": car_state_topic,
                         "map_frame": map_frame,
                         "slam_base_frame": slam_base_frame,
                         "publish_tf": publish_tf,

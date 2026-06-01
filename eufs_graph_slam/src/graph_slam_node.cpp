@@ -70,7 +70,8 @@ GraphSlamNode::GraphSlamNode()
   keyframes_since_last_optimization_(0),
   last_cone_pose_graph_id_(-1)
 {
-  odom_topic_ = declare_parameter<std::string>("odom_topic", "/ground_truth/odom");
+  car_state_topic_ =
+    declare_parameter<std::string>("car_state_topic", "/odometry_integration/car_state");
   cones_topic_ = declare_parameter<std::string>("cones_topic", "/cones");
   map_topic_ = declare_parameter<std::string>("map_topic", "/graph_slam/map");
   slam_odom_topic_ = declare_parameter<std::string>("slam_odom_topic", "/graph_slam/odom");
@@ -198,10 +199,10 @@ GraphSlamNode::GraphSlamNode()
     "~/save_graph",
     std::bind(&GraphSlamNode::handleSaveGraph, this, std::placeholders::_1, std::placeholders::_2));
 
-  odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
-    odom_topic_,
+  car_state_sub_ = create_subscription<eufs_msgs::msg::CarState>(
+    car_state_topic_,
     rclcpp::SensorDataQoS(),
-    std::bind(&GraphSlamNode::odomCallback, this, std::placeholders::_1));
+    std::bind(&GraphSlamNode::stateCallback, this, std::placeholders::_1));
   cones_sub_ = create_subscription<eufs_msgs::msg::ConeArrayWithCovariance>(
     cones_topic_,
     rclcpp::SensorDataQoS(),
@@ -209,8 +210,8 @@ GraphSlamNode::GraphSlamNode()
 
   RCLCPP_INFO(
     get_logger(),
-    "g2o graph SLAM listening to odom '%s' and cones '%s'",
-    odom_topic_.c_str(),
+    "g2o graph SLAM listening to car state '%s' and cones '%s'",
+    car_state_topic_.c_str(),
     cones_topic_.c_str());
 }
 
@@ -243,10 +244,10 @@ void GraphSlamNode::resetGraph()
   last_landmark_delete_time_sec_ = -1.0;
 }
 
-void GraphSlamNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
+void GraphSlamNode::stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg)
 {
   const rclcpp::Time stamp = stampOrNow(msg->header.stamp, get_clock());
-  const g2o::SE2 raw_odom = poseFromOdometry(*msg);
+  const g2o::SE2 raw_odom = poseFromCarState(*msg);
 
   if (poses_.empty()) {
     addInitialPose(raw_odom, stamp);
@@ -279,12 +280,12 @@ void GraphSlamNode::conesCallback(
   }
 }
 
-g2o::SE2 GraphSlamNode::poseFromOdometry(const nav_msgs::msg::Odometry & msg) const
+g2o::SE2 GraphSlamNode::poseFromCarState(const eufs_msgs::msg::CarState & msg) const
 {
   return g2o::SE2(
     msg.pose.pose.position.x,
     msg.pose.pose.position.y,
-    yawFromOdometry(msg));
+    yawFromQuaternion(msg.pose.pose.orientation));
 }
 
 g2o::SE2 GraphSlamNode::estimateFromRawOdometry(const g2o::SE2 & raw_odom) const
@@ -1081,9 +1082,8 @@ double GraphSlamNode::normalizeAngle(double angle)
   return std::atan2(std::sin(angle), std::cos(angle));
 }
 
-double GraphSlamNode::yawFromOdometry(const nav_msgs::msg::Odometry & msg)
+double GraphSlamNode::yawFromQuaternion(const geometry_msgs::msg::Quaternion & q)
 {
-  const auto & q = msg.pose.pose.orientation;
   const double siny_cosp = 2.0 * (q.w * q.z + q.x * q.y);
   const double cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
   return std::atan2(siny_cosp, cosy_cosp);
