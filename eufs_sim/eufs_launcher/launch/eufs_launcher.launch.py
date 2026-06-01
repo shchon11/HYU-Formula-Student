@@ -2,6 +2,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.actions import SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -18,6 +19,15 @@ def generate_launch_description():
             name="gui",
             default_value="true",
             description="Condition for GUI, if false, auto-launches as per defaults in config"),
+
+        DeclareLaunchArgument(
+            name="ros_localhost_only",
+            default_value="1",
+            description="Limit ROS discovery to localhost"),
+
+        SetEnvironmentVariable(
+            name="ROS_LOCALHOST_ONLY",
+            value=LaunchConfiguration("ros_localhost_only")),
 
         # Launch the launcher
         Node(

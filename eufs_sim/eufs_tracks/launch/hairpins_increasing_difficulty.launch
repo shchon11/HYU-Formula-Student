@@ -19,6 +19,8 @@
   <arg name="gazebo_gui" default="true"/>
   <!-- Use simulator clock for TF and RViz -->
   <arg name="use_sim_time" default="true"/>
+  <!-- Limit ROS discovery to this machine -->
+  <arg name="ros_localhost_only" default="1"/>
   <!-- Show the RQT GUI (with Mission Control GUI and EUFS Robot Steering GUI) -->
   <arg name="show_rqt_gui" default="true"/>
   <!-- Launch RViz -->
@@ -69,6 +71,7 @@
     <arg name="show_rqt_gui" value="$(var show_rqt_gui)"/>
     <arg name="rviz" value="$(var rviz)"/>
     <arg name="use_sim_time" value="$(var use_sim_time)"/>
+    <arg name="ros_localhost_only" value="$(var ros_localhost_only)"/>
     <arg name="publish_gt_tf" value="$(var publish_gt_tf)"/>
     <arg name="pub_ground_truth" value="$(var pub_ground_truth)"/>
     <arg name="launch_group" value="$(var launch_group)"/>

@@ -5,7 +5,8 @@ from os.path import isfile
 import xacro
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction, RegisterEventHandler, TimerAction
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import RegisterEventHandler, SetEnvironmentVariable, TimerAction
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.substitutions import LaunchConfiguration
@@ -94,9 +95,27 @@ def spawn_car(context, *args, **kwargs):
         package='rqt_gui',
         executable='rqt_gui',
         output='screen',
+        parameters=[{'use_sim_time': use_sim_time}],
         arguments=['--force-discover', '--perspective-file',
                    str(rqt_perspective_file)],
         condition=IfCondition(LaunchConfiguration('show_rqt_gui'))
+    )
+
+    rviz_config_file = join(
+        get_package_share_directory('eufs_launcher'), 'config', 'default.rviz')
+
+    default_user_config_file = join(os.path.expanduser("~"),
+                                    ".rviz2", "default.rviz")
+    if os.path.isfile(default_user_config_file):
+        rviz_config_file = default_user_config_file
+
+    rviz = Node(
+        name='rviz',
+        package='rviz2',
+        executable='rviz2',
+        parameters=[{'use_sim_time': use_sim_time}],
+        arguments=['-d', rviz_config_file],
+        condition=IfCondition(LaunchConfiguration('rviz'))
     )
 
     return [
@@ -106,7 +125,7 @@ def spawn_car(context, *args, **kwargs):
                 on_exit=[
                     TimerAction(
                         period=1.0,
-                        actions=[rqt_gui]
+                        actions=[rviz, rqt_gui]
                     )
                 ]
             )
@@ -148,14 +167,6 @@ def spawn_car(context, *args, **kwargs):
 
 
 def generate_launch_description():
-    rviz_config_file = join(
-        get_package_share_directory('eufs_launcher'), 'config', 'default.rviz')
-
-    default_user_config_file = join(os.path.expanduser("~"),
-                                    ".rviz2", "default.rviz")
-    if os.path.isfile(default_user_config_file):
-        rviz_config_file = default_user_config_file
-
     return LaunchDescription([
         # Launch Arguments
         DeclareLaunchArgument('launch_group', default_value='default',
@@ -167,6 +178,10 @@ def generate_launch_description():
 
         DeclareLaunchArgument('use_sim_time', default_value='true',
                               description='Use the simulator clock'),
+
+        DeclareLaunchArgument('ros_localhost_only',
+                              default_value='1',
+                              description='Limit ROS discovery to localhost'),
 
         DeclareLaunchArgument('show_rqt_gui', default_value='true',
                               description='Show the RQT GUI (with '
@@ -217,14 +232,9 @@ def generate_launch_description():
         DeclareLaunchArgument('yaw', default_value='0',
                               description='Vehicle initial yaw'),
 
-        Node(
-            name='rviz',
-            package='rviz2',
-            executable='rviz2',
-            parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
-            arguments=['-d', rviz_config_file],
-            condition=IfCondition(LaunchConfiguration('rviz'))
-        ),
+        SetEnvironmentVariable(
+            name='ROS_LOCALHOST_ONLY',
+            value=LaunchConfiguration('ros_localhost_only')),
 
         # Spawn the car!!!
         OpaqueFunction(function=spawn_car)

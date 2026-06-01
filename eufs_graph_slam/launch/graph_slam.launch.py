@@ -1,6 +1,7 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
+from launch.substitutions import LaunchConfiguration
+from launch.substitutions import PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
@@ -26,6 +27,15 @@ def generate_launch_description():
                 "use_sim_time",
                 default_value="true",
                 description="Use the simulator clock.",
+            ),
+            DeclareLaunchArgument(
+                "ros_localhost_only",
+                default_value="1",
+                description="Limit ROS discovery to localhost.",
+            ),
+            SetEnvironmentVariable(
+                name="ROS_LOCALHOST_ONLY",
+                value=LaunchConfiguration("ros_localhost_only"),
             ),
             Node(
                 package="eufs_graph_slam",

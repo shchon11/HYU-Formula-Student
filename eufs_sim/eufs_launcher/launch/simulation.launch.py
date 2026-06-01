@@ -2,6 +2,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.actions import IncludeLaunchDescription
+from launch.actions import SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration
 from launch.substitutions import PathJoinSubstitution
 from launch.substitutions import PythonExpression
@@ -47,9 +48,19 @@ def generate_launch_description():
             description="Use the simulator clock"),
 
         DeclareLaunchArgument(
+            name='ros_localhost_only',
+            default_value='1',
+            description="Limit ROS discovery to localhost"),
+
+        DeclareLaunchArgument(
             name='rviz',
             default_value='true',
             description="Condition to launch the Rviz GUI"),
+
+        DeclareLaunchArgument(
+            name='show_rqt_gui',
+            default_value='true',
+            description="Show the RQT GUI"),
 
         DeclareLaunchArgument(
             name='publish_gt_tf',
@@ -67,6 +78,10 @@ def generate_launch_description():
             default_value='default',
             description="Determines which launch files are used in the state_machine node"),
 
+        SetEnvironmentVariable(
+            name='ROS_LOCALHOST_ONLY',
+            value=LaunchConfiguration('ros_localhost_only')),
+
         IncludeLaunchDescription(
             FrontendLaunchDescriptionSource(
                 PathJoinSubstitution([
@@ -82,7 +97,9 @@ def generate_launch_description():
                 ('robot_name', LaunchConfiguration('robot_name')),
                 ('gazebo_gui', LaunchConfiguration('gazebo_gui')),
                 ('use_sim_time', LaunchConfiguration('use_sim_time')),
+                ('ros_localhost_only', LaunchConfiguration('ros_localhost_only')),
                 ('rviz', LaunchConfiguration('rviz')),
+                ('show_rqt_gui', LaunchConfiguration('show_rqt_gui')),
                 ('publish_gt_tf', LaunchConfiguration('publish_gt_tf')),
                 ('pub_ground_truth', LaunchConfiguration('pub_ground_truth')),
                 ('launch_group', LaunchConfiguration('launch_group')),
