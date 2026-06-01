@@ -54,6 +54,7 @@ GraphSlamNode::GraphSlamNode()
   publish_tf_(true),
   optimize_min_interval_(10.0),
   visual_publish_min_interval_(0.5),
+  tf_stamp_offset_(0.5),
   last_optimization_time_sec_(-1.0),
   last_visual_publish_time_sec_(-1.0),
   next_vertex_id_(0),
@@ -108,6 +109,7 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<double>("optimize_min_interval", optimize_min_interval_);
   visual_publish_min_interval_ =
     declare_parameter<double>("visual_publish_min_interval", visual_publish_min_interval_);
+  tf_stamp_offset_ = declare_parameter<double>("tf_stamp_offset", tf_stamp_offset_);
 
   use_cone_covariance_ = declare_parameter<bool>("use_cone_covariance", use_cone_covariance_);
   process_every_cone_message_ =
@@ -128,6 +130,7 @@ GraphSlamNode::GraphSlamNode()
   landmark_min_observations_to_publish_ = std::max(1, landmark_min_observations_to_publish_);
   optimize_min_interval_ = std::max(0.0, optimize_min_interval_);
   visual_publish_min_interval_ = std::max(0.0, visual_publish_min_interval_);
+  tf_stamp_offset_ = std::max(0.0, tf_stamp_offset_);
 
   odom_information_.setZero();
   odom_information_(0, 0) = 1.0 / (odom_translation_sigma_ * odom_translation_sigma_);
@@ -147,9 +150,11 @@ GraphSlamNode::GraphSlamNode()
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
     RCLCPP_INFO(
       get_logger(),
-      "Publishing graph SLAM TF '%s' -> '%s'; keep simulator publish_gt_tf disabled",
+      "Publishing graph SLAM TF '%s' -> '%s' with %.2fs stamp offset; "
+      "keep simulator publish_gt_tf disabled",
       map_frame_.c_str(),
-      slam_base_frame_.c_str());
+      slam_base_frame_.c_str(),
+      tf_stamp_offset_);
   }
 
   reset_srv_ = create_service<std_srvs::srv::Trigger>(
@@ -215,6 +220,7 @@ void GraphSlamNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
   }
 
   if (!shouldCreateKeyframe(raw_odom, stamp)) {
+    publishLiveEstimate(stamp, estimateFromRawOdometry(raw_odom));
     return;
   }
 
@@ -232,7 +238,7 @@ void GraphSlamNode::conesCallback(
   const std::size_t added_edges = addConeObservations(*msg, false);
   if (added_edges > 0U) {
     maybeOptimize();
-    publishEstimate();
+    publishGraphVisuals(stampOrNow(msg->header.stamp, get_clock()));
   }
 }
 
@@ -242,6 +248,17 @@ g2o::SE2 GraphSlamNode::poseFromOdometry(const nav_msgs::msg::Odometry & msg) co
     msg.pose.pose.position.x,
     msg.pose.pose.position.y,
     yawFromOdometry(msg));
+}
+
+g2o::SE2 GraphSlamNode::estimateFromRawOdometry(const g2o::SE2 & raw_odom) const
+{
+  if (poses_.empty()) {
+    return raw_odom;
+  }
+
+  const PoseRecord & previous = poses_.back();
+  const g2o::SE2 odom_delta = previous.raw_odom.inverse() * raw_odom;
+  return previous.vertex->estimate() * odom_delta;
 }
 
 bool GraphSlamNode::shouldCreateKeyframe(
@@ -617,13 +634,24 @@ void GraphSlamNode::publishEstimate()
   }
 
   const rclcpp::Time stamp = poses_.back().stamp;
+  const g2o::SE2 estimate = poses_.back().vertex->estimate();
+  publishGraphVisuals(stamp);
+  publishLiveEstimate(stamp, estimate);
+}
+
+void GraphSlamNode::publishGraphVisuals(const rclcpp::Time & stamp)
+{
   if (shouldPublishVisuals(stamp)) {
     publishMap(stamp);
     publishPath(stamp);
     publishMarkers(stamp);
   }
-  publishOdometry(stamp);
-  publishTransform(stamp);
+}
+
+void GraphSlamNode::publishLiveEstimate(const rclcpp::Time & stamp, const g2o::SE2 & estimate)
+{
+  publishOdometry(stamp, estimate);
+  publishTransform(stamp, estimate);
 }
 
 void GraphSlamNode::publishMap(const rclcpp::Time & stamp)
@@ -694,11 +722,8 @@ void GraphSlamNode::publishPath(const rclcpp::Time & stamp)
   path_pub_->publish(path);
 }
 
-void GraphSlamNode::publishOdometry(const rclcpp::Time & stamp)
+void GraphSlamNode::publishOdometry(const rclcpp::Time & stamp, const g2o::SE2 & estimate)
 {
-  const PoseRecord & pose_record = poses_.back();
-  const g2o::SE2 estimate = pose_record.vertex->estimate();
-
   nav_msgs::msg::Odometry odom;
   odom.header.frame_id = map_frame_;
   odom.header.stamp = stamp;
@@ -791,17 +816,15 @@ void GraphSlamNode::publishMarkers(const rclcpp::Time & stamp)
   marker_pub_->publish(markers);
 }
 
-void GraphSlamNode::publishTransform(const rclcpp::Time & stamp)
+void GraphSlamNode::publishTransform(const rclcpp::Time & stamp, const g2o::SE2 & estimate)
 {
-  if (!publish_tf_ || !tf_broadcaster_ || poses_.empty()) {
+  if (!publish_tf_ || !tf_broadcaster_) {
     return;
   }
 
-  const g2o::SE2 estimate = poses_.back().vertex->estimate();
-
   geometry_msgs::msg::TransformStamped transform;
   transform.header.frame_id = map_frame_;
-  transform.header.stamp = stamp;
+  transform.header.stamp = stamp + rclcpp::Duration::from_seconds(tf_stamp_offset_);
   transform.child_frame_id = slam_base_frame_;
   transform.transform.translation.x = estimate.translation().x();
   transform.transform.translation.y = estimate.translation().y();

@@ -80,6 +80,7 @@ private:
   void conesCallback(const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg);
 
   g2o::SE2 poseFromOdometry(const nav_msgs::msg::Odometry & msg) const;
+  g2o::SE2 estimateFromRawOdometry(const g2o::SE2 & raw_odom) const;
   bool shouldCreateKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & stamp) const;
   void addInitialPose(const g2o::SE2 & raw_odom, const rclcpp::Time & stamp);
   void addKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & stamp);
@@ -108,11 +109,13 @@ private:
   bool shouldPublishVisuals(const rclcpp::Time & stamp);
 
   void publishEstimate();
+  void publishGraphVisuals(const rclcpp::Time & stamp);
+  void publishLiveEstimate(const rclcpp::Time & stamp, const g2o::SE2 & estimate);
   void publishMap(const rclcpp::Time & stamp);
   void publishPath(const rclcpp::Time & stamp);
-  void publishOdometry(const rclcpp::Time & stamp);
+  void publishOdometry(const rclcpp::Time & stamp, const g2o::SE2 & estimate);
   void publishMarkers(const rclcpp::Time & stamp);
-  void publishTransform(const rclcpp::Time & stamp);
+  void publishTransform(const rclcpp::Time & stamp, const g2o::SE2 & estimate);
 
   void handleReset(
     const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
@@ -183,6 +186,7 @@ private:
 
   double optimize_min_interval_;
   double visual_publish_min_interval_;
+  double tf_stamp_offset_;
   double last_optimization_time_sec_;
   double last_visual_publish_time_sec_;
 

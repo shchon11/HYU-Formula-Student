@@ -13,6 +13,7 @@ graph_slam:
     map_frame: map
     slam_base_frame: base_footprint
     publish_tf: true
+    tf_stamp_offset: 0.5
 
     keyframe_distance: 1.0
     keyframe_yaw: 0.25
