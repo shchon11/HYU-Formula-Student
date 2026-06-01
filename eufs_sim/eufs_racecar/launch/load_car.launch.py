@@ -5,7 +5,7 @@ from os.path import isfile
 import xacro
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, TimerAction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -67,22 +67,27 @@ def spawn_car(context, *args, **kwargs):
         robot_description = urdf_file.read()
 
     return [
-        Node(
-            name='spawn_robot',
-            package='gazebo_ros',
-            executable='spawn_entity.py',
-            output='screen',
-            arguments=[
-                '-entity', namespace,
-                '-file', urdf_path,
-                '-x', x,
-                '-y', y,
-                '-z', z,
-                '-R', roll,
-                '-P', pitch,
-                '-Y', yaw,
-                '-spawn_service_timeout', '60.0',
-                '--ros-args', '--log-level', 'warn'
+        TimerAction(
+            period=5.0,
+            actions=[
+                Node(
+                    name='spawn_robot',
+                    package='gazebo_ros',
+                    executable='spawn_entity.py',
+                    output='screen',
+                    arguments=[
+                        '-entity', namespace,
+                        '-file', urdf_path,
+                        '-x', x,
+                        '-y', y,
+                        '-z', z,
+                        '-R', roll,
+                        '-P', pitch,
+                        '-Y', yaw,
+                        '-timeout', '60.0',
+                        '--ros-args', '--log-level', 'warn'
+                    ]
+                )
             ]
         ),
 
