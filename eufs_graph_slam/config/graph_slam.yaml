@@ -11,8 +11,8 @@ graph_slam:
     marker_topic: /graph_slam/markers
 
     map_frame: map
-    slam_base_frame: graph_slam/base_footprint
-    publish_tf: false
+    slam_base_frame: base_footprint
+    publish_tf: true
 
     keyframe_distance: 0.5
     keyframe_yaw: 0.25
@@ -29,12 +29,15 @@ graph_slam:
     odom_translation_sigma: 0.05
     odom_yaw_sigma: 0.03
 
-    optimize_every_n_keyframes: 3
+    optimize_every_n_keyframes: 10
+    optimize_min_interval: 1.0
+    max_optimization_poses: 1500
     optimization_iterations: 10
     process_every_cone_message: false
 
     landmark_min_observations_to_publish: 1
     max_landmarks: 400
+    path_max_poses_to_publish: 1000
     marker_scale: 0.3
 
     g2o_output_path: /tmp/eufs_graph_slam.g2o

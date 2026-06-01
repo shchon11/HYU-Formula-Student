@@ -1,5 +1,17 @@
+// Copyright 2026 shchon11
+//
+// Use of this source code is governed by an MIT-style
+// license that can be found in the LICENSE file or at
+// https://opensource.org/licenses/MIT.
+
 #ifndef EUFS_GRAPH_SLAM__GRAPH_SLAM_NODE_HPP_
 #define EUFS_GRAPH_SLAM__GRAPH_SLAM_NODE_HPP_
+
+#include <Eigen/Core>
+#include <g2o/core/sparse_optimizer.h>
+#include <g2o/types/slam2d/se2.h>
+#include <g2o/types/slam2d/vertex_point_xy.h>
+#include <g2o/types/slam2d/vertex_se2.h>
 
 #include <array>
 #include <cstddef>
@@ -7,12 +19,6 @@
 #include <memory>
 #include <string>
 #include <vector>
-
-#include <Eigen/Core>
-#include <g2o/core/sparse_optimizer.h>
-#include <g2o/types/slam2d/se2.h>
-#include <g2o/types/slam2d/vertex_point_xy.h>
-#include <g2o/types/slam2d/vertex_se2.h>
 
 #include "builtin_interfaces/msg/time.hpp"
 #include "eufs_msgs/msg/cone_array_with_covariance.hpp"
@@ -98,6 +104,7 @@ private:
 
   void maybeOptimize();
   void optimizeGraph();
+  std::size_t firstPublishedPoseIndex() const;
 
   void publishEstimate();
   void publishMap(const rclcpp::Time & stamp);
@@ -166,10 +173,15 @@ private:
   int optimization_iterations_;
   int landmark_min_observations_to_publish_;
   int max_landmarks_;
+  int max_optimization_poses_;
+  int path_max_poses_to_publish_;
 
   bool use_cone_covariance_;
   bool process_every_cone_message_;
   bool publish_tf_;
+
+  double optimize_min_interval_;
+  double last_optimization_time_sec_;
 
   int next_vertex_id_;
   int next_edge_id_;

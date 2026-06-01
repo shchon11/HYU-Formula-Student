@@ -1,11 +1,10 @@
-#include "eufs_graph_slam/graph_slam_node.hpp"
+// Copyright 2026 shchon11
+//
+// Use of this source code is governed by an MIT-style
+// license that can be found in the LICENSE file or at
+// https://opensource.org/licenses/MIT.
 
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <limits>
-#include <memory>
-#include <utility>
+#include "eufs_graph_slam/graph_slam_node.hpp"
 
 #include <g2o/core/block_solver.h>
 #include <g2o/core/optimization_algorithm_levenberg.h>
@@ -14,6 +13,13 @@
 #include <g2o/types/slam2d/edge_se2.h>
 #include <g2o/types/slam2d/edge_se2_pointxy.h>
 #include <g2o/types/slam2d/types_slam2d.h>
+
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <limits>
+#include <memory>
+#include <utility>
 
 #include "geometry_msgs/msg/point.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
@@ -41,9 +47,13 @@ GraphSlamNode::GraphSlamNode()
   optimization_iterations_(10),
   landmark_min_observations_to_publish_(1),
   max_landmarks_(400),
+  max_optimization_poses_(1500),
+  path_max_poses_to_publish_(1000),
   use_cone_covariance_(true),
   process_every_cone_message_(false),
-  publish_tf_(false),
+  publish_tf_(true),
+  optimize_min_interval_(1.0),
+  last_optimization_time_sec_(-1.0),
   next_vertex_id_(0),
   next_edge_id_(0),
   keyframes_since_last_optimization_(0),
@@ -56,7 +66,7 @@ GraphSlamNode::GraphSlamNode()
   path_topic_ = declare_parameter<std::string>("path_topic", "/graph_slam/path");
   marker_topic_ = declare_parameter<std::string>("marker_topic", "/graph_slam/markers");
   map_frame_ = declare_parameter<std::string>("map_frame", "map");
-  slam_base_frame_ = declare_parameter<std::string>("slam_base_frame", "graph_slam/base_footprint");
+  slam_base_frame_ = declare_parameter<std::string>("slam_base_frame", "base_footprint");
   g2o_output_path_ = declare_parameter<std::string>("g2o_output_path", "/tmp/eufs_graph_slam.g2o");
 
   keyframe_distance_ = declare_parameter<double>("keyframe_distance", keyframe_distance_);
@@ -64,8 +74,10 @@ GraphSlamNode::GraphSlamNode()
   keyframe_max_dt_ = declare_parameter<double>("keyframe_max_dt", keyframe_max_dt_);
   association_max_distance_ =
     declare_parameter<double>("association_max_distance", association_max_distance_);
-  min_observation_range_ = declare_parameter<double>("min_observation_range", min_observation_range_);
-  max_observation_range_ = declare_parameter<double>("max_observation_range", max_observation_range_);
+  min_observation_range_ =
+    declare_parameter<double>("min_observation_range", min_observation_range_);
+  max_observation_range_ =
+    declare_parameter<double>("max_observation_range", max_observation_range_);
   default_observation_sigma_ =
     declare_parameter<double>("default_observation_sigma", default_observation_sigma_);
   min_observation_variance_ =
@@ -85,6 +97,13 @@ GraphSlamNode::GraphSlamNode()
     "landmark_min_observations_to_publish",
     landmark_min_observations_to_publish_);
   max_landmarks_ = declare_parameter<int>("max_landmarks", max_landmarks_);
+  max_optimization_poses_ =
+    declare_parameter<int>("max_optimization_poses", max_optimization_poses_);
+  path_max_poses_to_publish_ =
+    declare_parameter<int>("path_max_poses_to_publish", path_max_poses_to_publish_);
+
+  optimize_min_interval_ =
+    declare_parameter<double>("optimize_min_interval", optimize_min_interval_);
 
   use_cone_covariance_ = declare_parameter<bool>("use_cone_covariance", use_cone_covariance_);
   process_every_cone_message_ =
@@ -103,6 +122,7 @@ GraphSlamNode::GraphSlamNode()
   optimize_every_n_keyframes_ = std::max(1, optimize_every_n_keyframes_);
   optimization_iterations_ = std::max(1, optimization_iterations_);
   landmark_min_observations_to_publish_ = std::max(1, landmark_min_observations_to_publish_);
+  optimize_min_interval_ = std::max(0.0, optimize_min_interval_);
 
   odom_information_.setZero();
   odom_information_(0, 0) = 1.0 / (odom_translation_sigma_ * odom_translation_sigma_);
@@ -115,10 +135,16 @@ GraphSlamNode::GraphSlamNode()
   map_pub_ = create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(map_topic_, transient_qos);
   odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(slam_odom_topic_, 10);
   path_pub_ = create_publisher<nav_msgs::msg::Path>(path_topic_, transient_qos);
-  marker_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(marker_topic_, transient_qos);
+  marker_pub_ =
+    create_publisher<visualization_msgs::msg::MarkerArray>(marker_topic_, transient_qos);
 
   if (publish_tf_) {
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+    RCLCPP_INFO(
+      get_logger(),
+      "Publishing graph SLAM TF '%s' -> '%s'; keep simulator publish_gt_tf disabled",
+      map_frame_.c_str(),
+      slam_base_frame_.c_str());
   }
 
   reset_srv_ = create_service<std_srvs::srv::Trigger>(
@@ -168,6 +194,7 @@ void GraphSlamNode::resetGraph()
   next_edge_id_ = 0;
   keyframes_since_last_optimization_ = 0;
   last_cone_pose_graph_id_ = -1;
+  last_optimization_time_sec_ = -1.0;
 }
 
 void GraphSlamNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
@@ -507,8 +534,32 @@ void GraphSlamNode::maybeOptimize()
     return;
   }
 
+  if (max_optimization_poses_ > 0 &&
+    poses_.size() > static_cast<std::size_t>(max_optimization_poses_))
+  {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      5000,
+      "Skipping graph optimization with %zu poses; max_optimization_poses is %d",
+      poses_.size(),
+      max_optimization_poses_);
+    keyframes_since_last_optimization_ = 0;
+    return;
+  }
+
+  const double stamp_sec = poses_.empty() ? 0.0 : poses_.back().stamp.seconds();
+  if (optimize_min_interval_ > 0.0 &&
+    last_optimization_time_sec_ >= 0.0 &&
+    stamp_sec >= last_optimization_time_sec_ &&
+    stamp_sec - last_optimization_time_sec_ < optimize_min_interval_)
+  {
+    return;
+  }
+
   optimizeGraph();
   keyframes_since_last_optimization_ = 0;
+  last_optimization_time_sec_ = stamp_sec;
 }
 
 void GraphSlamNode::optimizeGraph()
@@ -525,6 +576,17 @@ void GraphSlamNode::optimizeGraph()
     completed_iterations,
     poses_.size(),
     landmarks_.size());
+}
+
+std::size_t GraphSlamNode::firstPublishedPoseIndex() const
+{
+  if (path_max_poses_to_publish_ <= 0 ||
+    poses_.size() <= static_cast<std::size_t>(path_max_poses_to_publish_))
+  {
+    return 0U;
+  }
+
+  return poses_.size() - static_cast<std::size_t>(path_max_poses_to_publish_);
 }
 
 void GraphSlamNode::publishEstimate()
@@ -588,9 +650,11 @@ void GraphSlamNode::publishPath(const rclcpp::Time & stamp)
   nav_msgs::msg::Path path;
   path.header.frame_id = map_frame_;
   path.header.stamp = stamp;
-  path.poses.reserve(poses_.size());
+  const std::size_t first_pose_index = firstPublishedPoseIndex();
+  path.poses.reserve(poses_.size() - first_pose_index);
 
-  for (const PoseRecord & pose_record : poses_) {
+  for (std::size_t i = first_pose_index; i < poses_.size(); ++i) {
+    const PoseRecord & pose_record = poses_[i];
     geometry_msgs::msg::PoseStamped pose;
     pose.header.frame_id = map_frame_;
     pose.header.stamp = pose_record.stamp;
@@ -649,7 +713,8 @@ void GraphSlamNode::publishMarkers(const rclcpp::Time & stamp)
   path_marker.color.b = 1.0;
   path_marker.color.a = 0.85;
 
-  for (const PoseRecord & pose_record : poses_) {
+  for (std::size_t i = firstPublishedPoseIndex(); i < poses_.size(); ++i) {
+    const PoseRecord & pose_record = poses_[i];
     geometry_msgs::msg::Point point;
     const g2o::SE2 estimate = pose_record.vertex->estimate();
     point.x = estimate.translation().x();
