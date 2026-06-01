@@ -1,0 +1,40 @@
+graph_slam:
+  ros__parameters:
+    use_sim_time: true
+
+    odom_topic: /ground_truth/odom
+    cones_topic: /cones
+
+    map_topic: /graph_slam/map
+    slam_odom_topic: /graph_slam/odom
+    path_topic: /graph_slam/path
+    marker_topic: /graph_slam/markers
+
+    map_frame: map
+    slam_base_frame: graph_slam/base_footprint
+    publish_tf: false
+
+    keyframe_distance: 0.5
+    keyframe_yaw: 0.25
+    keyframe_max_dt: 1.0
+
+    association_max_distance: 1.2
+    min_observation_range: 0.2
+    max_observation_range: 30.0
+    use_cone_covariance: true
+    default_observation_sigma: 0.25
+    min_observation_variance: 0.01
+    robust_kernel_delta: 1.0
+
+    odom_translation_sigma: 0.05
+    odom_yaw_sigma: 0.03
+
+    optimize_every_n_keyframes: 3
+    optimization_iterations: 10
+    process_every_cone_message: false
+
+    landmark_min_observations_to_publish: 1
+    max_landmarks: 400
+    marker_scale: 0.3
+
+    g2o_output_path: /tmp/eufs_graph_slam.g2o
