@@ -64,6 +64,7 @@ private:
     ConeColor color;
     g2o::VertexPointXY * vertex;
     std::size_t observations;
+    int consecutive_misses;
   };
 
   struct ConeObservation
@@ -71,6 +72,12 @@ private:
     Eigen::Vector2d measurement;
     Eigen::Matrix2d covariance;
     ConeColor color;
+  };
+
+  struct ObservationUpdate
+  {
+    std::size_t added_edges;
+    std::size_t deleted_landmarks;
   };
 
   void configureOptimizer();
@@ -85,7 +92,7 @@ private:
   void addInitialPose(const g2o::SE2 & raw_odom, const rclcpp::Time & stamp);
   void addKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & stamp);
 
-  std::size_t addConeObservations(
+  ObservationUpdate addConeObservations(
     const eufs_msgs::msg::ConeArrayWithCovariance & msg,
     bool force_process);
   std::vector<ConeObservation> extractConeObservations(
@@ -102,6 +109,14 @@ private:
     const ConeObservation & observation,
     g2o::VertexSE2 * pose_vertex,
     LandmarkRecord & landmark);
+  std::size_t deleteMissedVisibleLandmarks(
+    const PoseRecord & pose,
+    const std::vector<std::size_t> & observed_landmark_indices);
+  bool landmarkExpectedVisible(
+    const PoseRecord & pose,
+    const LandmarkRecord & landmark) const;
+  bool removeLandmarkAt(std::size_t landmark_index);
+  bool shouldUpdateLandmarkDeletion(const rclcpp::Time & stamp, bool force_update);
 
   void maybeOptimize();
   void optimizeGraph();
@@ -172,6 +187,11 @@ private:
   double odom_yaw_sigma_;
   double robust_kernel_delta_;
   double marker_scale_;
+  double landmark_delete_fov_;
+  double landmark_delete_max_range_;
+  double landmark_delete_max_abs_x_;
+  double landmark_delete_max_abs_y_;
+  double landmark_delete_min_interval_;
 
   int optimize_every_n_keyframes_;
   int optimization_iterations_;
@@ -179,16 +199,19 @@ private:
   int max_landmarks_;
   int max_optimization_poses_;
   int path_max_poses_to_publish_;
+  int landmark_missed_observations_to_delete_;
 
   bool use_cone_covariance_;
   bool process_every_cone_message_;
   bool publish_tf_;
+  bool delete_stale_landmarks_;
 
   double optimize_min_interval_;
   double visual_publish_min_interval_;
   double tf_stamp_offset_;
   double last_optimization_time_sec_;
   double last_visual_publish_time_sec_;
+  double last_landmark_delete_time_sec_;
 
   int next_vertex_id_;
   int next_edge_id_;

@@ -48,4 +48,11 @@ ros2 service call /graph_slam/reset std_srvs/srv/Trigger "{}"
 ros2 service call /graph_slam/save_graph std_srvs/srv/Trigger "{}"
 ```
 
+Landmark deletion is handled separately from reset. When `delete_stale_landmarks`
+is enabled, landmarks that should be visible but are missed for
+`landmark_missed_observations_to_delete` deletion updates are removed from the
+g2o graph with their connected observation edges. The default visibility gate
+matches the simulator perception window: 180 degree FOV, 30 m range, and
+20 m absolute x/y bounds in `base_footprint`.
+
 Parameters live in `config/graph_slam.yaml`.

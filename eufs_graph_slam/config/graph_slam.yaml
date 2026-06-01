@@ -38,6 +38,13 @@ graph_slam:
 
     landmark_min_observations_to_publish: 1
     max_landmarks: 400
+    delete_stale_landmarks: true
+    landmark_missed_observations_to_delete: 6
+    landmark_delete_min_interval: 0.2
+    landmark_delete_fov: 3.141593
+    landmark_delete_max_range: 30.0
+    landmark_delete_max_abs_x: 20.0
+    landmark_delete_max_abs_y: 20.0
     path_max_poses_to_publish: 1000
     visual_publish_min_interval: 0.5
     marker_scale: 0.3

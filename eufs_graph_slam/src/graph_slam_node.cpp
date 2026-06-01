@@ -43,20 +43,28 @@ GraphSlamNode::GraphSlamNode()
   odom_yaw_sigma_(0.03),
   robust_kernel_delta_(1.0),
   marker_scale_(0.3),
+  landmark_delete_fov_(std::acos(-1.0)),
+  landmark_delete_max_range_(30.0),
+  landmark_delete_max_abs_x_(20.0),
+  landmark_delete_max_abs_y_(20.0),
+  landmark_delete_min_interval_(0.2),
   optimize_every_n_keyframes_(100),
   optimization_iterations_(3),
   landmark_min_observations_to_publish_(1),
   max_landmarks_(400),
   max_optimization_poses_(100),
   path_max_poses_to_publish_(1000),
+  landmark_missed_observations_to_delete_(6),
   use_cone_covariance_(true),
   process_every_cone_message_(false),
   publish_tf_(true),
+  delete_stale_landmarks_(true),
   optimize_min_interval_(10.0),
   visual_publish_min_interval_(0.5),
   tf_stamp_offset_(0.5),
   last_optimization_time_sec_(-1.0),
   last_visual_publish_time_sec_(-1.0),
+  last_landmark_delete_time_sec_(-1.0),
   next_vertex_id_(0),
   next_edge_id_(0),
   keyframes_since_last_optimization_(0),
@@ -90,6 +98,15 @@ GraphSlamNode::GraphSlamNode()
   odom_yaw_sigma_ = declare_parameter<double>("odom_yaw_sigma", odom_yaw_sigma_);
   robust_kernel_delta_ = declare_parameter<double>("robust_kernel_delta", robust_kernel_delta_);
   marker_scale_ = declare_parameter<double>("marker_scale", marker_scale_);
+  landmark_delete_fov_ = declare_parameter<double>("landmark_delete_fov", landmark_delete_fov_);
+  landmark_delete_max_range_ =
+    declare_parameter<double>("landmark_delete_max_range", landmark_delete_max_range_);
+  landmark_delete_max_abs_x_ =
+    declare_parameter<double>("landmark_delete_max_abs_x", landmark_delete_max_abs_x_);
+  landmark_delete_max_abs_y_ =
+    declare_parameter<double>("landmark_delete_max_abs_y", landmark_delete_max_abs_y_);
+  landmark_delete_min_interval_ =
+    declare_parameter<double>("landmark_delete_min_interval", landmark_delete_min_interval_);
 
   optimize_every_n_keyframes_ =
     declare_parameter<int>("optimize_every_n_keyframes", optimize_every_n_keyframes_);
@@ -104,6 +121,10 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<int>("max_optimization_poses", max_optimization_poses_);
   path_max_poses_to_publish_ =
     declare_parameter<int>("path_max_poses_to_publish", path_max_poses_to_publish_);
+  landmark_missed_observations_to_delete_ =
+    declare_parameter<int>(
+    "landmark_missed_observations_to_delete",
+    landmark_missed_observations_to_delete_);
 
   optimize_min_interval_ =
     declare_parameter<double>("optimize_min_interval", optimize_min_interval_);
@@ -115,6 +136,8 @@ GraphSlamNode::GraphSlamNode()
   process_every_cone_message_ =
     declare_parameter<bool>("process_every_cone_message", process_every_cone_message_);
   publish_tf_ = declare_parameter<bool>("publish_tf", publish_tf_);
+  delete_stale_landmarks_ =
+    declare_parameter<bool>("delete_stale_landmarks", delete_stale_landmarks_);
 
   keyframe_distance_ = std::max(0.0, keyframe_distance_);
   keyframe_yaw_ = std::max(0.0, keyframe_yaw_);
@@ -128,6 +151,17 @@ GraphSlamNode::GraphSlamNode()
   optimize_every_n_keyframes_ = std::max(1, optimize_every_n_keyframes_);
   optimization_iterations_ = std::max(1, optimization_iterations_);
   landmark_min_observations_to_publish_ = std::max(1, landmark_min_observations_to_publish_);
+  landmark_missed_observations_to_delete_ =
+    std::max(1, landmark_missed_observations_to_delete_);
+  landmark_delete_fov_ =
+    std::clamp(landmark_delete_fov_, 0.0, 2.0 * std::acos(-1.0));
+  landmark_delete_max_range_ =
+    landmark_delete_max_range_ <= 0.0 ?
+    max_observation_range_ :
+    std::max(min_observation_range_, landmark_delete_max_range_);
+  landmark_delete_max_abs_x_ = std::max(0.0, landmark_delete_max_abs_x_);
+  landmark_delete_max_abs_y_ = std::max(0.0, landmark_delete_max_abs_y_);
+  landmark_delete_min_interval_ = std::max(0.0, landmark_delete_min_interval_);
   optimize_min_interval_ = std::max(0.0, optimize_min_interval_);
   visual_publish_min_interval_ = std::max(0.0, visual_publish_min_interval_);
   tf_stamp_offset_ = std::max(0.0, tf_stamp_offset_);
@@ -158,10 +192,10 @@ GraphSlamNode::GraphSlamNode()
   }
 
   reset_srv_ = create_service<std_srvs::srv::Trigger>(
-    "reset",
+    "~/reset",
     std::bind(&GraphSlamNode::handleReset, this, std::placeholders::_1, std::placeholders::_2));
   save_graph_srv_ = create_service<std_srvs::srv::Trigger>(
-    "save_graph",
+    "~/save_graph",
     std::bind(&GraphSlamNode::handleSaveGraph, this, std::placeholders::_1, std::placeholders::_2));
 
   odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
@@ -206,6 +240,7 @@ void GraphSlamNode::resetGraph()
   last_cone_pose_graph_id_ = -1;
   last_optimization_time_sec_ = -1.0;
   last_visual_publish_time_sec_ = -1.0;
+  last_landmark_delete_time_sec_ = -1.0;
 }
 
 void GraphSlamNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
@@ -235,9 +270,11 @@ void GraphSlamNode::conesCallback(
     return;
   }
 
-  const std::size_t added_edges = addConeObservations(*msg, false);
-  if (added_edges > 0U) {
+  const ObservationUpdate update = addConeObservations(*msg, false);
+  if (update.added_edges > 0U) {
     maybeOptimize();
+  }
+  if (update.added_edges > 0U || update.deleted_landmarks > 0U) {
     publishGraphVisuals(stampOrNow(msg->header.stamp, get_clock()));
   }
 }
@@ -340,63 +377,95 @@ void GraphSlamNode::addKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & 
   ++keyframes_since_last_optimization_;
 }
 
-std::size_t GraphSlamNode::addConeObservations(
+GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
   const eufs_msgs::msg::ConeArrayWithCovariance & msg,
   bool force_process)
 {
   if (poses_.empty()) {
-    return 0U;
+    return ObservationUpdate{0U, 0U};
   }
 
   PoseRecord & pose = poses_.back();
-  if (!force_process &&
+  const bool add_edges =
+    force_process ||
+    process_every_cone_message_ ||
+    last_cone_pose_graph_id_ != pose.graph_id;
+  const rclcpp::Time stamp = stampOrNow(msg.header.stamp, get_clock());
+  const bool update_deletions = shouldUpdateLandmarkDeletion(stamp, add_edges);
+
+  if (!add_edges && !update_deletions) {
+    return ObservationUpdate{0U, 0U};
+  }
+
+  if (!add_edges &&
     !process_every_cone_message_ &&
     last_cone_pose_graph_id_ == pose.graph_id)
   {
-    return 0U;
+    RCLCPP_DEBUG(
+      get_logger(),
+      "Skipping duplicate cone graph edges for pose %d; updating landmark deletion state",
+      pose.graph_id);
   }
 
   const std::vector<ConeObservation> observations = extractConeObservations(msg);
-  if (observations.empty()) {
-    return 0U;
-  }
 
-  if (!process_every_cone_message_) {
+  if (add_edges && !process_every_cone_message_) {
     last_cone_pose_graph_id_ = pose.graph_id;
   }
 
   std::size_t added_edges = 0U;
+  std::vector<std::size_t> observed_landmark_indices;
+  observed_landmark_indices.reserve(observations.size());
 
   for (const ConeObservation & observation : observations) {
     const Eigen::Vector2d map_point = pose.vertex->estimate() * observation.measurement;
 
     const int landmark_index = findAssociatedLandmark(map_point, observation.color);
     LandmarkRecord * landmark = nullptr;
+    std::size_t observed_index = 0U;
+    bool has_observed_index = false;
 
     if (landmark_index >= 0) {
-      landmark = &landmarks_[static_cast<std::size_t>(landmark_index)];
+      observed_index = static_cast<std::size_t>(landmark_index);
+      has_observed_index = true;
+      landmark = &landmarks_[observed_index];
       if (landmark->color == ConeColor::Unknown && observation.color != ConeColor::Unknown) {
         landmark->color = observation.color;
       }
-    } else {
+    } else if (add_edges) {
       landmark = addLandmark(map_point, observation.color);
+      if (landmark != nullptr) {
+        observed_index = landmarks_.size() - 1U;
+        has_observed_index = true;
+      }
     }
 
     if (landmark == nullptr) {
       continue;
     }
 
-    addObservationEdge(observation, pose.vertex, *landmark);
-    ++added_edges;
+    if (has_observed_index) {
+      observed_landmark_indices.push_back(observed_index);
+    }
+
+    if (add_edges) {
+      addObservationEdge(observation, pose.vertex, *landmark);
+      ++added_edges;
+    }
   }
+
+  const std::size_t deleted_landmarks = update_deletions ?
+    deleteMissedVisibleLandmarks(pose, observed_landmark_indices) :
+    0U;
 
   RCLCPP_DEBUG(
     get_logger(),
-    "Added %zu cone observation edges from %zu visible cones",
+    "Added %zu cone observation edges from %zu visible cones; deleted %zu stale landmarks",
     added_edges,
-    observations.size());
+    observations.size(),
+    deleted_landmarks);
 
-  return added_edges;
+  return ObservationUpdate{added_edges, deleted_landmarks};
 }
 
 std::vector<GraphSlamNode::ConeObservation> GraphSlamNode::extractConeObservations(
@@ -520,7 +589,7 @@ GraphSlamNode::LandmarkRecord * GraphSlamNode::addLandmark(
     return nullptr;
   }
 
-  landmarks_.push_back(LandmarkRecord{vertex->id(), color, vertex, 0U});
+  landmarks_.push_back(LandmarkRecord{vertex->id(), color, vertex, 0U, 0});
   return &landmarks_.back();
 }
 
@@ -549,6 +618,146 @@ void GraphSlamNode::addObservationEdge(
   }
 
   ++landmark.observations;
+  landmark.consecutive_misses = 0;
+}
+
+std::size_t GraphSlamNode::deleteMissedVisibleLandmarks(
+  const PoseRecord & pose,
+  const std::vector<std::size_t> & observed_landmark_indices)
+{
+  if (!delete_stale_landmarks_ || landmarks_.empty()) {
+    return 0U;
+  }
+
+  std::vector<bool> observed(landmarks_.size(), false);
+  for (const std::size_t landmark_index : observed_landmark_indices) {
+    if (landmark_index < observed.size()) {
+      observed[landmark_index] = true;
+    }
+  }
+
+  std::vector<std::size_t> delete_indices;
+  for (std::size_t i = 0; i < landmarks_.size(); ++i) {
+    LandmarkRecord & landmark = landmarks_[i];
+    if (observed[i]) {
+      landmark.consecutive_misses = 0;
+      continue;
+    }
+
+    if (!landmarkExpectedVisible(pose, landmark)) {
+      continue;
+    }
+
+    ++landmark.consecutive_misses;
+    if (landmark.consecutive_misses >= landmark_missed_observations_to_delete_) {
+      delete_indices.push_back(i);
+    }
+  }
+
+  std::size_t deleted_landmarks = 0U;
+  for (auto it = delete_indices.rbegin(); it != delete_indices.rend(); ++it) {
+    if (removeLandmarkAt(*it)) {
+      ++deleted_landmarks;
+    }
+  }
+
+  if (deleted_landmarks > 0U) {
+    RCLCPP_INFO(
+      get_logger(),
+      "Deleted %zu stale landmarks from the g2o graph; %zu landmarks remain",
+      deleted_landmarks,
+      landmarks_.size());
+  }
+
+  return deleted_landmarks;
+}
+
+bool GraphSlamNode::landmarkExpectedVisible(
+  const PoseRecord & pose,
+  const LandmarkRecord & landmark) const
+{
+  const Eigen::Vector2d relative =
+    pose.vertex->estimate().inverse() * landmark.vertex->estimate();
+  const double range = relative.norm();
+  if (range < min_observation_range_ || range > landmark_delete_max_range_) {
+    return false;
+  }
+
+  if (landmark_delete_max_abs_x_ > 0.0 &&
+    std::abs(relative.x()) > landmark_delete_max_abs_x_)
+  {
+    return false;
+  }
+  if (landmark_delete_max_abs_y_ > 0.0 &&
+    std::abs(relative.y()) > landmark_delete_max_abs_y_)
+  {
+    return false;
+  }
+
+  if (landmark_delete_fov_ > 0.0 && landmark_delete_fov_ < 2.0 * std::acos(-1.0)) {
+    const double bearing = std::abs(std::atan2(relative.y(), relative.x()));
+    if (bearing > 0.5 * landmark_delete_fov_) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool GraphSlamNode::removeLandmarkAt(std::size_t landmark_index)
+{
+  if (landmark_index >= landmarks_.size()) {
+    return false;
+  }
+
+  LandmarkRecord & landmark = landmarks_[landmark_index];
+  const int graph_id = landmark.graph_id;
+  const std::size_t removed_edges = landmark.vertex->edges().size();
+
+  if (optimizer_.vertex(graph_id) != landmark.vertex) {
+    RCLCPP_ERROR(
+      get_logger(),
+      "Refusing to delete landmark vertex %d because optimizer bookkeeping is inconsistent",
+      graph_id);
+    return false;
+  }
+
+  if (!optimizer_.removeVertex(landmark.vertex)) {
+    RCLCPP_ERROR(get_logger(), "Failed to delete landmark vertex %d from g2o graph", graph_id);
+    return false;
+  }
+
+  landmarks_.erase(landmarks_.begin() + static_cast<std::ptrdiff_t>(landmark_index));
+
+  RCLCPP_DEBUG(
+    get_logger(),
+    "Deleted landmark vertex %d and %zu connected observation edges from g2o graph",
+    graph_id,
+    removed_edges);
+  return true;
+}
+
+bool GraphSlamNode::shouldUpdateLandmarkDeletion(const rclcpp::Time & stamp, bool force_update)
+{
+  if (!delete_stale_landmarks_) {
+    return false;
+  }
+
+  if (force_update || landmark_delete_min_interval_ <= 0.0) {
+    last_landmark_delete_time_sec_ = stamp.seconds();
+    return true;
+  }
+
+  const double stamp_sec = stamp.seconds();
+  if (last_landmark_delete_time_sec_ < 0.0 ||
+    stamp_sec < last_landmark_delete_time_sec_ ||
+    stamp_sec - last_landmark_delete_time_sec_ >= landmark_delete_min_interval_)
+  {
+    last_landmark_delete_time_sec_ = stamp_sec;
+    return true;
+  }
+
+  return false;
 }
 
 void GraphSlamNode::maybeOptimize()
