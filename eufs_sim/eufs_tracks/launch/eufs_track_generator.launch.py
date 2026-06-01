@@ -9,7 +9,7 @@ def generate_launch_description():
         Node(
             name='eufs_track_generator',
             package='eufs_tracks',
-            executable='eufs_tracks',
+            executable='eufs_tracks_generator',
             output='screen',
         ),
     ])
