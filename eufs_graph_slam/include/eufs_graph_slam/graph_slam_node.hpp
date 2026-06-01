@@ -64,6 +64,7 @@ private:
     int graph_id;
     ConeColor color;
     g2o::VertexPointXY * vertex;
+    Eigen::Matrix2d covariance;
     std::size_t observations;
     int consecutive_misses;
   };
@@ -78,6 +79,7 @@ private:
   struct ObservationUpdate
   {
     std::size_t added_edges;
+    std::size_t updated_landmarks;
     std::size_t deleted_landmarks;
   };
 
@@ -100,12 +102,22 @@ private:
     const eufs_msgs::msg::ConeArrayWithCovariance & msg) const;
   Eigen::Matrix2d covarianceFromCone(
     const eufs_msgs::msg::ConeWithCovariance & cone) const;
+  Eigen::Matrix2d covarianceInMapFrame(
+    const g2o::SE2 & pose,
+    const Eigen::Matrix2d & local_covariance) const;
 
   int findAssociatedLandmark(
     const Eigen::Vector2d & map_point,
     ConeColor color) const;
   bool colorsCompatible(ConeColor observation_color, ConeColor landmark_color) const;
-  LandmarkRecord * addLandmark(const Eigen::Vector2d & map_point, ConeColor color);
+  LandmarkRecord * addLandmark(
+    const Eigen::Vector2d & map_point,
+    const Eigen::Matrix2d & covariance,
+    ConeColor color);
+  bool updateLandmarkEstimate(
+    LandmarkRecord & landmark,
+    const Eigen::Vector2d & map_point,
+    const Eigen::Matrix2d & covariance);
   void addObservationEdge(
     const ConeObservation & observation,
     g2o::VertexSE2 * pose_vertex,
@@ -200,6 +212,8 @@ private:
   double landmark_delete_max_abs_x_;
   double landmark_delete_max_abs_y_;
   double landmark_delete_min_interval_;
+  double landmark_update_gain_;
+  double landmark_update_process_variance_;
 
   int optimize_every_n_keyframes_;
   int optimization_iterations_;
@@ -213,6 +227,7 @@ private:
   bool process_every_cone_message_;
   bool publish_tf_;
   bool delete_stale_landmarks_;
+  bool update_existing_landmarks_;
 
   double optimize_min_interval_;
   double visual_publish_min_interval_;
@@ -225,6 +240,9 @@ private:
   int next_edge_id_;
   int keyframes_since_last_optimization_;
   int last_cone_pose_graph_id_;
+
+  g2o::SE2 latest_estimate_;
+  bool has_latest_pose_;
 };
 
 }  // namespace eufs_graph_slam

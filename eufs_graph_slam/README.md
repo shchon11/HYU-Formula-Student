@@ -59,4 +59,11 @@ g2o graph with their connected observation edges. The default visibility gate
 matches the simulator perception window: 180 degree FOV, 30 m range, and
 20 m absolute x/y bounds in `base_footprint`.
 
+Existing landmark positions are also updated between graph optimizations. When
+`update_existing_landmarks` is enabled, each associated cone observation is
+transformed through the latest live pose estimate and fused into the landmark
+vertex with a covariance-aware update. Keyframe observations still add g2o
+edges; duplicate in-between observations only update the vertex estimate and
+published covariance.
+
 Parameters live in `config/graph_slam.yaml`.

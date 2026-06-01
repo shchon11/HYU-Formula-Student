@@ -48,6 +48,8 @@ GraphSlamNode::GraphSlamNode()
   landmark_delete_max_abs_x_(20.0),
   landmark_delete_max_abs_y_(20.0),
   landmark_delete_min_interval_(0.2),
+  landmark_update_gain_(1.0),
+  landmark_update_process_variance_(0.04),
   optimize_every_n_keyframes_(100),
   optimization_iterations_(3),
   landmark_min_observations_to_publish_(1),
@@ -59,6 +61,7 @@ GraphSlamNode::GraphSlamNode()
   process_every_cone_message_(false),
   publish_tf_(true),
   delete_stale_landmarks_(true),
+  update_existing_landmarks_(true),
   optimize_min_interval_(10.0),
   visual_publish_min_interval_(0.5),
   tf_stamp_offset_(0.0),
@@ -68,7 +71,9 @@ GraphSlamNode::GraphSlamNode()
   next_vertex_id_(0),
   next_edge_id_(0),
   keyframes_since_last_optimization_(0),
-  last_cone_pose_graph_id_(-1)
+  last_cone_pose_graph_id_(-1),
+  latest_estimate_(),
+  has_latest_pose_(false)
 {
   car_state_topic_ =
     declare_parameter<std::string>("car_state_topic", "/odometry_integration/car_state");
@@ -109,6 +114,12 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<double>("landmark_delete_max_abs_y", landmark_delete_max_abs_y_);
   landmark_delete_min_interval_ =
     declare_parameter<double>("landmark_delete_min_interval", landmark_delete_min_interval_);
+  landmark_update_gain_ =
+    declare_parameter<double>("landmark_update_gain", landmark_update_gain_);
+  landmark_update_process_variance_ =
+    declare_parameter<double>(
+    "landmark_update_process_variance",
+    landmark_update_process_variance_);
 
   optimize_every_n_keyframes_ =
     declare_parameter<int>("optimize_every_n_keyframes", optimize_every_n_keyframes_);
@@ -140,6 +151,8 @@ GraphSlamNode::GraphSlamNode()
   publish_tf_ = declare_parameter<bool>("publish_tf", publish_tf_);
   delete_stale_landmarks_ =
     declare_parameter<bool>("delete_stale_landmarks", delete_stale_landmarks_);
+  update_existing_landmarks_ =
+    declare_parameter<bool>("update_existing_landmarks", update_existing_landmarks_);
 
   keyframe_distance_ = std::max(0.0, keyframe_distance_);
   keyframe_yaw_ = std::max(0.0, keyframe_yaw_);
@@ -164,6 +177,8 @@ GraphSlamNode::GraphSlamNode()
   landmark_delete_max_abs_x_ = std::max(0.0, landmark_delete_max_abs_x_);
   landmark_delete_max_abs_y_ = std::max(0.0, landmark_delete_max_abs_y_);
   landmark_delete_min_interval_ = std::max(0.0, landmark_delete_min_interval_);
+  landmark_update_gain_ = std::clamp(landmark_update_gain_, 0.0, 1.0);
+  landmark_update_process_variance_ = std::max(0.0, landmark_update_process_variance_);
   optimize_min_interval_ = std::max(0.0, optimize_min_interval_);
   visual_publish_min_interval_ = std::max(0.0, visual_publish_min_interval_);
   tf_stamp_offset_ = std::max(0.0, tf_stamp_offset_);
@@ -254,6 +269,7 @@ void GraphSlamNode::resetGraph()
   last_optimization_time_sec_ = -1.0;
   last_visual_publish_time_sec_ = -1.0;
   last_landmark_delete_time_sec_ = -1.0;
+  has_latest_pose_ = false;
 }
 
 void GraphSlamNode::stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg)
@@ -263,16 +279,23 @@ void GraphSlamNode::stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg)
 
   if (poses_.empty()) {
     addInitialPose(raw_odom, stamp);
+    latest_estimate_ = poses_.empty() ? raw_odom : poses_.back().vertex->estimate();
+    has_latest_pose_ = true;
     publishEstimate();
     return;
   }
 
+  const g2o::SE2 live_estimate = estimateFromRawOdometry(raw_odom);
+  latest_estimate_ = live_estimate;
+  has_latest_pose_ = true;
+
   if (!shouldCreateKeyframe(raw_odom, stamp)) {
-    publishLiveEstimate(stamp, estimateFromRawOdometry(raw_odom), raw_odom);
+    publishLiveEstimate(stamp, live_estimate, raw_odom);
     return;
   }
 
   addKeyframe(raw_odom, stamp);
+  latest_estimate_ = estimateFromRawOdometry(raw_odom);
   publishEstimate();
 }
 
@@ -287,7 +310,10 @@ void GraphSlamNode::conesCallback(
   if (update.added_edges > 0U) {
     maybeOptimize();
   }
-  if (update.added_edges > 0U || update.deleted_landmarks > 0U) {
+  if (update.added_edges > 0U ||
+    update.updated_landmarks > 0U ||
+    update.deleted_landmarks > 0U)
+  {
     publishGraphVisuals(stampOrNow(msg->header.stamp, get_clock()));
   }
 }
@@ -395,7 +421,7 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
   bool force_process)
 {
   if (poses_.empty()) {
-    return ObservationUpdate{0U, 0U};
+    return ObservationUpdate{0U, 0U, 0U};
   }
 
   PoseRecord & pose = poses_.back();
@@ -403,11 +429,12 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
     force_process ||
     process_every_cone_message_ ||
     last_cone_pose_graph_id_ != pose.graph_id;
+  const bool update_landmarks = update_existing_landmarks_;
   const rclcpp::Time stamp = stampOrNow(msg.header.stamp, get_clock());
   const bool update_deletions = shouldUpdateLandmarkDeletion(stamp, add_edges);
 
-  if (!add_edges && !update_deletions) {
-    return ObservationUpdate{0U, 0U};
+  if (!add_edges && !update_landmarks && !update_deletions) {
+    return ObservationUpdate{0U, 0U, 0U};
   }
 
   if (!add_edges &&
@@ -421,19 +448,24 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
   }
 
   const std::vector<ConeObservation> observations = extractConeObservations(msg);
+  const g2o::SE2 observation_pose = has_latest_pose_ ? latest_estimate_ : pose.vertex->estimate();
 
   if (add_edges && !process_every_cone_message_) {
     last_cone_pose_graph_id_ = pose.graph_id;
   }
 
   std::size_t added_edges = 0U;
+  std::size_t updated_landmarks = 0U;
   std::vector<std::size_t> observed_landmark_indices;
   observed_landmark_indices.reserve(observations.size());
 
   for (const ConeObservation & observation : observations) {
-    const Eigen::Vector2d map_point = pose.vertex->estimate() * observation.measurement;
+    const Eigen::Vector2d graph_map_point = pose.vertex->estimate() * observation.measurement;
+    const Eigen::Vector2d latest_map_point = observation_pose * observation.measurement;
+    const Eigen::Matrix2d map_covariance =
+      covarianceInMapFrame(observation_pose, observation.covariance);
 
-    const int landmark_index = findAssociatedLandmark(map_point, observation.color);
+    const int landmark_index = findAssociatedLandmark(latest_map_point, observation.color);
     LandmarkRecord * landmark = nullptr;
     std::size_t observed_index = 0U;
     bool has_observed_index = false;
@@ -445,8 +477,17 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
       if (landmark->color == ConeColor::Unknown && observation.color != ConeColor::Unknown) {
         landmark->color = observation.color;
       }
+      if (update_landmarks &&
+        updateLandmarkEstimate(*landmark, latest_map_point, map_covariance))
+      {
+        ++updated_landmarks;
+      }
     } else if (add_edges) {
-      landmark = addLandmark(map_point, observation.color);
+      landmark =
+        addLandmark(
+        graph_map_point,
+        covarianceInMapFrame(pose.vertex->estimate(), observation.covariance),
+        observation.color);
       if (landmark != nullptr) {
         observed_index = landmarks_.size() - 1U;
         has_observed_index = true;
@@ -473,12 +514,14 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
 
   RCLCPP_DEBUG(
     get_logger(),
-    "Added %zu cone observation edges from %zu visible cones; deleted %zu stale landmarks",
+    "Added %zu cone observation edges, updated %zu landmarks from %zu visible cones; "
+    "deleted %zu stale landmarks",
     added_edges,
+    updated_landmarks,
     observations.size(),
     deleted_landmarks);
 
-  return ObservationUpdate{added_edges, deleted_landmarks};
+  return ObservationUpdate{added_edges, updated_landmarks, deleted_landmarks};
 }
 
 std::vector<GraphSlamNode::ConeObservation> GraphSlamNode::extractConeObservations(
@@ -547,6 +590,29 @@ Eigen::Matrix2d GraphSlamNode::covarianceFromCone(
   return covariance;
 }
 
+Eigen::Matrix2d GraphSlamNode::covarianceInMapFrame(
+  const g2o::SE2 & pose,
+  const Eigen::Matrix2d & local_covariance) const
+{
+  const double yaw = pose.rotation().angle();
+  Eigen::Matrix2d rotation;
+  rotation << std::cos(yaw), -std::sin(yaw),
+    std::sin(yaw), std::cos(yaw);
+
+  Eigen::Matrix2d covariance = rotation * local_covariance * rotation.transpose();
+  covariance = (0.5 * (covariance + covariance.transpose())).eval();
+  covariance(0, 0) = std::max(covariance(0, 0), min_observation_variance_);
+  covariance(1, 1) = std::max(covariance(1, 1), min_observation_variance_);
+
+  if (!covariance.allFinite() ||
+    covariance.determinant() <= min_observation_variance_ * min_observation_variance_)
+  {
+    return Eigen::Matrix2d::Identity() * default_observation_sigma_ * default_observation_sigma_;
+  }
+
+  return covariance;
+}
+
 int GraphSlamNode::findAssociatedLandmark(
   const Eigen::Vector2d & map_point,
   ConeColor color) const
@@ -580,6 +646,7 @@ bool GraphSlamNode::colorsCompatible(ConeColor observation_color, ConeColor land
 
 GraphSlamNode::LandmarkRecord * GraphSlamNode::addLandmark(
   const Eigen::Vector2d & map_point,
+  const Eigen::Matrix2d & covariance,
   ConeColor color)
 {
   if (max_landmarks_ > 0 &&
@@ -602,8 +669,56 @@ GraphSlamNode::LandmarkRecord * GraphSlamNode::addLandmark(
     return nullptr;
   }
 
-  landmarks_.push_back(LandmarkRecord{vertex->id(), color, vertex, 0U, 0});
+  landmarks_.push_back(LandmarkRecord{vertex->id(), color, vertex, covariance, 0U, 0});
   return &landmarks_.back();
+}
+
+bool GraphSlamNode::updateLandmarkEstimate(
+  LandmarkRecord & landmark,
+  const Eigen::Vector2d & map_point,
+  const Eigen::Matrix2d & covariance)
+{
+  if (!update_existing_landmarks_ || landmark_update_gain_ <= 0.0) {
+    return false;
+  }
+
+  Eigen::Matrix2d prior_covariance = landmark.covariance;
+  prior_covariance = (0.5 * (prior_covariance + prior_covariance.transpose())).eval();
+  prior_covariance(0, 0) = std::max(prior_covariance(0, 0), min_observation_variance_);
+  prior_covariance(1, 1) = std::max(prior_covariance(1, 1), min_observation_variance_);
+
+  if (landmark_update_process_variance_ > 0.0) {
+    prior_covariance +=
+      Eigen::Matrix2d::Identity() * landmark_update_process_variance_;
+  }
+
+  const Eigen::Matrix2d innovation_covariance = prior_covariance + covariance;
+  if (!innovation_covariance.allFinite() ||
+    innovation_covariance.determinant() <= min_observation_variance_ * min_observation_variance_)
+  {
+    return false;
+  }
+
+  const Eigen::Matrix2d kalman_gain = prior_covariance * innovation_covariance.inverse();
+  const Eigen::Vector2d estimate = landmark.vertex->estimate();
+  const Eigen::Vector2d update = landmark_update_gain_ * (kalman_gain * (map_point - estimate));
+  const Eigen::Vector2d updated_estimate = estimate + update;
+
+  if (!updated_estimate.allFinite()) {
+    return false;
+  }
+
+  landmark.vertex->setEstimate(updated_estimate);
+
+  const Eigen::Matrix2d identity = Eigen::Matrix2d::Identity();
+  Eigen::Matrix2d updated_covariance =
+    (identity - landmark_update_gain_ * kalman_gain) * prior_covariance;
+  updated_covariance = (0.5 * (updated_covariance + updated_covariance.transpose())).eval();
+  updated_covariance(0, 0) = std::max(updated_covariance(0, 0), min_observation_variance_);
+  updated_covariance(1, 1) = std::max(updated_covariance(1, 1), min_observation_variance_);
+  landmark.covariance = updated_covariance;
+
+  return update.squaredNorm() > 1e-8;
 }
 
 void GraphSlamNode::addObservationEdge(
@@ -897,7 +1012,11 @@ void GraphSlamNode::publishMap(const rclcpp::Time & stamp)
     cone.point.x = estimate.x();
     cone.point.y = estimate.y();
     cone.point.z = 0.0;
-    cone.covariance = {0.0, 0.0, 0.0, 0.0};
+    cone.covariance = {
+      landmark.covariance(0, 0),
+      landmark.covariance(0, 1),
+      landmark.covariance(1, 0),
+      landmark.covariance(1, 1)};
 
     switch (landmark.color) {
       case ConeColor::Blue:

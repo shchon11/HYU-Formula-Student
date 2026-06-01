@@ -39,6 +39,9 @@ graph_slam:
 
     landmark_min_observations_to_publish: 1
     max_landmarks: 400
+    update_existing_landmarks: true
+    landmark_update_gain: 1.0
+    landmark_update_process_variance: 0.04
     delete_stale_landmarks: true
     landmark_missed_observations_to_delete: 6
     landmark_delete_min_interval: 0.2
