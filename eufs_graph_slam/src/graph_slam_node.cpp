@@ -824,7 +824,7 @@ void GraphSlamNode::publishTransform(const rclcpp::Time & stamp, const g2o::SE2 
 
   geometry_msgs::msg::TransformStamped transform;
   transform.header.frame_id = map_frame_;
-  transform.header.stamp = stamp + rclcpp::Duration::from_seconds(tf_stamp_offset_);
+  transform.header.stamp = stamp;
   transform.child_frame_id = slam_base_frame_;
   transform.transform.translation.x = estimate.translation().x();
   transform.transform.translation.y = estimate.translation().y();
@@ -832,6 +832,11 @@ void GraphSlamNode::publishTransform(const rclcpp::Time & stamp, const g2o::SE2 
   transform.transform.rotation = quaternionFromYaw(estimate.rotation().angle());
 
   tf_broadcaster_->sendTransform(transform);
+
+  if (tf_stamp_offset_ > 0.0) {
+    transform.header.stamp = stamp + rclcpp::Duration::from_seconds(tf_stamp_offset_);
+    tf_broadcaster_->sendTransform(transform);
+  }
 }
 
 void GraphSlamNode::handleReset(
