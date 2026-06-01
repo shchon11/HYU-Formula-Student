@@ -20,14 +20,16 @@ From the EUFS workspace root:
 
 ```bash
 source /opt/ros/humble/setup.zsh
-colcon build --symlink-install --packages-select eufs_graph_slam
+colcon build --symlink-install --packages-up-to eufs_graph_slam
 source install/setup.zsh
 ```
 
-The package first tries `find_package(g2o CONFIG)`. If that is not available, it vendors a sibling g2o source tree at `../g2o` relative to `eufs_simulator`, which matches this workspace layout. For a different location, pass:
+`--packages-up-to` builds workspace dependencies such as `eufs_msgs` before building `eufs_graph_slam`.
+
+The package first tries `find_package(g2o CONFIG)`. If that is not available, it vendors a sibling g2o source tree at `../g2o` relative to `eufs_simulator`. For a different location, pass:
 
 ```bash
-colcon build --symlink-install --packages-select eufs_graph_slam \
+colcon build --symlink-install --packages-up-to eufs_graph_slam \
   --cmake-args -DG2O_VENDOR_SOURCE_DIR=/path/to/g2o
 ```
 
