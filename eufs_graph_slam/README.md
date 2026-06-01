@@ -14,6 +14,10 @@ It publishes:
 - `/graph_slam/path` (`nav_msgs/msg/Path`)
 - `/graph_slam/markers` (`visualization_msgs/msg/MarkerArray`)
 
+When TF publishing is enabled, the node owns `map -> odom` and
+`odom -> base_footprint`. The simulator ground-truth TF publisher must stay
+disabled so `base_footprint` has one parent.
+
 ## Build
 
 From the EUFS workspace root:

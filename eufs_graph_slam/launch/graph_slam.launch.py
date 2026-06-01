@@ -17,6 +17,7 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
     car_state_topic = LaunchConfiguration("car_state_topic")
     map_frame = LaunchConfiguration("map_frame")
+    odom_frame = LaunchConfiguration("odom_frame")
     slam_base_frame = LaunchConfiguration("slam_base_frame")
     publish_tf = LaunchConfiguration("publish_tf")
 
@@ -47,6 +48,11 @@ def generate_launch_description():
                 "map_frame",
                 default_value="map",
                 description="Frame used for the optimized SLAM map.",
+            ),
+            DeclareLaunchArgument(
+                "odom_frame",
+                default_value="odom",
+                description="Continuous odometry frame corrected by graph SLAM.",
             ),
             DeclareLaunchArgument(
                 "slam_base_frame",
@@ -81,6 +87,7 @@ def generate_launch_description():
                         "use_sim_time": use_sim_time,
                         "car_state_topic": car_state_topic,
                         "map_frame": map_frame,
+                        "odom_frame": odom_frame,
                         "slam_base_frame": slam_base_frame,
                         "publish_tf": publish_tf,
                     },

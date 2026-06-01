@@ -11,9 +11,10 @@ graph_slam:
     marker_topic: /graph_slam/markers
 
     map_frame: map
+    odom_frame: odom
     slam_base_frame: base_footprint
     publish_tf: true
-    tf_stamp_offset: 0.5
+    tf_stamp_offset: 0.0
 
     keyframe_distance: 1.0
     keyframe_yaw: 0.25

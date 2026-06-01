@@ -126,12 +126,18 @@ private:
 
   void publishEstimate();
   void publishGraphVisuals(const rclcpp::Time & stamp);
-  void publishLiveEstimate(const rclcpp::Time & stamp, const g2o::SE2 & estimate);
+  void publishLiveEstimate(
+    const rclcpp::Time & stamp,
+    const g2o::SE2 & estimate,
+    const g2o::SE2 & raw_odom);
   void publishMap(const rclcpp::Time & stamp);
   void publishPath(const rclcpp::Time & stamp);
   void publishOdometry(const rclcpp::Time & stamp, const g2o::SE2 & estimate);
   void publishMarkers(const rclcpp::Time & stamp);
-  void publishTransform(const rclcpp::Time & stamp, const g2o::SE2 & estimate);
+  void publishTransform(
+    const rclcpp::Time & stamp,
+    const g2o::SE2 & estimate,
+    const g2o::SE2 & raw_odom);
 
   void handleReset(
     const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
@@ -173,6 +179,7 @@ private:
   std::string path_topic_;
   std::string marker_topic_;
   std::string map_frame_;
+  std::string odom_frame_;
   std::string slam_base_frame_;
   std::string g2o_output_path_;
 

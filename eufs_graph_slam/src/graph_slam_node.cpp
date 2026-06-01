@@ -61,7 +61,7 @@ GraphSlamNode::GraphSlamNode()
   delete_stale_landmarks_(true),
   optimize_min_interval_(10.0),
   visual_publish_min_interval_(0.5),
-  tf_stamp_offset_(0.5),
+  tf_stamp_offset_(0.0),
   last_optimization_time_sec_(-1.0),
   last_visual_publish_time_sec_(-1.0),
   last_landmark_delete_time_sec_(-1.0),
@@ -78,6 +78,7 @@ GraphSlamNode::GraphSlamNode()
   path_topic_ = declare_parameter<std::string>("path_topic", "/graph_slam/path");
   marker_topic_ = declare_parameter<std::string>("marker_topic", "/graph_slam/markers");
   map_frame_ = declare_parameter<std::string>("map_frame", "map");
+  odom_frame_ = declare_parameter<std::string>("odom_frame", "odom");
   slam_base_frame_ = declare_parameter<std::string>("slam_base_frame", "base_footprint");
   g2o_output_path_ = declare_parameter<std::string>("g2o_output_path", "/tmp/eufs_graph_slam.g2o");
 
@@ -166,6 +167,17 @@ GraphSlamNode::GraphSlamNode()
   optimize_min_interval_ = std::max(0.0, optimize_min_interval_);
   visual_publish_min_interval_ = std::max(0.0, visual_publish_min_interval_);
   tf_stamp_offset_ = std::max(0.0, tf_stamp_offset_);
+  if (tf_stamp_offset_ > 0.0) {
+    RCLCPP_WARN(
+      get_logger(),
+      "Ignoring tf_stamp_offset %.3f. Future-dated base TF can split RobotModel links; "
+      "graph SLAM now publishes map->%s and %s->%s at the measurement stamp.",
+      tf_stamp_offset_,
+      odom_frame_.c_str(),
+      odom_frame_.c_str(),
+      slam_base_frame_.c_str());
+    tf_stamp_offset_ = 0.0;
+  }
 
   odom_information_.setZero();
   odom_information_(0, 0) = 1.0 / (odom_translation_sigma_ * odom_translation_sigma_);
@@ -185,11 +197,11 @@ GraphSlamNode::GraphSlamNode()
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
     RCLCPP_INFO(
       get_logger(),
-      "Publishing graph SLAM TF '%s' -> '%s' with %.2fs stamp offset; "
+      "Publishing graph SLAM TF '%s' -> '%s' -> '%s'; "
       "keep simulator publish_gt_tf disabled",
       map_frame_.c_str(),
-      slam_base_frame_.c_str(),
-      tf_stamp_offset_);
+      odom_frame_.c_str(),
+      slam_base_frame_.c_str());
   }
 
   reset_srv_ = create_service<std_srvs::srv::Trigger>(
@@ -256,7 +268,7 @@ void GraphSlamNode::stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg)
   }
 
   if (!shouldCreateKeyframe(raw_odom, stamp)) {
-    publishLiveEstimate(stamp, estimateFromRawOdometry(raw_odom));
+    publishLiveEstimate(stamp, estimateFromRawOdometry(raw_odom), raw_odom);
     return;
   }
 
@@ -846,7 +858,7 @@ void GraphSlamNode::publishEstimate()
   const rclcpp::Time stamp = poses_.back().stamp;
   const g2o::SE2 estimate = poses_.back().vertex->estimate();
   publishGraphVisuals(stamp);
-  publishLiveEstimate(stamp, estimate);
+  publishLiveEstimate(stamp, estimate, poses_.back().raw_odom);
 }
 
 void GraphSlamNode::publishGraphVisuals(const rclcpp::Time & stamp)
@@ -858,10 +870,13 @@ void GraphSlamNode::publishGraphVisuals(const rclcpp::Time & stamp)
   }
 }
 
-void GraphSlamNode::publishLiveEstimate(const rclcpp::Time & stamp, const g2o::SE2 & estimate)
+void GraphSlamNode::publishLiveEstimate(
+  const rclcpp::Time & stamp,
+  const g2o::SE2 & estimate,
+  const g2o::SE2 & raw_odom)
 {
   publishOdometry(stamp, estimate);
-  publishTransform(stamp, estimate);
+  publishTransform(stamp, estimate, raw_odom);
 }
 
 void GraphSlamNode::publishMap(const rclcpp::Time & stamp)
@@ -1026,27 +1041,38 @@ void GraphSlamNode::publishMarkers(const rclcpp::Time & stamp)
   marker_pub_->publish(markers);
 }
 
-void GraphSlamNode::publishTransform(const rclcpp::Time & stamp, const g2o::SE2 & estimate)
+void GraphSlamNode::publishTransform(
+  const rclcpp::Time & stamp,
+  const g2o::SE2 & estimate,
+  const g2o::SE2 & raw_odom)
 {
   if (!publish_tf_ || !tf_broadcaster_) {
     return;
   }
 
-  geometry_msgs::msg::TransformStamped transform;
-  transform.header.frame_id = map_frame_;
-  transform.header.stamp = stamp;
-  transform.child_frame_id = slam_base_frame_;
-  transform.transform.translation.x = estimate.translation().x();
-  transform.transform.translation.y = estimate.translation().y();
-  transform.transform.translation.z = 0.0;
-  transform.transform.rotation = quaternionFromYaw(estimate.rotation().angle());
+  const auto make_transform =
+    [&stamp](
+    const std::string & parent_frame,
+    const std::string & child_frame,
+    const g2o::SE2 & transform)
+    {
+      geometry_msgs::msg::TransformStamped msg;
+      msg.header.frame_id = parent_frame;
+      msg.header.stamp = stamp;
+      msg.child_frame_id = child_frame;
+      msg.transform.translation.x = transform.translation().x();
+      msg.transform.translation.y = transform.translation().y();
+      msg.transform.translation.z = 0.0;
+      msg.transform.rotation = GraphSlamNode::quaternionFromYaw(transform.rotation().angle());
+      return msg;
+    };
 
-  tf_broadcaster_->sendTransform(transform);
-
-  if (tf_stamp_offset_ > 0.0) {
-    transform.header.stamp = stamp + rclcpp::Duration::from_seconds(tf_stamp_offset_);
-    tf_broadcaster_->sendTransform(transform);
-  }
+  const g2o::SE2 map_to_odom = estimate * raw_odom.inverse();
+  const std::array<geometry_msgs::msg::TransformStamped, 2> transforms = {
+    make_transform(map_frame_, odom_frame_, map_to_odom),
+    make_transform(odom_frame_, slam_base_frame_, raw_odom)};
+  tf_broadcaster_->sendTransform(transforms[0]);
+  tf_broadcaster_->sendTransform(transforms[1]);
 }
 
 void GraphSlamNode::handleReset(
