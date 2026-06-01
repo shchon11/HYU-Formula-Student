@@ -24,6 +24,7 @@ def spawn_car(context, *args, **kwargs):
     vehicle_model_config = get_argument(context, "vehicleModelConfig")
     publish_tf = get_argument(context, 'publish_gt_tf')
     pub_ground_truth = get_argument(context, 'pub_ground_truth')
+    use_sim_time = get_argument(context, 'use_sim_time').lower() == 'true'
     x = get_argument(context, 'x')
     y = get_argument(context, 'y')
     z = get_argument(context, 'z')
@@ -124,6 +125,7 @@ def spawn_car(context, *args, **kwargs):
             parameters=[{
                 'robot_description': robot_description,
                 'rate': 200,
+                'use_sim_time': use_sim_time,
             }],
             arguments=[urdf_path],
             remappings=[('/joint_states', '/eufs/joint_states')]
@@ -137,6 +139,7 @@ def spawn_car(context, *args, **kwargs):
             parameters=[{
                 'robot_description': robot_description,
                 'rate': 200,
+                'use_sim_time': use_sim_time,
             }],
             remappings=[('/joint_states', '/eufs/joint_states')],
             arguments=['--ros-args', '--log-level', 'warn']
@@ -161,6 +164,9 @@ def generate_launch_description():
 
         DeclareLaunchArgument('rviz', default_value='false',
                               description='Launch RViz'),
+
+        DeclareLaunchArgument('use_sim_time', default_value='true',
+                              description='Use the simulator clock'),
 
         DeclareLaunchArgument('show_rqt_gui', default_value='true',
                               description='Show the RQT GUI (with '
@@ -193,7 +199,7 @@ def generate_launch_description():
                                           "the vehicle model parameters are "
                                           "read"),
 
-        DeclareLaunchArgument('publish_gt_tf', default_value='false',
+        DeclareLaunchArgument('publish_gt_tf', default_value='true',
                               description='If the gazebo_ros_race_car_model '
                                           'should publish the ground truth '
                                           'tf'),
@@ -215,6 +221,7 @@ def generate_launch_description():
             name='rviz',
             package='rviz2',
             executable='rviz2',
+            parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
             arguments=['-d', rviz_config_file],
             condition=IfCondition(LaunchConfiguration('rviz'))
         ),

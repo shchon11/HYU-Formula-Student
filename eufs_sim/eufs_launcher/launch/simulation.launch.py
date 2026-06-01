@@ -42,13 +42,18 @@ def generate_launch_description():
             description="Condition to launch the Gazebo GUI"),
 
         DeclareLaunchArgument(
+            name='use_sim_time',
+            default_value='true',
+            description="Use the simulator clock"),
+
+        DeclareLaunchArgument(
             name='rviz',
             default_value='true',
             description="Condition to launch the Rviz GUI"),
 
         DeclareLaunchArgument(
             name='publish_gt_tf',
-            default_value='false',
+            default_value='true',
             description="Condition to use ground truth transform"),
 
         DeclareLaunchArgument(
@@ -76,6 +81,7 @@ def generate_launch_description():
                 ('commandMode', LaunchConfiguration('commandMode')),
                 ('robot_name', LaunchConfiguration('robot_name')),
                 ('gazebo_gui', LaunchConfiguration('gazebo_gui')),
+                ('use_sim_time', LaunchConfiguration('use_sim_time')),
                 ('rviz', LaunchConfiguration('rviz')),
                 ('publish_gt_tf', LaunchConfiguration('publish_gt_tf')),
                 ('pub_ground_truth', LaunchConfiguration('pub_ground_truth')),
