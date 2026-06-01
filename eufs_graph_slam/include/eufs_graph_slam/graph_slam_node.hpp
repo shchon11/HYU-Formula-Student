@@ -105,6 +105,7 @@ private:
   void maybeOptimize();
   void optimizeGraph();
   std::size_t firstPublishedPoseIndex() const;
+  bool shouldPublishVisuals(const rclcpp::Time & stamp);
 
   void publishEstimate();
   void publishMap(const rclcpp::Time & stamp);
@@ -181,7 +182,9 @@ private:
   bool publish_tf_;
 
   double optimize_min_interval_;
+  double visual_publish_min_interval_;
   double last_optimization_time_sec_;
+  double last_visual_publish_time_sec_;
 
   int next_vertex_id_;
   int next_edge_id_;

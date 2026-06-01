@@ -31,7 +31,7 @@ namespace eufs_graph_slam
 
 GraphSlamNode::GraphSlamNode()
 : Node("graph_slam_node"),
-  keyframe_distance_(0.5),
+  keyframe_distance_(1.0),
   keyframe_yaw_(0.25),
   keyframe_max_dt_(1.0),
   association_max_distance_(1.2),
@@ -43,17 +43,19 @@ GraphSlamNode::GraphSlamNode()
   odom_yaw_sigma_(0.03),
   robust_kernel_delta_(1.0),
   marker_scale_(0.3),
-  optimize_every_n_keyframes_(3),
-  optimization_iterations_(10),
+  optimize_every_n_keyframes_(100),
+  optimization_iterations_(3),
   landmark_min_observations_to_publish_(1),
   max_landmarks_(400),
-  max_optimization_poses_(1500),
+  max_optimization_poses_(100),
   path_max_poses_to_publish_(1000),
   use_cone_covariance_(true),
   process_every_cone_message_(false),
   publish_tf_(true),
-  optimize_min_interval_(1.0),
+  optimize_min_interval_(10.0),
+  visual_publish_min_interval_(0.5),
   last_optimization_time_sec_(-1.0),
+  last_visual_publish_time_sec_(-1.0),
   next_vertex_id_(0),
   next_edge_id_(0),
   keyframes_since_last_optimization_(0),
@@ -104,6 +106,8 @@ GraphSlamNode::GraphSlamNode()
 
   optimize_min_interval_ =
     declare_parameter<double>("optimize_min_interval", optimize_min_interval_);
+  visual_publish_min_interval_ =
+    declare_parameter<double>("visual_publish_min_interval", visual_publish_min_interval_);
 
   use_cone_covariance_ = declare_parameter<bool>("use_cone_covariance", use_cone_covariance_);
   process_every_cone_message_ =
@@ -123,6 +127,7 @@ GraphSlamNode::GraphSlamNode()
   optimization_iterations_ = std::max(1, optimization_iterations_);
   landmark_min_observations_to_publish_ = std::max(1, landmark_min_observations_to_publish_);
   optimize_min_interval_ = std::max(0.0, optimize_min_interval_);
+  visual_publish_min_interval_ = std::max(0.0, visual_publish_min_interval_);
 
   odom_information_.setZero();
   odom_information_(0, 0) = 1.0 / (odom_translation_sigma_ * odom_translation_sigma_);
@@ -195,6 +200,7 @@ void GraphSlamNode::resetGraph()
   keyframes_since_last_optimization_ = 0;
   last_cone_pose_graph_id_ = -1;
   last_optimization_time_sec_ = -1.0;
+  last_visual_publish_time_sec_ = -1.0;
 }
 
 void GraphSlamNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
@@ -589,6 +595,21 @@ std::size_t GraphSlamNode::firstPublishedPoseIndex() const
   return poses_.size() - static_cast<std::size_t>(path_max_poses_to_publish_);
 }
 
+bool GraphSlamNode::shouldPublishVisuals(const rclcpp::Time & stamp)
+{
+  const double stamp_sec = stamp.seconds();
+  if (visual_publish_min_interval_ <= 0.0 ||
+    last_visual_publish_time_sec_ < 0.0 ||
+    stamp_sec < last_visual_publish_time_sec_ ||
+    stamp_sec - last_visual_publish_time_sec_ >= visual_publish_min_interval_)
+  {
+    last_visual_publish_time_sec_ = stamp_sec;
+    return true;
+  }
+
+  return false;
+}
+
 void GraphSlamNode::publishEstimate()
 {
   if (poses_.empty()) {
@@ -596,10 +617,12 @@ void GraphSlamNode::publishEstimate()
   }
 
   const rclcpp::Time stamp = poses_.back().stamp;
-  publishMap(stamp);
-  publishPath(stamp);
+  if (shouldPublishVisuals(stamp)) {
+    publishMap(stamp);
+    publishPath(stamp);
+    publishMarkers(stamp);
+  }
   publishOdometry(stamp);
-  publishMarkers(stamp);
   publishTransform(stamp);
 }
 
