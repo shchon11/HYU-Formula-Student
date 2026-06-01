@@ -28,6 +28,7 @@
       <localisationCarStateTopic>/odometry_integration/car_state</localisationCarStateTopic>
       <wheelSpeedsTopicName>/ros_can/wheel_speeds</wheelSpeedsTopicName>
       <groundTruthWheelSpeedsTopicName>/ground_truth/wheel_speeds</groundTruthWheelSpeedsTopicName>
+      <jointStatesTopicName>/eufs/joint_states</jointStatesTopicName>
       <odometryTopicName>/ground_truth/odom</odometryTopicName>
       <commandMode>$(arg command_mode)</commandMode>
       <controlDelay>0.2</controlDelay>

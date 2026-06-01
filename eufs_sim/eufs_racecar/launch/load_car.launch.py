@@ -137,27 +137,13 @@ def spawn_car(context, *args, **kwargs):
         ),
 
         Node(
-            name='joint_state_publisher',
-            package='joint_state_publisher',
-            executable='joint_state_publisher',
-            output='screen',
-            parameters=[{
-                'robot_description': robot_description,
-                'rate': 200,
-                'use_sim_time': use_sim_time,
-            }],
-            arguments=[urdf_path],
-            remappings=[('/joint_states', '/eufs/joint_states')]
-        ),
-
-        Node(
             name='robot_state_publisher',
             package='robot_state_publisher',
             executable='robot_state_publisher',
             output='screen',
             parameters=[{
                 'robot_description': robot_description,
-                'rate': 200,
+                'publish_frequency': 200.0,
                 'use_sim_time': use_sim_time,
             }],
             remappings=[('/joint_states', '/eufs/joint_states')],

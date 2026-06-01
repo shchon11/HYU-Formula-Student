@@ -22,9 +22,10 @@
  * SOFTWARE.
  */
 
-#ifndef EUFS_PLUGINS_GAZEBO_RACE_CAR_MODEL_INCLUDE_GAZEBO_RACE_CAR_MODEL_GAZEBO_ROS_RACE_CAR_HPP_
-#define EUFS_PLUGINS_GAZEBO_RACE_CAR_MODEL_INCLUDE_GAZEBO_RACE_CAR_MODEL_GAZEBO_ROS_RACE_CAR_HPP_
+#ifndef EUFS_SIM__EUFS_PLUGINS__GAZEBO_RACE_CAR_MODEL__INCLUDE__GAZEBO_RACE_CAR_MODEL__GAZEBO_ROS_RACE_CAR_HPP_
+#define EUFS_SIM__EUFS_PLUGINS__GAZEBO_RACE_CAR_MODEL__INCLUDE__GAZEBO_RACE_CAR_MODEL__GAZEBO_ROS_RACE_CAR_HPP_
 
+#include <array>
 #include <memory>
 #include <queue>
 #include <string>
@@ -41,6 +42,7 @@
 #include "geometry_msgs/msg/twist_with_covariance.hpp"
 #include "geometry_msgs/msg/vector3.hpp"
 #include "nav_msgs/msg/odometry.hpp"
+#include "sensor_msgs/msg/joint_state.hpp"
 
 // ROS TF2
 #include <tf2/transform_datatypes.h>
@@ -97,8 +99,10 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
 
   void publishCarState();
   void publishWheelSpeeds();
+  void publishJointStates();
   void publishOdom();
   void publishTf();
+  void updateWheelJointPositions(double dt);
 
   void onCmd(const ackermann_msgs::msg::AckermannDriveStamped::SharedPtr msg);
 
@@ -137,6 +141,7 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
   std::string _localisation_car_state_topic;
   std::string _wheel_speeds_topic_name;
   std::string _ground_truth_wheel_speeds_topic_name;
+  std::string _joint_states_topic_name;
   std::string _odom_topic_name;
 
   // ROS Publishers
@@ -144,6 +149,7 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
   rclcpp::Publisher<eufs_msgs::msg::CarState>::SharedPtr _pub_localisation_car_state;
   rclcpp::Publisher<eufs_msgs::msg::WheelSpeedsStamped>::SharedPtr _pub_wheel_speeds;
   rclcpp::Publisher<eufs_msgs::msg::WheelSpeedsStamped>::SharedPtr _pub_ground_truth_wheel_speeds;
+  rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr _pub_joint_states;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr _pub_odom;
 
   // ROS Subscriptions
@@ -154,8 +160,16 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr _command_mode_srv;
 
   // Steering joints state
+  std::string _left_steering_joint_name;
+  std::string _right_steering_joint_name;
+  std::string _front_left_wheel_joint_name;
+  std::string _front_right_wheel_joint_name;
+  std::string _rear_left_wheel_joint_name;
+  std::string _rear_right_wheel_joint_name;
   gazebo::physics::JointPtr _left_steering_joint;
   gazebo::physics::JointPtr _right_steering_joint;
+  std::array<double, 4> _wheel_joint_positions;
+  std::array<double, 4> _wheel_joint_velocities;
 
   // Stop Ground truth
   bool _pub_ground_truth;
@@ -174,4 +188,4 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
 }  // namespace eufs_plugins
 }  // namespace gazebo_plugins
 
-#endif  // EUFS_PLUGINS_GAZEBO_RACE_CAR_MODEL_INCLUDE_GAZEBO_RACE_CAR_MODEL_GAZEBO_ROS_RACE_CAR_HPP_
+#endif  // EUFS_SIM__EUFS_PLUGINS__GAZEBO_RACE_CAR_MODEL__INCLUDE__GAZEBO_RACE_CAR_MODEL__GAZEBO_ROS_RACE_CAR_HPP_

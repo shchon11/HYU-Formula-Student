@@ -65,6 +65,7 @@ This has to be inserted inside a robot URDF.
       <localisationCarStateTopic>/odometry_integration/car_state</localisationCarStateTopic>
       <wheelSpeedsTopicName>/ros_can/wheel_speeds</wheelSpeedsTopicName>
       <groundTruthWheelSpeedsTopicName>/ground_truth/wheel_speeds</groundTruthWheelSpeedsTopicName>
+      <jointStatesTopicName>/eufs/joint_states</jointStatesTopicName>
       <odometryTopicName>/ground_truth/odom</odometryTopicName>
       <commandMode>acceleration</commandMode>
       <controlDelay>0.2</controlDelay>
@@ -81,6 +82,7 @@ This has to be inserted inside a robot URDF.
 | `localisationCarStateTopic` parameter value       | [eufs_msgs/CarState](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/CarState.msg)                     | Publishes the dynamic and kinematic state of the simulated car with added noise. |
 | `groundTruthWheelSpeedsTopicName` parameter value | [eufs_msgs/WheelSpeedsStamped](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/WheelSpeedsStamped.msg) | Publishes ground truth wheel speeds. |
 | `wheelSpeedsTopicName` parameter value            | [eufs_msgs/WheelSpeedsStamped](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/WheelSpeedsStamped.msg) | Publishes wheel speeds with added noise. |
+| `jointStatesTopicName` parameter value            | [sensor_msgs/JointState](http://docs.ros.org/en/noetic/api/sensor_msgs/html/msg/JointState.html)         | Publishes steering and wheel joint states for robot_state_publisher. |
 | `odometryTopicName` parameter value               | [nav_msgs/Odometry](http://docs.ros.org/en/noetic/api/nav_msgs/html/msg/Odometry.html)                   | Publishes vehicle odometry with noise. |
 
 ### ROS 2 Subscribers

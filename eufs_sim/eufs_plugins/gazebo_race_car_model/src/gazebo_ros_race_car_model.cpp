@@ -27,6 +27,8 @@
 
 // STD Include
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <fstream>
 #include <mutex>  // NOLINT(build/c++11)
 #include <thread>  // NOLINT(build/c++11)
@@ -35,7 +37,10 @@
 namespace gazebo_plugins {
 namespace eufs_plugins {
 
-RaceCarModelPlugin::RaceCarModelPlugin() {}
+RaceCarModelPlugin::RaceCarModelPlugin()
+: _wheel_joint_positions{0.0, 0.0, 0.0, 0.0},
+  _wheel_joint_velocities{0.0, 0.0, 0.0, 0.0}
+{}
 
 RaceCarModelPlugin::~RaceCarModelPlugin() { _update_connection.reset(); }
 
@@ -71,6 +76,8 @@ void RaceCarModelPlugin::Load(gazebo::physics::ModelPtr model, sdf::ElementPtr s
       _rosnode->create_publisher<eufs_msgs::msg::WheelSpeedsStamped>(_wheel_speeds_topic_name, 1);
   _pub_ground_truth_wheel_speeds = _rosnode->create_publisher<eufs_msgs::msg::WheelSpeedsStamped>(
       _ground_truth_wheel_speeds_topic_name, 1);
+  _pub_joint_states =
+      _rosnode->create_publisher<sensor_msgs::msg::JointState>(_joint_states_topic_name, 10);
   _pub_odom = _rosnode->create_publisher<nav_msgs::msg::Odometry>(_odom_topic_name, 1);
 
   // ROS Services
@@ -154,6 +161,12 @@ void RaceCarModelPlugin::initParams(const sdf::ElementPtr &sdf) {
   } else {
     _ground_truth_wheel_speeds_topic_name =
         sdf->GetElement("groundTruthWheelSpeedsTopicName")->Get<std::string>();
+  }
+
+  if (!sdf->HasElement("jointStatesTopicName")) {
+    _joint_states_topic_name = "/eufs/joint_states";
+  } else {
+    _joint_states_topic_name = sdf->GetElement("jointStatesTopicName")->Get<std::string>();
   }
 
   if (!sdf->HasElement("groundTruthCarStateTopic")) {
@@ -260,12 +273,17 @@ void RaceCarModelPlugin::initVehicleModel(const sdf::ElementPtr &sdf) {
 
 void RaceCarModelPlugin::initModel(const sdf::ElementPtr &sdf) {
   // Steering joints
-  std::string leftSteeringJointName =
-      _model->GetName() + "::" + sdf->Get<std::string>("front_left_wheel_steering");
+  _left_steering_joint_name = sdf->Get<std::string>("front_left_wheel_steering");
+  std::string leftSteeringJointName = _model->GetName() + "::" + _left_steering_joint_name;
   _left_steering_joint = _model->GetJoint(leftSteeringJointName);
-  std::string rightSteeringJointName =
-      _model->GetName() + "::" + sdf->Get<std::string>("front_right_wheel_steering");
+  _right_steering_joint_name = sdf->Get<std::string>("front_right_wheel_steering");
+  std::string rightSteeringJointName = _model->GetName() + "::" + _right_steering_joint_name;
   _right_steering_joint = _model->GetJoint(rightSteeringJointName);
+
+  _front_left_wheel_joint_name = sdf->Get<std::string>("front_left_wheel");
+  _front_right_wheel_joint_name = sdf->Get<std::string>("front_right_wheel");
+  _rear_left_wheel_joint_name = sdf->Get<std::string>("rear_left_wheel");
+  _rear_right_wheel_joint_name = sdf->Get<std::string>("rear_right_wheel");
 }
 
 void RaceCarModelPlugin::initNoise(const sdf::ElementPtr &sdf) {
@@ -326,6 +344,8 @@ bool RaceCarModelPlugin::resetVehiclePosition(
   _model->SetWorldPose(_offset);
   _model->SetAngularVel(angular);
   _model->SetLinearVel(vel);
+  _wheel_joint_positions = {0.0, 0.0, 0.0, 0.0};
+  _wheel_joint_velocities = {0.0, 0.0, 0.0, 0.0};
 
   return response->success;
 }
@@ -471,6 +491,67 @@ void RaceCarModelPlugin::publishWheelSpeeds() {
   }
 }
 
+void RaceCarModelPlugin::updateWheelJointPositions(double dt) {
+  const auto &param = _vehicle->getParam();
+  const double half_track = 0.5 * param.kinematic.axle_width;
+  const double wheel_radius = param.tire.radius;
+  const double steering = _act_input.delta;
+
+  const std::array<double, 4> wheel_x = {
+    param.kinematic.l_F,
+    param.kinematic.l_F,
+    -param.kinematic.l_R,
+    -param.kinematic.l_R};
+  const std::array<double, 4> wheel_y = {
+    half_track,
+    -half_track,
+    half_track,
+    -half_track};
+  const std::array<double, 4> wheel_heading = {steering, steering, 0.0, 0.0};
+
+  for (std::size_t i = 0; i < _wheel_joint_velocities.size(); ++i) {
+    const double wheel_vx = _state.v_x - _state.r_z * wheel_y[i];
+    const double wheel_vy = _state.v_y + _state.r_z * wheel_x[i];
+    const double rolling_speed =
+        wheel_vx * std::cos(wheel_heading[i]) + wheel_vy * std::sin(wheel_heading[i]);
+    _wheel_joint_velocities[i] = rolling_speed / wheel_radius;
+    _wheel_joint_positions[i] += _wheel_joint_velocities[i] * dt;
+  }
+}
+
+void RaceCarModelPlugin::publishJointStates() {
+  sensor_msgs::msg::JointState joint_states;
+
+  joint_states.header.stamp.sec = _last_sim_time.sec;
+  joint_states.header.stamp.nanosec = _last_sim_time.nsec;
+
+  joint_states.name = {
+    _left_steering_joint_name,
+    _front_left_wheel_joint_name,
+    _right_steering_joint_name,
+    _front_right_wheel_joint_name,
+    _rear_left_wheel_joint_name,
+    _rear_right_wheel_joint_name};
+
+  joint_states.position = {
+    _act_input.delta,
+    _wheel_joint_positions[0],
+    _act_input.delta,
+    _wheel_joint_positions[1],
+    _wheel_joint_positions[2],
+    _wheel_joint_positions[3]};
+
+  joint_states.velocity = {
+    0.0,
+    _wheel_joint_velocities[0],
+    0.0,
+    _wheel_joint_velocities[1],
+    _wheel_joint_velocities[2],
+    _wheel_joint_velocities[3]};
+
+  _pub_joint_states->publish(joint_states);
+}
+
 void RaceCarModelPlugin::publishOdom() {
   nav_msgs::msg::Odometry odom;
 
@@ -596,6 +677,7 @@ void RaceCarModelPlugin::updateState(const double dt) {
   _state.z = _model->WorldPose().Pos().Z();
 
   _vehicle->updateState(_state, _act_input, dt);
+  updateWheelJointPositions(dt);
 
   _left_steering_joint->SetPosition(0, _act_input.delta);
   _right_steering_joint->SetPosition(0, _act_input.delta);
@@ -610,6 +692,7 @@ void RaceCarModelPlugin::updateState(const double dt) {
   // Publish Everything
   publishCarState();
   publishWheelSpeeds();
+  publishJointStates();
   publishOdom();
 
   if (_publish_tf) {

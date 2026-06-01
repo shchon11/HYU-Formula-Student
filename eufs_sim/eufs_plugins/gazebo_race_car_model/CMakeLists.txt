@@ -10,6 +10,7 @@ find_package(rclcpp REQUIRED)
 find_package(eufs_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(ackermann_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -24,6 +25,7 @@ ament_target_dependencies(gazebo_race_car_model
   "eufs_msgs"
   "nav_msgs"
   "geometry_msgs"
+  "sensor_msgs"
   "tf2"
   "ackermann_msgs"
   "tf2_ros"
