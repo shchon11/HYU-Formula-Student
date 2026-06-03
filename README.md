@@ -49,6 +49,8 @@ gazebo --version
 /home/shchon11/formula_student
 ├── eufs_sim
 ├── eufs_msgs
+├── eufs_graph_slam
+├── eufs_perception_baseline
 ├── build
 ├── install
 └── log
@@ -65,6 +67,32 @@ gazebo --version
 | `eufs_rqt` | 미션 제어 GUI, 수동 조향 GUI |
 | `eufs_models` | 차량 동역학 모델 |
 | `eufs_msgs` | EUFS 전용 ROS 2 message/service |
+| `eufs_graph_slam` | `/cones`와 car state를 사용하는 graph SLAM baseline |
+| `eufs_perception_baseline` | LiDAR-camera fusion 기반 `/cones` perception baseline |
+
+## Perception + SLAM Quick Start
+
+Perception baseline과 graph SLAM 통합 실행은 아래 흐름을 사용합니다.
+
+```bash
+cd /path/to/HYU-FS-Sim
+
+./scripts/hyu-docker setup-g2o
+./scripts/hyu-docker build-ws
+./scripts/hyu-docker sim-gui-bg
+./scripts/hyu-docker fusion-bg
+./scripts/hyu-docker slam-bg
+./scripts/hyu-docker status
+```
+
+정상 상태에서는 `/cones`를 `perception_baseline_node`가 publish하고,
+`graph_slam`이 subscribe합니다.
+
+자세한 설명:
+
+- `eufs_perception_baseline/README.md`
+- `eufs_perception_baseline/docs/perception_baseline_usage.md`
+- `README_HYU_INTEGRATION.md`
 
 ## 2. 시스템 패키지 설치 확인
 

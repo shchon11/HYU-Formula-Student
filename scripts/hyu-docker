@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+IMAGE="${HYU_IMAGE:-eufs-sim:humble}"
+CONTAINER="${HYU_CONTAINER:-hyu_eufs_sim}"
+
+docker_args=(
+  --network host
+  --user eufs
+  --env EUFS_MASTER=/workspace
+  --env HOME=/home/eufs
+  --env ROS_LOCALHOST_ONLY=1
+  --volume "${ROOT}:/workspace"
+  --workdir /workspace
+)
+
+gui_args=(
+  --env DISPLAY="${DISPLAY:-:0}"
+  --env QT_X11_NO_MITSHM=1
+  --volume /tmp/.X11-unix:/tmp/.X11-unix:rw
+)
+
+if [ -n "${XAUTHORITY:-}" ] && [ -r "${XAUTHORITY}" ]; then
+  gui_args+=(
+    --env XAUTHORITY=/tmp/hyu-docker.xauth
+    --volume "${XAUTHORITY}:/tmp/hyu-docker.xauth:ro"
+  )
+fi
+
+if [ -d /dev/dri ]; then
+  gui_args+=(--device /dev/dri)
+fi
+
+exec_in_sim() {
+  docker exec "${CONTAINER}" bash -lc "source /workspace/install/setup.bash && $*"
+}
+
+build_command() {
+  if [ -d "${ROOT}/g2o" ]; then
+    echo "source /opt/ros/humble/setup.bash && colcon build --symlink-install --cmake-args -DG2O_VENDOR_SOURCE_DIR=/workspace/g2o"
+  else
+    echo "source /opt/ros/humble/setup.bash && colcon build --symlink-install"
+  fi
+}
+
+case "${1:-help}" in
+  setup-g2o)
+    if [ -d "${ROOT}/g2o/.git" ]; then
+      git -C "${ROOT}/g2o" pull --ff-only
+    elif [ -d "${ROOT}/g2o" ]; then
+      echo "Using existing ${ROOT}/g2o"
+    else
+      git clone --depth 1 https://github.com/RainerKuemmerle/g2o.git "${ROOT}/g2o"
+    fi
+    touch "${ROOT}/g2o/COLCON_IGNORE"
+    ;;
+  build-ws)
+    docker run --rm "${docker_args[@]}" "${IMAGE}" \
+      bash -lc "$(build_command)"
+    ;;
+  sim-headless)
+    docker run --rm --name "${CONTAINER}" "${docker_args[@]}" "${IMAGE}" \
+      bash -lc "source install/setup.bash && ros2 launch eufs_launcher simulation.launch.py rviz:=false gazebo_gui:=false show_rqt_gui:=false publish_gt_tf:=false launch_group:=default pub_ground_truth:=true vehicleModelConfig:=configDry.yaml"
+    ;;
+  sim-gui)
+    docker run --rm --name "${CONTAINER}" "${docker_args[@]}" "${gui_args[@]}" "${IMAGE}" \
+      bash -lc "source install/setup.bash && ros2 launch eufs_launcher simulation.launch.py rviz:=true gazebo_gui:=true show_rqt_gui:=false publish_gt_tf:=false launch_group:=default pub_ground_truth:=true vehicleModelConfig:=configDry.yaml"
+    ;;
+  sim-gui-bg)
+    docker run -d --rm --name "${CONTAINER}" "${docker_args[@]}" "${gui_args[@]}" "${IMAGE}" \
+      bash -lc "source install/setup.bash && ros2 launch eufs_launcher simulation.launch.py rviz:=true gazebo_gui:=true show_rqt_gui:=false publish_gt_tf:=false launch_group:=default pub_ground_truth:=true vehicleModelConfig:=configDry.yaml"
+    ;;
+  adapter)
+    exec_in_sim "ros2 launch eufs_perception_baseline perception_baseline.launch.py oracle_cones_topic:=/camera_0/cones output_cones_topic:=/cones output_frame:=base_footprint publish_empty_on_sync:=false fusion_enabled:=false"
+    ;;
+  adapter-bg)
+    docker exec -d "${CONTAINER}" bash -lc "source /workspace/install/setup.bash && ros2 launch eufs_perception_baseline perception_baseline.launch.py oracle_cones_topic:=/camera_0/cones output_cones_topic:=/cones output_frame:=base_footprint publish_empty_on_sync:=false fusion_enabled:=false > /tmp/perception_adapter.log 2>&1"
+    ;;
+  fusion)
+    exec_in_sim "ros2 launch eufs_perception_baseline perception_baseline.launch.py output_cones_topic:=/cones output_frame:=base_footprint fusion_enabled:=true publish_empty_on_sync:=false"
+    ;;
+  fusion-bg)
+    docker exec -d "${CONTAINER}" bash -lc "source /workspace/install/setup.bash && ros2 launch eufs_perception_baseline perception_baseline.launch.py output_cones_topic:=/cones output_frame:=base_footprint fusion_enabled:=true publish_empty_on_sync:=false > /tmp/perception_fusion.log 2>&1"
+    ;;
+  slam)
+    exec_in_sim "ros2 launch eufs_graph_slam graph_slam.launch.py publish_tf:=true use_sim_time:=true"
+    ;;
+  slam-bg)
+    docker exec -d "${CONTAINER}" bash -lc "source /workspace/install/setup.bash && ros2 launch eufs_graph_slam graph_slam.launch.py publish_tf:=true use_sim_time:=true > /tmp/graph_slam.log 2>&1"
+    ;;
+  status)
+    exec_in_sim "ros2 node list | sort && echo '--- /cones' && ros2 topic info -v /cones && echo '--- graph topics' && ros2 topic list | sort | grep -E '^/graph_slam|^/cones$|^/tf$'"
+    ;;
+  logs)
+    docker exec "${CONTAINER}" bash -lc "tail -80 /tmp/perception_adapter.log 2>/dev/null || true; echo '--- perception_fusion'; tail -80 /tmp/perception_fusion.log 2>/dev/null || true; echo '--- graph_slam'; tail -80 /tmp/graph_slam.log 2>/dev/null || true"
+    ;;
+  mission-manual)
+    exec_in_sim "ros2 service call /ros_can/set_mission eufs_msgs/srv/SetCanState '{ami_state: 21, as_state: 0}'"
+    ;;
+  mission-trackdrive)
+    exec_in_sim "ros2 service call /ros_can/set_mission eufs_msgs/srv/SetCanState '{ami_state: 14, as_state: 0}'"
+    ;;
+  drive-forward)
+    exec_in_sim "timeout 8 ros2 topic pub -r 20 /cmd ackermann_msgs/msg/AckermannDriveStamped '{drive: {steering_angle: 0.0, speed: 0.0, acceleration: 1.0}}'"
+    ;;
+  drive-stop)
+    exec_in_sim "timeout 2 ros2 topic pub -r 20 /cmd ackermann_msgs/msg/AckermannDriveStamped '{drive: {steering_angle: 0.0, speed: 0.0, acceleration: -2.0}}'"
+    ;;
+  pose-once)
+    exec_in_sim "ros2 topic echo /odometry_integration/car_state --once"
+    ;;
+  stop)
+    docker stop "${CONTAINER}"
+    ;;
+  shell)
+    docker exec -it "${CONTAINER}" bash
+    ;;
+  *)
+    echo "Usage: $0 {setup-g2o|build-ws|sim-headless|sim-gui|sim-gui-bg|adapter|adapter-bg|fusion|fusion-bg|slam|slam-bg|status|logs|mission-manual|mission-trackdrive|drive-forward|drive-stop|pose-once|stop|shell}" >&2
+    exit 2
+    ;;
+esac

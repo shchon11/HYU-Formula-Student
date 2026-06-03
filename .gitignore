@@ -1,6 +1,7 @@
 build/
 install/
 log/
+g2o/
 
 .colcon/
 *.pyc
