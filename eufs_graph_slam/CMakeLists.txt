@@ -26,18 +26,23 @@ find_package(g2o QUIET CONFIG)
 if(NOT g2o_FOUND)
   set(G2O_VENDOR_SOURCE_DIR "" CACHE PATH "Path to a g2o source tree")
   if(NOT G2O_VENDOR_SOURCE_DIR)
+    get_filename_component(_package_parent "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
     get_filename_component(_workspace_parent "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
-    set(_g2o_candidate "${_workspace_parent}/g2o")
-    if(EXISTS "${_g2o_candidate}/CMakeLists.txt")
-      set(G2O_VENDOR_SOURCE_DIR "${_g2o_candidate}" CACHE PATH "Path to a g2o source tree" FORCE)
-    endif()
+    foreach(_g2o_candidate
+        "${_package_parent}/g2o"
+        "${_workspace_parent}/g2o")
+      if(EXISTS "${_g2o_candidate}/CMakeLists.txt")
+        set(G2O_VENDOR_SOURCE_DIR "${_g2o_candidate}" CACHE PATH "Path to a g2o source tree" FORCE)
+        break()
+      endif()
+    endforeach()
   endif()
 
   if(NOT EXISTS "${G2O_VENDOR_SOURCE_DIR}/CMakeLists.txt")
     message(FATAL_ERROR
       "Could not find g2o. Install a g2o CMake package or configure with "
-      "-DG2O_VENDOR_SOURCE_DIR=/path/to/g2o. In this workspace, the expected "
-      "sibling location is ../g2o from eufs_simulator.")
+      "-DG2O_VENDOR_SOURCE_DIR=/path/to/g2o. Expected source locations include "
+      "a g2o directory next to eufs_graph_slam or next to this repository.")
   endif()
 
   set(G2O_BUILD_APPS OFF CACHE BOOL "" FORCE)
