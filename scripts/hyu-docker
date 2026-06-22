@@ -78,10 +78,10 @@ case "${1:-help}" in
     docker exec -d "${CONTAINER}" bash -lc "source /workspace/install/setup.bash && ros2 launch eufs_perception_baseline perception_baseline.launch.py oracle_cones_topic:=/camera_0/cones output_cones_topic:=/cones output_frame:=base_footprint publish_empty_on_sync:=false fusion_enabled:=false > /tmp/perception_adapter.log 2>&1"
     ;;
   fusion)
-    exec_in_sim "ros2 launch eufs_perception_baseline perception_baseline.launch.py output_cones_topic:=/cones output_frame:=base_footprint fusion_enabled:=true publish_empty_on_sync:=false"
+    exec_in_sim "ros2 launch eufs_perception_baseline perception_baseline.launch.py output_cones_topic:=/cones output_frame:=base_footprint fusion_enabled:=true bbox_source:=yolov8 publish_empty_on_sync:=false"
     ;;
   fusion-bg)
-    docker exec -d "${CONTAINER}" bash -lc "source /workspace/install/setup.bash && ros2 launch eufs_perception_baseline perception_baseline.launch.py output_cones_topic:=/cones output_frame:=base_footprint fusion_enabled:=true publish_empty_on_sync:=false > /tmp/perception_fusion.log 2>&1"
+    docker exec -d "${CONTAINER}" bash -lc "source /workspace/install/setup.bash && ros2 launch eufs_perception_baseline perception_baseline.launch.py output_cones_topic:=/cones output_frame:=base_footprint fusion_enabled:=true bbox_source:=yolov8 publish_empty_on_sync:=false > /tmp/perception_fusion.log 2>&1"
     ;;
   slam)
     exec_in_sim "ros2 launch eufs_graph_slam graph_slam.launch.py publish_tf:=true use_sim_time:=true"

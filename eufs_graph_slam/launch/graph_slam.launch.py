@@ -6,6 +6,7 @@
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch.substitutions import PathJoinSubstitution
 from launch_ros.actions import Node
@@ -20,6 +21,8 @@ def generate_launch_description():
     odom_frame = LaunchConfiguration("odom_frame")
     slam_base_frame = LaunchConfiguration("slam_base_frame")
     publish_tf = LaunchConfiguration("publish_tf")
+    rviz = LaunchConfiguration("rviz")
+    rviz_config = LaunchConfiguration("rviz_config")
 
     return LaunchDescription(
         [
@@ -72,6 +75,22 @@ def generate_launch_description():
                 default_value="1",
                 description="Limit ROS discovery to localhost.",
             ),
+            DeclareLaunchArgument(
+                "rviz",
+                default_value="false",
+                description="Launch RViz with the graph SLAM map frame config.",
+            ),
+            DeclareLaunchArgument(
+                "rviz_config",
+                default_value=PathJoinSubstitution(
+                    [
+                        FindPackageShare("eufs_launcher"),
+                        "config",
+                        "graph_slam.rviz",
+                    ]
+                ),
+                description="RViz config used when graph SLAM owns the map frame.",
+            ),
             SetEnvironmentVariable(
                 name="ROS_LOCALHOST_ONLY",
                 value=LaunchConfiguration("ros_localhost_only"),
@@ -92,6 +111,14 @@ def generate_launch_description():
                         "publish_tf": publish_tf,
                     },
                 ],
+            ),
+            Node(
+                package="rviz2",
+                executable="rviz2",
+                name="graph_slam_rviz",
+                parameters=[{"use_sim_time": use_sim_time}],
+                arguments=["-d", rviz_config],
+                condition=IfCondition(rviz),
             ),
         ]
     )

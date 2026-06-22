@@ -32,6 +32,7 @@
  *cones with noise.
  **/
 
+#include "gazebo_cone_plugins/cone_markers.hpp"
 #include "gazebo_cone_plugins/gazebo_camera_cones.hpp"
 #include "gazebo_cone_plugins/ground_truth_getter.hpp"
 
@@ -94,16 +95,24 @@ void GazeboCameraCones::Load(gazebo::physics::ModelPtr _parent, sdf::ElementPtr 
 
   // Set up the publishers
   // Camera cones publisher
+  std::string topic_name_;
   if (!_sdf->HasElement("cameraConesTopicName")) {
     RCLCPP_FATAL(this->rosnode_->get_logger(),
                  "camera cones plugin missing <cameraConesTopicName>, cannot proceed");
     return;
   } else {
-    std::string topic_name_ = _sdf->GetElement("cameraConesTopicName")->Get<std::string>();
+    topic_name_ = _sdf->GetElement("cameraConesTopicName")->Get<std::string>();
     this->camera_cones_pub_ =
         this->rosnode_->create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(
             topic_name_, 1);
   }
+
+  std::string marker_topic_name_ =
+      getStringParameter(_sdf, "cameraConeMarkersTopicName", topic_name_ + "/viz",
+                         "<cameraConesTopicName>/viz");
+  this->camera_cone_markers_pub_ =
+      this->rosnode_->create_publisher<visualization_msgs::msg::MarkerArray>(
+          marker_topic_name_, 1);
 
   this->time_last_published = _world->SimTime();
   this->track_model = _parent->GetWorld()->ModelByName("track");
@@ -140,11 +149,19 @@ void GazeboCameraCones::UpdateChild() {
   eufs_msgs::msg::ConeArrayWithCovariance ground_truth_cones_msg =
       processCones(cone_arrays_msg);
 
-  // Publish the camera cones if it has subscribers
-  if (this->camera_cones_pub_->get_subscription_count() > 0) {
+  bool camera_cones_requested = this->camera_cones_pub_->get_subscription_count() > 0;
+  bool camera_markers_requested = this->camera_cone_markers_pub_->get_subscription_count() > 0;
+
+  // Publish the camera cones if either the raw topic or its RViz marker view is requested.
+  if (camera_cones_requested || camera_markers_requested) {
     eufs_msgs::msg::ConeArrayWithCovariance camera_cones_msg =
         addConeNoise(ground_truth_cones_msg);
-    this->camera_cones_pub_->publish(camera_cones_msg);
+    if (camera_cones_requested) {
+      this->camera_cones_pub_->publish(camera_cones_msg);
+    }
+    if (camera_markers_requested) {
+      this->camera_cone_markers_pub_->publish(cone_markers::fromConeArray(camera_cones_msg));
+    }
   }
 }
 
@@ -345,6 +362,19 @@ double GazeboCameraCones::getDoubleParameter(sdf::ElementPtr _sdf, const char *e
     return default_value;
   } else {
     return _sdf->GetElement(element)->Get<double>();
+  }
+}
+
+std::string GazeboCameraCones::getStringParameter(sdf::ElementPtr _sdf, const char *element,
+                                                 std::string default_value,
+                                                 const char *default_description) {
+  if (!_sdf->HasElement(element)) {
+    RCLCPP_DEBUG(this->rosnode_->get_logger(),
+                 "camera cones plugin missing <%s>, defaults to %s", element,
+                 default_description);
+    return default_value;
+  } else {
+    return _sdf->GetElement(element)->Get<std::string>();
   }
 }
 

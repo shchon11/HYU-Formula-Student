@@ -104,11 +104,6 @@ def spawn_car(context, *args, **kwargs):
     rviz_config_file = join(
         get_package_share_directory('eufs_launcher'), 'config', 'default.rviz')
 
-    default_user_config_file = join(os.path.expanduser("~"),
-                                    ".rviz2", "default.rviz")
-    if os.path.isfile(default_user_config_file):
-        rviz_config_file = default_user_config_file
-
     rviz = Node(
         name='rviz',
         package='rviz2',

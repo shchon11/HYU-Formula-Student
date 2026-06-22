@@ -108,6 +108,18 @@
               <parameter name="update_rate" type="double">60.0</parameter>
               <remapping>/${prefix}_left/image_raw:=/${prefix}/left/image_rect_color</remapping>
               <remapping>/${prefix}_left/camera_info:=/${prefix}/left/camera_info</remapping>
+              <qos>
+                <topic name="/${prefix}/left/image_rect_color">
+                  <publisher>
+                    <reliability>reliable</reliability>
+                  </publisher>
+                </topic>
+                <topic name="/${prefix}/left/camera_info">
+                  <publisher>
+                    <reliability>reliable</reliability>
+                  </publisher>
+                </topic>
+              </qos>
             </ros>
 
             <camera_name>${prefix}_left</camera_name>
@@ -146,6 +158,18 @@
               <parameter name="update_rate" type="double">60.0</parameter>
               <remapping>/${prefix}_right/image_raw:=/${prefix}/right/image_rect_color</remapping>
               <remapping>/${prefix}_right/camera_info:=/${prefix}/right/camera_info</remapping>
+              <qos>
+                <topic name="/${prefix}/right/image_rect_color">
+                  <publisher>
+                    <reliability>reliable</reliability>
+                  </publisher>
+                </topic>
+                <topic name="/${prefix}/right/camera_info">
+                  <publisher>
+                    <reliability>reliable</reliability>
+                  </publisher>
+                </topic>
+              </qos>
             </ros>
 
             <camera_name>${prefix}_right</camera_name>

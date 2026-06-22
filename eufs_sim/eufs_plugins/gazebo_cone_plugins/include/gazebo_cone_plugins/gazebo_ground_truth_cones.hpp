@@ -55,6 +55,7 @@
 #include <utility>
 #include <vector>
 #include <map>
+#include <visualization_msgs/msg/marker_array.hpp>
 
 #include "rclcpp/rclcpp.hpp"
 #include "yaml-cpp/yaml.h"
@@ -136,6 +137,12 @@ class GazeboGroundTruthCones : public gazebo::ModelPlugin {
   rclcpp::Publisher<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr ground_truth_cone_pub_;
   rclcpp::Publisher<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr ground_truth_track_pub_;
   rclcpp::Publisher<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr perception_cone_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
+      ground_truth_cone_markers_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
+      ground_truth_track_markers_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
+      perception_cone_markers_pub_;
 
   // Services
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr

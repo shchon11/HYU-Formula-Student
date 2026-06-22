@@ -8,12 +8,6 @@ Panels:
         - /Status1
         - /RobotModel1
         - /RobotModel1/Description Topic1
-        - /Fusion Cones1
-        - /Raw LiDAR Points1
-        - /Compare LiDAR Points1
-        - /YOLO BBox Debug Image1
-        - /Fusion Debug ROI Points1
-        - /Fusion Debug Cluster Candidates1
         - /TF1/Frames1
       Splitter Ratio: 0.6499999761581421
     Tree Height: 1079
@@ -55,7 +49,7 @@ Visualization Manager:
       Plane: XY
       Plane Cell Count: 10
       Reference Frame: <Fixed Frame>
-      Value: true
+      Value: false
     - Alpha: 1
       Class: rviz_default_plugins/RobotModel
       Collision Enabled: false
@@ -179,8 +173,13 @@ Visualization Manager:
       Value: true
       Visual Enabled: true
     - Class: rviz_default_plugins/MarkerArray
-      Enabled: false
-      Topic: /ground_truth/cones/viz
+      Enabled: true
+      Marker Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /ground_truth/cones/viz
       Name: Ground Truth Cones
       Namespaces:
         big_orange: true
@@ -192,7 +191,12 @@ Visualization Manager:
       Value: false
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Topic: /cones/viz
+      Marker Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /cones/viz
       Name: Fusion Cones
       Namespaces:
         big_orange: true
@@ -204,7 +208,12 @@ Visualization Manager:
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Topic: /camera_0/cones/viz
+      Marker Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /camera_0/cones/viz
       Name: Left Camera Cones
       Namespaces:
         big_orange: true
@@ -216,7 +225,12 @@ Visualization Manager:
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Topic: /camera_1/cones/viz
+      Marker Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /camera_1/cones/viz
       Name: Right Camera Cones
       Namespaces:
         big_orange: true
@@ -226,51 +240,6 @@ Visualization Manager:
         yellow: true
       Queue Size: 100
       Value: true
-    - Class: rviz_default_plugins/Image
-      Enabled: true
-      Max Value: 1
-      Median window: 5
-      Min Value: 0
-      Name: ZED Left Raw Image
-      Normalize Range: true
-      Queue Size: 2
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Best Effort
-        Value: /zed/left/image_rect_color
-      Value: true
-    - Class: rviz_default_plugins/Image
-      Enabled: true
-      Max Value: 1
-      Median window: 5
-      Min Value: 0
-      Name: ZED Right Raw Image
-      Normalize Range: true
-      Queue Size: 2
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Best Effort
-        Value: /zed/right/image_rect_color
-      Value: true
-    - Class: rviz_default_plugins/Image
-      Enabled: false
-      Max Value: 1
-      Median window: 5
-      Min Value: 0
-      Name: YOLO BBox Debug Image
-      Normalize Range: true
-      Queue Size: 2
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /yolo_bounding_boxes/debug_image
-      Value: false
     - Class: eufs_rviz_plugins/WaypointArrayStamped
       Enabled: false
       Name: WaypointArrayStamped
@@ -294,13 +263,13 @@ Visualization Manager:
       Color: 255; 255; 255
       Color Transformer: Intensity
       Decay Time: 0
-      Enabled: true
+      Enabled: false
       Invert Rainbow: false
       Max Color: 255; 255; 255
       Max Intensity: 0
       Min Color: 0; 0; 0
       Min Intensity: 0
-      Name: Raw LiDAR Points
+      Name: PointCloud2
       Position Transformer: XYZ
       Selectable: true
       Size (Pixels): 3
@@ -311,45 +280,11 @@ Visualization Manager:
         Durability Policy: Volatile
         Filter size: 10
         History Policy: Keep Last
-        Reliability Policy: Best Effort
+        Reliability Policy: Reliable
         Value: /velodyne_points
       Use Fixed Frame: true
       Use rainbow: true
-      Value: true
-    - Alpha: 1
-      Autocompute Intensity Bounds: true
-      Autocompute Value Bounds:
-        Max Value: 10
-        Min Value: -10
-        Value: true
-      Axis: Z
-      Channel Name: intensity
-      Class: rviz_default_plugins/PointCloud2
-      Color: 255; 255; 255
-      Color Transformer: Intensity
-      Decay Time: 0
-      Enabled: true
-      Invert Rainbow: false
-      Max Color: 255; 255; 255
-      Max Intensity: 0
-      Min Color: 0; 0; 0
-      Min Intensity: 0
-      Name: Compare LiDAR Points
-      Position Transformer: XYZ
-      Selectable: true
-      Size (Pixels): 3
-      Size (m): 0.009999999776482582
-      Style: Flat Squares
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        Filter size: 10
-        History Policy: Keep Last
-        Reliability Policy: Best Effort
-        Value: /velodyne_compare_points
-      Use Fixed Frame: true
-      Use rainbow: true
-      Value: true
+      Value: false
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -368,7 +303,7 @@ Visualization Manager:
       Max Intensity: 4096
       Min Color: 0; 0; 0
       Min Intensity: 0
-      Name: ZED Depth PointCloud
+      Name: PointCloud2
       Position Transformer: XYZ
       Selectable: true
       Size (Pixels): 3
@@ -384,107 +319,14 @@ Visualization Manager:
       Use Fixed Frame: true
       Use rainbow: true
       Value: false
-    - Alpha: 1
-      Autocompute Intensity Bounds: true
-      Autocompute Value Bounds:
-        Max Value: 10
-        Min Value: -10
-        Value: true
-      Axis: Z
-      Channel Name: intensity
-      Class: rviz_default_plugins/PointCloud2
-      Color: 85; 255; 255
-      Color Transformer: FlatColor
-      Decay Time: 0
-      Enabled: false
-      Invert Rainbow: false
-      Max Color: 255; 255; 255
-      Max Intensity: 4096
-      Min Color: 0; 0; 0
-      Min Intensity: 0
-      Name: Fusion Debug ROI Points
-      Position Transformer: XYZ
-      Selectable: true
-      Size (Pixels): 4
-      Size (m): 0.019999999552965164
-      Style: Flat Squares
-      Topic:
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Marker Topic:
         Depth: 5
-        Durability Policy: Volatile
-        Filter size: 10
+        Durability Policy: Transient Local
         History Policy: Keep Last
-        Reliability Policy: Best Effort
-        Value: /fusion/debug/roi_points
-      Use Fixed Frame: true
-      Use rainbow: false
-      Value: false
-    - Alpha: 1
-      Autocompute Intensity Bounds: true
-      Autocompute Value Bounds:
-        Max Value: 10
-        Min Value: -10
-        Value: true
-      Axis: Z
-      Channel Name: intensity
-      Class: rviz_default_plugins/PointCloud2
-      Color: 255; 170; 0
-      Color Transformer: FlatColor
-      Decay Time: 0
-      Enabled: false
-      Invert Rainbow: false
-      Max Color: 255; 255; 255
-      Max Intensity: 4096
-      Min Color: 0; 0; 0
-      Min Intensity: 0
-      Name: Fusion Debug Sparse Support Points
-      Position Transformer: XYZ
-      Selectable: true
-      Size (Pixels): 5
-      Size (m): 0.029999999329447746
-      Style: Flat Squares
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        Filter size: 10
-        History Policy: Keep Last
-        Reliability Policy: Best Effort
-        Value: /fusion/debug/sparse_support_points
-      Use Fixed Frame: true
-      Use rainbow: false
-      Value: false
-    - Class: rviz_default_plugins/MarkerArray
-      Enabled: false
-      Topic: /fusion/debug/cluster_candidates
-      Name: Fusion Debug Cluster Candidates
-      Namespaces:
-        accepted_cluster: true
-        rejected_cluster: true
-        sparse_candidate: true
-      Queue Size: 100
-      Value: false
-    - Class: rviz_default_plugins/MarkerArray
-      Enabled: false
-      Topic: /fusion/debug/bbox_support
-      Name: Fusion Debug BBox Support
-      Namespaces:
-        bbox_supported: true
-        bbox_sparse: true
-      Queue Size: 100
-      Value: false
-    - Class: rviz_default_plugins/MarkerArray
-      Enabled: false
-      Topic: /fusion/debug/rejections
-      Name: Fusion Debug Rejections
-      Namespaces:
-        duplicate_or_low_score: true
-        insufficient_cluster_support: true
-        no_lidar_support: true
-        rejected_by_roi_or_self_ground: true
-      Queue Size: 100
-      Value: false
-    - Class: rviz_default_plugins/MarkerArray
-      Enabled: false
-      Topic: /graph_slam/markers
+        Reliability Policy: Reliable
+        Value: /graph_slam/markers
       Name: Graph SLAM Map
       Namespaces:
         big_orange_landmarks: true
@@ -494,9 +336,9 @@ Visualization Manager:
         unknown_landmarks: true
         yellow_landmarks: true
       Queue Size: 100
-      Value: false
+      Value: true
     - Class: rviz_default_plugins/Path
-      Enabled: false
+      Enabled: true
       Name: Graph SLAM Path
       Buffer Length: 1
       Color: 85; 255; 127
@@ -520,7 +362,7 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /graph_slam/path
-      Value: false
+      Value: true
     - Class: rviz_default_plugins/Odometry
       Angle Tolerance: 0.10000000149011612
       Covariance:
@@ -538,7 +380,7 @@ Visualization Manager:
           Scale: 1
           Value: true
         Value: false
-      Enabled: false
+      Enabled: true
       Keep: 100
       Name: Graph SLAM Odometry
       Position Tolerance: 0.10000000149011612
@@ -558,25 +400,30 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /graph_slam/odom
-      Value: false
+      Value: true
     - Class: rviz_default_plugins/MarkerArray
-      Enabled: false
-      Topic: /graph_slam/markers
+      Enabled: true
+      Marker Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /graph_slam/markers
       Name: Graph SLAM Markers
       Namespaces:
         landmarks: true
         path: true
       Queue Size: 100
-      Value: false
+      Value: true
     - Class: rviz_default_plugins/TF
       Enabled: false
       Frame Timeout: 15
       Frames:
         All Enabled: false
         base_footprint:
-          Value: true
+          Value: false
         chassis:
-          Value: true
+          Value: false
         gps_base_link:
           Value: false
         left_front_wheel:
@@ -596,11 +443,11 @@ Visualization Manager:
         sbg_imu_base_link:
           Value: false
         velodyne:
-          Value: true
+          Value: false
         velodyne_base_link:
           Value: true
         zed_camera_center:
-          Value: true
+          Value: false
         zed_depth_camera_frame:
           Value: false
         zed_depth_camera_optical_frame:
@@ -610,11 +457,11 @@ Visualization Manager:
         zed_left_camera_frame:
           Value: false
         zed_left_camera_optical_frame:
-          Value: true
+          Value: false
         zed_right_camera_frame:
           Value: false
         zed_right_camera_optical_frame:
-          Value: true
+          Value: false
       Marker Scale: 0.5
       Name: TF
       Show Arrows: false
@@ -659,7 +506,7 @@ Visualization Manager:
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: base_footprint
+    Fixed Frame: map
     Frame Rate: 30
   Name: root
   Tools:

@@ -53,6 +53,7 @@
 #include <vector>
 #include <map>
 #include <filesystem>
+#include <visualization_msgs/msg/marker_array.hpp>
 
 #include "rclcpp/rclcpp.hpp"
 #include "yaml-cpp/yaml.h"
@@ -105,6 +106,8 @@ class GazeboCameraCones : public gazebo::ModelPlugin {
 
   // Publishers
   rclcpp::Publisher<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr camera_cones_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
+      camera_cone_markers_pub_;
 
   // Gazebo variables
   gazebo::physics::ModelPtr track_model;

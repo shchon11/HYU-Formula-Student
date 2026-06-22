@@ -17,7 +17,11 @@
 #include <gazebo_ros/node.hpp>
 
 #include <tf2_ros/transform_listener.h>
-#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
+#if __has_include(<tf2_geometry_msgs/tf2_geometry_msgs.hpp>)
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#else
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#endif
 #include <tf2_ros/buffer.h>
 
 #include "sensor_msgs/msg/camera_info.hpp"

@@ -10,9 +10,12 @@ perception_baseline_node:
     clip_projected_points_to_image: false
     output_cones_topic: /cones
     output_frame: base_footprint
+    marker_scale: 0.35
     sync_tolerance_sec: 0.15
     publish_empty_on_sync: false
     fusion_enabled: true
+    publish_fusion_debug: true
+    fusion_debug_prefix: /fusion/debug
 
     # Leave empty for the real image/pointcloud baseline path.
     # Set to a simulator cone topic, for example /camera_0/cones or /ground_truth/cones,
@@ -35,6 +38,13 @@ perception_baseline_node:
     roi_max_z: 1.5
     ground_min_z: 0.05
 
+    self_mask_enabled: true
+    self_mask_min_x: -1.5
+    self_mask_max_x: 1.8
+    self_mask_abs_y: 0.8
+    self_mask_min_z: -0.4
+    self_mask_max_z: 1.4
+
     cluster_eps: 0.35
     cluster_min_points: 3
     cluster_min_height: 0.02
@@ -44,3 +54,38 @@ perception_baseline_node:
     min_bbox_probability: 0.0
     min_projected_points: 1
     min_project_depth: 0.2
+
+    sparse_association_enabled: true
+    sparse_bbox_margin_px: 4.0
+    sparse_bbox_margin_ratio: 0.15
+    sparse_near_range_m: 6.0
+    sparse_far_range_m: 12.0
+    sparse_near_min_points: 4
+    sparse_mid_min_points: 3
+    sparse_far_min_points: 2
+    sparse_far_min_probability: 0.25
+    sparse_far_min_bbox_width_px: 4.0
+    sparse_far_min_bbox_height_px: 4.0
+    sparse_max_depth_span_m: 1.0
+    sparse_max_depth_span_ratio: 0.35
+    sparse_max_width: 0.90
+    sparse_variance_x: 0.12
+    sparse_variance_y: 0.12
+
+yolov8_bbox_node:
+  ros__parameters:
+    image_topic: /zed/left/image_rect_color
+    bbox_topic: /yolo_bounding_boxes
+    # FSOCO fine-tuned YOLOv8n cone detector. Keep this as an absolute path
+    # because the generated training artifact is intentionally outside git.
+    model_path: /home/dohyun/FS/artifacts/yolov8/fsoco_yolov8n/weights/best.pt
+    confidence_threshold: 0.25
+    iou_threshold: 0.45
+    imgsz: 640
+    device: ""
+    max_det: 100
+    # Map FSOCO class names to the EUFS cone color contract.
+    class_map: "blue_cone:blue,yellow_cone:yellow,orange_cone:orange,large_orange_cone:big_orange,unknown_cone:unknown"
+    unknown_color_policy: unknown
+    publish_debug_image: false
+    debug_image_topic: /yolo_bounding_boxes/debug_image

@@ -1,4 +1,5 @@
 import math
+import struct
 import time
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Tuple
@@ -11,12 +12,18 @@ from eufs_msgs.msg import (
     ConeArrayWithCovariance,
     ConeWithCovariance,
 )
+from geometry_msgs.msg import Point
 from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from sensor_msgs_py import point_cloud2
+from sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField
 from tf2_ros import Buffer, TransformException, TransformListener
+from visualization_msgs.msg import Marker, MarkerArray
+
+try:
+    from sensor_msgs_py import point_cloud2
+except ImportError:
+    from eufs_perception_baseline import point_cloud2_compat as point_cloud2
 
 
 StampKey = Tuple[int, int]
@@ -39,6 +46,30 @@ class Cluster:
     points_camera: np.ndarray
     centroid_base: np.ndarray
     range_m: float
+    indices: np.ndarray
+    source: str = "cluster"
+    support_count: int = 0
+
+
+@dataclass
+class Assignment:
+    detection_index: int
+    detection: Detection
+    cluster: Cluster
+    source: str
+    support_count: int
+
+
+@dataclass
+class DetectionDebugReport:
+    detection_index: int
+    detection: Detection
+    raw_projected_points: int
+    roi_projected_points: int
+    cluster_projected_points: int
+    assigned_source: str
+    reason: str
+    support_centroid_base: Optional[np.ndarray]
 
 
 class PerceptionBaselineNode(Node):
@@ -71,6 +102,42 @@ class PerceptionBaselineNode(Node):
             self.output_cones_topic,
             10,
         )
+        self.cones_viz_pub = self.create_publisher(
+            MarkerArray,
+            self._viz_topic_for(self.output_cones_topic),
+            10,
+        )
+        self.debug_roi_points_pub = None
+        self.debug_sparse_support_pub = None
+        self.debug_cluster_candidates_pub = None
+        self.debug_bbox_support_pub = None
+        self.debug_rejections_pub = None
+        if self.publish_fusion_debug:
+            self.debug_roi_points_pub = self.create_publisher(
+                PointCloud2,
+                f"{self.fusion_debug_prefix}/roi_points",
+                10,
+            )
+            self.debug_sparse_support_pub = self.create_publisher(
+                PointCloud2,
+                f"{self.fusion_debug_prefix}/sparse_support_points",
+                10,
+            )
+            self.debug_cluster_candidates_pub = self.create_publisher(
+                MarkerArray,
+                f"{self.fusion_debug_prefix}/cluster_candidates",
+                10,
+            )
+            self.debug_bbox_support_pub = self.create_publisher(
+                MarkerArray,
+                f"{self.fusion_debug_prefix}/bbox_support",
+                10,
+            )
+            self.debug_rejections_pub = self.create_publisher(
+                MarkerArray,
+                f"{self.fusion_debug_prefix}/rejections",
+                10,
+            )
         self.image_sub = self.create_subscription(
             Image,
             self.image_topic,
@@ -93,7 +160,7 @@ class PerceptionBaselineNode(Node):
             CameraInfo,
             self.camera_info_topic,
             self._camera_info_callback,
-            10,
+            sensor_qos,
         )
 
         self.oracle_sub = None
@@ -118,6 +185,11 @@ class PerceptionBaselineNode(Node):
             f"{self.output_cones_topic} as eufs_msgs/msg/ConeArrayWithCovariance"
         )
         self.get_logger().info(
+            "Publishing RViz cone markers on "
+            f"{self._viz_topic_for(self.output_cones_topic)} "
+            "as visualization_msgs/msg/MarkerArray"
+        )
+        self.get_logger().info(
             f"Fusion inputs: image={self.image_topic}, pointcloud={self.pointcloud_topic}, "
             f"bboxes={self.bbox_topic}, camera_info={self.camera_info_topic}"
         )
@@ -128,6 +200,10 @@ class PerceptionBaselineNode(Node):
         if self.fusion_enabled:
             self.get_logger().info(
                 "LiDAR-camera fusion enabled. BBox class/color is fused with LiDAR clusters."
+            )
+        if self.publish_fusion_debug:
+            self.get_logger().info(
+                f"Fusion debug topics enabled under {self.fusion_debug_prefix}"
             )
 
     def _declare_parameters(self) -> None:
@@ -141,9 +217,12 @@ class PerceptionBaselineNode(Node):
         self.declare_parameter("clip_projected_points_to_image", False)
         self.declare_parameter("output_cones_topic", "/cones")
         self.declare_parameter("output_frame", "base_footprint")
+        self.declare_parameter("marker_scale", 0.35)
         self.declare_parameter("sync_tolerance_sec", 0.15)
         self.declare_parameter("publish_empty_on_sync", False)
         self.declare_parameter("fusion_enabled", True)
+        self.declare_parameter("publish_fusion_debug", True)
+        self.declare_parameter("fusion_debug_prefix", "/fusion/debug")
         self.declare_parameter("oracle_cones_topic", "")
         self.declare_parameter("oracle_rewrite_frame", True)
 
@@ -154,6 +233,13 @@ class PerceptionBaselineNode(Node):
         self.declare_parameter("roi_max_z", 1.5)
         self.declare_parameter("ground_min_z", 0.05)
 
+        self.declare_parameter("self_mask_enabled", True)
+        self.declare_parameter("self_mask_min_x", -1.5)
+        self.declare_parameter("self_mask_max_x", 1.8)
+        self.declare_parameter("self_mask_abs_y", 0.8)
+        self.declare_parameter("self_mask_min_z", -0.4)
+        self.declare_parameter("self_mask_max_z", 1.4)
+
         self.declare_parameter("cluster_eps", 0.35)
         self.declare_parameter("cluster_min_points", 3)
         self.declare_parameter("cluster_min_height", 0.02)
@@ -163,6 +249,23 @@ class PerceptionBaselineNode(Node):
         self.declare_parameter("min_bbox_probability", 0.0)
         self.declare_parameter("min_projected_points", 1)
         self.declare_parameter("min_project_depth", 0.2)
+
+        self.declare_parameter("sparse_association_enabled", True)
+        self.declare_parameter("sparse_bbox_margin_px", 4.0)
+        self.declare_parameter("sparse_bbox_margin_ratio", 0.15)
+        self.declare_parameter("sparse_near_range_m", 6.0)
+        self.declare_parameter("sparse_far_range_m", 12.0)
+        self.declare_parameter("sparse_near_min_points", 4)
+        self.declare_parameter("sparse_mid_min_points", 3)
+        self.declare_parameter("sparse_far_min_points", 2)
+        self.declare_parameter("sparse_far_min_probability", 0.25)
+        self.declare_parameter("sparse_far_min_bbox_width_px", 4.0)
+        self.declare_parameter("sparse_far_min_bbox_height_px", 4.0)
+        self.declare_parameter("sparse_max_depth_span_m", 1.0)
+        self.declare_parameter("sparse_max_depth_span_ratio", 0.35)
+        self.declare_parameter("sparse_max_width", 0.90)
+        self.declare_parameter("sparse_variance_x", 0.12)
+        self.declare_parameter("sparse_variance_y", 0.12)
 
         self.declare_parameter("default_variance_x", 0.04)
         self.declare_parameter("default_variance_y", 0.04)
@@ -186,11 +289,18 @@ class PerceptionBaselineNode(Node):
         )
         self.output_cones_topic = self.get_parameter("output_cones_topic").value
         self.output_frame = self.get_parameter("output_frame").value
+        self.marker_scale = float(self.get_parameter("marker_scale").value)
         self.sync_tolerance_sec = float(self.get_parameter("sync_tolerance_sec").value)
         self.publish_empty_on_sync = self._as_bool(
             self.get_parameter("publish_empty_on_sync").value
         )
         self.fusion_enabled = self._as_bool(self.get_parameter("fusion_enabled").value)
+        self.publish_fusion_debug = self._as_bool(
+            self.get_parameter("publish_fusion_debug").value
+        )
+        self.fusion_debug_prefix = str(
+            self.get_parameter("fusion_debug_prefix").value
+        ).rstrip("/")
         self.oracle_cones_topic = self.get_parameter("oracle_cones_topic").value
         self.oracle_rewrite_frame = self._as_bool(
             self.get_parameter("oracle_rewrite_frame").value
@@ -203,6 +313,15 @@ class PerceptionBaselineNode(Node):
         self.roi_max_z = float(self.get_parameter("roi_max_z").value)
         self.ground_min_z = float(self.get_parameter("ground_min_z").value)
 
+        self.self_mask_enabled = self._as_bool(
+            self.get_parameter("self_mask_enabled").value
+        )
+        self.self_mask_min_x = float(self.get_parameter("self_mask_min_x").value)
+        self.self_mask_max_x = float(self.get_parameter("self_mask_max_x").value)
+        self.self_mask_abs_y = float(self.get_parameter("self_mask_abs_y").value)
+        self.self_mask_min_z = float(self.get_parameter("self_mask_min_z").value)
+        self.self_mask_max_z = float(self.get_parameter("self_mask_max_z").value)
+
         self.cluster_eps = float(self.get_parameter("cluster_eps").value)
         self.cluster_min_points = int(self.get_parameter("cluster_min_points").value)
         self.cluster_min_height = float(self.get_parameter("cluster_min_height").value)
@@ -212,6 +331,49 @@ class PerceptionBaselineNode(Node):
         self.min_bbox_probability = float(self.get_parameter("min_bbox_probability").value)
         self.min_projected_points = int(self.get_parameter("min_projected_points").value)
         self.min_project_depth = float(self.get_parameter("min_project_depth").value)
+
+        self.sparse_association_enabled = self._as_bool(
+            self.get_parameter("sparse_association_enabled").value
+        )
+        self.sparse_bbox_margin_px = float(
+            self.get_parameter("sparse_bbox_margin_px").value
+        )
+        self.sparse_bbox_margin_ratio = float(
+            self.get_parameter("sparse_bbox_margin_ratio").value
+        )
+        self.sparse_near_range_m = float(
+            self.get_parameter("sparse_near_range_m").value
+        )
+        self.sparse_far_range_m = float(
+            self.get_parameter("sparse_far_range_m").value
+        )
+        self.sparse_near_min_points = int(
+            self.get_parameter("sparse_near_min_points").value
+        )
+        self.sparse_mid_min_points = int(
+            self.get_parameter("sparse_mid_min_points").value
+        )
+        self.sparse_far_min_points = int(
+            self.get_parameter("sparse_far_min_points").value
+        )
+        self.sparse_far_min_probability = float(
+            self.get_parameter("sparse_far_min_probability").value
+        )
+        self.sparse_far_min_bbox_width_px = float(
+            self.get_parameter("sparse_far_min_bbox_width_px").value
+        )
+        self.sparse_far_min_bbox_height_px = float(
+            self.get_parameter("sparse_far_min_bbox_height_px").value
+        )
+        self.sparse_max_depth_span_m = float(
+            self.get_parameter("sparse_max_depth_span_m").value
+        )
+        self.sparse_max_depth_span_ratio = float(
+            self.get_parameter("sparse_max_depth_span_ratio").value
+        )
+        self.sparse_max_width = float(self.get_parameter("sparse_max_width").value)
+        self.sparse_variance_x = float(self.get_parameter("sparse_variance_x").value)
+        self.sparse_variance_y = float(self.get_parameter("sparse_variance_y").value)
 
         self.default_variance_x = float(self.get_parameter("default_variance_x").value)
         self.default_variance_y = float(self.get_parameter("default_variance_y").value)
@@ -261,21 +423,40 @@ class PerceptionBaselineNode(Node):
         msg = ConeArrayWithCovariance()
         msg.header.stamp = self.latest_pointcloud.header.stamp
         msg.header.frame_id = self.output_frame
-        self.cones_pub.publish(msg)
+        self._publish_cones(msg)
 
     def _try_publish_fusion(self) -> None:
         if not self.fusion_enabled:
             return
-        if (
-            self.latest_pointcloud is None
-            or self.latest_bboxes is None
-            or self.latest_camera_info is None
-        ):
+        missing_inputs = []
+        if self.latest_pointcloud is None:
+            missing_inputs.append(f"pointcloud={self.pointcloud_topic}")
+        if self.latest_bboxes is None:
+            missing_inputs.append(f"bboxes={self.bbox_topic}")
+        if self.latest_camera_info is None:
+            missing_inputs.append(f"camera_info={self.camera_info_topic}")
+        if missing_inputs:
+            self._warn_throttled(
+                "missing_fusion_inputs",
+                "Fusion waiting for inputs: " + ", ".join(missing_inputs),
+                period_sec=5.0,
+            )
             return
 
         cloud_stamp = self.latest_pointcloud.header.stamp
         bbox_stamp = self._bounding_boxes_stamp(self.latest_bboxes)
-        if abs(self._stamp_to_sec(cloud_stamp) - self._stamp_to_sec(bbox_stamp)) > self.sync_tolerance_sec:
+        stamp_delta = abs(
+            self._stamp_to_sec(cloud_stamp) - self._stamp_to_sec(bbox_stamp)
+        )
+        if stamp_delta > self.sync_tolerance_sec:
+            self._warn_throttled(
+                "fusion_sync_mismatch",
+                "Fusion waiting for synchronized bbox/LiDAR: "
+                f"delta={stamp_delta:.3f}s > tolerance={self.sync_tolerance_sec:.3f}s "
+                f"(cloud={self._format_stamp(cloud_stamp)}, "
+                f"bbox={self._format_stamp(bbox_stamp)})",
+                period_sec=2.0,
+            )
             return
 
         key = (self._stamp_key(cloud_stamp), self._stamp_key(bbox_stamp))
@@ -296,7 +477,12 @@ class PerceptionBaselineNode(Node):
             self._warn_throttled("fusion", f"Fusion skipped: {exc}")
             return
 
-        self.cones_pub.publish(cones)
+        self._info_throttled(
+            "fusion_success",
+            "Fusion published cones: " + self._cone_count_summary(cones),
+            period_sec=2.0,
+        )
+        self._publish_cones(cones)
 
     def _run_lidar_camera_fusion(
         self,
@@ -310,6 +496,10 @@ class PerceptionBaselineNode(Node):
         msg.header.frame_id = self.output_frame
 
         if not detections:
+            self._warn_throttled(
+                "no_detections",
+                "Fusion produced no cones: no bbox detections after filtering",
+            )
             return msg
 
         lidar_frame = pointcloud.header.frame_id
@@ -319,34 +509,122 @@ class PerceptionBaselineNode(Node):
             raise RuntimeError("camera frame is empty")
 
         points_lidar = self._pointcloud_to_xyz(pointcloud)
+        raw_point_count = int(points_lidar.shape[0])
         if points_lidar.size == 0:
+            self._warn_throttled(
+                "no_lidar_points",
+                "Fusion produced no cones: point cloud has no finite xyz points",
+            )
             return msg
 
         lidar_to_base = self._lookup_transform_matrix(self.output_frame, lidar_frame)
         lidar_to_camera = self._lookup_transform_matrix(self.camera_frame, lidar_frame)
 
-        points_base = self._transform_points(points_lidar, lidar_to_base)
-        points_camera = self._transform_points(points_lidar, lidar_to_camera)
+        points_base_all = self._transform_points(points_lidar, lidar_to_base)
+        points_camera_all = self._transform_points(points_lidar, lidar_to_camera)
 
-        roi_mask = self._roi_mask(points_base)
-        points_base = points_base[roi_mask]
-        points_camera = points_camera[roi_mask]
+        roi_mask = self._roi_mask(points_base_all)
+        points_base = points_base_all[roi_mask]
+        points_camera = points_camera_all[roi_mask]
+        debug_header = self._debug_header(pointcloud)
+        self._publish_debug_pointcloud(
+            self.debug_roi_points_pub,
+            debug_header,
+            points_base,
+        )
         if points_base.size == 0:
+            self._warn_throttled(
+                "empty_roi",
+                "Fusion produced no cones: no LiDAR points survived ROI filtering",
+            )
+            reports = self._build_detection_debug_reports(
+                detections,
+                points_base_all,
+                points_camera_all,
+                points_base,
+                points_camera,
+                [],
+                camera_info,
+                [],
+            )
+            self._publish_fusion_debug_markers(debug_header, [], [], reports)
             return msg
 
         clusters = self._cluster_cone_candidates(points_base, points_camera)
         if not clusters:
-            return msg
+            self._warn_throttled(
+                "no_clusters",
+                f"Fusion found no global cone clusters from {len(points_base)} ROI points; "
+                "trying sparse bbox-guided association if enabled",
+            )
 
-        assignments = self._associate_detections_to_clusters(
+        cluster_assignments = (
+            self._associate_detections_to_clusters(detections, clusters, camera_info)
+            if clusters
+            else []
+        )
+        used_detection_indices = {
+            assignment.detection_index for assignment in cluster_assignments
+        }
+        used_roi_indices = set()
+        for assignment in cluster_assignments:
+            used_roi_indices.update(int(index) for index in assignment.cluster.indices)
+
+        sparse_assignments = self._associate_sparse_detections(
             detections,
+            points_base,
+            points_camera,
+            camera_info,
+            used_detection_indices,
+            used_roi_indices,
+        )
+        assignments = cluster_assignments + sparse_assignments
+        reports = self._build_detection_debug_reports(
+            detections,
+            points_base_all,
+            points_camera_all,
+            points_base,
+            points_camera,
             clusters,
             camera_info,
+            assignments,
         )
+        self._publish_debug_pointcloud(
+            self.debug_sparse_support_pub,
+            debug_header,
+            self._assignment_support_points(sparse_assignments),
+        )
+        self._publish_fusion_debug_markers(
+            debug_header,
+            clusters,
+            assignments,
+            reports,
+        )
+        self._log_fusion_debug_summary(
+            raw_point_count,
+            int(points_base.shape[0]),
+            detections,
+            clusters,
+            cluster_assignments,
+            sparse_assignments,
+            reports,
+        )
+        if not assignments:
+            detection = detections[0]
+            self._warn_throttled(
+                "no_assignments",
+                "Fusion produced no cones: "
+                f"0 bbox/cluster assignments from {len(detections)} detections "
+                f"and {len(clusters)} clusters; "
+                f"first bbox {detection.color}=({detection.xmin:.1f}, "
+                f"{detection.ymin:.1f})-({detection.xmax:.1f}, "
+                f"{detection.ymax:.1f}); "
+                f"cluster pixels {self._cluster_summaries(clusters, camera_info)}",
+            )
 
-        for detection, cluster in assignments:
-            cone = self._cluster_to_cone(cluster)
-            self._append_cone_by_color(msg, detection.color, cone)
+        for assignment in assignments:
+            cone = self._cluster_to_cone(assignment.cluster)
+            self._append_cone_by_color(msg, assignment.detection.color, cone)
 
         return msg
 
@@ -417,13 +695,27 @@ class PerceptionBaselineNode(Node):
         return np.asarray(points, dtype=np.float64)
 
     def _roi_mask(self, points_base: np.ndarray) -> np.ndarray:
-        return (
+        mask = (
             (points_base[:, 0] >= self.roi_min_x)
             & (points_base[:, 0] <= self.roi_max_x)
             & (np.abs(points_base[:, 1]) <= self.roi_abs_y)
             & (points_base[:, 2] >= self.roi_min_z)
             & (points_base[:, 2] <= self.roi_max_z)
             & (points_base[:, 2] >= self.ground_min_z)
+        )
+        if self.self_mask_enabled:
+            mask &= ~self._self_mask(points_base)
+        return mask
+
+    def _self_mask(self, points_base: np.ndarray) -> np.ndarray:
+        if points_base.size == 0:
+            return np.zeros(points_base.shape[0], dtype=bool)
+        return (
+            (points_base[:, 0] >= self.self_mask_min_x)
+            & (points_base[:, 0] <= self.self_mask_max_x)
+            & (np.abs(points_base[:, 1]) <= self.self_mask_abs_y)
+            & (points_base[:, 2] >= self.self_mask_min_z)
+            & (points_base[:, 2] <= self.self_mask_max_z)
         )
 
     def _cluster_cone_candidates(
@@ -460,6 +752,8 @@ class PerceptionBaselineNode(Node):
                     points_camera=cluster_camera,
                     centroid_base=centroid_base,
                     range_m=float(np.hypot(centroid_base[0], centroid_base[1])),
+                    indices=indices,
+                    support_count=len(indices),
                 )
             )
 
@@ -536,7 +830,7 @@ class PerceptionBaselineNode(Node):
         detections: List[Detection],
         clusters: List[Cluster],
         camera_info: CameraInfo,
-    ) -> List[Tuple[Detection, Cluster]]:
+    ) -> List[Assignment]:
         candidates = []
         for detection_index, detection in enumerate(detections):
             for cluster_index, cluster in enumerate(clusters):
@@ -555,24 +849,188 @@ class PerceptionBaselineNode(Node):
                     continue
 
                 score = inside_count * max(detection.probability, 1.0)
-                candidates.append((score, detection_index, cluster_index))
+                candidates.append(
+                    (score, detection_index, cluster_index, inside_count)
+                )
 
         candidates.sort(reverse=True, key=lambda item: item[0])
         used_detections = set()
         used_clusters = set()
         assignments = []
-        for _, detection_index, cluster_index in candidates:
+        for _, detection_index, cluster_index, inside_count in candidates:
             if detection_index in used_detections or cluster_index in used_clusters:
                 continue
             used_detections.add(detection_index)
             used_clusters.add(cluster_index)
-            assignments.append((detections[detection_index], clusters[cluster_index]))
+            assignments.append(
+                Assignment(
+                    detection_index=detection_index,
+                    detection=detections[detection_index],
+                    cluster=clusters[cluster_index],
+                    source="cluster",
+                    support_count=inside_count,
+                )
+            )
 
         return assignments
 
+    def _associate_sparse_detections(
+        self,
+        detections: List[Detection],
+        points_base: np.ndarray,
+        points_camera: np.ndarray,
+        camera_info: CameraInfo,
+        used_detection_indices,
+        used_roi_indices,
+    ) -> List[Assignment]:
+        if not self.sparse_association_enabled or points_base.size == 0:
+            return []
+
+        pixels, projected_indices = self._project_points_with_indices(
+            points_camera,
+            camera_info,
+        )
+        if pixels.size == 0:
+            return []
+
+        candidates = []
+        unavailable_indices = set(int(index) for index in used_roi_indices)
+        for detection_index, detection in enumerate(detections):
+            if detection_index in used_detection_indices:
+                continue
+
+            xmin, ymin, xmax, ymax = self._expanded_bbox(detection)
+            inside = (
+                (pixels[:, 0] >= xmin)
+                & (pixels[:, 0] <= xmax)
+                & (pixels[:, 1] >= ymin)
+                & (pixels[:, 1] <= ymax)
+            )
+            support_indices = [
+                int(index)
+                for index in projected_indices[inside]
+                if int(index) not in unavailable_indices
+            ]
+            if not support_indices:
+                continue
+
+            support_indices = np.asarray(sorted(set(support_indices)), dtype=np.int64)
+            support_base = points_base[support_indices]
+            candidate = self._sparse_candidate(
+                detection,
+                support_indices,
+                support_base,
+                points_camera[support_indices],
+            )
+            if candidate is None:
+                continue
+            score = (
+                float(candidate.support_count)
+                * max(float(detection.probability), 0.01)
+                / max(float(candidate.range_m), 0.1)
+            )
+            candidates.append((score, detection_index, candidate))
+
+        candidates.sort(reverse=True, key=lambda item: item[0])
+        assignments = []
+        used_sparse_indices = set()
+        for _, detection_index, candidate in candidates:
+            candidate_indices = set(int(index) for index in candidate.indices)
+            if candidate_indices & used_sparse_indices:
+                continue
+            used_sparse_indices.update(candidate_indices)
+            assignments.append(
+                Assignment(
+                    detection_index=detection_index,
+                    detection=detections[detection_index],
+                    cluster=candidate,
+                    source="sparse",
+                    support_count=candidate.support_count,
+                )
+            )
+        return assignments
+
+    def _sparse_candidate(
+        self,
+        detection: Detection,
+        support_indices: np.ndarray,
+        support_base: np.ndarray,
+        support_camera: np.ndarray,
+    ) -> Optional[Cluster]:
+        centroid_base = support_base.mean(axis=0)
+        range_m = float(np.hypot(centroid_base[0], centroid_base[1]))
+        min_points = self._sparse_min_points_for_range(range_m)
+        if len(support_indices) < min_points:
+            return None
+
+        min_values = support_base.min(axis=0)
+        max_values = support_base.max(axis=0)
+        width = float(np.linalg.norm(max_values[:2] - min_values[:2]))
+        if width > self.sparse_max_width:
+            return None
+
+        point_ranges = np.hypot(support_base[:, 0], support_base[:, 1])
+        depth_span = float(point_ranges.max() - point_ranges.min())
+        allowed_depth_span = max(
+            self.sparse_max_depth_span_m,
+            range_m * self.sparse_max_depth_span_ratio,
+        )
+        if depth_span > allowed_depth_span:
+            return None
+
+        if range_m >= self.sparse_far_range_m:
+            bbox_width = detection.xmax - detection.xmin
+            bbox_height = detection.ymax - detection.ymin
+            if detection.probability < self.sparse_far_min_probability:
+                return None
+            if bbox_width < self.sparse_far_min_bbox_width_px:
+                return None
+            if bbox_height < self.sparse_far_min_bbox_height_px:
+                return None
+
+        return Cluster(
+            points_base=support_base,
+            points_camera=support_camera,
+            centroid_base=centroid_base,
+            range_m=range_m,
+            indices=support_indices,
+            source="sparse",
+            support_count=len(support_indices),
+        )
+
+    def _sparse_min_points_for_range(self, range_m: float) -> int:
+        if range_m < self.sparse_near_range_m:
+            return self.sparse_near_min_points
+        if range_m < self.sparse_far_range_m:
+            return self.sparse_mid_min_points
+        return self.sparse_far_min_points
+
+    def _expanded_bbox(self, detection: Detection) -> Tuple[float, float, float, float]:
+        width = detection.xmax - detection.xmin
+        height = detection.ymax - detection.ymin
+        margin_x = max(self.sparse_bbox_margin_px, width * self.sparse_bbox_margin_ratio)
+        margin_y = max(self.sparse_bbox_margin_px, height * self.sparse_bbox_margin_ratio)
+        return (
+            detection.xmin - margin_x,
+            detection.ymin - margin_y,
+            detection.xmax + margin_x,
+            detection.ymax + margin_y,
+        )
+
     def _project_points(self, points_camera: np.ndarray, camera_info: CameraInfo) -> np.ndarray:
+        pixels, _ = self._project_points_with_indices(points_camera, camera_info)
+        return pixels
+
+    def _project_points_with_indices(
+        self,
+        points_camera: np.ndarray,
+        camera_info: CameraInfo,
+    ) -> Tuple[np.ndarray, np.ndarray]:
         if points_camera.size == 0:
-            return np.empty((0, 2), dtype=np.float64)
+            return (
+                np.empty((0, 2), dtype=np.float64),
+                np.empty((0,), dtype=np.int64),
+            )
 
         if self.projection_model == "eufs_bbox":
             projection_points = np.column_stack(
@@ -584,9 +1042,13 @@ class PerceptionBaselineNode(Node):
         z = projection_points[:, 2]
         valid = z > self.min_project_depth
         if not np.any(valid):
-            return np.empty((0, 2), dtype=np.float64)
+            return (
+                np.empty((0, 2), dtype=np.float64),
+                np.empty((0,), dtype=np.int64),
+            )
 
         points = projection_points[valid]
+        indices = np.flatnonzero(valid)
         fx = float(camera_info.k[0])
         fy = float(camera_info.k[4])
         cx = float(camera_info.k[2])
@@ -602,10 +1064,372 @@ class PerceptionBaselineNode(Node):
                 & (v < float(camera_info.height))
             )
             if not np.any(in_image):
-                return np.empty((0, 2), dtype=np.float64)
-            return np.column_stack((u[in_image], v[in_image]))
+                return (
+                    np.empty((0, 2), dtype=np.float64),
+                    np.empty((0,), dtype=np.int64),
+                )
+            return np.column_stack((u[in_image], v[in_image])), indices[in_image]
 
-        return np.column_stack((u, v))
+        return np.column_stack((u, v)), indices
+
+    def _build_detection_debug_reports(
+        self,
+        detections: List[Detection],
+        points_base_all: np.ndarray,
+        points_camera_all: np.ndarray,
+        points_base_roi: np.ndarray,
+        points_camera_roi: np.ndarray,
+        clusters: List[Cluster],
+        camera_info: CameraInfo,
+        assignments: List[Assignment],
+    ) -> List[DetectionDebugReport]:
+        assignment_by_detection = {
+            assignment.detection_index: assignment for assignment in assignments
+        }
+        reports = []
+        for detection_index, detection in enumerate(detections):
+            raw_count, _ = self._bbox_point_support(
+                detection,
+                points_base_all,
+                points_camera_all,
+                camera_info,
+            )
+            roi_count, roi_centroid = self._bbox_point_support(
+                detection,
+                points_base_roi,
+                points_camera_roi,
+                camera_info,
+                expanded=True,
+            )
+            cluster_count = 0
+            for cluster in clusters:
+                cluster_count += self._bbox_point_support(
+                    detection,
+                    cluster.points_base,
+                    cluster.points_camera,
+                    camera_info,
+                )[0]
+
+            assignment = assignment_by_detection.get(detection_index)
+            assigned_source = assignment.source if assignment else ""
+            reason = "assigned_" + assigned_source if assignment else self._unmatched_reason(
+                raw_count,
+                roi_count,
+                cluster_count,
+            )
+            reports.append(
+                DetectionDebugReport(
+                    detection_index=detection_index,
+                    detection=detection,
+                    raw_projected_points=raw_count,
+                    roi_projected_points=roi_count,
+                    cluster_projected_points=cluster_count,
+                    assigned_source=assigned_source,
+                    reason=reason,
+                    support_centroid_base=roi_centroid,
+                )
+            )
+        return reports
+
+    def _bbox_point_support(
+        self,
+        detection: Detection,
+        points_base: np.ndarray,
+        points_camera: np.ndarray,
+        camera_info: CameraInfo,
+        expanded: bool = False,
+    ) -> Tuple[int, Optional[np.ndarray]]:
+        if points_base.size == 0 or points_camera.size == 0:
+            return 0, None
+        pixels, indices = self._project_points_with_indices(points_camera, camera_info)
+        if pixels.size == 0:
+            return 0, None
+        if expanded:
+            xmin, ymin, xmax, ymax = self._expanded_bbox(detection)
+        else:
+            xmin, ymin, xmax, ymax = (
+                detection.xmin,
+                detection.ymin,
+                detection.xmax,
+                detection.ymax,
+            )
+        inside = (
+            (pixels[:, 0] >= xmin)
+            & (pixels[:, 0] <= xmax)
+            & (pixels[:, 1] >= ymin)
+            & (pixels[:, 1] <= ymax)
+        )
+        count = int(np.count_nonzero(inside))
+        if count == 0:
+            return 0, None
+        support = points_base[indices[inside]]
+        return count, support.mean(axis=0)
+
+    @staticmethod
+    def _unmatched_reason(
+        raw_count: int,
+        roi_count: int,
+        cluster_count: int,
+    ) -> str:
+        if raw_count <= 0:
+            return "no_lidar_support"
+        if roi_count <= 0:
+            return "rejected_by_roi_or_self_ground"
+        if cluster_count <= 0:
+            return "insufficient_cluster_support"
+        return "duplicate_or_low_score"
+
+    def _assignment_support_points(self, assignments: List[Assignment]) -> np.ndarray:
+        sparse_points = [
+            assignment.cluster.points_base
+            for assignment in assignments
+            if assignment.source == "sparse" and assignment.cluster.points_base.size > 0
+        ]
+        if not sparse_points:
+            return np.empty((0, 3), dtype=np.float64)
+        return np.vstack(sparse_points)
+
+    def _debug_header(self, pointcloud: PointCloud2):
+        header = pointcloud.header.__class__()
+        header.stamp = pointcloud.header.stamp
+        header.frame_id = self.output_frame
+        return header
+
+    def _publish_debug_pointcloud(
+        self,
+        publisher,
+        header,
+        points: np.ndarray,
+    ) -> None:
+        if publisher is None:
+            return
+        publisher.publish(self._xyz_to_pointcloud2(header, points))
+
+    @staticmethod
+    def _xyz_to_pointcloud2(header, points: np.ndarray) -> PointCloud2:
+        msg = PointCloud2()
+        msg.header = header
+        msg.height = 1
+        msg.width = int(points.shape[0]) if points.size else 0
+        msg.fields = [
+            PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
+            PointField(name="y", offset=4, datatype=PointField.FLOAT32, count=1),
+            PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=1),
+        ]
+        msg.is_bigendian = False
+        msg.point_step = 12
+        msg.row_step = msg.point_step * msg.width
+        msg.is_dense = True
+        if points.size:
+            data = bytearray()
+            for point in points:
+                data.extend(
+                    struct.pack(
+                        "<fff",
+                        float(point[0]),
+                        float(point[1]),
+                        float(point[2]),
+                    )
+                )
+            msg.data = bytes(data)
+        else:
+            msg.data = b""
+        return msg
+
+    def _publish_fusion_debug_markers(
+        self,
+        header,
+        clusters: List[Cluster],
+        assignments: List[Assignment],
+        reports: List[DetectionDebugReport],
+    ) -> None:
+        if self.debug_cluster_candidates_pub is not None:
+            self.debug_cluster_candidates_pub.publish(
+                self._cluster_debug_markers(header, clusters, assignments)
+            )
+        if self.debug_bbox_support_pub is not None:
+            self.debug_bbox_support_pub.publish(
+                self._bbox_support_markers(header, reports, rejections_only=False)
+            )
+        if self.debug_rejections_pub is not None:
+            self.debug_rejections_pub.publish(
+                self._bbox_support_markers(header, reports, rejections_only=True)
+            )
+
+    def _cluster_debug_markers(
+        self,
+        header,
+        clusters: List[Cluster],
+        assignments: List[Assignment],
+    ) -> MarkerArray:
+        markers = MarkerArray()
+        markers.markers.append(self._clear_marker(header))
+        marker_id = 1
+        for cluster in clusters:
+            marker = self._sphere_marker(
+                header,
+                "accepted_cluster",
+                marker_id,
+                cluster.centroid_base,
+                0.22,
+                (0.0, 0.9, 1.0, 0.85),
+            )
+            markers.markers.append(marker)
+            marker_id += 1
+        for assignment in assignments:
+            if assignment.source != "sparse":
+                continue
+            marker = self._sphere_marker(
+                header,
+                "sparse_candidate",
+                marker_id,
+                assignment.cluster.centroid_base,
+                0.28,
+                (1.0, 0.55, 0.0, 0.9),
+            )
+            markers.markers.append(marker)
+            marker_id += 1
+        return markers
+
+    def _bbox_support_markers(
+        self,
+        header,
+        reports: List[DetectionDebugReport],
+        rejections_only: bool,
+    ) -> MarkerArray:
+        markers = MarkerArray()
+        markers.markers.append(self._clear_marker(header))
+        marker_id = 1
+        for report in reports:
+            is_assigned = bool(report.assigned_source)
+            if rejections_only and is_assigned:
+                continue
+            if not rejections_only and not is_assigned:
+                continue
+            position = report.support_centroid_base
+            if position is None:
+                position = np.array(
+                    [0.6, -2.5 + 0.25 * float(report.detection_index), 1.0],
+                    dtype=np.float64,
+                )
+            text = (
+                f"{report.detection_index}:{report.detection.color} "
+                f"raw={report.raw_projected_points} roi={report.roi_projected_points} "
+                f"cl={report.cluster_projected_points} {report.reason}"
+            )
+            color = (
+                (0.2, 1.0, 0.2, 0.9)
+                if is_assigned
+                else (1.0, 0.2, 0.2, 0.9)
+            )
+            if is_assigned:
+                namespace = (
+                    "bbox_sparse"
+                    if report.assigned_source == "sparse"
+                    else "bbox_supported"
+                )
+            else:
+                namespace = report.reason
+            markers.markers.append(
+                self._text_marker(header, namespace, marker_id, position, text, color)
+            )
+            marker_id += 1
+        return markers
+
+    @staticmethod
+    def _sphere_marker(header, namespace, marker_id, position, scale, color) -> Marker:
+        marker = Marker()
+        marker.header = header
+        marker.ns = namespace
+        marker.id = marker_id
+        marker.type = Marker.SPHERE
+        marker.action = Marker.ADD
+        marker.pose.position.x = float(position[0])
+        marker.pose.position.y = float(position[1])
+        marker.pose.position.z = float(position[2])
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = scale
+        marker.scale.y = scale
+        marker.scale.z = scale
+        marker.color.r = color[0]
+        marker.color.g = color[1]
+        marker.color.b = color[2]
+        marker.color.a = color[3]
+        return marker
+
+    @staticmethod
+    def _text_marker(header, namespace, marker_id, position, text, color) -> Marker:
+        marker = Marker()
+        marker.header = header
+        marker.ns = namespace
+        marker.id = marker_id
+        marker.type = Marker.TEXT_VIEW_FACING
+        marker.action = Marker.ADD
+        marker.pose.position.x = float(position[0])
+        marker.pose.position.y = float(position[1])
+        marker.pose.position.z = float(position[2]) + 0.4
+        marker.pose.orientation.w = 1.0
+        marker.scale.z = 0.18
+        marker.color.r = color[0]
+        marker.color.g = color[1]
+        marker.color.b = color[2]
+        marker.color.a = color[3]
+        marker.text = text
+        return marker
+
+    def _log_fusion_debug_summary(
+        self,
+        raw_point_count: int,
+        roi_point_count: int,
+        detections: List[Detection],
+        clusters: List[Cluster],
+        cluster_assignments: List[Assignment],
+        sparse_assignments: List[Assignment],
+        reports: List[DetectionDebugReport],
+    ) -> None:
+        compact_reports = []
+        for report in reports[:8]:
+            compact_reports.append(
+                f"#{report.detection_index}:{report.detection.color}"
+                f"(raw={report.raw_projected_points},roi={report.roi_projected_points},"
+                f"cl={report.cluster_projected_points},{report.reason})"
+            )
+        self._info_throttled(
+            "fusion_debug_summary",
+            "Fusion debug: "
+            f"raw={raw_point_count}, roi={roi_point_count}, "
+            f"detections={len(detections)}, clusters={len(clusters)}, "
+            f"cluster_assignments={len(cluster_assignments)}, "
+            f"sparse_assignments={len(sparse_assignments)}; "
+            + "; ".join(compact_reports),
+            period_sec=2.0,
+        )
+
+    def _cluster_pixel_summary(self, cluster: Cluster, camera_info: CameraInfo) -> str:
+        pixels = self._project_points(cluster.points_camera, camera_info)
+        if pixels.size == 0:
+            return "empty"
+        min_uv = pixels.min(axis=0)
+        max_uv = pixels.max(axis=0)
+        return (
+            f"({min_uv[0]:.1f}, {min_uv[1]:.1f})-"
+            f"({max_uv[0]:.1f}, {max_uv[1]:.1f})"
+        )
+
+    def _cluster_summaries(
+        self,
+        clusters: List[Cluster],
+        camera_info: CameraInfo,
+    ) -> str:
+        summaries = []
+        for index, cluster in enumerate(clusters[:5]):
+            centroid = cluster.centroid_base
+            summaries.append(
+                f"#{index}@base({centroid[0]:.2f}, {centroid[1]:.2f}, "
+                f"{centroid[2]:.2f})="
+                f"{self._cluster_pixel_summary(cluster, camera_info)}"
+            )
+        return "; ".join(summaries)
 
     def _cluster_to_cone(self, cluster: Cluster) -> ConeWithCovariance:
         cone = ConeWithCovariance()
@@ -613,8 +1437,14 @@ class PerceptionBaselineNode(Node):
         cone.point.y = float(cluster.centroid_base[1])
         cone.point.z = 0.0
 
-        var_x = self.fused_variance_x + self.range_variance_scale * cluster.range_m
-        var_y = self.fused_variance_y + self.range_variance_scale * cluster.range_m
+        base_var_x = (
+            self.sparse_variance_x if cluster.source == "sparse" else self.fused_variance_x
+        )
+        base_var_y = (
+            self.sparse_variance_y if cluster.source == "sparse" else self.fused_variance_y
+        )
+        var_x = base_var_x + self.range_variance_scale * cluster.range_m
+        var_y = base_var_y + self.range_variance_scale * cluster.range_m
         cone.covariance = [
             max(var_x, self.min_variance),
             0.0,
@@ -696,7 +1526,107 @@ class PerceptionBaselineNode(Node):
         normalized.orange_cones = self._normalize_cones(msg.orange_cones)
         normalized.big_orange_cones = self._normalize_cones(msg.big_orange_cones)
         normalized.unknown_color_cones = self._normalize_cones(msg.unknown_color_cones)
-        self.cones_pub.publish(normalized)
+        self._publish_cones(normalized)
+
+    def _publish_cones(self, msg: ConeArrayWithCovariance) -> None:
+        self.cones_pub.publish(msg)
+        self.cones_viz_pub.publish(self._cones_to_markers(msg, self.marker_scale))
+
+    @staticmethod
+    def _viz_topic_for(topic: str) -> str:
+        return topic.rstrip("/") + "/viz"
+
+    @classmethod
+    def _cones_to_markers(
+        cls,
+        msg: ConeArrayWithCovariance,
+        marker_scale: float = 0.25,
+    ) -> MarkerArray:
+        markers = MarkerArray()
+        markers.markers.append(cls._clear_marker(msg.header))
+        markers.markers.extend(
+            [
+                cls._cone_list_marker(
+                    msg.header,
+                    "blue",
+                    0,
+                    msg.blue_cones,
+                    (0.0, 0.2, 1.0, 0.95),
+                    marker_scale,
+                ),
+                cls._cone_list_marker(
+                    msg.header,
+                    "yellow",
+                    1,
+                    msg.yellow_cones,
+                    (1.0, 0.9, 0.0, 0.95),
+                    marker_scale,
+                ),
+                cls._cone_list_marker(
+                    msg.header,
+                    "orange",
+                    2,
+                    msg.orange_cones,
+                    (1.0, 0.45, 0.0, 0.95),
+                    marker_scale,
+                ),
+                cls._cone_list_marker(
+                    msg.header,
+                    "big_orange",
+                    3,
+                    msg.big_orange_cones,
+                    (1.0, 0.2, 0.0, 0.95),
+                    marker_scale,
+                ),
+                cls._cone_list_marker(
+                    msg.header,
+                    "unknown",
+                    4,
+                    msg.unknown_color_cones,
+                    (0.7, 0.7, 0.7, 0.95),
+                    marker_scale,
+                ),
+            ]
+        )
+        return markers
+
+    @staticmethod
+    def _clear_marker(header) -> Marker:
+        marker = Marker()
+        marker.header = header
+        marker.action = Marker.DELETEALL
+        return marker
+
+    @staticmethod
+    def _cone_list_marker(
+        header,
+        namespace,
+        marker_id,
+        cones,
+        color,
+        marker_scale: float,
+    ) -> Marker:
+        marker = Marker()
+        marker.header = header
+        marker.ns = namespace
+        marker.id = marker_id
+        marker.type = Marker.SPHERE_LIST
+        marker.action = Marker.ADD
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = marker_scale
+        marker.scale.y = marker_scale
+        marker.scale.z = marker_scale
+        marker.color.r = color[0]
+        marker.color.g = color[1]
+        marker.color.b = color[2]
+        marker.color.a = color[3]
+        for cone in cones:
+            point = Point()
+            point.x = float(cone.point.x)
+            point.y = float(cone.point.y)
+            point.z = float(cone.point.z) + 0.5 * marker_scale
+            marker.points.append(point)
+        return marker
 
     def _normalize_cones(self, cones: Iterable[ConeWithCovariance]):
         normalized = []
@@ -738,6 +1668,22 @@ class PerceptionBaselineNode(Node):
             self.last_warning_time[key] = now
             self.get_logger().warn(message)
 
+    def _info_throttled(self, key: str, message: str, period_sec: float = 2.0) -> None:
+        now = time.monotonic()
+        key = f"info:{key}"
+        last_time = self.last_warning_time.get(key, 0.0)
+        if now - last_time >= period_sec:
+            self.last_warning_time[key] = now
+            self.get_logger().info(message)
+
+    @staticmethod
+    def _cone_count_summary(msg: ConeArrayWithCovariance) -> str:
+        return (
+            f"blue={len(msg.blue_cones)}, yellow={len(msg.yellow_cones)}, "
+            f"orange={len(msg.orange_cones)}, big_orange={len(msg.big_orange_cones)}, "
+            f"unknown={len(msg.unknown_color_cones)}"
+        )
+
     @staticmethod
     def _normalize_color(color: str) -> str:
         value = color.strip().lower().replace(" ", "_").replace("-", "_")
@@ -758,6 +1704,10 @@ class PerceptionBaselineNode(Node):
     @staticmethod
     def _stamp_to_sec(stamp) -> float:
         return float(stamp.sec) + float(stamp.nanosec) * 1.0e-9
+
+    @staticmethod
+    def _format_stamp(stamp) -> str:
+        return f"{int(stamp.sec)}.{int(stamp.nanosec):09d}"
 
     @staticmethod
     def _stamp_key(stamp) -> StampKey:

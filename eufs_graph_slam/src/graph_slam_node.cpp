@@ -19,7 +19,9 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "geometry_msgs/msg/point.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"

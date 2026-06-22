@@ -32,6 +32,7 @@
  *cones with noise.
  **/
 
+#include "gazebo_cone_plugins/cone_markers.hpp"
 #include "gazebo_cone_plugins/gazebo_ground_truth_cones.hpp"
 #include "eigen3/Eigen/Core"
 #include "eigen3/Eigen/Dense"
@@ -118,28 +119,48 @@ void GazeboGroundTruthCones::Load(gazebo::physics::ModelPtr _parent, sdf::Elemen
 
   // Setup the publishers
   // Ground truth cone publisher
+  std::string ground_truth_cones_topic_name_;
   if (!_sdf->HasElement("groundTruthConesTopicName")) {
     RCLCPP_FATAL(this->rosnode_->get_logger(),
                  "state_ground_truth plugin missing <groundTruthConesTopicName>, cannot proceed");
     return;
   } else {
-    std::string topic_name_ = _sdf->GetElement("groundTruthConesTopicName")->Get<std::string>();
+    ground_truth_cones_topic_name_ =
+        _sdf->GetElement("groundTruthConesTopicName")->Get<std::string>();
     this->ground_truth_cone_pub_ =
         this->rosnode_->create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(
-            topic_name_, 1);
+            ground_truth_cones_topic_name_, 1);
   }
 
+  std::string ground_truth_markers_topic_name_ =
+      getStringParameter(_sdf, "groundTruthConeMarkersTopicName",
+                         ground_truth_cones_topic_name_ + "/viz",
+                         "<groundTruthConesTopicName>/viz");
+  this->ground_truth_cone_markers_pub_ =
+      this->rosnode_->create_publisher<visualization_msgs::msg::MarkerArray>(
+          ground_truth_markers_topic_name_, 1);
+
   // Ground truth track publisher
+  std::string ground_truth_track_topic_name_;
   if (!_sdf->HasElement("groundTruthTrackTopicName")) {
     RCLCPP_FATAL(this->rosnode_->get_logger(),
                  "state_ground_truth plugin missing <groundTruthTrackTopicName>, cannot proceed");
     return;
   } else {
-    std::string topic_name_ = _sdf->GetElement("groundTruthTrackTopicName")->Get<std::string>();
+    ground_truth_track_topic_name_ =
+        _sdf->GetElement("groundTruthTrackTopicName")->Get<std::string>();
     this->ground_truth_track_pub_ =
         this->rosnode_->create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(
-            topic_name_, 1);
+            ground_truth_track_topic_name_, 1);
   }
+
+  std::string ground_truth_track_markers_topic_name_ =
+      getStringParameter(_sdf, "groundTruthTrackMarkersTopicName",
+                         ground_truth_track_topic_name_ + "/viz",
+                         "<groundTruthTrackTopicName>/viz");
+  this->ground_truth_track_markers_pub_ =
+      this->rosnode_->create_publisher<visualization_msgs::msg::MarkerArray>(
+          ground_truth_track_markers_topic_name_, 1);
 
   if (!_sdf->HasElement("pubGroundTruth")) {
     RCLCPP_FATAL(this->rosnode_->get_logger(),
@@ -151,16 +172,26 @@ void GazeboGroundTruthCones::Load(gazebo::physics::ModelPtr _parent, sdf::Elemen
 
   if (this->simulate_perception_) {
     // Camera cone publisher
+    std::string perception_cones_topic_name_;
     if (!_sdf->HasElement("perceptionConesTopicName")) {
       RCLCPP_FATAL(this->rosnode_->get_logger(),
                    "state_ground_truth plugin missing <perceptionConesTopicName>, cannot proceed");
       return;
     } else {
-      std::string topic_name_ = _sdf->GetElement("perceptionConesTopicName")->Get<std::string>();
+      perception_cones_topic_name_ =
+          _sdf->GetElement("perceptionConesTopicName")->Get<std::string>();
       this->perception_cone_pub_ =
           this->rosnode_->create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(
-              topic_name_, 1);
+              perception_cones_topic_name_, 1);
     }
+
+    std::string perception_markers_topic_name_ =
+        getStringParameter(_sdf, "perceptionConeMarkersTopicName",
+                           perception_cones_topic_name_ + "/viz",
+                           "<perceptionConesTopicName>/viz");
+    this->perception_cone_markers_pub_ =
+        this->rosnode_->create_publisher<visualization_msgs::msg::MarkerArray>(
+            perception_markers_topic_name_, 1);
   }
 
   // Setup Services
@@ -196,11 +227,20 @@ void GazeboGroundTruthCones::UpdateChild() {
   // update rate)
   this->time_last_published = cur_time;
 
+  bool ground_truth_cones_requested =
+      this->ground_truth_cone_pub_->get_subscription_count() > 0 ||
+      this->ground_truth_cone_markers_pub_->get_subscription_count() > 0;
+  bool ground_truth_track_requested =
+      this->ground_truth_track_pub_->get_subscription_count() > 0 ||
+      this->ground_truth_track_markers_pub_->get_subscription_count() > 0;
+  bool perception_requested =
+      this->simulate_perception_ &&
+      (this->perception_cone_pub_->get_subscription_count() > 0 ||
+       this->perception_cone_markers_pub_->get_subscription_count() > 0);
+
   // Check if there is a reason to publish the data
-  if (this->ground_truth_cone_pub_->get_subscription_count() == 0 &&
-      this->ground_truth_track_pub_->get_subscription_count() == 0 &&
-      (!this->simulate_perception_ ||
-       this->perception_cone_pub_->get_subscription_count() == 0)) {
+  if ((!pub_ground_truth || (!ground_truth_cones_requested && !ground_truth_track_requested)) &&
+      !perception_requested) {
     RCLCPP_DEBUG(this->rosnode_->get_logger(),
                  "Nobody is listening to cone_ground_truth. Doing nothing");
     return;
@@ -228,6 +268,11 @@ void GazeboGroundTruthCones::UpdateChild() {
   if (this->ground_truth_track_pub_->get_subscription_count() > 0 && pub_ground_truth) {
     this->ground_truth_track_pub_->publish(ground_truth_track_message);
   }
+  if (this->ground_truth_track_markers_pub_->get_subscription_count() > 0 &&
+      pub_ground_truth) {
+    this->ground_truth_track_markers_pub_->publish(
+        cone_markers::fromConeArray(ground_truth_track_message));
+  }
 
   eufs_msgs::msg::ConeArrayWithCovariance ground_truth_cones_message =
       processCones(cone_arrays_message);
@@ -236,13 +281,23 @@ void GazeboGroundTruthCones::UpdateChild() {
   if (this->ground_truth_cone_pub_->get_subscription_count() > 0 && pub_ground_truth) {
     this->ground_truth_cone_pub_->publish(ground_truth_cones_message);
   }
+  if (this->ground_truth_cone_markers_pub_->get_subscription_count() > 0 &&
+      pub_ground_truth) {
+    this->ground_truth_cone_markers_pub_->publish(
+        cone_markers::fromConeArray(ground_truth_cones_message));
+  }
 
   // Publish the simulated perception cones if it has subscribers
-  if (this->simulate_perception_ &&
-      this->perception_cone_pub_->get_subscription_count() > 0) {
+  if (perception_requested) {
     eufs_msgs::msg::ConeArrayWithCovariance perception_cones_message =
         addNoisePerception(ground_truth_cones_message, perception_lidar_noise_);
-    this->perception_cone_pub_->publish(perception_cones_message);
+    if (this->perception_cone_pub_->get_subscription_count() > 0) {
+      this->perception_cone_pub_->publish(perception_cones_message);
+    }
+    if (this->perception_cone_markers_pub_->get_subscription_count() > 0) {
+      this->perception_cone_markers_pub_->publish(
+          cone_markers::fromConeArray(perception_cones_message));
+    }
   }
 }
 

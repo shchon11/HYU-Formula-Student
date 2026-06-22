@@ -3,6 +3,15 @@
 
 ## 0. Quick Start: 의존성 설치
 
+이 저장소는 두 가지 환경에서 사용할 수 있습니다.
+
+| 환경 | 상태 | 비고 |
+| --- | --- | --- |
+| Ubuntu 22.04 + ROS 2 Humble + Docker | 문서상의 기본 경로 | `scripts/hyu-docker`는 `eufs-sim:humble` Docker 이미지가 이미 있거나 별도로 제공된다는 전제입니다. |
+| Ubuntu 20.04 + ROS 2 Galactic + native build | 2026-06-03 검증 완료 | `/opt/ros/galactic`과 conda 환경 `eufs` 기준으로 전체 빌드/테스트가 통과했습니다. |
+
+### Humble 기준 시스템 패키지
+
 ROS 2 Humble이 이미 설치되어 있다는 전제에서, 시뮬레이터에 필요한 패키지는 아래처럼 설치합니다.
 
 ```bash
@@ -17,6 +26,25 @@ sudo apt install -y \
   ros-humble-gazebo-plugins
 ```
 
+### Galactic/Focal 기준 시스템 패키지
+
+Ubuntu 20.04 + ROS 2 Galactic 환경에서는 Humble 패키지 대신 Galactic 패키지를 사용합니다.
+
+```bash
+sudo apt update
+sudo apt install -y \
+  python3-colcon-common-extensions \
+  python3-rosdep \
+  python3-pandas \
+  gazebo11 \
+  ros-galactic-gazebo-dev \
+  ros-galactic-gazebo-ros \
+  ros-galactic-gazebo-plugins \
+  ros-galactic-tf2-geometry-msgs \
+  ros-galactic-libg2o \
+  docker.io
+```
+
 `rosdep`을 처음 쓰는 PC라면 한 번만 초기화합니다.
 
 ```bash
@@ -27,26 +55,29 @@ rosdep update
 워크스페이스 의존성 확인 및 설치:
 
 ```bash
-cd /home/shchon11/formula_student
-source /opt/ros/humble/setup.zsh
+cd /home/dohyun/FS/HYU-Formula-Student
+source /opt/ros/galactic/setup.bash
 
-rosdep check --from-paths . --ignore-src
-rosdep install --from-paths . --ignore-src -r -y
+rosdep check --from-paths . --ignore-src --skip-keys ament_python
+rosdep install --from-paths . --ignore-src -r -y --skip-keys ament_python
 ```
+
+`ament_python`은 ROS 패키지의 build type으로 쓰이며, Ubuntu 20.04/Galactic rosdep key로는 해석되지 않을 수 있습니다. `python3-rosdep`과 ROS Galactic의 ament 패키지가 설치되어 있으면 위처럼 skip해도 워크스페이스 빌드에는 문제가 없습니다.
 
 설치 확인:
 
 ```bash
-dpkg -l | grep -E "python3-pandas|gazebo|ros-humble-gazebo"
+dpkg -l | grep -E "python3-pandas|gazebo|ros-galactic-gazebo|ros-galactic-libg2o|docker.io"
 gazebo --version
+sudo docker info
 ```
 
 ## 1. 기본 구조
 
-현재 워크스페이스는 보통 아래처럼 둡니다.
+현재 검증된 워크스페이스는 아래 경로에 있습니다.
 
 ```bash
-/home/shchon11/formula_student
+/home/dohyun/FS/HYU-Formula-Student
 ├── eufs_sim
 ├── eufs_msgs
 ├── eufs_graph_slam
@@ -72,7 +103,7 @@ gazebo --version
 
 ## Perception + SLAM Quick Start
 
-Perception baseline과 graph SLAM 통합 실행은 아래 흐름을 사용합니다.
+Perception baseline과 graph SLAM 통합 실행은 Docker 이미지가 준비된 Humble 환경에서는 아래 흐름을 사용합니다.
 
 ```bash
 cd /path/to/HYU-FS-Sim
@@ -84,6 +115,26 @@ cd /path/to/HYU-FS-Sim
 ./scripts/hyu-docker slam-bg
 ./scripts/hyu-docker status
 ```
+
+주의: `scripts/hyu-docker`는 기본 이미지 이름을 `eufs-sim:humble`로 사용합니다. 이 저장소에는 해당 이미지를 빌드하는 Dockerfile이 포함되어 있지 않으므로, 로컬에 이미지가 없으면 Docker 실행 단계는 먼저 실패합니다. 이 경우 이미지 제공 위치를 확인하거나 아래 native build 경로를 사용합니다.
+
+Galactic native 환경에서는 아래처럼 g2o를 준비하고 빌드합니다.
+
+```bash
+cd /home/dohyun/FS/HYU-Formula-Student
+
+./scripts/hyu-docker setup-g2o
+
+conda run -n eufs bash -lc '
+  source /opt/ros/galactic/setup.bash &&
+  export EUFS_MASTER=/home/dohyun/FS/HYU-Formula-Student &&
+  colcon build --symlink-install --cmake-args \
+    -DG2O_VENDOR_SOURCE_DIR=/home/dohyun/FS/HYU-Formula-Student/g2o \
+    -DG2O_USE_LOGGING=OFF
+'
+```
+
+`-DG2O_USE_LOGGING=OFF`는 Ubuntu 20.04의 `spdlog` 헤더 버전과 최신 g2o 소스의 호환성 문제를 피하기 위한 옵션입니다.
 
 정상 상태에서는 `/cones`를 `perception_baseline_node`가 publish하고,
 `graph_slam`이 subscribe합니다.
@@ -99,22 +150,23 @@ cd /path/to/HYU-FS-Sim
 설치 확인:
 
 ```bash
-dpkg -l | grep -E "python3-pandas|gazebo|ros-humble-gazebo"
+dpkg -l | grep -E "python3-pandas|gazebo|ros-galactic-gazebo|ros-galactic-libg2o|docker.io"
 gazebo --version
+sudo docker info
 ```
 
 ROS 의존성 확인:
 
 ```bash
-cd /home/shchon11/formula_student
-source /opt/ros/humble/setup.zsh
-rosdep check --from-paths . --ignore-src
+cd /home/dohyun/FS/HYU-Formula-Student
+source /opt/ros/galactic/setup.bash
+rosdep check --from-paths . --ignore-src --skip-keys ament_python
 ```
 
 부족한 의존성이 있으면:
 
 ```bash
-rosdep install --from-paths . --ignore-src -r -y
+rosdep install --from-paths . --ignore-src -r -y --skip-keys ament_python
 ```
 
 ## 3. 빌드
@@ -122,19 +174,21 @@ rosdep install --from-paths . --ignore-src -r -y
 `eufs_tracks` launch 파일에서 `EUFS_MASTER` 환경변수를 사용하므로 워크스페이스 루트를 지정해둡니다.
 
 ```bash
-cd /home/shchon11/formula_student
+cd /home/dohyun/FS/HYU-Formula-Student
 export EUFS_MASTER=$PWD
 
-source /opt/ros/humble/setup.zsh
-colcon build --symlink-install
-source install/setup.zsh
+source /opt/ros/galactic/setup.bash
+colcon build --symlink-install --cmake-args \
+  -DG2O_VENDOR_SOURCE_DIR=$PWD/g2o \
+  -DG2O_USE_LOGGING=OFF
+source install/setup.bash
 ```
 
 `eufs_plugins`만 다시 빌드하고 싶으면:
 
 ```bash
 colcon build --symlink-install --packages-select eufs_plugins
-source install/setup.zsh
+source install/setup.bash
 ```
 
 ## 4. 실행 방법
@@ -142,10 +196,10 @@ source install/setup.zsh
 ### 런처 GUI로 실행
 
 ```bash
-cd /home/shchon11/formula_student
+cd /home/dohyun/FS/HYU-Formula-Student
 export EUFS_MASTER=$PWD
-source /opt/ros/humble/setup.zsh
-source install/setup.zsh
+source /opt/ros/galactic/setup.bash
+source install/setup.bash
 
 ros2 launch eufs_launcher eufs_launcher.launch.py
 ```
@@ -398,7 +452,7 @@ eufs_sim/eufs_plugins/urdf/eufs_plugins.gazebo.xacro
 
 ```bash
 colcon build --symlink-install --packages-select eufs_sensors eufs_racecar eufs_plugins
-source install/setup.zsh
+source install/setup.bash
 ```
 
 ## 9. 주요 서비스
@@ -469,10 +523,10 @@ AS_FINISHED
 `EUFS_MASTER`와 setup sourcing을 확인합니다.
 
 ```bash
-cd /home/shchon11/formula_student
+cd /home/dohyun/FS/HYU-Formula-Student
 export EUFS_MASTER=$PWD
-source /opt/ros/humble/setup.zsh
-source install/setup.zsh
+source /opt/ros/galactic/setup.bash
+source install/setup.bash
 ```
 
 plugin library가 있는지도 확인합니다.
@@ -486,8 +540,10 @@ ls install/eufs_plugins/lib
 워크스페이스 전체를 빌드하고 setup을 다시 source합니다.
 
 ```bash
-colcon build --symlink-install
-source install/setup.zsh
+colcon build --symlink-install --cmake-args \
+  -DG2O_VENDOR_SOURCE_DIR=$PWD/g2o \
+  -DG2O_USE_LOGGING=OFF
+source install/setup.bash
 ros2 interface show eufs_msgs/msg/CanState
 ```
 
@@ -513,7 +569,7 @@ ROS 2 Humble/Jammy의 PyQt는 일부 Qt 함수에 `float` 인자를 허용하지
 
 ```bash
 colcon build --symlink-install --packages-select eufs_launcher eufs_rqt
-source install/setup.zsh
+source install/setup.bash
 ```
 
 ### `/cmd`를 보내도 차가 안 움직이는 경우
