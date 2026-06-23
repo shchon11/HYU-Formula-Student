@@ -1,0 +1,851 @@
+## sparse support points 5s
+header:
+  stamp:
+    sec: 6697
+    nanosec: 953000000
+  frame_id: base_footprint
+height: 1
+width: 2
+fields:
+- name: x
+  offset: 0
+  datatype: 7
+  count: 1
+- name: y
+  offset: 4
+  datatype: 7
+  count: 1
+- name: z
+  offset: 8
+  datatype: 7
+  count: 1
+is_bigendian: false
+point_step: 12
+row_step: 24
+data:
+- 79
+- 144
+- 193
+- 64
+- 147
+- 218
+- 241
+- 191
+- 148
+- 88
+- 217
+- 61
+- 118
+- 67
+- 193
+- 64
+- 127
+- 112
+- 233
+- 191
+- 199
+- 218
+- 218
+- 61
+is_dense: true
+---
+header:
+  stamp:
+    sec: 6698
+    nanosec: 53000000
+  frame_id: base_footprint
+height: 1
+width: 2
+fields:
+- name: x
+  offset: 0
+  datatype: 7
+  count: 1
+- name: y
+  offset: 4
+  datatype: 7
+  count: 1
+- name: z
+  offset: 8
+  datatype: 7
+  count: 1
+is_bigendian: false
+point_step: 12
+row_step: 24
+data:
+- 12
+- 206
+- 193
+- 64
+- 15
+- 63
+- 242
+- 191
+- 238
+- 120
+- 215
+- 61
+- 11
+- 168
+- 193
+- 64
+- 210
+- 14
+- 234
+- 191
+- 204
+- 204
+- 215
+- 61
+is_dense: true
+---
+header:
+  stamp:
+    sec: 6698
+    nanosec: 153000000
+  frame_id: base_footprint
+height: 1
+width: 2
+fields:
+- name: x
+  offset: 0
+  datatype: 7
+  count: 1
+- name: y
+  offset: 4
+  datatype: 7
+  count: 1
+- name: z
+  offset: 8
+  datatype: 7
+  count: 1
+is_bigendian: false
+point_step: 12
+row_step: 24
+data:
+- 186
+- 126
+- 193
+- 64
+- 245
+- 189
+- 241
+- 191
+- 43
+- 225
+- 217
+- 61
+- 28
+- 17
+- 193
+- 64
+- 59
+- 33
+- 233
+- 191
+- 67
+- 98
+- 220
+- 61
+is_dense: true
+---
+header:
+  stamp:
+    sec: 6698
+    nanosec: 253000000
+  frame_id: base_footprint
+height: 1
+width: 2
+fields:
+- name: x
+  offset: 0
+  datatype: 7
+  count: 1
+- name: y
+  offset: 4
+  datatype: 7
+  count: 1
+- name: z
+  offset: 8
+  datatype: 7
+  count: 1
+is_bigendian: false
+point_step: 12
+row_step: 24
+data:
+- 44
+- 83
+- 193
+- 64
+- 18
+- 119
+- 241
+- 191
+- 143
+- 51
+- 219
+- 61
+- 103
+- 25
+- 193
+- 64
+- 72
+- 46
+- 233
+- 191
+- 204
+- 33
+- 220
+- 61
+is_dense: true
+---
+header:
+  stamp:
+    sec: 6698
+    nanosec: 253000000
+  frame_id: base_footprint
+height: 1
+width: 2
+fields:
+- name: x
+  offset: 0
+  datatype: 7
+  count: 1
+- name: y
+  offset: 4
+  datatype: 7
+  count: 1
+- name: z
+  offset: 8
+  datatype: 7
+  count: 1
+is_bigendian: false
+point_step: 12
+row_step: 24
+data:
+- 44
+- 83
+- 193
+- 64
+- 18
+- 119
+- 241
+- 191
+- 143
+- 51
+- 219
+- 61
+- 103
+- 25
+- 193
+- 64
+- 72
+- 46
+- 233
+- 191
+- 204
+- 33
+- 220
+- 61
+is_dense: true
+---
+header:
+  stamp:
+    sec: 6698
+    nanosec: 353000000
+  frame_id: base_footprint
+height: 1
+width: 2
+fields:
+- name: x
+  offset: 0
+  datatype: 7
+  count: 1
+- name: y
+  offset: 4
+  datatype: 7
+  count: 1
+- name: z
+  offset: 8
+  datatype: 7
+  count: 1
+is_bigendian: false
+point_step: 12
+row_step: 24
+data:
+- 161
+- 129
+- 193
+- 64
+- 175
+- 194
+- 241
+- 191
+- 162
+- 202
+- 217
+- 61
+- 127
+- 55
+- 193
+- 64
+- 168
+- 93
+- 233
+- 191
+- 205
+- 55
+- 219
+- 61
+is_dense: true
+---
+header:
+  stamp:
+    sec: 6698
+    nanosec: 453000000
+  frame_id: base_footprint
+height: 1
+width: 2
+fields:
+- name: x
+  offset: 0
+  datatype: 7
+  count: 1
+- name: y
+  offset: 4
+  datatype: 7
+  count: 1
+- name: z
+  offset: 8
+  datatype: 7
+  count: 1
+is_bigendian: false
+point_step: 12
+row_step: 24
+data:
+- 193
+- 130
+- 193
+- 64
+- 132
+- 196
+- 241
+- 191
+- 229
+- 193
+- 217
+- 61
+- 173
+- 61
+- 193
+- 64
+- 98
+- 103
+- 233
+- 191
+- 196
+- 7
+- 219
+- 61
+is_dense: true
+---
+header:
+  stamp:
+    sec: 6698
+    nanosec: 553000000
+  frame_id: base_footprint
+height: 1
+width: 2
+fields:
+- name: x
+  offset: 0
+  datatype: 7
+  count: 1
+- name: y
+  offset: 4
+  datatype: 7
+  count: 1
+- name: z
+  offset: 8
+  datatype: 7
+  count: 1
+is_bigendian: false
+point_step: 12
+row_step: 24
+data:
+- 177
+- 53
+- 193
+- 64
+- 22
+- 71
+- 241
+- 191
+- 153
+- 24
+- 220
+- 61
+- 102
+- 150
+- 193
+- 64
+- 12
+- 243
+- 233
+- 191
+- 248
+- 85
+- 216
+- 61
+is_dense: true
+---
+header:
+  stamp:
+    sec: 6698
+    nanosec: 653000000
+  frame_id: base_footprint
+height: 1
+width: 2
+fields:
+- name: x
+  offset: 0
+  datatype: 7
+  count: 1
+- name: y
+  offset: 4
+  datatype: 7
+  count: 1
+- name: z
+  offset: 8
+  datatype: 7
+  count: 1
+is_bigendian: false
+point_step: 12
+row_step: 24
+data:
+- 83
+- 121
+- 193
+- 64
+- 43
+- 181
+- 241
+- 191
+- 38
+- 11
+- 218
+- 61
+- 163
+- 1
+- 193
+- 64
+- 224
+- 8
+- 233
+- 191
+- 140
+- 218
+- 220
+- 61
+is_dense: true
+---
+header:
+  stamp:
+    sec: 6698
+    nanosec: 754000000
+  frame_id: base_footprint
+height: 1
+width: 2
+fields:
+- name: x
+  offset: 0
+  datatype: 7
+  count: 1
+- name: y
+  offset: 4
+  datatype: 7
+  count: 1
+- name: z
+  offset: 8
+  datatype: 7
+  count: 1
+is_bigendian: false
+point_step: 12
+row_step: 24
+data:
+- 105
+- 36
+- 193
+- 64
+- 245
+- 42
+- 241
+- 191
+- 222
+- 158
+- 220
+- 61
+- 153
+- 63
+- 193
+- 64
+- 105
+- 106
+- 233
+- 191
+- 207
+- 248
+- 218
+- 61
+is_dense: true
+---
+header:
+  stamp:
+    sec: 6698
+    nanosec: 853000000
+  frame_id: base_footprint
+height: 1
+width: 2
+fields:
+- name: x
+  offset: 0
+  datatype: 7
+  count: 1
+- name: y
+  offset: 4
+  datatype: 7
+  count: 1
+- name: z
+  offset: 8
+  datatype: 7
+  count: 1
+is_bigendian: false
+point_step: 12
+row_step: 24
+data:
+- 210
+- 61
+- 193
+- 64
+- 82
+- 84
+- 241
+- 191
+- 113
+- 217
+- 219
+- 61
+- 142
+- 174
+- 193
+- 64
+- 19
+- 25
+- 234
+- 191
+- 44
+- 154
+- 215
+- 61
+is_dense: true
+---
+header:
+  stamp:
+    sec: 6698
+    nanosec: 853000000
+  frame_id: base_footprint
+height: 1
+width: 2
+fields:
+- name: x
+  offset: 0
+  datatype: 7
+  count: 1
+- name: y
+  offset: 4
+  datatype: 7
+  count: 1
+- name: z
+  offset: 8
+  datatype: 7
+  count: 1
+is_bigendian: false
+point_step: 12
+row_step: 24
+data:
+- 210
+- 61
+- 193
+- 64
+- 82
+- 84
+- 241
+- 191
+- 113
+- 217
+- 219
+- 61
+- 142
+- 174
+- 193
+- 64
+- 19
+- 25
+- 234
+- 191
+- 44
+- 154
+- 215
+- 61
+is_dense: true
+---
+header:
+  stamp:
+    sec: 6698
+    nanosec: 953000000
+  frame_id: base_footprint
+height: 1
+width: 2
+fields:
+- name: x
+  offset: 0
+  datatype: 7
+  count: 1
+- name: y
+  offset: 4
+  datatype: 7
+  count: 1
+- name: z
+  offset: 8
+  datatype: 7
+  count: 1
+is_bigendian: false
+point_step: 12
+row_step: 24
+data:
+- 116
+- 220
+- 193
+- 64
+- 131
+- 86
+- 242
+- 191
+- 252
+- 8
+- 215
+- 61
+- 128
+- 118
+- 193
+- 64
+- 212
+- 192
+- 233
+- 191
+- 251
+- 77
+- 217
+- 61
+is_dense: true
+---
+header:
+  stamp:
+    sec: 6699
+    nanosec: 53000000
+  frame_id: base_footprint
+height: 1
+width: 2
+fields:
+- name: x
+  offset: 0
+  datatype: 7
+  count: 1
+- name: y
+  offset: 4
+  datatype: 7
+  count: 1
+- name: z
+  offset: 8
+  datatype: 7
+  count: 1
+is_bigendian: false
+point_step: 12
+row_step: 24
+data:
+- 220
+- 44
+- 193
+- 64
+- 183
+- 56
+- 241
+- 191
+- 54
+- 93
+- 220
+- 61
+- 146
+- 39
+- 193
+- 64
+- 149
+- 68
+- 233
+- 191
+- 164
+- 179
+- 219
+- 61
+is_dense: true
+---
+header:
+  stamp:
+    sec: 6699
+    nanosec: 153000000
+  frame_id: base_footprint
+height: 1
+width: 2
+fields:
+- name: x
+  offset: 0
+  datatype: 7
+  count: 1
+- name: y
+  offset: 4
+  datatype: 7
+  count: 1
+- name: z
+  offset: 8
+  datatype: 7
+  count: 1
+is_bigendian: false
+point_step: 12
+row_step: 24
+data:
+- 25
+- 6
+- 194
+- 64
+- 73
+- 154
+- 242
+- 191
+- 115
+- 197
+- 213
+- 61
+- 227
+- 107
+- 193
+- 64
+- 34
+- 176
+- 233
+- 191
+- 124
+- 160
+- 217
+- 61
+is_dense: true
+---
+header:
+  stamp:
+    sec: 6699
+    nanosec: 253000000
+  frame_id: base_footprint
+height: 1
+width: 2
+fields:
+- name: x
+  offset: 0
+  datatype: 7
+  count: 1
+- name: y
+  offset: 4
+  datatype: 7
+  count: 1
+- name: z
+  offset: 8
+  datatype: 7
+  count: 1
+is_bigendian: false
+point_step: 12
+row_step: 24
+data:
+- 38
+- 18
+- 193
+- 64
+- 62
+- 13
+- 241
+- 191
+- 188
+- 44
+- 221
+- 61
+- 191
+- 43
+- 193
+- 64
+- 41
+- 75
+- 233
+- 191
+- 42
+- 147
+- 219
+- 61
+is_dense: true
+---
+header:
+  stamp:
+    sec: 6699
+    nanosec: 353000000
+  frame_id: base_footprint
+height: 1
+width: 2
+fields:
+- name: x
+  offset: 0
+  datatype: 7
+  count: 1
+- name: y
+  offset: 4
+  datatype: 7
+  count: 1
+- name: z
+  offset: 8
+  datatype: 7
+  count: 1
+is_bigendian: false
+point_step: 12
+row_step: 24
+data:
+- 239
+- 90
+- 193
+- 64
+- 179
+- 131
+- 241
+- 191
+- 68
+- 247
+- 218
+- 61
+- 156
+- 71
+- 193
+- 64
+- 6
+- 119
+- 233
+- 191
+- 139
+- 186
+- 218
+- 61
+is_dense: true
+---

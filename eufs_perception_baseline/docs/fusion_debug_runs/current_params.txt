@@ -1,0 +1,27 @@
+## perception parameters
+### bbox_topic
+String value is: /yolo_bounding_boxes
+### camera_info_topic
+String value is: /zed/left/camera_info
+### camera_frame
+String value is: zed_left_camera_optical_frame
+### projection_model
+String value is: pinhole
+### sync_tolerance_sec
+Double value is: 2.0
+### self_mask_enabled
+Boolean value is: True
+### sparse_near_min_points
+Integer value is: 4
+### sparse_mid_min_points
+Integer value is: 3
+### sparse_far_min_points
+Integer value is: 2
+### sparse_bbox_margin_px
+Double value is: 4.0
+### sparse_bbox_margin_ratio
+Double value is: 0.15
+### fusion_enabled
+Boolean value is: True
+### publish_fusion_debug
+Boolean value is: True

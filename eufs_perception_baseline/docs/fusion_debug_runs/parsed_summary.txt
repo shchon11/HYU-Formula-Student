@@ -1,0 +1,57 @@
+## yolo message count approximation
+8
+## cones message count approximation
+52
+## rejections text counts
+    290 raw=0 roi=0 cl=0 no_lidar_support
+    116 raw=2 roi=1 cl=0 insufficient_cluster_support
+     58 raw=3 roi=0 cl=0 rejected_by_roi_or_self_ground
+     58 raw=3 roi=1 cl=0 insufficient_cluster_support
+      1 raw=37 roi=21 cl=18 assigned_cluster
+     56 raw=37 roi=22 cl=18 assigned_cluster
+     58 raw=37 roi=22 cl=18 duplicate_or_low_score
+     58 raw=4 roi=2 cl=0 insufficient_cluster_support
+     49 raw=42 roi=18 cl=13 duplicate_or_low_score
+      6 raw=42 roi=19 cl=13 duplicate_or_low_score
+      3 raw=43 roi=18 cl=14 duplicate_or_low_score
+     57 raw=5 roi=3 cl=3 assigned_cluster
+      4 raw=54 roi=28 cl=21 duplicate_or_low_score
+      1 raw=54 roi=29 cl=21 duplicate_or_low_score
+      5 raw=55 roi=27 cl=21 duplicate_or_low_score
+     27 raw=55 roi=28 cl=21 duplicate_or_low_score
+     17 raw=55 roi=29 cl=21 duplicate_or_low_score
+      1 raw=56 roi=27 cl=21 duplicate_or_low_score
+      2 raw=56 roi=28 cl=21 duplicate_or_low_score
+      1 raw=56 roi=29 cl=21 duplicate_or_low_score
+      9 raw=60 roi=39 cl=30 duplicate_or_low_score
+      5 raw=60 roi=40 cl=30 duplicate_or_low_score
+      9 raw=60 roi=40 cl=31 duplicate_or_low_score
+      4 raw=60 roi=41 cl=31 duplicate_or_low_score
+      1 raw=61 roi=39 cl=30 duplicate_or_low_score
+      4 raw=61 roi=39 cl=31 duplicate_or_low_score
+      1 raw=61 roi=39 cl=32 duplicate_or_low_score
+      1 raw=61 roi=40 cl=30 duplicate_or_low_score
+      7 raw=61 roi=40 cl=31 duplicate_or_low_score
+      7 raw=61 roi=40 cl=32 duplicate_or_low_score
+      5 raw=61 roi=41 cl=32 duplicate_or_low_score
+      2 raw=61 roi=42 cl=32 duplicate_or_low_score
+      1 raw=62 roi=39 cl=31 duplicate_or_low_score
+      2 raw=62 roi=40 cl=31 duplicate_or_low_score
+      1 raw=64 roi=44 cl=32 assigned_cluster
+      1 raw=64 roi=45 cl=33 assigned_cluster
+      1 raw=65 roi=42 cl=33 assigned_cluster
+      3 raw=65 roi=43 cl=32 assigned_cluster
+      6 raw=65 roi=43 cl=33 assigned_cluster
+      2 raw=65 roi=43 cl=34 assigned_cluster
+      7 raw=65 roi=44 cl=33 assigned_cluster
+      5 raw=65 roi=44 cl=34 assigned_cluster
+      3 raw=65 roi=45 cl=34 assigned_cluster
+     10 raw=66 roi=43 cl=33 assigned_cluster
+      2 raw=66 roi=43 cl=34 assigned_cluster
+      1 raw=66 roi=44 cl=33 assigned_cluster
+      7 raw=66 roi=44 cl=34 assigned_cluster
+      2 raw=66 roi=45 cl=34 assigned_cluster
+      2 raw=67 roi=43 cl=33 assigned_cluster
+      1 raw=67 roi=44 cl=34 assigned_cluster
+      2 raw=67 roi=45 cl=34 assigned_cluster
+      1 raw=68 roi=44 cl=35 assigned_cluster

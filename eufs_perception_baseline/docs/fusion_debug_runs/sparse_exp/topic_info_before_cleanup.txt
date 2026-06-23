@@ -1,0 +1,7 @@
+## topic info before cleanup
+Type: eufs_msgs/msg/ConeArrayWithCovariance
+Publisher count: 1
+Subscription count: 0
+Type: visualization_msgs/msg/MarkerArray
+Publisher count: 1
+Subscription count: 0

@@ -1,0 +1,988 @@
+header:
+  stamp:
+    sec: 7945
+    nanosec: 361000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.0885540876293796
+    y: 2.7524046103159585
+    z: 0.0
+  covariance:
+  - 0.0433408914235903
+  - 0.0
+  - 0.0
+  - 0.0433408914235903
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.0575537325386564
+    y: 2.771826587874314
+    z: 0.0
+  covariance:
+  - 0.042063471435506684
+  - 0.0
+  - 0.0
+  - 0.042063471435506684
+big_orange_cones:
+- point:
+    x: 3.034156523493648
+    y: -1.7399354672431946
+    z: 0.0
+  covariance:
+  - 0.04174881969047912
+  - 0.0
+  - 0.0
+  - 0.04174881969047912
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7945
+    nanosec: 461000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.090568387266525
+    y: 2.7535735766092935
+    z: 0.0
+  covariance:
+  - 0.043342049921895665
+  - 0.0
+  - 0.0
+  - 0.043342049921895665
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.059630807393873
+    y: 2.7752421806598533
+    z: 0.0
+  covariance:
+  - 0.04206538796832867
+  - 0.0
+  - 0.0
+  - 0.04206538796832867
+big_orange_cones:
+- point:
+    x: 3.033029496525074
+    y: -1.7386795854568482
+    z: 0.0
+  covariance:
+  - 0.04174801849444418
+  - 0.0
+  - 0.0
+  - 0.04174801849444418
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7945
+    nanosec: 561000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.086730946015613
+    y: 2.75127903620402
+    z: 0.0
+  covariance:
+  - 0.043339828960599625
+  - 0.0
+  - 0.0
+  - 0.043339828960599625
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.059661825492782
+    y: 2.7753388223976923
+    z: 0.0
+  covariance:
+  - 0.04206543192005242
+  - 0.0
+  - 0.0
+  - 0.04206543192005242
+big_orange_cones:
+- point:
+    x: 3.0333362918565343
+    y: -1.739032678604126
+    z: 0.0
+  covariance:
+  - 0.041748239379829535
+  - 0.0
+  - 0.0
+  - 0.041748239379829535
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7945
+    nanosec: 661000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.090802329660858
+    y: 2.753749450047811
+    z: 0.0
+  covariance:
+  - 0.043342192732796866
+  - 0.0
+  - 0.0
+  - 0.043342192732796866
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.0577164780589032
+    y: 2.772018005108011
+    z: 0.0
+  covariance:
+  - 0.04206359600460192
+  - 0.0
+  - 0.0
+  - 0.04206359600460192
+big_orange_cones:
+- point:
+    x: 3.033120976064989
+    y: -1.738773980140686
+    z: 0.0
+  covariance:
+  - 0.04174808164922721
+  - 0.0
+  - 0.0
+  - 0.04174808164922721
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7945
+    nanosec: 761000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.093085139652405
+    y: 2.755054553349813
+    z: 0.0
+  covariance:
+  - 0.04334350161174578
+  - 0.0
+  - 0.0
+  - 0.04334350161174578
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.05775920709611
+    y: 2.771903260000821
+    z: 0.0
+  covariance:
+  - 0.04206357329960582
+  - 0.0
+  - 0.0
+  - 0.04206357329960582
+big_orange_cones:
+- point:
+    x: 3.033893949448902
+    y: -1.7397584676742555
+    z: 0.0
+  covariance:
+  - 0.041748661775640655
+  - 0.0
+  - 0.0
+  - 0.041748661775640655
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7945
+    nanosec: 861000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.085409510897349
+    y: 2.7505735556284585
+    z: 0.0
+  covariance:
+  - 0.043339081602785504
+  - 0.0
+  - 0.0
+  - 0.043339081602785504
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.0575552529763828
+    y: 2.7715850287470323
+    z: 0.0
+  covariance:
+  - 0.042063390880115674
+  - 0.0
+  - 0.0
+  - 0.042063390880115674
+big_orange_cones:
+- point:
+    x: 3.032996277515283
+    y: -1.7385759115219117
+    z: 0.0
+  covariance:
+  - 0.04174797830503884
+  - 0.0
+  - 0.0
+  - 0.04174797830503884
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7945
+    nanosec: 961000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.080094368113305
+    y: 2.7474356492360434
+    z: 0.0
+  covariance:
+  - 0.04333601372044002
+  - 0.0
+  - 0.0
+  - 0.04333601372044002
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.0585131950131244
+    y: 2.77327823638916
+    z: 0.0
+  covariance:
+  - 0.0420643143619916
+  - 0.0
+  - 0.0
+  - 0.0420643143619916
+big_orange_cones:
+- point:
+    x: 3.0334307482940828
+    y: -1.739183964729309
+    z: 0.0
+  covariance:
+  - 0.041748317975074015
+  - 0.0
+  - 0.0
+  - 0.041748317975074015
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7945
+    nanosec: 961000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.080094368113305
+    y: 2.7474356492360434
+    z: 0.0
+  covariance:
+  - 0.04333601372044002
+  - 0.0
+  - 0.0
+  - 0.04333601372044002
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.0585131950131244
+    y: 2.77327823638916
+    z: 0.0
+  covariance:
+  - 0.0420643143619916
+  - 0.0
+  - 0.0
+  - 0.0420643143619916
+big_orange_cones:
+- point:
+    x: 3.0334307482940828
+    y: -1.739183964729309
+    z: 0.0
+  covariance:
+  - 0.041748317975074015
+  - 0.0
+  - 0.0
+  - 0.041748317975074015
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7946
+    nanosec: 61000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.08819485778395
+    y: 2.752132018407186
+    z: 0.0
+  covariance:
+  - 0.04334067161185775
+  - 0.0
+  - 0.0
+  - 0.04334067161185775
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.0600958062729835
+    y: 2.775650912317736
+    z: 0.0
+  covariance:
+  - 0.04206569748091412
+  - 0.0
+  - 0.0
+  - 0.04206569748091412
+big_orange_cones:
+- point:
+    x: 3.0334951338468006
+    y: -1.7391059708595276
+    z: 0.0
+  covariance:
+  - 0.04174832650733148
+  - 0.0
+  - 0.0
+  - 0.04174832650733148
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7946
+    nanosec: 161000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.085146201848642
+    y: 2.7504168351491294
+    z: 0.0
+  covariance:
+  - 0.04333892935927614
+  - 0.0
+  - 0.0
+  - 0.04333892935927614
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.058212946428919
+    y: 2.772714951942707
+    z: 0.0
+  covariance:
+  - 0.04206401396739655
+  - 0.0
+  - 0.0
+  - 0.04206401396739655
+big_orange_cones:
+- point:
+    x: 3.0333946361017405
+    y: -1.7389266419410705
+    z: 0.0
+  covariance:
+  - 0.0417482383193077
+  - 0.0
+  - 0.0
+  - 0.0417482383193077
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7946
+    nanosec: 261000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.091790482781065
+    y: 2.7543036142985025
+    z: 0.0
+  covariance:
+  - 0.04334275708382466
+  - 0.0
+  - 0.0
+  - 0.04334275708382466
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.0588249271463543
+    y: 2.773731017934865
+    z: 0.0
+  covariance:
+  - 0.04206458190045744
+  - 0.0
+  - 0.0
+  - 0.04206458190045744
+big_orange_cones:
+- point:
+    x: 3.0341610185389056
+    y: -1.739765625
+    z: 0.0
+  covariance:
+  - 0.04174877939691894
+  - 0.0
+  - 0.0
+  - 0.04174877939691894
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7946
+    nanosec: 361000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.083491479074546
+    y: 2.749438921610514
+    z: 0.0
+  covariance:
+  - 0.04333797404721934
+  - 0.0
+  - 0.0
+  - 0.04333797404721934
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.0566541319955034
+    y: 2.7704907779035897
+    z: 0.0
+  covariance:
+  - 0.04206268960541171
+  - 0.0
+  - 0.0
+  - 0.04206268960541171
+big_orange_cones:
+- point:
+    x: 3.0337415715836693
+    y: -1.7394115471839904
+    z: 0.0
+  covariance:
+  - 0.04174850939757497
+  - 0.0
+  - 0.0
+  - 0.04174850939757497
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7946
+    nanosec: 461000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.091823119336578
+    y: 2.7542858123779297
+    z: 0.0
+  covariance:
+  - 0.04334276828592523
+  - 0.0
+  - 0.0
+  - 0.04334276828592523
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.059117329319621
+    y: 2.7743758333140405
+    z: 0.0
+  covariance:
+  - 0.04206490678355105
+  - 0.0
+  - 0.0
+  - 0.04206490678355105
+big_orange_cones:
+- point:
+    x: 3.033103740427127
+    y: -1.7386235809326172
+    z: 0.0
+  covariance:
+  - 0.04174803677423903
+  - 0.0
+  - 0.0
+  - 0.04174803677423903
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7946
+    nanosec: 461000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.091823119336578
+    y: 2.7542858123779297
+    z: 0.0
+  covariance:
+  - 0.04334276828592523
+  - 0.0
+  - 0.0
+  - 0.04334276828592523
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.059117329319621
+    y: 2.7743758333140405
+    z: 0.0
+  covariance:
+  - 0.04206490678355105
+  - 0.0
+  - 0.0
+  - 0.04206490678355105
+big_orange_cones:
+- point:
+    x: 3.033103740427127
+    y: -1.7386235809326172
+    z: 0.0
+  covariance:
+  - 0.04174803677423903
+  - 0.0
+  - 0.0
+  - 0.04174803677423903
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7946
+    nanosec: 561000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.089471772419248
+    y: 2.7529091040293374
+    z: 0.0
+  covariance:
+  - 0.0433414134360379
+  - 0.0
+  - 0.0
+  - 0.0433414134360379
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.0595216603943673
+    y: 2.774937531043743
+    z: 0.0
+  covariance:
+  - 0.04206524520890483
+  - 0.0
+  - 0.0
+  - 0.04206524520890483
+big_orange_cones:
+- point:
+    x: 3.0318272178298473
+    y: -1.7374182868003845
+    z: 0.0
+  covariance:
+  - 0.041747183346280685
+  - 0.0
+  - 0.0
+  - 0.041747183346280685
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7946
+    nanosec: 661000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.085695925297021
+    y: 2.7507781187693277
+    z: 0.0
+  covariance:
+  - 0.04333925422639086
+  - 0.0
+  - 0.0
+  - 0.04333925422639086
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.059399510283148
+    y: 2.774613980589242
+    z: 0.0
+  covariance:
+  - 0.04206509128761915
+  - 0.0
+  - 0.0
+  - 0.04206509128761915
+big_orange_cones:
+- point:
+    x: 3.033328252737603
+    y: -1.7389975953102113
+    z: 0.0
+  covariance:
+  - 0.041748227168115666
+  - 0.0
+  - 0.0
+  - 0.041748227168115666
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7946
+    nanosec: 761000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.085670911251117
+    y: 2.7507170041402182
+    z: 0.0
+  covariance:
+  - 0.04333923024351849
+  - 0.0
+  - 0.0
+  - 0.04333923024351849
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.058470444316592
+    y: 2.7734133375102075
+    z: 0.0
+  covariance:
+  - 0.04206434390300149
+  - 0.0
+  - 0.0
+  - 0.04206434390300149
+big_orange_cones:
+- point:
+    x: 3.0336605805254186
+    y: -1.7393108057975768
+    z: 0.0
+  covariance:
+  - 0.041748449212659466
+  - 0.0
+  - 0.0
+  - 0.041748449212659466
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7946
+    nanosec: 861000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.088941613278782
+    y: 2.75262443224589
+    z: 0.0
+  covariance:
+  - 0.04334111325888973
+  - 0.0
+  - 0.0
+  - 0.04334111325888973
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.0582743961734327
+    y: 2.77311006085626
+    z: 0.0
+  covariance:
+  - 0.04206416942690712
+  - 0.0
+  - 0.0
+  - 0.04206416942690712
+big_orange_cones:
+- point:
+    x: 3.0326637307073674
+    y: -1.7381752681732179
+    z: 0.0
+  covariance:
+  - 0.04174773443108764
+  - 0.0
+  - 0.0
+  - 0.04174773443108764
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7946
+    nanosec: 961000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.089732037766158
+    y: 2.753096262613932
+    z: 0.0
+  covariance:
+  - 0.04334157056348562
+  - 0.0
+  - 0.0
+  - 0.04334157056348562
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.0573985089271987
+    y: 2.7713530721335577
+    z: 0.0
+  covariance:
+  - 0.04206325492201124
+  - 0.0
+  - 0.0
+  - 0.04206325492201124
+big_orange_cones:
+- point:
+    x: 3.032946412602937
+    y: -1.738495228290558
+    z: 0.0
+  covariance:
+  - 0.04174793661215947
+  - 0.0
+  - 0.0
+  - 0.04174793661215947
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7946
+    nanosec: 961000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.089732037766158
+    y: 2.753096262613932
+    z: 0.0
+  covariance:
+  - 0.04334157056348562
+  - 0.0
+  - 0.0
+  - 0.04334157056348562
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.0573985089271987
+    y: 2.7713530721335577
+    z: 0.0
+  covariance:
+  - 0.04206325492201124
+  - 0.0
+  - 0.0
+  - 0.04206325492201124
+big_orange_cones:
+- point:
+    x: 3.032946412602937
+    y: -1.738495228290558
+    z: 0.0
+  covariance:
+  - 0.04174793661215947
+  - 0.0
+  - 0.0
+  - 0.04174793661215947
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7947
+    nanosec: 61000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.086472514412871
+    y: 2.7511789798736572
+    z: 0.0
+  covariance:
+  - 0.04333969060872418
+  - 0.0
+  - 0.0
+  - 0.04333969060872418
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.058582254918268
+    y: 2.773787391596827
+    z: 0.0
+  covariance:
+  - 0.04206451095322127
+  - 0.0
+  - 0.0
+  - 0.04206451095322127
+big_orange_cones:
+- point:
+    x: 3.0328720161046636
+    y: -1.7384436702728272
+    z: 0.0
+  covariance:
+  - 0.04174789151985917
+  - 0.0
+  - 0.0
+  - 0.04174789151985917
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7947
+    nanosec: 161000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.083275587360656
+    y: 2.7493245601654053
+    z: 0.0
+  covariance:
+  - 0.04333785213157005
+  - 0.0
+  - 0.0
+  - 0.04333785213157005
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.0597061621731503
+    y: 2.7754554419681945
+    z: 0.0
+  covariance:
+  - 0.042065487515648016
+  - 0.0
+  - 0.0
+  - 0.042065487515648016
+big_orange_cones:
+- point:
+    x: 3.033117259439551
+    y: -1.7388863635063172
+    z: 0.0
+  covariance:
+  - 0.04174810798398571
+  - 0.0
+  - 0.0
+  - 0.04174810798398571
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7947
+    nanosec: 261000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.081861033309771
+    y: 2.7484821478525796
+    z: 0.0
+  covariance:
+  - 0.043337034152715406
+  - 0.0
+  - 0.0
+  - 0.043337034152715406
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.0594650587521297
+    y: 2.7747310687755715
+    z: 0.0
+  covariance:
+  - 0.042065154894296894
+  - 0.0
+  - 0.0
+  - 0.042065154894296894
+big_orange_cones:
+- point:
+    x: 3.0337363426613693
+    y: -1.7394145154953002
+    z: 0.0
+  covariance:
+  - 0.04174850786769035
+  - 0.0
+  - 0.0
+  - 0.04174850786769035
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7947
+    nanosec: 361000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.079995026475081
+    y: 2.7473443349202475
+    z: 0.0
+  covariance:
+  - 0.04333594965551715
+  - 0.0
+  - 0.0
+  - 0.04333594965551715
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.05919874930512
+    y: 2.7746367618955414
+    z: 0.0
+  covariance:
+  - 0.04206502458509652
+  - 0.0
+  - 0.0
+  - 0.04206502458509652
+big_orange_cones:
+- point:
+    x: 3.032414528840828
+    y: -1.738012878894806
+    z: 0.0
+  covariance:
+  - 0.041747585952244495
+  - 0.0
+  - 0.0
+  - 0.041747585952244495
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7947
+    nanosec: 461000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.0871620050365545
+    y: 2.751585086186727
+    z: 0.0
+  covariance:
+  - 0.04334008838813009
+  - 0.0
+  - 0.0
+  - 0.04334008838813009
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.058598578883585
+    y: 2.773094358115361
+    z: 0.0
+  covariance:
+  - 0.04206428423344267
+  - 0.0
+  - 0.0
+  - 0.04206428423344267
+big_orange_cones:
+- point:
+    x: 3.0346887962619076
+    y: -1.7404255723953248
+    z: 0.0
+  covariance:
+  - 0.04174917246599679
+  - 0.0
+  - 0.0
+  - 0.04174917246599679
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7947
+    nanosec: 561000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.090592659041593
+    y: 2.753626505533854
+    z: 0.0
+  covariance:
+  - 0.04334207188246864
+  - 0.0
+  - 0.0
+  - 0.04334207188246864
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.059197922960651
+    y: 2.7745321536886283
+    z: 0.0
+  covariance:
+  - 0.042064989140631184
+  - 0.0
+  - 0.0
+  - 0.042064989140631184
+big_orange_cones:
+- point:
+    x: 3.0339108938496606
+    y: -1.7397180342674254
+    z: 0.0
+  covariance:
+  - 0.0417486590684418
+  - 0.0
+  - 0.0
+  - 0.0417486590684418
+unknown_color_cones: []
+---

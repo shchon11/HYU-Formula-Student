@@ -1,0 +1,10 @@
+## Scenario B - yolo topic info
+Type: eufs_msgs/msg/BoundingBoxes
+Publisher count: 1
+Subscription count: 1
+
+## Scenario B - yolo hz 6s
+
+## Scenario B - yolo echo once
+usage: ros2 [-h] Call `ros2 <command> -h` for more detailed usage. ...
+ros2: error: unrecognized arguments: --once
