@@ -21,6 +21,10 @@ graph_slam:
     keyframe_max_dt: 1.0
 
     association_max_distance: 1.2
+    association_gate_chi2: 5.991
+    association_ambiguity_ratio: 0.85
+    association_inflation_per_keyframe: 0.01
+    association_max_inflation: 4.0
     min_observation_range: 0.2
     max_observation_range: 30.0
     use_cone_covariance: true
@@ -31,13 +35,22 @@ graph_slam:
     odom_translation_sigma: 0.05
     odom_yaw_sigma: 0.03
 
-    optimize_every_n_keyframes: 100
-    optimize_min_interval: 10.0
-    max_optimization_poses: 100
-    optimization_iterations: 3
+    optimize_every_n_keyframes: 15
+    optimize_min_interval: 1.0
+    max_optimization_poses: 4000
+    optimization_iterations: 10
     process_every_cone_message: false
 
-    landmark_min_observations_to_publish: 1
+    landmark_min_observations_to_publish: 2
+    landmark_confirm_observations: 3
+    loop_gap_keyframes: 30
+    landmark_merge_distance: 0.6
+    # After the map converges (loop closures reconciled by this many
+    # optimization cycles), confirmed-landmark observation edges get their
+    # information scaled up so the pose conforms to the settled map.
+    map_trust_after_loop_closure: true
+    map_trust_loop_closures_required: 2
+    map_trust_info_scale: 3.0
     max_landmarks: 400
     update_existing_landmarks: true
     landmark_update_gain: 1.0
@@ -54,3 +67,10 @@ graph_slam:
     marker_scale: 0.3
 
     g2o_output_path: /tmp/eufs_graph_slam.g2o
+
+    # Localization-only mode: load a saved cone map (CSV) as a fixed reference
+    # and optimise only the pose against it (no mapping/deletion/merge).
+    # load_map_path is usually set by the launch/GUI. map_save_dir defaults to
+    # the package map/ directory when launched via graph_slam.launch.py.
+    localization_mode: false
+    load_map_path: ""

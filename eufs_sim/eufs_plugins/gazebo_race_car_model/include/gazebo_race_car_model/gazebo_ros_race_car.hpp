@@ -28,6 +28,7 @@
 #include <array>
 #include <memory>
 #include <queue>
+#include <random>
 #include <string>
 #include <vector>
 // ROS Includes
@@ -97,6 +98,11 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
 
   eufs_msgs::msg::CarState stateToCarStateMsg(const eufs::models::State &state);
 
+  /// @brief Integrates the ground-truth body twist with bias + noise so the
+  /// localisation car state drifts like real wheel odometry. Returns the
+  /// ground-truth state with its x/y/yaw replaced by the drifted pose.
+  eufs::models::State integrateDriftedState();
+
   void publishCarState();
   void publishWheelSpeeds();
   void publishJointStates();
@@ -118,6 +124,18 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
   eufs::models::Input _des_input, _act_input;
   std::unique_ptr<eufs::models::Noise> _noise;
   ignition::math::Pose3d _offset;
+
+  // Drift odometry: when enabled, the localisation car state
+  // (_pub_localisation_car_state) integrates the body-frame twist with a
+  // velocity/yaw-rate bias plus white noise so its pose accumulates error
+  // like real wheel odometry. The ground-truth state is left untouched.
+  bool _drift_odometry;
+  double _drift_v_bias, _drift_w_bias, _drift_sigma_v, _drift_sigma_w;
+  bool _drift_initialized;
+  double _drift_x, _drift_y, _drift_yaw;
+  gazebo::common::Time _drift_last_time;
+  std::mt19937 _drift_rng;
+  std::normal_distribution<double> _drift_normal{0.0, 1.0};
 
   // Gazebo
   gazebo::physics::WorldPtr _world;

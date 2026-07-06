@@ -4,12 +4,22 @@
 # license that can be found in the LICENSE file or at
 # https://opensource.org/licenses/MIT.
 
+import os
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch.substitutions import PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
+
+# Saved maps live in the package's map/ directory (this launch file is at
+# eufs_graph_slam/launch/, so ../map resolves to eufs_graph_slam/map even with
+# a symlink install).
+DEFAULT_MAP_DIR = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "map")
+)
 
 
 def generate_launch_description():
@@ -20,6 +30,9 @@ def generate_launch_description():
     odom_frame = LaunchConfiguration("odom_frame")
     slam_base_frame = LaunchConfiguration("slam_base_frame")
     publish_tf = LaunchConfiguration("publish_tf")
+    localization_mode = LaunchConfiguration("localization_mode")
+    load_map_path = LaunchConfiguration("load_map_path")
+    gui = LaunchConfiguration("gui")
 
     return LaunchDescription(
         [
@@ -68,6 +81,21 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument(
+                "localization_mode",
+                default_value="false",
+                description="Localize against a saved map instead of mapping.",
+            ),
+            DeclareLaunchArgument(
+                "load_map_path",
+                default_value="",
+                description="CSV map to load when localization_mode is true.",
+            ),
+            DeclareLaunchArgument(
+                "gui",
+                default_value="true",
+                description="Launch the graph SLAM control GUI.",
+            ),
+            DeclareLaunchArgument(
                 "ros_localhost_only",
                 default_value="1",
                 description="Limit ROS discovery to localhost.",
@@ -90,8 +118,19 @@ def generate_launch_description():
                         "odom_frame": odom_frame,
                         "slam_base_frame": slam_base_frame,
                         "publish_tf": publish_tf,
+                        "map_save_dir": DEFAULT_MAP_DIR,
+                        "localization_mode": localization_mode,
+                        "load_map_path": load_map_path,
                     },
                 ],
+            ),
+            Node(
+                package="eufs_graph_slam",
+                executable="slam_gui",
+                name="slam_gui",
+                output="screen",
+                arguments=["--map-dir", DEFAULT_MAP_DIR],
+                condition=IfCondition(gui),
             ),
         ]
     )

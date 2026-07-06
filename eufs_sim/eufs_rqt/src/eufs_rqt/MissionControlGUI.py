@@ -102,7 +102,16 @@ class MissionControlGUI(Plugin):
         thread.start()
 
     def ros_spin(self):
-        rclpy.spin(self.node)
+        try:
+            rclpy.spin(self.node)
+        except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+            # Normal Ctrl-C / launch shutdown while the GUI thread is spinning.
+            pass
+        except Exception:
+            # Shutdown races surface as varying rclpy errors (e.g. RCLError:
+            # "context is not valid"); only re-raise while ROS is still up.
+            if rclpy.ok():
+                raise
 
     def sendRequest(self, mission_ami_state):
         """Sends a mission request to the simulated ros_can

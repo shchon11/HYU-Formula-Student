@@ -145,6 +145,31 @@ void RaceCarModelPlugin::initParams(const sdf::ElementPtr &sdf) {
     _publish_tf = sdf->GetElement("publishTransform")->Get<bool>();
   }
 
+  // Drift odometry parameters for the localisation car state.
+  _drift_odometry =
+      sdf->HasElement("driftOdometry") && sdf->GetElement("driftOdometry")->Get<bool>();
+  _drift_v_bias =
+      sdf->HasElement("driftVelocityBias") ? sdf->GetElement("driftVelocityBias")->Get<double>()
+                                           : 0.02;
+  _drift_w_bias =
+      sdf->HasElement("driftYawRateBias") ? sdf->GetElement("driftYawRateBias")->Get<double>()
+                                          : 0.01;
+  _drift_sigma_v =
+      sdf->HasElement("driftVelocityNoise") ? sdf->GetElement("driftVelocityNoise")->Get<double>()
+                                            : 0.05;
+  _drift_sigma_w =
+      sdf->HasElement("driftYawRateNoise") ? sdf->GetElement("driftYawRateNoise")->Get<double>()
+                                           : 0.01;
+  _drift_rng.seed(
+      sdf->HasElement("driftSeed") ? sdf->GetElement("driftSeed")->Get<unsigned int>() : 42u);
+  _drift_initialized = false;
+  if (_drift_odometry) {
+    RCLCPP_INFO(_rosnode->get_logger(),
+                "Localisation car state uses drifting odometry "
+                "(v_bias=%.3f w_bias=%.3f sigma_v=%.3f sigma_w=%.3f)",
+                _drift_v_bias, _drift_w_bias, _drift_sigma_v, _drift_sigma_w);
+  }
+
   if (!sdf->HasElement("wheelSpeedsTopicName")) {
     RCLCPP_FATAL(_rosnode->get_logger(),
                  "gazebo_ros_race_car_model plugin missing <wheelSpeedsTopicName>, cannot proceed");
@@ -426,6 +451,34 @@ eufs_msgs::msg::CarState RaceCarModelPlugin::stateToCarStateMsg(const eufs::mode
   return car_state;
 }
 
+eufs::models::State RaceCarModelPlugin::integrateDriftedState() {
+  if (!_drift_initialized) {
+    _drift_x = _state.x;
+    _drift_y = _state.y;
+    _drift_yaw = _state.yaw;
+    _drift_last_time = _last_sim_time;
+    _drift_initialized = true;
+  } else {
+    const double dt = (_last_sim_time - _drift_last_time).Double();
+    _drift_last_time = _last_sim_time;
+    if (dt > 0.0 && dt < 0.5) {
+      // Corrupt the body-frame twist with bias + white noise, then integrate.
+      const double v = _state.v_x * (1.0 + _drift_v_bias) + _drift_normal(_drift_rng) * _drift_sigma_v;
+      const double vy = _state.v_y;
+      const double w = _state.r_z * (1.0 + _drift_w_bias) + _drift_normal(_drift_rng) * _drift_sigma_w;
+      _drift_x += (v * std::cos(_drift_yaw) - vy * std::sin(_drift_yaw)) * dt;
+      _drift_y += (v * std::sin(_drift_yaw) + vy * std::cos(_drift_yaw)) * dt;
+      _drift_yaw = std::atan2(std::sin(_drift_yaw + w * dt), std::cos(_drift_yaw + w * dt));
+    }
+  }
+
+  eufs::models::State drifted = _state;
+  drifted.x = _drift_x;
+  drifted.y = _drift_y;
+  drifted.yaw = _drift_yaw;
+  return drifted;
+}
+
 void RaceCarModelPlugin::publishCarState() {
   eufs_msgs::msg::CarState car_state = stateToCarStateMsg(_state);
 
@@ -434,8 +487,9 @@ void RaceCarModelPlugin::publishCarState() {
     _pub_ground_truth_car_state->publish(car_state);
   }
 
-  // Add noise
-  eufs::models::State state_noisy = _noise->applyNoise(_state);
+  // Localisation car state: drifting odometry if enabled, otherwise iid noise.
+  eufs::models::State state_noisy =
+      _drift_odometry ? integrateDriftedState() : _noise->applyNoise(_state);
   eufs_msgs::msg::CarState car_state_noisy = stateToCarStateMsg(state_noisy);
 
   // Fill in covariance matrix
@@ -459,6 +513,14 @@ void RaceCarModelPlugin::publishCarState() {
   car_state_noisy.linear_acceleration_covariance[0] = pow(noise_param.linear_acceleration[0], 2);
   car_state_noisy.linear_acceleration_covariance[4] = pow(noise_param.linear_acceleration[1], 2);
   car_state_noisy.linear_acceleration_covariance[8] = pow(noise_param.linear_acceleration[2], 2);
+
+  if (_drift_odometry) {
+    // Per-step drift noise as the reported pose uncertainty (the accumulated
+    // error itself is unbounded and not represented here).
+    car_state_noisy.pose.covariance[0] = _drift_sigma_v * _drift_sigma_v;
+    car_state_noisy.pose.covariance[7] = _drift_sigma_v * _drift_sigma_v;
+    car_state_noisy.pose.covariance[35] = _drift_sigma_w * _drift_sigma_w;
+  }
 
   // Publish with noise
   if (_pub_localisation_car_state->get_subscription_count() > 0) {
@@ -630,7 +692,11 @@ void RaceCarModelPlugin::publishTf() {
   _tf_br->sendTransform(transform_stamped);
 }
 
-void RaceCarModelPlugin::Reset() { _last_sim_time = 0; }
+void RaceCarModelPlugin::Reset() {
+  _last_sim_time = 0;
+  // Re-seed drift integration from the reset pose on the next publish.
+  _drift_initialized = false;
+}
 
 void RaceCarModelPlugin::update() {
   gazebo::common::Time curTime = _world->SimTime();

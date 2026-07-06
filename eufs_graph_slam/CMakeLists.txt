@@ -60,7 +60,7 @@ if(NOT g2o_FOUND)
   add_subdirectory("${G2O_VENDOR_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/g2o_vendor" EXCLUDE_FROM_ALL)
 endif()
 
-foreach(_g2o_target core stuff solver_dense types_slam2d)
+foreach(_g2o_target core stuff solver_eigen types_slam2d)
   if(TARGET g2o::${_g2o_target})
     list(APPEND EUFS_GRAPH_SLAM_G2O_TARGETS g2o::${_g2o_target})
   elseif(TARGET ${_g2o_target})
@@ -95,7 +95,11 @@ target_link_libraries(graph_slam_node
 install(TARGETS graph_slam_node
   DESTINATION lib/${PROJECT_NAME})
 
-install(DIRECTORY config launch
+install(PROGRAMS scripts/slam_gui.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME slam_gui)
+
+install(DIRECTORY config launch map
   DESTINATION share/${PROJECT_NAME})
 
 install(DIRECTORY include/

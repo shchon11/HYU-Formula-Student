@@ -26,6 +26,14 @@
       <publishTransform>$(arg publish_tf)</publishTransform>
       <groundTruthCarStateTopic>/ground_truth/state</groundTruthCarStateTopic>
       <localisationCarStateTopic>/odometry_integration/car_state</localisationCarStateTopic>
+      <!-- Drifting odometry for the localisation car state (GT stays on
+           groundTruthCarStateTopic). Set driftOdometry to false to restore the
+           noise-model behaviour. -->
+      <driftOdometry>true</driftOdometry>
+      <driftVelocityBias>0.02</driftVelocityBias>
+      <driftYawRateBias>0.01</driftYawRateBias>
+      <driftVelocityNoise>0.05</driftVelocityNoise>
+      <driftYawRateNoise>0.01</driftYawRateNoise>
       <wheelSpeedsTopicName>/ros_can/wheel_speeds</wheelSpeedsTopicName>
       <groundTruthWheelSpeedsTopicName>/ground_truth/wheel_speeds</groundTruthWheelSpeedsTopicName>
       <jointStatesTopicName>/eufs/joint_states</jointStatesTopicName>

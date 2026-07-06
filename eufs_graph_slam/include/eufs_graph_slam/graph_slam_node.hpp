@@ -16,14 +16,18 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "builtin_interfaces/msg/time.hpp"
 #include "eufs_msgs/msg/car_state.hpp"
 #include "eufs_msgs/msg/cone_array_with_covariance.hpp"
 #include "eufs_msgs/msg/cone_with_covariance.hpp"
+#include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "geometry_msgs/msg/quaternion.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "nav_msgs/msg/path.hpp"
@@ -67,6 +71,8 @@ private:
     Eigen::Matrix2d covariance;
     std::size_t observations;
     int consecutive_misses;
+    std::size_t last_seen_keyframe_index;
+    std::array<std::uint16_t, 5> color_votes;
   };
 
   struct ConeObservation
@@ -88,6 +94,11 @@ private:
 
   void stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg);
   void conesCallback(const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg);
+  void initialPoseCallback(
+    const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
+  void relocalizeTo(const g2o::SE2 & pose);
+  g2o::SE2 scanMatchNearClick(const g2o::SE2 & click) const;
+  g2o::SE2 latestRawOdom() const;
 
   g2o::SE2 poseFromCarState(const eufs_msgs::msg::CarState & msg) const;
   g2o::SE2 estimateFromRawOdometry(const g2o::SE2 & raw_odom) const;
@@ -108,8 +119,11 @@ private:
 
   int findAssociatedLandmark(
     const Eigen::Vector2d & map_point,
-    ConeColor color) const;
+    const Eigen::Matrix2d & map_covariance,
+    ConeColor color,
+    bool * ambiguous) const;
   bool colorsCompatible(ConeColor observation_color, ConeColor landmark_color) const;
+  static void voteLandmarkColor(LandmarkRecord & landmark, ConeColor observed_color);
   LandmarkRecord * addLandmark(
     const Eigen::Vector2d & map_point,
     const Eigen::Matrix2d & covariance,
@@ -130,9 +144,16 @@ private:
     const LandmarkRecord & landmark) const;
   bool removeLandmarkAt(std::size_t landmark_index);
   bool shouldUpdateLandmarkDeletion(const rclcpp::Time & stamp, bool force_update);
+  std::size_t mergeCloseLandmarks();
+
+  void recordRawOdometry(double stamp_sec, const g2o::SE2 & raw_odom);
+  g2o::SE2 rawOdomAt(double stamp_sec) const;
 
   void maybeOptimize();
+  void onOptimizeTimer();
   void optimizeGraph();
+  void updateKeyframeSnapshot();
+  void publishLiveEstimateFromSnapshot(const rclcpp::Time & stamp, const g2o::SE2 & raw_odom);
   std::size_t firstPublishedPoseIndex() const;
   bool shouldPublishVisuals(const rclcpp::Time & stamp);
 
@@ -157,6 +178,18 @@ private:
   void handleSaveGraph(
     const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
     std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+  void handleSaveMap(
+    const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+  bool saveMapCsv(const std::string & path, std::string * error) const;
+  bool loadMapCsv(const std::string & path, std::string * error);
+  static ConeColor colorFromTag(const std::string & tag);
+  void handleLoadMap(
+    const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+  void handleStartMapping(
+    const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> response);
 
   static double normalizeAngle(double angle);
   static double yawFromQuaternion(const geometry_msgs::msg::Quaternion & q);
@@ -171,16 +204,28 @@ private:
 
   rclcpp::Subscription<eufs_msgs::msg::CarState>::SharedPtr car_state_sub_;
   rclcpp::Subscription<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr cones_sub_;
+  rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr
+    initialpose_sub_;
   rclcpp::Publisher<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr map_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr save_graph_srv_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr save_map_srv_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr load_map_srv_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr start_mapping_srv_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+  rclcpp::TimerBase::SharedPtr optimize_timer_;
+  rclcpp::CallbackGroup::SharedPtr state_callback_group_;
+  rclcpp::CallbackGroup::SharedPtr graph_callback_group_;
 
   std::vector<PoseRecord> poses_;
   std::vector<LandmarkRecord> landmarks_;
+
+  // Most recent cone observations (base frame), kept so a relocalization can
+  // scan-match them against the fixed map near the clicked pose.
+  std::vector<ConeObservation> last_observations_;
 
   Eigen::Matrix3d odom_information_;
 
@@ -194,11 +239,21 @@ private:
   std::string odom_frame_;
   std::string slam_base_frame_;
   std::string g2o_output_path_;
+  std::string map_save_dir_;
 
   double keyframe_distance_;
   double keyframe_yaw_;
   double keyframe_max_dt_;
   double association_max_distance_;
+  double association_gate_chi2_;
+  double association_ambiguity_ratio_;
+  double relocalize_search_radius_;
+  double relocalize_search_yaw_;
+  double relocalize_inlier_distance_;
+  double association_inflation_per_keyframe_;
+  double association_max_inflation_;
+  double landmark_merge_distance_;
+  double map_trust_info_scale_;
   double min_observation_range_;
   double max_observation_range_;
   double default_observation_sigma_;
@@ -222,12 +277,19 @@ private:
   int max_optimization_poses_;
   int path_max_poses_to_publish_;
   int landmark_missed_observations_to_delete_;
+  int landmark_confirm_observations_;
+  int loop_gap_keyframes_;
+  int map_trust_loop_closures_required_;
+
+  bool localization_mode_;
+  std::string load_map_path_;
 
   bool use_cone_covariance_;
   bool process_every_cone_message_;
   bool publish_tf_;
   bool delete_stale_landmarks_;
   bool update_existing_landmarks_;
+  bool map_trust_after_loop_closure_;
 
   double optimize_min_interval_;
   double visual_publish_min_interval_;
@@ -241,8 +303,37 @@ private:
   int keyframes_since_last_optimization_;
   int last_cone_pose_graph_id_;
 
+  // Once loop closures have been reconciled by this many optimization cycles,
+  // map_converged_ turns on and confirmed-landmark observation edges are
+  // trusted more so the pose conforms to the settled map.
+  bool map_converged_;
+  bool loop_closure_seen_since_optimize_;
+  int loop_closure_optimize_cycles_;
+
   g2o::SE2 latest_estimate_;
   bool has_latest_pose_;
+
+  // Raw odometry samples (stamp seconds, pose) for observation-time
+  // interpolation between keyframes. Guarded by odom_buffer_mutex_: the
+  // state callback writes while the cone/optimization thread interpolates.
+  std::deque<std::pair<double, g2o::SE2>> raw_odom_buffer_;
+  mutable std::mutex odom_buffer_mutex_;
+
+  // Serializes g2o graph access (poses_, landmarks_, id counters, timing
+  // state) between the state thread and the cone/optimization thread.
+  std::mutex graph_mutex_;
+
+  // Last keyframe pose (graph estimate + raw odometry) so the state callback
+  // can dead-reckon and publish without the graph lock while an optimization
+  // is running.
+  struct KeyframeSnapshot
+  {
+    g2o::SE2 estimate;
+    g2o::SE2 raw_odom;
+    bool valid{false};
+  };
+  KeyframeSnapshot keyframe_snapshot_;
+  std::mutex snapshot_mutex_;
 };
 
 }  // namespace eufs_graph_slam
