@@ -16,9 +16,9 @@ graph_slam:
     publish_tf: true
     tf_stamp_offset: 0.0
 
-    keyframe_distance: 1.0
-    keyframe_yaw: 0.25
-    keyframe_max_dt: 1.0
+    keyframe_distance: 0.5
+    keyframe_yaw: 0.2
+    keyframe_max_dt: 0.5
 
     association_max_distance: 1.2
     association_gate_chi2: 5.991
@@ -35,8 +35,13 @@ graph_slam:
     odom_translation_sigma: 0.05
     odom_yaw_sigma: 0.03
 
-    optimize_every_n_keyframes: 15
-    optimize_min_interval: 1.0
+    # Optimize on every perception frame that adds edges (conesCallback calls
+    # maybeOptimize); these gates just rate-limit it. optimize_every_n_keyframes
+    # = 1 means "as soon as there is a new keyframe of observations", and
+    # optimize_min_interval caps the solver rate so drift is corrected
+    # continuously instead of every N keyframes.
+    optimize_every_n_keyframes: 1
+    optimize_min_interval: 0.1
     max_optimization_poses: 4000
     optimization_iterations: 10
     process_every_cone_message: false

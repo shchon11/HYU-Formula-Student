@@ -462,6 +462,16 @@ void GraphSlamNode::conesCallback(
   }
 
   const ObservationUpdate update = addConeObservations(*msg, false);
+
+  // Perception-driven optimization: correct the pose as soon as new cone
+  // observations land, not only every N keyframes. optimize_min_interval
+  // still rate-limits how often the solver actually runs. This keeps the
+  // estimate continuously converging, so an initial pose that is slightly
+  // off is pulled back quickly instead of lagging for many keyframes.
+  if (update.added_edges > 0U) {
+    maybeOptimize();
+  }
+
   if (update.added_edges > 0U ||
     update.updated_landmarks > 0U ||
     update.deleted_landmarks > 0U)
