@@ -390,6 +390,19 @@ Visualization Manager:
         path: true
       Queue Size: 100
       Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Marker Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /gnss/markers
+      Name: GNSS State
+      Namespaces:
+        gnss: true
+      Queue Size: 100
+      Value: true
     - Class: rviz_default_plugins/TF
       Enabled: true
       Frame Timeout: 15

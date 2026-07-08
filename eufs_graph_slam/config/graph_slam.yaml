@@ -35,6 +35,24 @@ graph_slam:
     odom_translation_sigma: 0.05
     odom_yaw_sigma: 0.03
 
+    # GNSS global anchor (Level 2): consume the SBG bridge's /gnss/odom absolute
+    # ENU fix as a unary EdgeSE2XYPrior on each keyframe. gnss_prior_max_position_sigma
+    # gates it so only mode-4/RTK fixes (small covariance) anchor the graph;
+    # degraded modes publish a huge covariance and are dropped automatically, so
+    # the anchor fades out gracefully on RTK dropout while odometry keeps flowing.
+    gnss_prior_enable: true
+    gnss_prior_topic: /gnss/odom
+    gnss_prior_max_position_sigma: 0.5
+    gnss_prior_max_age: 0.3
+    gnss_prior_robust_delta: 1.0
+    # A manual /initialpose (RViz 2D Pose Estimate) suppresses the priors so an
+    # RTK fix cannot yank the pose straight back to GNSS; they re-arm after
+    # suppress_duration once GNSS agrees with the cone-anchored pose within
+    # rearm_max_residual. If the map is NOT georeferenced (old local-frame
+    # map / different datum), set gnss_prior_enable to false instead.
+    gnss_prior_suppress_duration: 20.0
+    gnss_prior_rearm_max_residual: 2.0
+
     # Optimize on every perception frame that adds edges (conesCallback calls
     # maybeOptimize); these gates just rate-limit it. optimize_every_n_keyframes
     # = 1 means "as soon as there is a new keyframe of observations", and

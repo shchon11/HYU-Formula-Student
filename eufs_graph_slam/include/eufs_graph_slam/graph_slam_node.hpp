@@ -94,6 +94,7 @@ private:
 
   void stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg);
   void conesCallback(const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg);
+  void gnssOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
   void initialPoseCallback(
     const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
   void relocalizeTo(const g2o::SE2 & pose);
@@ -105,6 +106,10 @@ private:
   bool shouldCreateKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & stamp) const;
   void addInitialPose(const g2o::SE2 & raw_odom, const rclcpp::Time & stamp);
   void addKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & stamp);
+  // Anchor a keyframe's (x,y) to the latest GNSS absolute fix with a unary
+  // EdgeSE2XYPrior, gated on the fix's freshness and covariance so the anchor
+  // fades out smoothly as the GNSS/INS solution degrades (RTK dropout).
+  void maybeAddGnssPrior(g2o::VertexSE2 * vertex, const rclcpp::Time & stamp);
 
   ObservationUpdate addConeObservations(
     const eufs_msgs::msg::ConeArrayWithCovariance & msg,
@@ -206,6 +211,7 @@ private:
   rclcpp::Subscription<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr cones_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr
     initialpose_sub_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr gnss_odom_sub_;
   rclcpp::Publisher<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr map_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
@@ -240,6 +246,21 @@ private:
   std::string slam_base_frame_;
   std::string g2o_output_path_;
   std::string map_save_dir_;
+
+  // GNSS global-anchor (unary prior) configuration.
+  std::string gnss_prior_topic_;
+  bool gnss_prior_enable_;
+  double gnss_prior_max_position_sigma_;
+  double gnss_prior_max_age_;
+  double gnss_prior_robust_delta_;
+  // Manual relocalization (/initialpose) suppresses GNSS priors: the click is
+  // a competing absolute reference, and an RTK prior would otherwise yank the
+  // pose straight back. Priors re-arm only once GNSS agrees with the
+  // cone-anchored pose again (or never, if the map is in a different frame).
+  double gnss_prior_suppress_duration_;
+  double gnss_prior_rearm_max_residual_;
+  bool gnss_prior_suppressed_;
+  double gnss_prior_suppress_until_sec_;
 
   double keyframe_distance_;
   double keyframe_yaw_;
@@ -334,6 +355,20 @@ private:
   };
   KeyframeSnapshot keyframe_snapshot_;
   std::mutex snapshot_mutex_;
+
+  // Latest GNSS absolute fix (map/ENU frame) from the bridge's /gnss/odom,
+  // consumed as a unary prior on new keyframes. Guarded by gnss_mutex_ so the
+  // GNSS callback can write while the keyframe/optimization thread reads.
+  struct GnssFix
+  {
+    double stamp_sec{0.0};
+    Eigen::Vector2d position{Eigen::Vector2d::Zero()};
+    double sigma_x{0.0};
+    double sigma_y{0.0};
+    bool valid{false};
+  };
+  GnssFix latest_gnss_fix_;
+  mutable std::mutex gnss_mutex_;
 };
 
 }  // namespace eufs_graph_slam

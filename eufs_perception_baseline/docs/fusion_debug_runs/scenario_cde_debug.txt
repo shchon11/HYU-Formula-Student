@@ -1,0 +1,15 @@
+## Scenario CDE - rejections echo once
+usage: ros2 [-h] Call `ros2 <command> -h` for more detailed usage. ...
+ros2: error: unrecognized arguments: --once
+
+## bbox support once
+usage: ros2 [-h] Call `ros2 <command> -h` for more detailed usage. ...
+ros2: error: unrecognized arguments: --once
+
+## cluster candidates once
+usage: ros2 [-h] Call `ros2 <command> -h` for more detailed usage. ...
+ros2: error: unrecognized arguments: --once
+
+## sparse support points once
+usage: ros2 [-h] Call `ros2 <command> -h` for more detailed usage. ...
+ros2: error: unrecognized arguments: --once

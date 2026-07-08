@@ -1,0 +1,5985 @@
+## sparse bbox_support 5s
+markers:
+- header:
+    stamp:
+      sec: 6721
+      nanosec: 953000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6721
+      nanosec: 953000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.9604695747871332
+      y: 2.760496457417806
+      z: 0.6500729994685943
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6721
+      nanosec: 953000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.037267640561126
+      y: -1.8538435697555542
+      z: 0.5073331135939878
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6721
+      nanosec: 953000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.081025187761287
+      y: 2.7479809125264487
+      z: 0.572784119419372
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6721
+      nanosec: 953000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.054228810207506
+      y: -1.7583079151078767
+      z: 0.6489179178189828
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=73 roi=51 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 53000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 53000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.96050767526061
+      y: 2.7606138785680137
+      z: 0.6500377732657323
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 53000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.046768621657021
+      y: -1.857562243938446
+      z: 0.5061787964973005
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 53000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.085091008004329
+      y: 2.7503789265950522
+      z: 0.5724163574056352
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 53000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.0545111213282157
+      y: -1.7587806664261163
+      z: 0.6487145392907534
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=73 roi=51 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.960790419705147
+      y: 2.761055509249369
+      z: 0.6498930154527001
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.05303331121031
+      y: -1.860170841217041
+      z: 0.5054186837211073
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.079704804606467
+      y: 2.747136195500692
+      z: 0.572960811591984
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.049518275753074
+      y: -1.7596718263626099
+      z: 0.6522830316129591
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=73 roi=50 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.960790419705147
+      y: 2.761055509249369
+      z: 0.6498930154527001
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.05303331121031
+      y: -1.860170841217041
+      z: 0.5054186837211073
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.079704804606467
+      y: 2.747136195500692
+      z: 0.572960811591984
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.049518275753074
+      y: -1.7596718263626099
+      z: 0.6522830316129591
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=73 roi=50 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.973021581260632
+      y: 2.7615707111358643
+      z: 0.6491925026538226
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=25 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.039374264238447
+      y: -1.8547298312187195
+      z: 0.5070775701400265
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.0793122843245015
+      y: 2.747013727823893
+      z: 0.5729625351564458
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.054343309802905
+      y: -1.7584943794736676
+      z: 0.6488546736210405
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=74 roi=51 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 353000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 353000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.959471715307952
+      y: 2.758698751529058
+      z: 0.6501914699794265
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 353000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.04454204520388
+      y: -1.8567010760307312
+      z: 0.5064493774544844
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 353000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.087157001156413
+      y: 2.7515286604563394
+      z: 0.572163512170984
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 353000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.0502429409117893
+      y: -1.7603966474533081
+      z: 0.6520917564023122
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=73 roi=50 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 453000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 453000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.971069704393362
+      y: 2.758032741546631
+      z: 0.6497833332515157
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=25 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 453000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.038300004298314
+      y: -1.8542803525924683
+      z: 0.5072078984548848
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 453000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.09199223348444
+      y: 2.7544103463490806
+      z: 0.5715383416065736
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 453000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.0545470958096668
+      y: -1.7586197245354747
+      z: 0.6488420111174137
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=74 roi=51 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 553000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 553000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.9614240329596035
+      y: 2.7622242073218026
+      z: 0.6499356561752572
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 553000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.036821942910975
+      y: -1.8537198305130005
+      z: 0.5073875927508015
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 553000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.08973575165228
+      y: 2.753065347671509
+      z: 0.5718393960983523
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 553000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.0504654242287574
+      y: -1.760650725364685
+      z: 0.6520147542301148
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=73 roi=50 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.960138700098735
+      y: 2.75959720214208
+      z: 0.6501243715946208
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.038383038637102
+      y: -1.8542523384094238
+      z: 0.507197417500274
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.085750431070963
+      y: 2.750781218210856
+      z: 0.5722077648322922
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.055245060474376
+      y: -1.7593010967853022
+      z: 0.6487589181647209
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=74 roi=51 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.960138700098735
+      y: 2.75959720214208
+      z: 0.6501243715946208
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.038383038637102
+      y: -1.8542523384094238
+      z: 0.507197417500274
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.085750431070963
+      y: 2.750781218210856
+      z: 0.5722077648322922
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.055245060474376
+      y: -1.7593010967853022
+      z: 0.6487589181647209
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=74 roi=51 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 753000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 753000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.9594244095392956
+      y: 2.758432000875473
+      z: 0.6503880054901123
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 753000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.041584526577774
+      y: -1.8556065559387207
+      z: 0.5068091126964769
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 753000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.087932700386759
+      y: 2.752054135004679
+      z: 0.5721507016062419
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 753000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.0555720073691965
+      y: -1.75972188687792
+      z: 0.6486949260348345
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=74 roi=51 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 854000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 854000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.959695322999069
+      y: 2.7590697507063546
+      z: 0.6502439360812315
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 854000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.040399614699041
+      y: -1.8549986481666565
+      z: 0.5069521330824945
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 854000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.086526522848412
+      y: 2.7512334187825522
+      z: 0.5722194467557248
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 854000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.0541571368040663
+      y: -1.7582288185755413
+      z: 0.6489706407091711
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=73 roi=51 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 953000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 953000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.960765999086391
+      y: 2.760770012935003
+      z: 0.6500075198641488
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 953000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.047618993401181
+      y: -1.857978343963623
+      z: 0.5060760212394907
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 953000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.087452791437346
+      y: 2.7517501513163247
+      z: 0.5721062268441498
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6722
+      nanosec: 953000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.05012038304758
+      y: -1.7601975750923158
+      z: 0.6520725142742045
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=73 roi=50 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 53000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 53000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.9618094966783395
+      y: 2.7627038955688477
+      z: 0.6496447082721739
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 53000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.040736080949195
+      y: -1.8552271723747253
+      z: 0.5069118881132568
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 53000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.083990175223239
+      y: 2.749720573425293
+      z: 0.5724010088733242
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 53000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.0502164421709024
+      y: -1.760432689189911
+      z: 0.65211116226692
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=73 roi=50 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.9599520162887636
+      y: 2.759634335835775
+      z: 0.6501893395703773
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.038758654173835
+      y: -1.854333758354187
+      z: 0.5071513582198512
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.090141364161398
+      y: 2.7533227602640786
+      z: 0.5718052006366303
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.0554960855735147
+      y: -1.7598104850918639
+      z: 0.6485997698192556
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=73 roi=51 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.960340208130825
+      y: 2.760331372419993
+      z: 0.65004118275285
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.043550692899332
+      y: -1.8563459515571594
+      z: 0.5065700363827872
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.08675990977684
+      y: 2.751349687576294
+      z: 0.5722012350135262
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.0547578083262463
+      y: -1.7588924122791665
+      z: 0.6487362437701067
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=72 roi=51 cl=35 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.960340208130825
+      y: 2.760331372419993
+      z: 0.65004118275285
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.043550692899332
+      y: -1.8563459515571594
+      z: 0.5065700363827872
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.08675990977684
+      y: 2.751349687576294
+      z: 0.5722012350135262
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.0547578083262463
+      y: -1.7588924122791665
+      z: 0.6487362437701067
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=72 roi=51 cl=35 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 353000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 353000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.970965224468663
+      y: 2.7579291534423827
+      z: 0.6497695327368943
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=25 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 353000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.0435748760262715
+      y: -1.8563974499702454
+      z: 0.5065673712366089
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 353000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.087943014606592
+      y: 2.751991351445516
+      z: 0.5720367912649638
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 353000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.054211719516863
+      y: -1.7583303054173787
+      z: 0.6489088221359192
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=73 roi=51 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 453000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 453000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.960619895174933
+      y: 2.7607416013876596
+      z: 0.6500276723806104
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=39 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 453000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.046004997855024
+      y: -1.8573015928268433
+      z: 0.5062718178386665
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 453000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.089415539558481
+      y: 2.752848227818807
+      z: 0.571823413544504
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 453000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.0484468370744597
+      y: -1.758535521030426
+      z: 0.6524185815985877
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=74 roi=50 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 553000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 553000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.961563088018232
+      y: 2.762139896551768
+      z: 0.6498278385333862
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 553000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.044763190432258
+      y: -1.8568418622016907
+      z: 0.5064228644671407
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 553000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.089198679782711
+      y: 2.752791086832682
+      z: 0.5719500855113033
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 553000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.049597576126286
+      y: -1.7596969318389892
+      z: 0.6521711878091692
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=73 roi=50 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.971945075544618
+      y: 2.759666576385498
+      z: 0.6494198480591914
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=25 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.046795223316101
+      y: -1.857671856880188
+      z: 0.5061762090195916
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.0858618282392785
+      y: 2.7507499853769937
+      z: 0.5723950986436928
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.055226719576023
+      y: -1.759229206571392
+      z: 0.6488087961072168
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=74 roi=51 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.971945075544618
+      y: 2.759666576385498
+      z: 0.6494198480591914
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=25 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.046795223316101
+      y: -1.857671856880188
+      z: 0.5061762090195916
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.0858618282392785
+      y: 2.7507499853769937
+      z: 0.5723950986436928
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 653000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.055226719576023
+      y: -1.759229206571392
+      z: 0.6488087961072168
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=74 roi=51 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 753000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 753000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.960522618654092
+      y: 2.760368754466375
+      z: 0.6500271814012792
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 753000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.043503852630392
+      y: -1.8563618659973145
+      z: 0.5065759459730279
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 753000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.09125103620118
+      y: 2.7539261976877847
+      z: 0.5715750842883788
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 753000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.0483622161653603
+      y: -1.758360903263092
+      z: 0.6525783774116731
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=72 roi=50 cl=35 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 853000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 853000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.961042840573365
+      y: 2.761271516482035
+      z: 0.6499105914363195
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 853000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.041923742017044
+      y: -1.855735421180725
+      z: 0.5067678719259666
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 853000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.091905962079139
+      y: 2.75437068939209
+      z: 0.571754775097539
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 853000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.055198841261618
+      y: -1.7593958471335618
+      z: 0.6487106148317499
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=73 roi=51 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 953000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 953000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.958397065802538
+      y: 2.7567710975805917
+      z: 0.6505473694391151
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 953000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.043899362640044
+      y: -1.8564623594284058
+      z: 0.5065275421348784
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 953000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.086532860014834
+      y: 2.7512385050455728
+      z: 0.5722211392969895
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6723
+      nanosec: 953000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.0547512914140404
+      y: -1.7588222751430436
+      z: 0.6488647113367787
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=73 roi=51 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 53000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 53000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.972164782284837
+      y: 2.759752941131592
+      z: 0.6493928301512886
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=25 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 53000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.038594904484043
+      y: -1.8543367981910706
+      z: 0.5071716895026246
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 53000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.092399550497343
+      y: 2.754631996154785
+      z: 0.5714911487326869
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 53000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.0485692705898786
+      y: -1.7587494492530822
+      z: 0.6524794582843633
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=74 roi=50 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.9617108162141506
+      y: 2.7627917925516763
+      z: 0.6496008934866662
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.041040737897574
+      y: -1.8553452491760254
+      z: 0.5068748646987568
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.086224612819806
+      y: 2.751011610031128
+      z: 0.5722229091661183
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 153000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.050326154368765
+      y: -1.7604267144203185
+      z: 0.6519849370351569
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=73 roi=50 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.9606362986535912
+      y: 2.760757734378179
+      z: 0.6500212952345855
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.0307405072404965
+      y: -1.851220965385437
+      z: 0.5081256789170931
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.0937413036645625
+      y: 2.7554567654927573
+      z: 0.5714208292142038
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.049146795395801
+      y: -1.7590855431556702
+      z: 0.6523360725068199
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=74 roi=50 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.9606362986535912
+      y: 2.760757734378179
+      z: 0.6500212952345855
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=41 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.0307405072404965
+      y: -1.851220965385437
+      z: 0.5081256789170931
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.0937413036645625
+      y: 2.7554567654927573
+      z: 0.5714208292142038
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 253000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.049146795395801
+      y: -1.7590855431556702
+      z: 0.6523360725068199
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=74 roi=50 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 353000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 353000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.959477700456848
+      y: 2.7587368488311768
+      z: 0.6501975815981216
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 353000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.050056008742223
+      y: -1.8589165210723877
+      z: 0.5057798375926545
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 353000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.088354314365738
+      y: 2.7522976398468018
+      z: 0.5719768225065396
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 353000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.0540397568625157
+      y: -1.7581920366661221
+      z: 0.6488797845356595
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=74 roi=51 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 453000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 453000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.958178204813033
+      y: 2.756436208883921
+      z: 0.6507558074684656
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 453000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.040790504879235
+      y: -1.8552244305610657
+      z: 0.5069051196135024
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 453000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.086055228289832
+      y: 2.7509520053863525
+      z: 0.5723344847722552
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 453000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.0551277908004635
+      y: -1.7594484324548758
+      z: 0.6487279152284424
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=74 roi=51 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---
+markers:
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 553000000
+    frame_id: base_footprint
+  ns: ''
+  id: 0
+  type: 0
+  action: 3
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+  color:
+    r: 0.0
+    g: 0.0
+    b: 0.0
+    a: 0.0
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: ''
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 553000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 1
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 2.9604479072374557
+      y: 2.760115216175715
+      z: 0.650139817798187
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 0:big_orange raw=40 roi=24 cl=19 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 553000000
+    frame_id: base_footprint
+  ns: bbox_sparse
+  id: 2
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.045919324439597
+      y: -1.857288897037506
+      z: 0.5062823649773416
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 1:yellow raw=4 roi=2 cl=0 assigned_sparse
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 553000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 3
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 6.089150502012156
+      y: 2.752683162689209
+      z: 0.5717831619689283
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 2:blue raw=5 roi=3 cl=3 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+- header:
+    stamp:
+      sec: 6724
+      nanosec: 553000000
+    frame_id: base_footprint
+  ns: bbox_supported
+  id: 4
+  type: 9
+  action: 0
+  pose:
+    position:
+      x: 3.055118632652599
+      y: -1.7592437524421543
+      z: 0.6485963938708044
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  scale:
+    x: 0.0
+    y: 0.0
+    z: 0.18
+  color:
+    r: 0.20000000298023224
+    g: 1.0
+    b: 0.20000000298023224
+    a: 0.8999999761581421
+  lifetime:
+    sec: 0
+    nanosec: 0
+  frame_locked: false
+  points: []
+  colors: []
+  text: 10:big_orange raw=73 roi=51 cl=36 assigned_cluster
+  mesh_resource: ''
+  mesh_use_embedded_materials: false
+---

@@ -33,6 +33,7 @@ def generate_launch_description():
     localization_mode = LaunchConfiguration("localization_mode")
     load_map_path = LaunchConfiguration("load_map_path")
     gui = LaunchConfiguration("gui")
+    ate_monitor = LaunchConfiguration("ate_monitor")
 
     return LaunchDescription(
         [
@@ -96,6 +97,11 @@ def generate_launch_description():
                 description="Launch the graph SLAM control GUI.",
             ),
             DeclareLaunchArgument(
+                "ate_monitor",
+                default_value="true",
+                description="Publish live SLAM-vs-ground-truth error markers for RViz.",
+            ),
+            DeclareLaunchArgument(
                 "ros_localhost_only",
                 default_value="1",
                 description="Limit ROS discovery to localhost.",
@@ -131,6 +137,14 @@ def generate_launch_description():
                 output="screen",
                 arguments=["--map-dir", DEFAULT_MAP_DIR],
                 condition=IfCondition(gui),
+            ),
+            Node(
+                package="eufs_graph_slam",
+                executable="ate_monitor",
+                name="ate_monitor",
+                output="screen",
+                parameters=[{"use_sim_time": use_sim_time}],
+                condition=IfCondition(ate_monitor),
             ),
         ]
     )

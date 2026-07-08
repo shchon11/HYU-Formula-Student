@@ -1,0 +1,38 @@
+install/eufs_perception_baseline/lib/eufs_perception_baseline/perception_baselin
+e_node:6: DeprecationWarning: pkg_resources is deprecated as an API. See https:/
+/setuptools.pypa.io/en/latest/pkg_resources.html
+  from pkg_resources import load_entry_point
+[INFO] [1782121980.136147518] [perception_sparse_experiment]: Publishing SLAM co
+ne observations on /cones_sparse_exp as eufs_msgs/msg/ConeArrayWithCovariance
+[INFO] [1782121980.136383551] [perception_sparse_experiment]: Publishing RViz co
+ne markers on /cones_sparse_exp/viz as visualization_msgs/msg/MarkerArray
+[INFO] [1782121980.136551936] [perception_sparse_experiment]: Fusion inputs: ima
+ge=/zed/left/image_rect_color, pointcloud=/velodyne_points, bboxes=/yolo_boundin
+g_boxes, camera_info=/zed/left/camera_info
+[INFO] [1782121980.136710209] [perception_sparse_experiment]: LiDAR-camera fusio
+n enabled. BBox class/color is fused with LiDAR clusters.
+[INFO] [1782121980.136870778] [perception_sparse_experiment]: Fusion debug topic
+s enabled under /fusion/debug_sparse_exp
+[WARN] [1782121980.185461406] [perception_sparse_experiment]: Fusion waiting for
+ inputs: bboxes=/yolo_bounding_boxes, camera_info=/zed/left/camera_info
+[INFO] [1782121980.767478590] [perception_sparse_experiment]: Fusion debug: raw=
+3378, roi=96, detections=17, clusters=4, cluster_assignments=3, sparse_assignmen
+ts=1; #0:big_orange(raw=40,roi=24,cl=19,assigned_cluster); #1:yellow(raw=4,roi=2
+,cl=0,assigned_sparse); #2:blue(raw=5,roi=3,cl=3,assigned_cluster); #3:blue(raw=
+3,roi=0,cl=0,rejected_by_roi_or_self_ground); #4:yellow(raw=3,roi=1,cl=0,insuffi
+cient_cluster_support); #5:big_orange(raw=66,roi=37,cl=25,duplicate_or_low_score
+); #6:blue(raw=2,roi=1,cl=0,insufficient_cluster_support); #7:yellow(raw=2,roi=1
+,cl=0,insufficient_cluster_support)
+[INFO] [1782121980.767794601] [perception_sparse_experiment]: Fusion published c
+ones: blue=1, yellow=1, orange=0, big_orange=2, unknown=0
+[INFO] [1782121982.769672360] [perception_sparse_experiment]: Fusion debug: raw=
+3378, roi=96, detections=17, clusters=4, cluster_assignments=3, sparse_assignmen
+ts=1; #0:big_orange(raw=40,roi=24,cl=19,assigned_cluster); #1:yellow(raw=4,roi=2
+,cl=0,assigned_sparse); #2:blue(raw=5,roi=3,cl=3,assigned_cluster); #3:blue(raw=
+3,roi=0,cl=0,rejected_by_roi_or_self_ground); #4:yellow(raw=3,roi=1,cl=0,insuffi
+cient_cluster_support); #5:big_orange(raw=67,roi=37,cl=26,duplicate_or_low_score
+); #6:blue(raw=2,roi=1,cl=0,insufficient_cluster_support); #7:yellow(raw=2,roi=1
+,cl=0,insufficient_cluster_support)
+[INFO] [1782121982.769954440] [perception_sparse_experiment]: Fusion published c
+ones: blue=1, yellow=1, orange=0, big_orange=2, unknown=0
+

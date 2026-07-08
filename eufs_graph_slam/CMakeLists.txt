@@ -99,6 +99,14 @@ install(PROGRAMS scripts/slam_gui.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME slam_gui)
 
+install(PROGRAMS scripts/ate_monitor.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME ate_monitor)
+
+install(PROGRAMS scripts/sbg_odometry_bridge.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME sbg_odometry_bridge)
+
 install(DIRECTORY config launch map
   DESTINATION share/${PROJECT_NAME})
 

@@ -246,6 +246,130 @@
       </property>
     </widget>
 
+    <!-- GNSS failure injection (simulated Ellipse-D). Dropdown changes publish
+         immediately to /sim_ins/set_solution_mode and set_correction_type. -->
+    <widget class="QLabel" name="GnssSectionLabel">
+      <property name="geometry">
+        <rect>
+          <x>20</x>
+          <y>240</y>
+          <width>280</width>
+          <height>20</height>
+        </rect>
+      </property>
+      <property name="text">
+        <string>GNSS failure injection (sim Ellipse-D)</string>
+      </property>
+      <property name="font">
+        <font>
+          <pointsize>9</pointsize>
+          <bold>true</bold>
+        </font>
+      </property>
+    </widget>
+    <widget class="QLabel" name="GnssModeLabel">
+      <property name="geometry">
+        <rect>
+          <x>20</x>
+          <y>265</y>
+          <width>60</width>
+          <height>30</height>
+        </rect>
+      </property>
+      <property name="text">
+        <string>Mode</string>
+      </property>
+      <property name="font">
+        <font>
+          <pointsize>10</pointsize>
+        </font>
+      </property>
+    </widget>
+    <widget class="QComboBox" name="GnssModeMenu">
+      <property name="geometry">
+        <rect>
+          <x>80</x>
+          <y>265</y>
+          <width>220</width>
+          <height>30</height>
+        </rect>
+      </property>
+      <property name="font">
+        <font>
+          <pointsize>10</pointsize>
+        </font>
+      </property>
+    </widget>
+    <widget class="QLabel" name="GnssCorrLabel">
+      <property name="geometry">
+        <rect>
+          <x>20</x>
+          <y>300</y>
+          <width>60</width>
+          <height>30</height>
+        </rect>
+      </property>
+      <property name="text">
+        <string>RTK</string>
+      </property>
+      <property name="font">
+        <font>
+          <pointsize>10</pointsize>
+        </font>
+      </property>
+    </widget>
+    <widget class="QComboBox" name="GnssCorrectionMenu">
+      <property name="geometry">
+        <rect>
+          <x>80</x>
+          <y>300</y>
+          <width>220</width>
+          <height>30</height>
+        </rect>
+      </property>
+      <property name="font">
+        <font>
+          <pointsize>10</pointsize>
+        </font>
+      </property>
+    </widget>
+    <widget class="QLabel" name="GnssStateInfo">
+      <property name="geometry">
+        <rect>
+          <x>20</x>
+          <y>335</y>
+          <width>60</width>
+          <height>30</height>
+        </rect>
+      </property>
+      <property name="text">
+        <string>GNSS</string>
+      </property>
+      <property name="font">
+        <font>
+          <pointsize>10</pointsize>
+        </font>
+      </property>
+    </widget>
+    <widget class="QLabel" name="GnssStateDisplay">
+      <property name="geometry">
+        <rect>
+          <x>80</x>
+          <y>335</y>
+          <width>220</width>
+          <height>30</height>
+        </rect>
+      </property>
+      <property name="text">
+        <string>-</string>
+      </property>
+      <property name="font">
+        <font>
+          <pointsize>10</pointsize>
+        </font>
+      </property>
+    </widget>
+
   </widget>
   <resources/>
   <connections/>

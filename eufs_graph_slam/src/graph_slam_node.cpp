@@ -12,6 +12,7 @@
 #include <g2o/solvers/eigen/linear_solver_eigen.h>
 #include <g2o/types/slam2d/edge_se2.h>
 #include <g2o/types/slam2d/edge_se2_pointxy.h>
+#include <g2o/types/slam2d/edge_se2_xyprior.h>
 #include <g2o/types/slam2d/types_slam2d.h>
 
 #include <algorithm>
@@ -209,6 +210,25 @@ GraphSlamNode::GraphSlamNode()
   map_trust_after_loop_closure_ =
     declare_parameter<bool>("map_trust_after_loop_closure", map_trust_after_loop_closure_);
 
+  // GNSS global anchor: add a unary EdgeSE2XYPrior on each keyframe from the
+  // SBG bridge's /gnss/odom absolute fix. gnss_prior_max_position_sigma gates
+  // it so only trustworthy (mode-4 / RTK) fixes anchor the graph; degraded
+  // fixes arrive with a huge covariance and are dropped automatically.
+  gnss_prior_enable_ = declare_parameter<bool>("gnss_prior_enable", true);
+  gnss_prior_topic_ = declare_parameter<std::string>("gnss_prior_topic", "/gnss/odom");
+  gnss_prior_max_position_sigma_ =
+    declare_parameter<double>("gnss_prior_max_position_sigma", 0.5);
+  gnss_prior_max_age_ = declare_parameter<double>("gnss_prior_max_age", 0.3);
+  gnss_prior_robust_delta_ =
+    declare_parameter<double>("gnss_prior_robust_delta", 1.0);
+  gnss_prior_suppress_duration_ =
+    declare_parameter<double>("gnss_prior_suppress_duration", 20.0);
+  gnss_prior_rearm_max_residual_ =
+    declare_parameter<double>("gnss_prior_rearm_max_residual", 2.0);
+  gnss_prior_max_position_sigma_ = std::max(1e-3, gnss_prior_max_position_sigma_);
+  gnss_prior_suppressed_ = false;
+  gnss_prior_suppress_until_sec_ = 0.0;
+
   keyframe_distance_ = std::max(0.0, keyframe_distance_);
   keyframe_yaw_ = std::max(0.0, keyframe_yaw_);
   association_max_distance_ = std::max(0.05, association_max_distance_);
@@ -359,6 +379,14 @@ GraphSlamNode::GraphSlamNode()
     std::bind(&GraphSlamNode::initialPoseCallback, this, std::placeholders::_1),
     graph_options);
 
+  if (gnss_prior_enable_) {
+    gnss_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+      gnss_prior_topic_,
+      rclcpp::SensorDataQoS(),
+      std::bind(&GraphSlamNode::gnssOdomCallback, this, std::placeholders::_1),
+      state_options);
+  }
+
   optimize_timer_ = create_wall_timer(
     std::chrono::milliseconds(250),
     std::bind(&GraphSlamNode::onOptimizeTimer, this),
@@ -415,6 +443,8 @@ void GraphSlamNode::resetGraph()
   next_edge_id_ = 0;
   keyframes_since_last_optimization_ = 0;
   last_cone_pose_graph_id_ = -1;
+  gnss_prior_suppressed_ = false;
+  gnss_prior_suppress_until_sec_ = 0.0;
   map_converged_ = false;
   loop_closure_seen_since_optimize_ = false;
   loop_closure_optimize_cycles_ = 0;
@@ -497,6 +527,22 @@ void GraphSlamNode::initialPoseCallback(
   }
 
   std::lock_guard<std::mutex> lock(graph_mutex_);
+
+  // The click is a manual absolute reference that may contradict GNSS (wrong
+  // map frame, degraded GNSS). Suppress GNSS priors so they cannot yank the
+  // pose back; they re-arm in maybeAddGnssPrior once GNSS agrees again.
+  if (gnss_prior_enable_ && gnss_prior_suppress_duration_ > 0.0) {
+    gnss_prior_suppressed_ = true;
+    gnss_prior_suppress_until_sec_ =
+      stampOrNow(msg->header.stamp, get_clock()).seconds() +
+      gnss_prior_suppress_duration_;
+    RCLCPP_INFO(
+      get_logger(),
+      "Manual relocalization: GNSS priors suppressed for %.0f s, then until "
+      "GNSS agrees with the cone-anchored pose within %.1f m",
+      gnss_prior_suppress_duration_, gnss_prior_rearm_max_residual_);
+  }
+
   relocalizeTo(pose);
 }
 
@@ -746,9 +792,95 @@ void GraphSlamNode::addKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & 
     return;
   }
 
+  maybeAddGnssPrior(vertex, stamp);
+
   poses_.push_back(PoseRecord{vertex->id(), vertex, raw_odom, stamp});
   updateKeyframeSnapshot();
   ++keyframes_since_last_optimization_;
+}
+
+void GraphSlamNode::gnssOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
+{
+  const rclcpp::Time stamp = stampOrNow(msg->header.stamp, get_clock());
+  std::lock_guard<std::mutex> lock(gnss_mutex_);
+  latest_gnss_fix_.stamp_sec = stamp.seconds();
+  latest_gnss_fix_.position =
+    Eigen::Vector2d(msg->pose.pose.position.x, msg->pose.pose.position.y);
+  // Bridge fills the (x, y) diagonal of the row-major 6x6 pose covariance.
+  latest_gnss_fix_.sigma_x = std::sqrt(std::max(0.0, msg->pose.covariance[0]));
+  latest_gnss_fix_.sigma_y = std::sqrt(std::max(0.0, msg->pose.covariance[7]));
+  latest_gnss_fix_.valid = true;
+}
+
+void GraphSlamNode::maybeAddGnssPrior(
+  g2o::VertexSE2 * vertex, const rclcpp::Time & stamp)
+{
+  if (!gnss_prior_enable_) {
+    return;
+  }
+
+  GnssFix fix;
+  {
+    std::lock_guard<std::mutex> lock(gnss_mutex_);
+    fix = latest_gnss_fix_;
+  }
+  if (!fix.valid) {
+    return;
+  }
+  // Drop stale fixes and any whose reported accuracy is worse than the gate
+  // (degraded modes arrive with a huge covariance and are filtered here).
+  if (gnss_prior_max_age_ > 0.0 &&
+    std::abs(stamp.seconds() - fix.stamp_sec) > gnss_prior_max_age_)
+  {
+    return;
+  }
+  if (fix.sigma_x <= 0.0 || fix.sigma_y <= 0.0 ||
+    fix.sigma_x > gnss_prior_max_position_sigma_ ||
+    fix.sigma_y > gnss_prior_max_position_sigma_)
+  {
+    return;
+  }
+
+  if (gnss_prior_suppressed_) {
+    if (stamp.seconds() < gnss_prior_suppress_until_sec_) {
+      return;
+    }
+    // Re-arm only when GNSS is consistent with the cone-anchored pose again.
+    // A persistent disagreement means the map frame and the GNSS ENU frame
+    // differ (e.g. an old local-frame map): keep the priors off and say so.
+    const double residual = (vertex->estimate().translation() - fix.position).norm();
+    if (residual > gnss_prior_rearm_max_residual_) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 10000,
+        "GNSS prior still suppressed: fix disagrees with the SLAM pose by "
+        "%.1f m (map frame != GNSS ENU frame? set gnss_prior_enable:=false "
+        "for non-georeferenced maps)",
+        residual);
+      return;
+    }
+    gnss_prior_suppressed_ = false;
+    RCLCPP_INFO(
+      get_logger(), "GNSS prior re-armed (residual %.2f m)", residual);
+  }
+
+  auto * prior = new g2o::EdgeSE2XYPrior();
+  prior->setId(next_edge_id_++);
+  prior->setVertex(0, vertex);
+  prior->setMeasurement(fix.position);
+  Eigen::Matrix2d information = Eigen::Matrix2d::Zero();
+  information(0, 0) = 1.0 / (fix.sigma_x * fix.sigma_x);
+  information(1, 1) = 1.0 / (fix.sigma_y * fix.sigma_y);
+  prior->setInformation(information);
+  if (gnss_prior_robust_delta_ > 0.0) {
+    auto * kernel = new g2o::RobustKernelHuber();
+    kernel->setDelta(gnss_prior_robust_delta_);
+    prior->setRobustKernel(kernel);
+  }
+
+  if (!optimizer_.addEdge(prior)) {
+    RCLCPP_ERROR(get_logger(), "Failed to add GNSS prior edge");
+    delete prior;
+  }
 }
 
 GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(

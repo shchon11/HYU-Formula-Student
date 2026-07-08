@@ -1,0 +1,11 @@
+## Fusion outputs
+Type: eufs_msgs/msg/ConeArrayWithCovariance
+Publisher count: 1
+Subscription count: 0
+Type: visualization_msgs/msg/MarkerArray
+Publisher count: 1
+Subscription count: 1
+
+## cones echo once
+usage: ros2 [-h] Call `ros2 <command> -h` for more detailed usage. ...
+ros2: error: unrecognized arguments: --once

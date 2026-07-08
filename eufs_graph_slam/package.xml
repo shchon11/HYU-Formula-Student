@@ -23,6 +23,9 @@
   <depend>visualization_msgs</depend>
 
   <exec_depend>eigen</exec_depend>
+  <!-- Runtime-only deps of the SBG bridge / simulated Ellipse-D scripts. -->
+  <exec_depend>diagnostic_msgs</exec_depend>
+  <exec_depend>sbg_driver</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

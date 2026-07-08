@@ -1,0 +1,494 @@
+header:
+  stamp:
+    sec: 7882
+    nanosec: 661000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.077424663245934
+    y: 2.745854377746582
+    z: 0.0
+  covariance:
+  - 0.043334471727321286
+  - 0.0
+  - 0.0
+  - 0.043334471727321286
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.057182874446985
+    y: 2.771042511380952
+    z: 0.0
+  covariance:
+  - 0.04206307075300948
+  - 0.0
+  - 0.0
+  - 0.04206307075300948
+big_orange_cones:
+- point:
+    x: 3.03272662259737
+    y: -1.73841472864151
+    z: 0.0
+  covariance:
+  - 0.04174782125345876
+  - 0.0
+  - 0.0
+  - 0.04174782125345876
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7882
+    nanosec: 761000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.086932664191219
+    y: 2.7514754931131997
+    z: 0.0
+  covariance:
+  - 0.043339961326407855
+  - 0.0
+  - 0.0
+  - 0.043339961326407855
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.058663977876899
+    y: 2.773590383858516
+    z: 0.0
+  covariance:
+  - 0.042064475051132505
+  - 0.0
+  - 0.0
+  - 0.042064475051132505
+big_orange_cones:
+- point:
+    x: 3.0349434764237633
+    y: -1.7406388807296753
+    z: 0.0
+  covariance:
+  - 0.041749335989611135
+  - 0.0
+  - 0.0
+  - 0.041749335989611135
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7882
+    nanosec: 761000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.086932664191219
+    y: 2.7514754931131997
+    z: 0.0
+  covariance:
+  - 0.043339961326407855
+  - 0.0
+  - 0.0
+  - 0.043339961326407855
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.058663977876899
+    y: 2.773590383858516
+    z: 0.0
+  covariance:
+  - 0.042064475051132505
+  - 0.0
+  - 0.0
+  - 0.042064475051132505
+big_orange_cones:
+- point:
+    x: 3.0349434764237633
+    y: -1.7406388807296753
+    z: 0.0
+  covariance:
+  - 0.041749335989611135
+  - 0.0
+  - 0.0
+  - 0.041749335989611135
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7882
+    nanosec: 861000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.088042574618321
+    y: 2.7521145343780518
+    z: 0.0
+  covariance:
+  - 0.04334059862901472
+  - 0.0
+  - 0.0
+  - 0.04334059862901472
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.0586338365526156
+    y: 2.773678310986223
+    z: 0.0
+  covariance:
+  - 0.04206449341963955
+  - 0.0
+  - 0.0
+  - 0.04206449341963955
+big_orange_cones:
+- point:
+    x: 3.034000437315782
+    y: -1.739867558479309
+    z: 0.0
+  covariance:
+  - 0.0417487350981982
+  - 0.0
+  - 0.0
+  - 0.0417487350981982
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7882
+    nanosec: 961000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.0878152918383925
+    y: 2.7519269784291587
+    z: 0.0
+  covariance:
+  - 0.04334045644793296
+  - 0.0
+  - 0.0
+  - 0.04334045644793296
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.059287374254434
+    y: 2.774620902949366
+    z: 0.0
+  covariance:
+  - 0.042065052081265514
+  - 0.0
+  - 0.0
+  - 0.042065052081265514
+big_orange_cones:
+- point:
+    x: 3.034454149992421
+    y: -1.7402014994621278
+    z: 0.0
+  covariance:
+  - 0.041749014954705684
+  - 0.0
+  - 0.0
+  - 0.041749014954705684
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7883
+    nanosec: 61000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.078779020768384
+    y: 2.7466633319854736
+    z: 0.0
+  covariance:
+  - 0.043335255381624
+  - 0.0
+  - 0.0
+  - 0.043335255381624
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.0593361606646456
+    y: 2.7747283392939073
+    z: 0.0
+  covariance:
+  - 0.04206510623823758
+  - 0.0
+  - 0.0
+  - 0.04206510623823758
+big_orange_cones:
+- point:
+    x: 3.034563819608116
+    y: -1.740243890285492
+    z: 0.0
+  covariance:
+  - 0.04174907306686646
+  - 0.0
+  - 0.0
+  - 0.04174907306686646
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7883
+    nanosec: 161000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.082015222111764
+    y: 2.7485526402791343
+    z: 0.0
+  covariance:
+  - 0.043337118921254705
+  - 0.0
+  - 0.0
+  - 0.043337118921254705
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.05849963816405
+    y: 2.7733848341580094
+    z: 0.0
+  covariance:
+  - 0.04206434514283509
+  - 0.0
+  - 0.0
+  - 0.04206434514283509
+big_orange_cones:
+- point:
+    x: 3.036100428435698
+    y: -1.7420962119102479
+    z: 0.0
+  covariance:
+  - 0.04175020034732452
+  - 0.0
+  - 0.0
+  - 0.04175020034732452
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7883
+    nanosec: 260000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.090773253238079
+    y: 2.753709634145101
+    z: 0.0
+  covariance:
+  - 0.04334217128419325
+  - 0.0
+  - 0.0
+  - 0.04334217128419325
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.058090026329858
+    y: 2.772823119985646
+    z: 0.0
+  covariance:
+  - 0.04206400476403672
+  - 0.0
+  - 0.0
+  - 0.04206400476403672
+big_orange_cones:
+- point:
+    x: 3.033632721329154
+    y: -1.739287347793579
+    z: 0.0
+  covariance:
+  - 0.04174843129448327
+  - 0.0
+  - 0.0
+  - 0.04174843129448327
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7883
+    nanosec: 260000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.090773253238079
+    y: 2.753709634145101
+    z: 0.0
+  covariance:
+  - 0.04334217128419325
+  - 0.0
+  - 0.0
+  - 0.04334217128419325
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.058090026329858
+    y: 2.772823119985646
+    z: 0.0
+  covariance:
+  - 0.04206400476403672
+  - 0.0
+  - 0.0
+  - 0.04206400476403672
+big_orange_cones:
+- point:
+    x: 3.033632721329154
+    y: -1.739287347793579
+    z: 0.0
+  covariance:
+  - 0.04174843129448327
+  - 0.0
+  - 0.0
+  - 0.04174843129448327
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7883
+    nanosec: 361000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.091377343835705
+    y: 2.7540475527445474
+    z: 0.0
+  covariance:
+  - 0.04334251611319127
+  - 0.0
+  - 0.0
+  - 0.04334251611319127
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.059183508837265
+    y: 2.7744259669862945
+    z: 0.0
+  covariance:
+  - 0.042064948134156746
+  - 0.0
+  - 0.0
+  - 0.042064948134156746
+big_orange_cones:
+- point:
+    x: 3.033612536330173
+    y: -1.7393027782440185
+    z: 0.0
+  covariance:
+  - 0.041748426376415876
+  - 0.0
+  - 0.0
+  - 0.041748426376415876
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7883
+    nanosec: 461000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.090408631759
+    y: 2.7534945805867515
+    z: 0.0
+  covariance:
+  - 0.04334196086553707
+  - 0.0
+  - 0.0
+  - 0.04334196086553707
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.0577958912310295
+    y: 2.771940625947097
+    z: 0.0
+  covariance:
+  - 0.04206359943703989
+  - 0.0
+  - 0.0
+  - 0.04206359943703989
+big_orange_cones:
+- point:
+    x: 3.0340945887713597
+    y: -1.7398837065696717
+    z: 0.0
+  covariance:
+  - 0.04174877995228089
+  - 0.0
+  - 0.0
+  - 0.04174877995228089
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7883
+    nanosec: 561000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.0866421609423496
+    y: 2.751239458719889
+    z: 0.0
+  covariance:
+  - 0.043339780357844596
+  - 0.0
+  - 0.0
+  - 0.043339780357844596
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.0576613984750347
+    y: 2.771879163281671
+    z: 0.0
+  covariance:
+  - 0.04206352897505459
+  - 0.0
+  - 0.0
+  - 0.04206352897505459
+big_orange_cones:
+- point:
+    x: 3.0338176657947504
+    y: -1.739563250541687
+    z: 0.0
+  covariance:
+  - 0.041748580133417076
+  - 0.0
+  - 0.0
+  - 0.041748580133417076
+unknown_color_cones: []
+---
+header:
+  stamp:
+    sec: 7883
+    nanosec: 661000000
+  frame_id: base_footprint
+blue_cones:
+- point:
+    x: 6.090685842457433
+    y: 2.75365940729777
+    z: 0.0
+  covariance:
+  - 0.043342121114012436
+  - 0.0
+  - 0.0
+  - 0.043342121114012436
+yellow_cones: []
+orange_cones:
+- point:
+    x: 3.057529482595314
+    y: 2.7719671315160292
+    z: 0.0
+  covariance:
+  - 0.04206350965076158
+  - 0.0
+  - 0.0
+  - 0.04206350965076158
+big_orange_cones:
+- point:
+    x: 3.0348557046153064
+    y: -1.7405662751197815
+    z: 0.0
+  covariance:
+  - 0.041749279859393605
+  - 0.0
+  - 0.0
+  - 0.041749279859393605
+unknown_color_cones: []
+---

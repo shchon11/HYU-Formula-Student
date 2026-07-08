@@ -60,10 +60,10 @@ class TeleopNode(Node):
         self.declare_parameter('max_brake', 8.0)          # m/s^2 command limit
         self.declare_parameter('max_jerk', 12.0)          # m/s^3 command slew
         self.declare_parameter('speed_step', 0.4)         # m/s per W tap
-        self.declare_parameter('steer_step', 0.12)        # fraction per tap
-        self.declare_parameter('steer_expo', 1.6)         # response curve
-        self.declare_parameter('counter_steer_gain', 2.0)
-        self.declare_parameter('auto_center_rate', 0.10)  # 1/s per (m/s)
+        self.declare_parameter('steer_step', 0.28)        # fraction per tap
+        self.declare_parameter('steer_expo', 1.15)        # response curve
+        self.declare_parameter('counter_steer_gain', 2.2)
+        self.declare_parameter('auto_center_rate', 0.15)  # 1/s per (m/s)
         self.declare_parameter('speed_steer_falloff', 0.07)  # per m/s
         self.declare_parameter('speed_kp', 1.6)
         self.declare_parameter('auto_mission', True)

@@ -1,0 +1,32 @@
+/gazebo
+/gazebo_ros_laser_controller
+/gps_controller
+/gz_bounding_boxes
+/gz_camera_0_cones
+/gz_camera_1_cones
+/gz_ground_truth_cones
+/perception_baseline_node
+/perception_sparse_experiment
+/race_car
+/robot_state_publisher
+/rqt_gui_cpp_node_3509103
+/rviz
+/sbg_imu
+/transform_listener_impl_558e1f36c8d0
+/yolov8_bbox_node
+/zed_controller
+/zed_imu
+/zed_left_camera_controller
+/zed_right_camera_controller
+---
+Type: eufs_msgs/msg/ConeArrayWithCovariance
+Publisher count: 1
+Subscription count: 0
+---
+/cones_sparse_exp
+/cones_sparse_exp/viz
+/fusion/debug_sparse_exp/bbox_support
+/fusion/debug_sparse_exp/cluster_candidates
+/fusion/debug_sparse_exp/rejections
+/fusion/debug_sparse_exp/roi_points
+/fusion/debug_sparse_exp/sparse_support_points

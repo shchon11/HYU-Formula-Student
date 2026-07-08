@@ -1,6 +1,17 @@
 # eufs_sensors
 
-This package contains [meshes](./meshes) and [urdf](./urdf) files for the car sensor suite.
+This package contains [meshes](./meshes) and [urdf](./urdf) files for the car sensor suite,
+plus simulated sensor nodes that don't fit the Gazebo plugin model.
+
+## sim_ellipse_d
+
+`ros2 run eufs_sensors sim_ellipse_d` simulates an SBG Ellipse-D GNSS/INS from
+`/ground_truth/state`: it publishes the SBG driver's EKF outputs
+(`/sbg/ekf_nav`, `/sbg/ekf_euler`) with a datasheet-calibrated error model over
+two degradation axes — `solution_mode` (RTK dropout / dead reckoning) and
+`correction_type` (RTK fixed / float / single point). See the module docstring
+in [scripts/sim_ellipse_d.py](./scripts/sim_ellipse_d.py) for parameters,
+schedules, and runtime control topics.
 
 A tutorial on [How To Add A New Sensor](https://gitlab.com/eufs/eufs_sim/-/wikis/How-To-Add-A-New-Sensor) can be found on the wiki.
 
