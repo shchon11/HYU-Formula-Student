@@ -1,3 +1,7 @@
+> **저작권 및 라이선스 안내**  
+> 이 문서는 EUFS Formula Student Simulator 관련 내용을 정리한 문서입니다.  
+> 원본 프로젝트 및 저작권/라이선스 정보는 EUFS GitLab 저장소를 따릅니다: <https://gitlab.com/eufs>
+
 # Formula Student Simulator
 
 
