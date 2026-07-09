@@ -326,7 +326,6 @@ private:
   // (and the map has converged), freeze the map and localize with a bounded
   // pose window so the graph never outgrows real-time optimization.
   bool auto_localization_after_lap_;
-  double lap_min_distance_;
   double lap_return_radius_;
   double lap_return_yaw_;
   int localization_window_poses_;

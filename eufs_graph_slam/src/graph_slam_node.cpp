@@ -78,7 +78,6 @@ GraphSlamNode::GraphSlamNode()
   map_trust_info_scale_(3.0),
   localization_mode_(false),
   auto_localization_after_lap_(true),
-  lap_min_distance_(100.0),
   lap_return_radius_(6.0),
   lap_return_yaw_(1.0),
   localization_window_poses_(100),
@@ -211,7 +210,6 @@ GraphSlamNode::GraphSlamNode()
   localization_mode_ = declare_parameter<bool>("localization_mode", localization_mode_);
   auto_localization_after_lap_ =
     declare_parameter<bool>("auto_localization_after_lap", auto_localization_after_lap_);
-  lap_min_distance_ = declare_parameter<double>("lap_min_distance", lap_min_distance_);
   lap_return_radius_ = declare_parameter<double>("lap_return_radius", lap_return_radius_);
   lap_return_yaw_ = declare_parameter<double>("lap_return_yaw", lap_return_yaw_);
   localization_window_poses_ =
@@ -266,7 +264,6 @@ GraphSlamNode::GraphSlamNode()
   landmark_merge_distance_ = std::max(0.0, landmark_merge_distance_);
   landmark_confirm_observations_ = std::max(0, landmark_confirm_observations_);
   loop_gap_distance_ = std::max(0.0, loop_gap_distance_);
-  lap_min_distance_ = std::max(10.0, lap_min_distance_);
   lap_origin_capture_distance_ = std::max(1.0, lap_origin_capture_distance_);
   lap_return_radius_ = std::max(0.5, lap_return_radius_);
   lap_return_yaw_ = std::max(0.05, lap_return_yaw_);
@@ -2274,7 +2271,6 @@ void GraphSlamNode::handleStartMapping(
 void GraphSlamNode::maybeFinishMappingLap(const g2o::SE2 & current_estimate)
 {
   if (!auto_localization_after_lap_ || !map_converged_ || !lap_origin_captured_ ||
-    traveled_distance_ < lap_origin_capture_distance_ + lap_min_distance_ ||
     landmarks_.empty())
   {
     return;
@@ -2289,17 +2285,17 @@ void GraphSlamNode::maybeFinishMappingLap(const g2o::SE2 & current_estimate)
     get_logger(),
     *get_clock(),
     10000,
-    "Lap check: traveled=%.0f m, return=%.2f m (radius %.1f), yaw=%.2f rad",
-    traveled_distance_, return_distance, lap_return_radius_, yaw_error);
+    "Lap check: return=%.2f m (radius %.1f), yaw=%.2f rad",
+    return_distance, lap_return_radius_, yaw_error);
   if (return_distance > lap_return_radius_ || yaw_error > lap_return_yaw_) {
     return;
   }
 
   RCLCPP_INFO(
     get_logger(),
-    "Mapping lap complete: traveled %.1f m and returned to within %.2f m / "
-    "%.2f rad of the start with a converged map",
-    traveled_distance_, return_distance, yaw_error);
+    "Mapping lap complete: returned to within %.2f m / %.2f rad of the start "
+    "with a converged map",
+    return_distance, yaw_error);
   enterLocalizationMode("mapping lap completed");
 }
 

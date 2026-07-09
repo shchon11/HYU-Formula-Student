@@ -79,13 +79,13 @@ graph_slam:
     # optimization cycles), confirmed-landmark observation edges get their
     # information scaled up so the pose conforms to the settled map.
     map_trust_after_loop_closure: true
-    map_trust_loop_closures_required: 2
+    map_trust_loop_closures_required: 1
     map_trust_info_scale: 3.0
     max_landmarks: 400
     update_existing_landmarks: true
     landmark_update_gain: 1.0
     landmark_update_process_variance: 0.04
-    delete_stale_landmarks: true
+    delete_stale_landmarks: false
     landmark_missed_observations_to_delete: 6
     landmark_delete_min_interval: 0.2
     landmark_delete_fov: 3.141593
@@ -105,21 +105,16 @@ graph_slam:
     localization_mode: false
     load_map_path: ""
 
-    # Trackdrive lifecycle: once the mapping lap closes (traveled at least
-    # lap_min_distance and returned within lap_return_radius / lap_return_yaw
-    # of the start pose with a converged map), freeze the map (auto-saved to
-    # map_save_dir), switch to localization, and keep only the most recent
-    # localization_window_poses pose vertices so the graph stays bounded for
-    # arbitrarily many laps. Status is published on ~/status and
-    # ~/map_converged (latched) for planning / RViz.
+    # Trackdrive lifecycle: once the map is converged and the car returns
+    # within lap_return_radius / lap_return_yaw of the captured lap origin,
+    # freeze the map (auto-saved to map_save_dir), switch to localization, and
+    # keep only the most recent localization_window_poses pose vertices so the
+    # graph stays bounded for arbitrarily many laps. Status is published on
+    # ~/status and ~/map_converged (latched) for planning / RViz.
     auto_localization_after_lap: true
     # The lap origin is captured this far into the drive so it sits on the
     # racing line (the spawn pose can be offset from the driven line).
     lap_origin_capture_distance: 15.0
-    # Set to roughly 0.8x the expected lap length: it is the only guard
-    # against a pinch point (two track sections passing close with similar
-    # heading) triggering lap completion mid-lap. small_track lap ~= 165 m.
-    lap_min_distance: 130.0
     lap_return_radius: 6.0
     lap_return_yaw: 1.0
     localization_window_poses: 100

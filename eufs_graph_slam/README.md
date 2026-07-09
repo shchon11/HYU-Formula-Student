@@ -89,13 +89,9 @@ trackdrive lifecycle without operator input:
    `lap_origin_capture_distance` (15 m) into the drive so it sits on the
    racing line rather than the spawn pose.
 2. **Lap completion**: once the map has converged (loop closures reconciled)
-   and the car has traveled at least `lap_min_distance` and returned within
-   `lap_return_radius` / `lap_return_yaw` of the lap origin, the node freezes
-   every landmark, auto-saves the map CSV to `map_save_dir`, and switches to
-   localization. Set `lap_min_distance` to roughly 0.8x the expected lap
-   length: it is the only guard against a pinch point (two track sections
-   close together with similar heading) firing the return check mid-lap and
-   freezing an incomplete map.
+   and the car returns within `lap_return_radius` / `lap_return_yaw` of the lap
+   origin, the node freezes every landmark, auto-saves the map CSV to
+   `map_save_dir`, and switches to localization.
 3. **Localization**: only the most recent `localization_window_poses` pose
    vertices are kept (the oldest is fixed as the anchor), so the graph stays
    bounded for arbitrarily many laps — full-batch optimization never outgrows

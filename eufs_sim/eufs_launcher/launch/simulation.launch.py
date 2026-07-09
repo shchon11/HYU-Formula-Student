@@ -12,7 +12,7 @@ from launch.launch_description_sources import FrontendLaunchDescriptionSource
 PERCEPTION_LAUNCH_ARGUMENTS = [
     (
         'perception_camera_view_distance',
-        '15',
+        '8',
         'Camera range used by the /cones simulated perception plugin.',
     ),
     (
@@ -42,7 +42,7 @@ PERCEPTION_LAUNCH_ARGUMENTS = [
     ),
     (
         'perception_camera_fov',
-        '2.09',
+        '2.8',
         'Camera FOV in radians used by the /cones simulated perception plugin.',
     ),
     (
@@ -52,12 +52,12 @@ PERCEPTION_LAUNCH_ARGUMENTS = [
     ),
     (
         'perception_lidar_on',
-        'true',
+        'false',
         'Whether lidar-only cones are included in simulated perception.',
     ),
     (
         'perception_detection_probability',
-        '1.0',
+        '0.9',
         'Probability that an in-range /cones simulated perception cone is published.',
     ),
     (
@@ -72,7 +72,7 @@ PERCEPTION_LAUNCH_ARGUMENTS = [
     ),
     (
         'camera_cones_fov',
-        '2.09',
+        '1.4',
         'Camera FOV in radians used by /camera_*/cones oracle topics.',
     ),
     (
@@ -146,7 +146,7 @@ def generate_launch_description():
 
         DeclareLaunchArgument(
             name='publish_gt_tf',
-            default_value='true',
+            default_value='false',
             description="Condition to use ground truth transform"),
 
         DeclareLaunchArgument(
