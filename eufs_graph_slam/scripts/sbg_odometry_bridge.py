@@ -25,9 +25,10 @@ never stops the odometry:
   * ``/odometry_integration/car_state`` (eufs_msgs/CarState) -- **relative
     odometry**. Pose is the ENU velocity+heading *integrated* here, so it is
     jump-free even when RTK re-acquisition makes the absolute position step.
-    graph_slam_node differences this between keyframes. Published whenever the
-    solution is at least ``min_odom_solution_mode`` (velocity integrated in
-    mode >= 3; position held with inflated covariance in mode 2).
+    graph_slam_node differences this between keyframes. Published only while
+    the solution is at least ``min_odom_solution_mode`` (default 3: velocity
+    valid). In mode 2 (AHRS) publication stops — the held position would look
+    like confident zero motion to the graph while the car may be moving.
   * ``/gnss/odom`` (nav_msgs/Odometry) -- **global anchor**. Pose is the raw
     ekf_nav absolute ENU position with a mode-tiered covariance (tight only at
     mode 4 / RTK, huge otherwise). graph_slam_node adds this as a unary GPS
@@ -135,8 +136,12 @@ class SbgOdometryBridge(Node):
             "start_min_solution_mode", 4
         ).value
         # Keep publishing odometry down to this mode; below it we fault (stop).
+        # Default 3 (NAV_VELOCITY): in mode 2 (AHRS) the position is held while
+        # the car may still be moving, so publishing would feed the graph
+        # confident zero-motion edges that warp the map. Stopping publication
+        # lets the SLAM side coast on its keyframe snapshot instead.
         self.min_odom_solution_mode = self.declare_parameter(
-            "min_odom_solution_mode", 2
+            "min_odom_solution_mode", 3
         ).value
         # The absolute /gnss/odom prior is only trustworthy at/above this mode;
         # below it we still publish but with a huge covariance so the SLAM

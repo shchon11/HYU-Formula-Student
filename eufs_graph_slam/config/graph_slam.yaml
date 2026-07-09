@@ -37,6 +37,10 @@ graph_slam:
 
     odom_translation_sigma: 0.05
     odom_yaw_sigma: 0.03
+    # Consume the motion source's reported noise (CarState.pose.covariance)
+    # per odometry edge, clamped below by the sigmas above — a degraded
+    # bridge/wheel-odometry mode then weakens its own constraints.
+    use_odom_covariance: true
 
     # GNSS global anchor (Level 2): consume the SBG bridge's /gnss/odom absolute
     # ENU fix as a unary EdgeSE2XYPrior on each keyframe. gnss_prior_max_position_sigma
@@ -112,7 +116,10 @@ graph_slam:
     # The lap origin is captured this far into the drive so it sits on the
     # racing line (the spawn pose can be offset from the driven line).
     lap_origin_capture_distance: 15.0
-    lap_min_distance: 100.0
+    # Set to roughly 0.8x the expected lap length: it is the only guard
+    # against a pinch point (two track sections passing close with similar
+    # heading) triggering lap completion mid-lap. small_track lap ~= 165 m.
+    lap_min_distance: 130.0
     lap_return_radius: 6.0
     lap_return_yaw: 1.0
     localization_window_poses: 100

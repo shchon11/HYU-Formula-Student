@@ -14,6 +14,7 @@
 #include <g2o/types/slam2d/vertex_se2.h>
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -131,7 +132,8 @@ private:
     const Eigen::Vector2d & map_point,
     const Eigen::Matrix2d & map_covariance,
     ConeColor color,
-    bool * ambiguous) const;
+    bool * ambiguous,
+    const std::vector<bool> * claimed = nullptr) const;
   bool colorsCompatible(ConeColor observation_color, ConeColor landmark_color) const;
   static void voteLandmarkColor(LandmarkRecord & landmark, ConeColor observed_color);
   LandmarkRecord * addLandmark(
@@ -329,6 +331,22 @@ private:
   double lap_return_yaw_;
   int localization_window_poses_;
   double traveled_distance_;
+
+  // Per-edge odometry trust: the motion source (SBG bridge / wheel odometry /
+  // sim drift) reports its current noise level in CarState.pose.covariance;
+  // odometry edges consume it so degraded modes weaken their constraints.
+  // Written and read only on the state-callback thread.
+  bool use_odom_covariance_;
+  double latest_odom_sigma_trans_;
+  double latest_odom_sigma_yaw_;
+
+  // Latest body twist from the motion input, passed through on
+  // /graph_slam/odom for downstream controllers. Atomics: written by the
+  // state thread, read wherever the estimate is published.
+  std::atomic<double> latest_twist_vx_{0.0};
+  std::atomic<double> latest_twist_vy_{0.0};
+  std::atomic<double> latest_twist_wz_{0.0};
+
   // Lap origin is captured a few meters into the drive so it sits on the
   // racing line (the spawn pose can be offset from it); each lap then passes
   // within ~1 m of this pose.

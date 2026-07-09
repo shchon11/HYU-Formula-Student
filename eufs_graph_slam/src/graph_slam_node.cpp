@@ -83,6 +83,9 @@ GraphSlamNode::GraphSlamNode()
   lap_return_yaw_(1.0),
   localization_window_poses_(100),
   traveled_distance_(0.0),
+  use_odom_covariance_(true),
+  latest_odom_sigma_trans_(0.0),
+  latest_odom_sigma_yaw_(0.0),
   lap_origin_capture_distance_(15.0),
   lap_origin_captured_(false),
   use_cone_covariance_(true),
@@ -217,6 +220,8 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<double>(
     "lap_origin_capture_distance",
     lap_origin_capture_distance_);
+  use_odom_covariance_ =
+    declare_parameter<bool>("use_odom_covariance", use_odom_covariance_);
   load_map_path_ = declare_parameter<std::string>("load_map_path", "");
   use_cone_covariance_ = declare_parameter<bool>("use_cone_covariance", use_cone_covariance_);
   process_every_cone_message_ =
@@ -492,6 +497,14 @@ void GraphSlamNode::stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg)
   const g2o::SE2 raw_odom = poseFromCarState(*msg);
   recordRawOdometry(stamp.seconds(), raw_odom);
 
+  // Motion-source trust and twist passthrough (see the member comments).
+  latest_odom_sigma_trans_ =
+    std::sqrt(std::max(0.0, std::max(msg->pose.covariance[0], msg->pose.covariance[7])));
+  latest_odom_sigma_yaw_ = std::sqrt(std::max(0.0, msg->pose.covariance[35]));
+  latest_twist_vx_.store(msg->twist.twist.linear.x);
+  latest_twist_vy_.store(msg->twist.twist.linear.y);
+  latest_twist_wz_.store(msg->twist.twist.angular.z);
+
   // Never wait for a running optimization: dead-reckon from the last
   // keyframe snapshot instead so live odometry keeps its input rate.
   std::unique_lock<std::mutex> lock(graph_mutex_, std::try_to_lock);
@@ -694,12 +707,15 @@ void GraphSlamNode::relocalizeTo(const g2o::SE2 & click)
   // local optimization so the pose snaps to the best fit near the click.
   std::size_t constrained = 0;
   if (can_refine) {
+    std::vector<bool> claimed(landmarks_.size(), false);
     for (const ConeObservation & obs : last_observations_) {
       const Eigen::Vector2d map_point = pose * obs.measurement;
       const Eigen::Matrix2d map_covariance = covarianceInMapFrame(pose, obs.covariance);
       bool ambiguous = false;
-      const int idx = findAssociatedLandmark(map_point, map_covariance, obs.color, &ambiguous);
+      const int idx =
+        findAssociatedLandmark(map_point, map_covariance, obs.color, &ambiguous, &claimed);
       if (idx >= 0) {
+        claimed[static_cast<std::size_t>(idx)] = true;
         addObservationEdge(obs, vertex, landmarks_[static_cast<std::size_t>(idx)]);
         ++constrained;
       }
@@ -822,7 +838,24 @@ void GraphSlamNode::addKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & 
   edge->setVertex(0, previous.vertex);
   edge->setVertex(1, vertex);
   edge->setMeasurement(odom_delta);
-  edge->setInformation(odom_information_);
+
+  // Per-edge trust from the motion source's reported noise: a bridge that
+  // degrades (e.g. SBG mode tiers) weakens its own constraints instead of
+  // being believed at the config sigma. Config sigmas act as the floor and a
+  // zero/absent covariance falls back to them entirely.
+  Eigen::Matrix3d information = odom_information_;
+  if (use_odom_covariance_ && latest_odom_sigma_trans_ > 1e-6) {
+    const double sigma_t =
+      std::clamp(latest_odom_sigma_trans_, odom_translation_sigma_, 50.0);
+    const double sigma_y = std::clamp(
+      latest_odom_sigma_yaw_ > 1e-6 ? latest_odom_sigma_yaw_ : odom_yaw_sigma_,
+      odom_yaw_sigma_, 10.0);
+    information = Eigen::Matrix3d::Zero();
+    information(0, 0) = 1.0 / (sigma_t * sigma_t);
+    information(1, 1) = 1.0 / (sigma_t * sigma_t);
+    information(2, 2) = 1.0 / (sigma_y * sigma_y);
+  }
+  edge->setInformation(information);
 
   if (!optimizer_.addEdge(edge)) {
     RCLCPP_ERROR(get_logger(), "Failed to add odometry edge");
@@ -988,6 +1021,10 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
   bool loop_closure_edge = false;
   std::vector<std::size_t> observed_landmark_indices;
   observed_landmark_indices.reserve(observations.size());
+  // Greedy in-frame exclusivity: each landmark may be matched by at most one
+  // cone per frame (indices track landmarks_; entries for landmarks created
+  // within this frame are appended as claimed).
+  std::vector<bool> claimed(landmarks_.size(), false);
 
   for (const ConeObservation & observation : observations) {
     ConeObservation keyframe_observation = observation;
@@ -1001,7 +1038,7 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
 
     bool ambiguous = false;
     const int landmark_index =
-      findAssociatedLandmark(map_point, map_covariance, observation.color, &ambiguous);
+      findAssociatedLandmark(map_point, map_covariance, observation.color, &ambiguous, &claimed);
     if (ambiguous) {
       // Two landmarks explain this cone almost equally well; fusing or
       // spawning a duplicate would corrupt the map, so skip it this frame.
@@ -1015,6 +1052,9 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
     if (landmark_index >= 0) {
       observed_index = static_cast<std::size_t>(landmark_index);
       has_observed_index = true;
+      if (observed_index < claimed.size()) {
+        claimed[observed_index] = true;
+      }
       landmark = &landmarks_[observed_index];
       voteLandmarkColor(*landmark, observation.color);
       if (add_edges && loop_gap_distance_ > 0.0 &&
@@ -1033,6 +1073,7 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
       if (landmark != nullptr) {
         observed_index = landmarks_.size() - 1U;
         has_observed_index = true;
+        claimed.push_back(true);  // a sibling cone must not merge into it
       }
     }
 
@@ -1179,7 +1220,8 @@ int GraphSlamNode::findAssociatedLandmark(
   const Eigen::Vector2d & map_point,
   const Eigen::Matrix2d & map_covariance,
   ConeColor color,
-  bool * ambiguous) const
+  bool * ambiguous,
+  const std::vector<bool> * claimed) const
 {
   if (ambiguous != nullptr) {
     *ambiguous = false;
@@ -1199,6 +1241,13 @@ int GraphSlamNode::findAssociatedLandmark(
   (void)color;
 
   for (std::size_t i = 0; i < landmarks_.size(); ++i) {
+    // In-frame exclusivity: a landmark already matched by another cone in
+    // this frame cannot absorb a second one (two adjacent cones must not
+    // collapse into a single landmark).
+    if (claimed != nullptr && i < claimed->size() && (*claimed)[i]) {
+      continue;
+    }
+
     const LandmarkRecord & landmark = landmarks_[i];
     const Eigen::Vector2d diff = landmark.vertex->estimate() - map_point;
 
@@ -1973,9 +2022,24 @@ void GraphSlamNode::publishOdometry(const rclcpp::Time & stamp, const g2o::SE2 &
   odom.pose.pose.position.y = estimate.translation().y();
   odom.pose.pose.position.z = 0.0;
   odom.pose.pose.orientation = quaternionFromYaw(estimate.rotation().angle());
-  odom.pose.covariance[0] = 0.05;
-  odom.pose.covariance[7] = 0.05;
-  odom.pose.covariance[35] = 0.05;
+
+  // Honest, state-tiered pose covariance: tight once the pose is anchored to
+  // a converged/loaded map, loose while mapping is still unconverged.
+  // (Benign unsynchronized reads of the mode flags.)
+  const bool anchored = localization_mode_ || map_converged_;
+  const double sigma_xy = anchored ? 0.05 : 0.30;
+  const double sigma_yaw = anchored ? 0.03 : 0.15;
+  odom.pose.covariance[0] = sigma_xy * sigma_xy;
+  odom.pose.covariance[7] = sigma_xy * sigma_xy;
+  odom.pose.covariance[35] = sigma_yaw * sigma_yaw;
+
+  // Body twist passthrough from the motion input for downstream controllers.
+  odom.twist.twist.linear.x = latest_twist_vx_.load();
+  odom.twist.twist.linear.y = latest_twist_vy_.load();
+  odom.twist.twist.angular.z = latest_twist_wz_.load();
+  odom.twist.covariance[0] = 0.01;
+  odom.twist.covariance[7] = 0.01;
+  odom.twist.covariance[35] = 0.02;
 
   odom_pub_->publish(odom);
 }
