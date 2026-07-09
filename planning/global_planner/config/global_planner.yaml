@@ -1,0 +1,76 @@
+# Shared parameters for both global_planner nodes. Each node reads only the
+# section keyed by its own node name, so both launch files can point their
+# params_file at this single file without clashing.
+
+global_planner_trajectory_publisher_node:
+  ros__parameters:
+    # Trajectory source. Leave trajectory_csv_path empty to resolve the CSV as
+    # <output_root>/<map_name>/<trajectory_filename>. If trajectory_csv_path is
+    # set, it takes precedence over output_root/map_name.
+    trajectory_csv_path: ""
+    output_root: "/home/haejun/HYU-Formula-Student/planning/trajectory_generator/outputs"
+    map_name: "peanut"
+    trajectory_filename: "traj_race_cl.csv"
+
+    # Publishing (data only; visualization lives in the debug visualizer node)
+    global_waypoints_topic: "/global_waypoints"
+    frame_id: "map"
+
+    # Reload / validation
+    reload_period_sec: 1.0
+    duplicate_point_tolerance: 0.0001
+    min_waypoint_count: 3
+    recompute_s_if_invalid: true
+
+wpnt_publisher:
+  ros__parameters:
+    # Republishes the next `waypoint_num` global points ahead of the vehicle,
+    # selecting the window by an s-based lookup over /global_waypoints using
+    # /car_state/frenet/odom (produced by the frenet_conversion package).
+    global_waypoints_topic: "/global_waypoints"
+    frenet_odom_topic: "/car_state/frenet/odom"
+    path_waypoints_topic: "/path_waypoints"
+    path_topic: "/path_waypoints/path"
+    waypoint_num: 50
+    closed_loop: true
+    closing_duplicate_tolerance: 0.001
+    # Diagnostic-only cross-check of the frenet segment index against the
+    # s-based closest point; warns on disagreement, never changes the output.
+    check_segment_index: true
+
+frenet_odom_node:
+  ros__parameters:
+    # EUFS simulation publishes vehicle odometry on /ground_truth/odom. For a
+    # localization stack, override launch arg odom_topic:=/pf/pose/odom.
+    odom_topic: "/ground_truth/odom"
+    waypoint_topic: "/global_waypoints"
+    frenet_odom_topic: "/car_state/frenet/odom"
+    debug_topic: "/car_state/frenet/debug"
+    frenet_frame_id: "frenet"
+    closed_loop: true
+    publish_debug: true
+
+global_planner_debug_visualizer_node:
+  ros__parameters:
+    # Layer CSVs are resolved as <output_root>/<map_name>/<*_filename>.
+    output_root: "/home/haejun/HYU-Formula-Student/planning/trajectory_generator/outputs"
+    map_name: "peanut"
+
+    # Publishing
+    frame_id: "map"
+    markers_topic: "/global_planner/debug/markers"
+    marker_line_width: 0.1
+    close_loops: true
+
+    # Reload
+    reload_period_sec: 1.0
+
+    # Layer sources (Formula Student colours are fixed in the node:
+    #   left boundary = blue, right boundary = yellow, centerline = red,
+    #   minimum-curvature raceline = green).
+    # left/right boundaries come from the periodic-spline export
+    # (export_boundary_splines.py) so they match the track map exactly.
+    left_boundary_filename: "left_boundary_spline.csv"
+    right_boundary_filename: "right_boundary_spline.csv"
+    centerline_filename: "centerline.csv"
+    raceline_filename: "traj_race_cl.csv"
