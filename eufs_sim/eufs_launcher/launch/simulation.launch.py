@@ -9,7 +9,89 @@ from launch.substitutions import PythonExpression
 from launch.launch_description_sources import FrontendLaunchDescriptionSource
 
 
+PERCEPTION_LAUNCH_ARGUMENTS = [
+    (
+        'perception_camera_view_distance',
+        '15',
+        'Camera range used by the /cones simulated perception plugin.',
+    ),
+    (
+        'perception_lidar_view_distance',
+        '100',
+        'Radial lidar range used by the /cones simulated perception plugin.',
+    ),
+    (
+        'perception_lidar_x_view_distance',
+        '20',
+        'Forward/back lidar clipping range used by simulated perception.',
+    ),
+    (
+        'perception_lidar_y_view_distance',
+        '20',
+        'Lateral lidar clipping range used by simulated perception.',
+    ),
+    (
+        'perception_lidar_min_view_distance',
+        '1',
+        'Minimum lidar range used by simulated perception.',
+    ),
+    (
+        'perception_camera_min_view_distance',
+        '0.5',
+        'Minimum camera range used by simulated perception.',
+    ),
+    (
+        'perception_camera_fov',
+        '2.09',
+        'Camera FOV in radians used by the /cones simulated perception plugin.',
+    ),
+    (
+        'perception_lidar_fov',
+        '3.141593',
+        'Lidar FOV in radians used by the /cones simulated perception plugin.',
+    ),
+    (
+        'perception_lidar_on',
+        'true',
+        'Whether lidar-only cones are included in simulated perception.',
+    ),
+    (
+        'perception_detection_probability',
+        '1.0',
+        'Probability that an in-range /cones simulated perception cone is published.',
+    ),
+    (
+        'camera_cones_view_distance',
+        '13',
+        'Camera range used by /camera_*/cones oracle topics.',
+    ),
+    (
+        'camera_cones_min_view_distance',
+        '0.5',
+        'Minimum camera range used by /camera_*/cones oracle topics.',
+    ),
+    (
+        'camera_cones_fov',
+        '2.09',
+        'Camera FOV in radians used by /camera_*/cones oracle topics.',
+    ),
+    (
+        'camera_cones_detection_probability',
+        '1.0',
+        'Probability that an in-range /camera_*/cones oracle cone is published.',
+    ),
+]
+
+
 def generate_launch_description():
+    perception_argument_declarations = [
+        DeclareLaunchArgument(name, default_value=default, description=description)
+        for name, default, description in PERCEPTION_LAUNCH_ARGUMENTS
+    ]
+    perception_launch_arguments = [
+        (name, LaunchConfiguration(name))
+        for name, _, _ in PERCEPTION_LAUNCH_ARGUMENTS
+    ]
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -77,6 +159,7 @@ def generate_launch_description():
             name='launch_group',
             default_value='default',
             description="Determines which launch files are used in the state_machine node"),
+        *perception_argument_declarations,
 
         SetEnvironmentVariable(
             name='ROS_LOCALHOST_ONLY',
@@ -103,6 +186,7 @@ def generate_launch_description():
                 ('publish_gt_tf', LaunchConfiguration('publish_gt_tf')),
                 ('pub_ground_truth', LaunchConfiguration('pub_ground_truth')),
                 ('launch_group', LaunchConfiguration('launch_group')),
+                *perception_launch_arguments,
             ]
         ),
     ])

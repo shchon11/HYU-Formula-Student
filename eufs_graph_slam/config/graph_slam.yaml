@@ -23,7 +23,10 @@ graph_slam:
     association_max_distance: 1.2
     association_gate_chi2: 5.991
     association_ambiguity_ratio: 0.85
-    association_inflation_per_keyframe: 0.01
+    # Gate inflation grows with distance driven since a landmark was last
+    # seen (drift is distance-proportional; keyframe density must not change
+    # the gate). 0.01 m^2/m -> ~3.2 m gate radius after a 165 m lap.
+    association_inflation_per_meter: 0.01
     association_max_inflation: 4.0
     min_observation_range: 0.2
     max_observation_range: 30.0
@@ -66,7 +69,7 @@ graph_slam:
 
     landmark_min_observations_to_publish: 2
     landmark_confirm_observations: 3
-    loop_gap_keyframes: 30
+    loop_gap_distance: 20.0
     landmark_merge_distance: 0.6
     # After the map converges (loop closures reconciled by this many
     # optimization cycles), confirmed-landmark observation edges get their
@@ -97,3 +100,19 @@ graph_slam:
     # the package map/ directory when launched via graph_slam.launch.py.
     localization_mode: false
     load_map_path: ""
+
+    # Trackdrive lifecycle: once the mapping lap closes (traveled at least
+    # lap_min_distance and returned within lap_return_radius / lap_return_yaw
+    # of the start pose with a converged map), freeze the map (auto-saved to
+    # map_save_dir), switch to localization, and keep only the most recent
+    # localization_window_poses pose vertices so the graph stays bounded for
+    # arbitrarily many laps. Status is published on ~/status and
+    # ~/map_converged (latched) for planning / RViz.
+    auto_localization_after_lap: true
+    # The lap origin is captured this far into the drive so it sits on the
+    # racing line (the spawn pose can be offset from the driven line).
+    lap_origin_capture_distance: 15.0
+    lap_min_distance: 100.0
+    lap_return_radius: 6.0
+    lap_return_yaw: 1.0
+    localization_window_poses: 100

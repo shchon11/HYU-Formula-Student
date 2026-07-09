@@ -32,7 +32,7 @@ from rclpy.qos import QoSDurabilityPolicy, QoSProfile, ReliabilityPolicy
 
 from eufs_msgs.msg import CarState
 from nav_msgs.msg import Odometry
-from std_msgs.msg import ColorRGBA, Float32
+from std_msgs.msg import ColorRGBA, Float32, String
 from geometry_msgs.msg import Point, Vector3
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -70,6 +70,15 @@ class ATEMonitor(Node):
         self.create_subscription(Odometry, args.slam_odom, self.on_slam, 50)
         self.create_subscription(CarState, args.gt_topic, self.on_gt, best_effort)
 
+        # SLAM lifecycle (mapping / mapping_converged / localization); the
+        # node latches it, so subscribe transient_local to get the last state.
+        self.slam_status = "unknown"
+        status_qos = QoSProfile(
+            depth=1, reliability=ReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(
+            String, "/graph_slam/status", self.on_status, status_qos)
+
         latched = QoSProfile(
             depth=1, reliability=ReliabilityPolicy.RELIABLE,
             durability=QoSDurabilityPolicy.VOLATILE)
@@ -81,14 +90,20 @@ class ATEMonitor(Node):
         if HAVE_OVERLAY:
             self.overlay_pub = self.create_publisher(
                 OverlayText, "/graph_slam/ate_overlay", latched)
+            self.status_overlay_pub = self.create_publisher(
+                OverlayText, "/graph_slam/status_overlay", latched)
         else:
             self.overlay_pub = None
+            self.status_overlay_pub = None
             self.get_logger().warn(
                 "rviz_2d_overlay_plugins not found; ATE shows as a marker above "
                 "the car. Install ros-humble-rviz-2d-overlay-plugins for a fixed "
                 "top-left HUD on /graph_slam/ate_overlay.")
 
         self.create_timer(0.1, self.publish_markers)  # 10 Hz refresh
+
+    def on_status(self, msg):
+        self.slam_status = msg.data
 
     def on_gt(self, msg):
         t = stamp_sec(msg.header)
@@ -127,6 +142,10 @@ class ATEMonitor(Node):
         self.ate_pub.publish(Float32(data=float(rmse)))
 
     def publish_markers(self):
+        # SLAM lifecycle HUD is independent of ground truth, so it also works
+        # on the real car where no GT/ATE exists.
+        self.publish_status_overlay()
+
         if self.latest is None:
             return
         sx, sy, gx, gy, err, rmse = self.latest
@@ -196,6 +215,40 @@ class ATEMonitor(Node):
             self.get_logger().warn(
                 f"OverlayText publish failed ({exc}); falling back to car marker")
             self.overlay_pub = None
+
+    STATUS_STYLE = {
+        # label, (r, g, b)
+        "mapping": ("MAPPING", (1.0, 0.85, 0.2)),
+        "mapping_converged": ("MAPPING (converged)", (0.2, 0.9, 1.0)),
+        "localization": ("LOCALIZATION", (0.3, 1.0, 0.3)),
+        "unknown": ("SLAM: waiting...", (0.7, 0.7, 0.7)),
+    }
+
+    def publish_status_overlay(self):
+        """SLAM lifecycle box just below the ATE box (does not overlap it)."""
+        if self.status_overlay_pub is None:
+            return
+        label, (r, g, b) = self.STATUS_STYLE.get(
+            self.slam_status, (self.slam_status, (0.7, 0.7, 0.7)))
+        try:
+            ov = OverlayText()
+            ov.action = OverlayText.ADD
+            ov.width = 220
+            ov.height = 34
+            ov.horizontal_distance = 12
+            ov.vertical_distance = 130
+            ov.horizontal_alignment = OverlayText.LEFT
+            ov.vertical_alignment = OverlayText.TOP
+            ov.bg_color = ColorRGBA(r=0.0, g=0.0, b=0.0, a=0.55)
+            ov.fg_color = ColorRGBA(r=float(r), g=float(g), b=float(b), a=1.0)
+            ov.line_width = 2
+            ov.text_size = 13.0
+            ov.font = "DejaVu Sans Mono"
+            ov.text = label
+            self.status_overlay_pub.publish(ov)
+        except Exception as exc:  # noqa: BLE001
+            self.get_logger().warn(f"status OverlayText publish failed ({exc})")
+            self.status_overlay_pub = None
 
 
 def main():

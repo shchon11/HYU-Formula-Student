@@ -84,6 +84,17 @@ void GazeboGroundTruthCones::Load(gazebo::physics::ModelPtr _parent, sdf::Elemen
   this->camera_noise_percentage =
       getDoubleParameter(_sdf, "perceptionCameraNoisePercentage", 0.4,
                          "0.4");
+  this->perception_detection_probability =
+      getDoubleParameter(_sdf, "detectionProbability", 1.0, "1.0");
+  if (this->perception_detection_probability < 0.0) {
+    RCLCPP_WARN(this->rosnode_->get_logger(),
+                "detectionProbability below 0.0, clamping to 0.0");
+    this->perception_detection_probability = 0.0;
+  } else if (this->perception_detection_probability > 1.0) {
+    RCLCPP_WARN(this->rosnode_->get_logger(),
+                "detectionProbability above 1.0, clamping to 1.0");
+    this->perception_detection_probability = 1.0;
+  }
   this->lidar_on = getBoolParameter(_sdf, "lidarOn", true,
                                     "true");
 
@@ -94,8 +105,10 @@ void GazeboGroundTruthCones::Load(gazebo::physics::ModelPtr _parent, sdf::Elemen
   this->simulate_perception_ = getBoolParameter(_sdf, "simulatePerception",
                                                 false, "false");
 
+  const char *lidar_noise_parameter =
+      _sdf->HasElement("perceptionLidarNoise") ? "perceptionLidarNoise" : "perceptionNoise";
   this->perception_lidar_noise_ =
-      getVector3dParameter(_sdf, "perceptionNoise",
+      getVector3dParameter(_sdf, lidar_noise_parameter,
                            {0.03, 0.03, 0.0}, "0.03, 0.03, 0.0");
 
   std::string random_cone_color_yaml = "";
@@ -652,6 +665,11 @@ double GazeboGroundTruthCones::GaussianKernel(double mu, double sigma) {
   return X;
 }
 
+bool GazeboGroundTruthCones::shouldDetectCone() {
+  double rand = static_cast<double>(rand_r(&this->seed)) / static_cast<double>(RAND_MAX);
+  return rand <= this->perception_detection_probability;
+}
+
 // Returns pointer to cone array at random given weights
 std::string GazeboGroundTruthCones::pickColorWithProbability(
   const YAML::Node weights) {
@@ -679,6 +697,9 @@ GazeboGroundTruthCones::swapConeColors(
   std::map<std::string, std::vector<eufs_msgs::msg::ConeWithCovariance>> new_map;
   for (auto const& [color, source] : color_map) {
     for (auto cone : source) {
+      if (!shouldDetectCone()) {
+        continue;
+      }
       std::string rand_color = pickColorWithProbability(recolor_config[color]);
       if (rand_color != "undetected") {
         if (!new_map.count(rand_color)) {

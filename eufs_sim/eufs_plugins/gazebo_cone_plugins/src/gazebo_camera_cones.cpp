@@ -59,12 +59,29 @@ void GazeboCameraCones::Load(gazebo::physics::ModelPtr _parent, sdf::ElementPtr 
                                                       1, "1");
   this->camera_fov = getDoubleParameter(_sdf, "cameraFOV", 1.918889,
                                         "1.918889  (110 degrees)");
+  const char *camera_noise_a_parameter =
+      _sdf->HasElement("perceptionCameraDepthNoiseParameterA") ?
+      "perceptionCameraDepthNoiseParameterA" : "CameraDepthNoiseParameterA";
+  const char *camera_noise_b_parameter =
+      _sdf->HasElement("perceptionCameraDepthNoiseParameterB") ?
+      "perceptionCameraDepthNoiseParameterB" : "CameraDepthNoiseParameterB";
   this->camera_a =
-      getDoubleParameter(_sdf, "CameraDepthNoiseParameterA", 0.0184,
+      getDoubleParameter(_sdf, camera_noise_a_parameter, 0.0184,
                          "0.0184");
   this->camera_b =
-      getDoubleParameter(_sdf, "CameraDepthNoiseParameterB", 0.2106,
+      getDoubleParameter(_sdf, camera_noise_b_parameter, 0.2106,
                          "0.2106");
+  this->detection_probability =
+      getDoubleParameter(_sdf, "detectionProbability", 1.0, "1.0");
+  if (this->detection_probability < 0.0) {
+    RCLCPP_WARN(this->rosnode_->get_logger(),
+                "detectionProbability below 0.0, clamping to 0.0");
+    this->detection_probability = 0.0;
+  } else if (this->detection_probability > 1.0) {
+    RCLCPP_WARN(this->rosnode_->get_logger(),
+                "detectionProbability above 1.0, clamping to 1.0");
+    this->detection_probability = 1.0;
+  }
   this->camera_pos =
       getPose3dParameter(_sdf, "cameraTF",
                          {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
@@ -294,6 +311,11 @@ double GazeboCameraCones::GaussianKernel(double mu, double sigma) {
   return X;
 }
 
+bool GazeboCameraCones::shouldDetectCone() {
+  double rand = static_cast<double>(rand_r(&this->seed)) / static_cast<double>(RAND_MAX);
+  return rand <= this->detection_probability;
+}
+
 // Returns pointer to cone array at random given weights
 std::string GazeboCameraCones::pickColorWithProbability(
   const YAML::Node weights) {
@@ -321,6 +343,9 @@ GazeboCameraCones::swapConeColors(
   std::map<std::string, std::vector<eufs_msgs::msg::ConeWithCovariance>> new_map;
   for (auto const& [color, source] : color_map) {
     for (auto cone : source) {
+      if (!shouldDetectCone()) {
+        continue;
+      }
       std::string rand_color = pickColorWithProbability(recolor_config[color]);
       if (rand_color != "undetected") {
         if (!new_map.count(rand_color)) {

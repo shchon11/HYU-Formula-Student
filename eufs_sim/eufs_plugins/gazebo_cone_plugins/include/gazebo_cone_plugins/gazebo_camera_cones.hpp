@@ -81,6 +81,7 @@ class GazeboCameraCones : public gazebo::ModelPlugin {
       eufs_msgs::msg::ConeArrayWithCovariance &cones_message);
   void addNoiseToConeArray(std::vector<eufs_msgs::msg::ConeWithCovariance> &cone_array);
   double GaussianKernel(double mu, double sigma);
+  bool shouldDetectCone();
 
   // Returns random cone colour with probability `weights`
   std::string pickColorWithProbability(const YAML::Node weights);
@@ -121,6 +122,7 @@ class GazeboCameraCones : public gazebo::ModelPlugin {
   double camera_fov;
   double camera_a;
   double camera_b;
+  double detection_probability;
   YAML::Node recolor_config;
 
   double update_rate_;

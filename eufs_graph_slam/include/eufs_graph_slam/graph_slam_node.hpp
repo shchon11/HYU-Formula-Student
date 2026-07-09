@@ -32,7 +32,9 @@
 #include "nav_msgs/msg/odometry.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/color_rgba.hpp"
+#include "std_msgs/msg/string.hpp"
 #include "std_srvs/srv/trigger.hpp"
 #include "tf2_ros/transform_broadcaster.h"
 #include "visualization_msgs/msg/marker_array.hpp"
@@ -71,7 +73,10 @@ private:
     Eigen::Matrix2d covariance;
     std::size_t observations;
     int consecutive_misses;
-    std::size_t last_seen_keyframe_index;
+    // traveled_distance_ value when this landmark was last associated; drift
+    // (and therefore the association gate inflation) grows with distance
+    // driven, independent of keyframe density.
+    double last_seen_traveled;
     std::array<std::uint16_t, 5> color_votes;
   };
 
@@ -196,6 +201,14 @@ private:
     const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
     std::shared_ptr<std_srvs::srv::Trigger::Response> response);
 
+  // Trackdrive lifecycle: detect lap completion, freeze the map, and switch
+  // to localization with a bounded sliding window of pose vertices.
+  void maybeFinishMappingLap(const g2o::SE2 & current_estimate);
+  void enterLocalizationMode(const std::string & reason);
+  void prunePoseWindow();
+  std::string saveMapTimestamped();
+  void publishStatus();
+
   static double normalizeAngle(double angle);
   static double yawFromQuaternion(const geometry_msgs::msg::Quaternion & q);
   static geometry_msgs::msg::Quaternion quaternionFromYaw(double yaw);
@@ -216,6 +229,8 @@ private:
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr converged_pub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr save_graph_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr save_map_srv_;
@@ -271,7 +286,7 @@ private:
   double relocalize_search_radius_;
   double relocalize_search_yaw_;
   double relocalize_inlier_distance_;
-  double association_inflation_per_keyframe_;
+  double association_inflation_per_meter_;
   double association_max_inflation_;
   double landmark_merge_distance_;
   double map_trust_info_scale_;
@@ -299,11 +314,27 @@ private:
   int path_max_poses_to_publish_;
   int landmark_missed_observations_to_delete_;
   int landmark_confirm_observations_;
-  int loop_gap_keyframes_;
+  double loop_gap_distance_;
   int map_trust_loop_closures_required_;
 
   bool localization_mode_;
   std::string load_map_path_;
+
+  // Trackdrive lifecycle: after the mapping lap closes near the start pose
+  // (and the map has converged), freeze the map and localize with a bounded
+  // pose window so the graph never outgrows real-time optimization.
+  bool auto_localization_after_lap_;
+  double lap_min_distance_;
+  double lap_return_radius_;
+  double lap_return_yaw_;
+  int localization_window_poses_;
+  double traveled_distance_;
+  // Lap origin is captured a few meters into the drive so it sits on the
+  // racing line (the spawn pose can be offset from it); each lap then passes
+  // within ~1 m of this pose.
+  double lap_origin_capture_distance_;
+  bool lap_origin_captured_;
+  g2o::SE2 lap_origin_;
 
   bool use_cone_covariance_;
   bool process_every_cone_message_;

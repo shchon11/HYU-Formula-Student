@@ -47,7 +47,7 @@ GraphSlamNode::GraphSlamNode()
   relocalize_search_radius_(2.0),
   relocalize_search_yaw_(0.5),
   relocalize_inlier_distance_(0.6),
-  association_inflation_per_keyframe_(0.01),
+  association_inflation_per_meter_(0.01),
   association_max_inflation_(4.0),
   landmark_merge_distance_(0.6),
   min_observation_range_(0.2),
@@ -73,10 +73,18 @@ GraphSlamNode::GraphSlamNode()
   path_max_poses_to_publish_(1000),
   landmark_missed_observations_to_delete_(6),
   landmark_confirm_observations_(3),
-  loop_gap_keyframes_(30),
+  loop_gap_distance_(20.0),
   map_trust_loop_closures_required_(2),
   map_trust_info_scale_(3.0),
   localization_mode_(false),
+  auto_localization_after_lap_(true),
+  lap_min_distance_(100.0),
+  lap_return_radius_(6.0),
+  lap_return_yaw_(1.0),
+  localization_window_poses_(100),
+  traveled_distance_(0.0),
+  lap_origin_capture_distance_(15.0),
+  lap_origin_captured_(false),
   use_cone_covariance_(true),
   process_every_cone_message_(false),
   publish_tf_(true),
@@ -125,10 +133,10 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<double>("relocalize_search_yaw", relocalize_search_yaw_);
   relocalize_inlier_distance_ =
     declare_parameter<double>("relocalize_inlier_distance", relocalize_inlier_distance_);
-  association_inflation_per_keyframe_ =
+  association_inflation_per_meter_ =
     declare_parameter<double>(
-    "association_inflation_per_keyframe",
-    association_inflation_per_keyframe_);
+    "association_inflation_per_meter",
+    association_inflation_per_meter_);
   association_max_inflation_ =
     declare_parameter<double>("association_max_inflation", association_max_inflation_);
   landmark_merge_distance_ =
@@ -183,7 +191,7 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<int>(
     "landmark_confirm_observations",
     landmark_confirm_observations_);
-  loop_gap_keyframes_ = declare_parameter<int>("loop_gap_keyframes", loop_gap_keyframes_);
+  loop_gap_distance_ = declare_parameter<double>("loop_gap_distance", loop_gap_distance_);
   map_trust_loop_closures_required_ =
     declare_parameter<int>(
     "map_trust_loop_closures_required",
@@ -198,6 +206,17 @@ GraphSlamNode::GraphSlamNode()
   tf_stamp_offset_ = declare_parameter<double>("tf_stamp_offset", tf_stamp_offset_);
 
   localization_mode_ = declare_parameter<bool>("localization_mode", localization_mode_);
+  auto_localization_after_lap_ =
+    declare_parameter<bool>("auto_localization_after_lap", auto_localization_after_lap_);
+  lap_min_distance_ = declare_parameter<double>("lap_min_distance", lap_min_distance_);
+  lap_return_radius_ = declare_parameter<double>("lap_return_radius", lap_return_radius_);
+  lap_return_yaw_ = declare_parameter<double>("lap_return_yaw", lap_return_yaw_);
+  localization_window_poses_ =
+    declare_parameter<int>("localization_window_poses", localization_window_poses_);
+  lap_origin_capture_distance_ =
+    declare_parameter<double>(
+    "lap_origin_capture_distance",
+    lap_origin_capture_distance_);
   load_map_path_ = declare_parameter<std::string>("load_map_path", "");
   use_cone_covariance_ = declare_parameter<bool>("use_cone_covariance", use_cone_covariance_);
   process_every_cone_message_ =
@@ -237,11 +256,16 @@ GraphSlamNode::GraphSlamNode()
   relocalize_search_radius_ = std::max(0.0, relocalize_search_radius_);
   relocalize_search_yaw_ = std::max(0.0, relocalize_search_yaw_);
   relocalize_inlier_distance_ = std::max(0.05, relocalize_inlier_distance_);
-  association_inflation_per_keyframe_ = std::max(0.0, association_inflation_per_keyframe_);
+  association_inflation_per_meter_ = std::max(0.0, association_inflation_per_meter_);
   association_max_inflation_ = std::max(0.0, association_max_inflation_);
   landmark_merge_distance_ = std::max(0.0, landmark_merge_distance_);
   landmark_confirm_observations_ = std::max(0, landmark_confirm_observations_);
-  loop_gap_keyframes_ = std::max(0, loop_gap_keyframes_);
+  loop_gap_distance_ = std::max(0.0, loop_gap_distance_);
+  lap_min_distance_ = std::max(10.0, lap_min_distance_);
+  lap_origin_capture_distance_ = std::max(1.0, lap_origin_capture_distance_);
+  lap_return_radius_ = std::max(0.5, lap_return_radius_);
+  lap_return_yaw_ = std::max(0.05, lap_return_yaw_);
+  localization_window_poses_ = std::max(10, localization_window_poses_);
   map_trust_loop_closures_required_ = std::max(1, map_trust_loop_closures_required_);
   map_trust_info_scale_ = std::max(1.0, map_trust_info_scale_);
   min_observation_range_ = std::max(0.0, min_observation_range_);
@@ -318,6 +342,10 @@ GraphSlamNode::GraphSlamNode()
   path_pub_ = create_publisher<nav_msgs::msg::Path>(path_topic_, transient_qos);
   marker_pub_ =
     create_publisher<visualization_msgs::msg::MarkerArray>(marker_topic_, transient_qos);
+  // Latched status so planning (local vs global) and RViz always see the
+  // current SLAM lifecycle even when subscribing late.
+  status_pub_ = create_publisher<std_msgs::msg::String>("~/status", transient_qos);
+  converged_pub_ = create_publisher<std_msgs::msg::Bool>("~/map_converged", transient_qos);
 
   if (publish_tf_) {
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
@@ -408,6 +436,8 @@ GraphSlamNode::GraphSlamNode()
       get_logger(), "Localization mode active with a fixed map of %zu cones",
       landmarks_.size());
   }
+
+  publishStatus();
 }
 
 void GraphSlamNode::configureOptimizer()
@@ -448,6 +478,9 @@ void GraphSlamNode::resetGraph()
   map_converged_ = false;
   loop_closure_seen_since_optimize_ = false;
   loop_closure_optimize_cycles_ = 0;
+  traveled_distance_ = 0.0;
+  lap_origin_captured_ = false;
+  lap_origin_ = g2o::SE2();
   last_optimization_time_sec_ = -1.0;
   last_visual_publish_time_sec_ = -1.0;
   last_landmark_delete_time_sec_ = -1.0;
@@ -683,6 +716,9 @@ void GraphSlamNode::relocalizeTo(const g2o::SE2 & click)
   publishEstimate();
 
   const g2o::SE2 result = vertex->estimate();
+  // Lap accounting restarts from the asserted pose.
+  traveled_distance_ = 0.0;
+  lap_origin_captured_ = false;
   RCLCPP_INFO(
     get_logger(),
     "Relocalized to x=%.2f y=%.2f yaw=%.2f (%zu cones constrained the fit, "
@@ -750,6 +786,8 @@ void GraphSlamNode::addInitialPose(const g2o::SE2 & raw_odom, const rclcpp::Time
 
   poses_.push_back(PoseRecord{vertex->id(), vertex, raw_odom, stamp});
   updateKeyframeSnapshot();
+  traveled_distance_ = 0.0;
+  lap_origin_captured_ = false;
   RCLCPP_INFO(
     get_logger(),
     "Initialized graph SLAM at x=%.2f y=%.2f yaw=%.2f",
@@ -797,6 +835,23 @@ void GraphSlamNode::addKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & 
   poses_.push_back(PoseRecord{vertex->id(), vertex, raw_odom, stamp});
   updateKeyframeSnapshot();
   ++keyframes_since_last_optimization_;
+
+  traveled_distance_ += odom_delta.translation().norm();
+  if (localization_mode_) {
+    prunePoseWindow();
+  } else {
+    if (!lap_origin_captured_ && traveled_distance_ >= lap_origin_capture_distance_) {
+      lap_origin_ = vertex->estimate();
+      lap_origin_captured_ = true;
+      RCLCPP_INFO(
+        get_logger(),
+        "Lap origin captured on the racing line at x=%.2f y=%.2f (%.1f m in)",
+        lap_origin_.translation().x(),
+        lap_origin_.translation().y(),
+        traveled_distance_);
+    }
+    maybeFinishMappingLap(vertex->estimate());
+  }
 }
 
 void GraphSlamNode::gnssOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
@@ -928,7 +983,6 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
     last_cone_pose_graph_id_ = pose.graph_id;
   }
 
-  const std::size_t keyframe_index = poses_.size() - 1U;
   std::size_t added_edges = 0U;
   std::size_t updated_landmarks = 0U;
   bool loop_closure_edge = false;
@@ -963,13 +1017,12 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
       has_observed_index = true;
       landmark = &landmarks_[observed_index];
       voteLandmarkColor(*landmark, observation.color);
-      if (add_edges && loop_gap_keyframes_ > 0 &&
-        keyframe_index >= landmark->last_seen_keyframe_index +
-        static_cast<std::size_t>(loop_gap_keyframes_))
+      if (add_edges && loop_gap_distance_ > 0.0 &&
+        traveled_distance_ - landmark->last_seen_traveled >= loop_gap_distance_)
       {
         loop_closure_edge = true;
       }
-      landmark->last_seen_keyframe_index = keyframe_index;
+      landmark->last_seen_traveled = traveled_distance_;
       if (update_landmarks &&
         updateLandmarkEstimate(*landmark, map_point, map_covariance))
       {
@@ -1011,9 +1064,9 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
         get_logger(),
         *get_clock(),
         5000,
-        "Loop closure: re-associated landmark(s) after >= %d keyframes; "
+        "Loop closure: re-associated landmark(s) unseen for >= %.1f m; "
         "pulling graph optimization forward",
-        loop_gap_keyframes_);
+        loop_gap_distance_);
     }
   }
 
@@ -1132,7 +1185,6 @@ int GraphSlamNode::findAssociatedLandmark(
     *ambiguous = false;
   }
 
-  const std::size_t current_keyframe = poses_.empty() ? 0U : poses_.size() - 1U;
 
   double best_d2 = std::numeric_limits<double>::max();
   double second_d2 = std::numeric_limits<double>::max();
@@ -1152,13 +1204,13 @@ int GraphSlamNode::findAssociatedLandmark(
 
     // Pose drift since the landmark was last seen widens its gate; this is
     // what lets lap-closure re-associations succeed despite accumulated
-    // odometry error.
-    const std::size_t keyframes_unseen =
-      current_keyframe > landmark.last_seen_keyframe_index ?
-      current_keyframe - landmark.last_seen_keyframe_index : 0U;
+    // odometry error. Drift grows with distance driven, so the inflation is
+    // per meter (keyframe density must not change the gate).
+    const double meters_unseen =
+      std::max(0.0, traveled_distance_ - landmark.last_seen_traveled);
     const double inflation = std::min(
       association_max_inflation_,
-      association_inflation_per_keyframe_ * static_cast<double>(keyframes_unseen));
+      association_inflation_per_meter_ * meters_unseen);
 
     // Coarse pre-gate to skip the matrix inverse for distant landmarks.
     const double gate_radius = association_max_distance_ + 3.0 * std::sqrt(inflation);
@@ -1267,9 +1319,8 @@ GraphSlamNode::LandmarkRecord * GraphSlamNode::addLandmark(
     return nullptr;
   }
 
-  const std::size_t keyframe_index = poses_.empty() ? 0U : poses_.size() - 1U;
   landmarks_.push_back(
-    LandmarkRecord{vertex->id(), color, vertex, covariance, 0U, 0, keyframe_index, {}});
+    LandmarkRecord{vertex->id(), color, vertex, covariance, 0U, 0, traveled_distance_, {}});
   voteLandmarkColor(landmarks_.back(), color);
   return &landmarks_.back();
 }
@@ -1576,8 +1627,8 @@ std::size_t GraphSlamNode::mergeCloseLandmarks()
 
       kept.observations += dropped.observations;
       kept.consecutive_misses = 0;
-      kept.last_seen_keyframe_index =
-        std::max(kept.last_seen_keyframe_index, dropped.last_seen_keyframe_index);
+      kept.last_seen_traveled =
+        std::max(kept.last_seen_traveled, dropped.last_seen_traveled);
       for (std::size_t k = 0; k < kept.color_votes.size(); ++k) {
         const std::uint32_t total = static_cast<std::uint32_t>(kept.color_votes[k]) +
           static_cast<std::uint32_t>(dropped.color_votes[k]);
@@ -1722,6 +1773,7 @@ void GraphSlamNode::maybeOptimize()
         "boosting confirmed-landmark observation weight by %.1fx",
         loop_closure_optimize_cycles_,
         map_trust_info_scale_);
+      publishStatus();
     }
   }
 
@@ -2046,6 +2098,7 @@ void GraphSlamNode::handleReset(
   (void)request;
   std::lock_guard<std::mutex> lock(graph_mutex_);
   resetGraph();
+  publishStatus();
   response->success = true;
   response->message = "Graph SLAM state reset";
 }
@@ -2069,13 +2122,10 @@ void GraphSlamNode::handleSaveGraph(
     "Failed to save graph to " + g2o_output_path_;
 }
 
-void GraphSlamNode::handleSaveMap(
-  const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-  std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+std::string GraphSlamNode::saveMapTimestamped()
 {
-  (void)request;
-
   // Timestamped filename: map_YYYYmmdd_HHMMSS.csv in map_save_dir_.
+  // Caller must hold graph_mutex_.
   const std::time_t now = std::time(nullptr);
   std::tm tm_buf{};
   localtime_r(&now, &tm_buf);
@@ -2085,16 +2135,27 @@ void GraphSlamNode::handleSaveMap(
   const std::string path = dir + "/" + name.str();
 
   std::string error;
-  std::lock_guard<std::mutex> lock(graph_mutex_);
-  if (saveMapCsv(path, &error)) {
-    response->success = true;
-    response->message = "Saved map to " + path;
-    RCLCPP_INFO(get_logger(), "Saved cone map to %s", path.c_str());
-  } else {
-    response->success = false;
-    response->message = "Failed to save map to " + path + ": " + error;
-    RCLCPP_ERROR(get_logger(), "%s", response->message.c_str());
+  if (!saveMapCsv(path, &error)) {
+    RCLCPP_ERROR(
+      get_logger(), "Failed to save map to %s: %s", path.c_str(), error.c_str());
+    return std::string();
   }
+  RCLCPP_INFO(get_logger(), "Saved cone map to %s", path.c_str());
+  return path;
+}
+
+void GraphSlamNode::handleSaveMap(
+  const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+  std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+{
+  (void)request;
+
+  std::lock_guard<std::mutex> lock(graph_mutex_);
+  const std::string path = saveMapTimestamped();
+  response->success = !path.empty();
+  response->message = response->success ?
+    "Saved map to " + path :
+    "Failed to save map (see node log)";
 }
 
 void GraphSlamNode::handleLoadMap(
@@ -2129,6 +2190,7 @@ void GraphSlamNode::handleLoadMap(
     response->success = false;
     response->message = "Failed to load map: " + error;
   }
+  publishStatus();
 }
 
 void GraphSlamNode::handleStartMapping(
@@ -2142,6 +2204,113 @@ void GraphSlamNode::handleStartMapping(
   response->success = true;
   response->message = "Mapping mode (SLAM) started";
   RCLCPP_INFO(get_logger(), "Switched to mapping (SLAM) mode");
+  publishStatus();
+}
+
+void GraphSlamNode::maybeFinishMappingLap(const g2o::SE2 & current_estimate)
+{
+  if (!auto_localization_after_lap_ || !map_converged_ || !lap_origin_captured_ ||
+    traveled_distance_ < lap_origin_capture_distance_ + lap_min_distance_ ||
+    landmarks_.empty())
+  {
+    return;
+  }
+
+  const double return_distance =
+    (current_estimate.translation() - lap_origin_.translation()).norm();
+  const double yaw_error = std::abs(
+    normalizeAngle(
+      current_estimate.rotation().angle() - lap_origin_.rotation().angle()));
+  RCLCPP_DEBUG_THROTTLE(
+    get_logger(),
+    *get_clock(),
+    10000,
+    "Lap check: traveled=%.0f m, return=%.2f m (radius %.1f), yaw=%.2f rad",
+    traveled_distance_, return_distance, lap_return_radius_, yaw_error);
+  if (return_distance > lap_return_radius_ || yaw_error > lap_return_yaw_) {
+    return;
+  }
+
+  RCLCPP_INFO(
+    get_logger(),
+    "Mapping lap complete: traveled %.1f m and returned to within %.2f m / "
+    "%.2f rad of the start with a converged map",
+    traveled_distance_, return_distance, yaw_error);
+  enterLocalizationMode("mapping lap completed");
+}
+
+void GraphSlamNode::enterLocalizationMode(const std::string & reason)
+{
+  // Freeze the map: landmarks become the fixed reference, mapping paths
+  // (addLandmark / deletion / merge / Kalman updates) are disabled by the
+  // localization_mode_ guards, and the pose window is bounded so the graph
+  // no longer grows with laps.
+  localization_mode_ = true;
+  for (LandmarkRecord & landmark : landmarks_) {
+    landmark.vertex->setFixed(true);
+  }
+
+  const std::string saved_path = saveMapTimestamped();
+  prunePoseWindow();
+  publishStatus();
+
+  RCLCPP_INFO(
+    get_logger(),
+    "Entered localization mode (%s): %zu landmarks frozen, pose window %d%s%s",
+    reason.c_str(),
+    landmarks_.size(),
+    localization_window_poses_,
+    saved_path.empty() ? "" : ", map saved to ",
+    saved_path.c_str());
+}
+
+void GraphSlamNode::prunePoseWindow()
+{
+  if (!localization_mode_ ||
+    poses_.size() <= static_cast<std::size_t>(localization_window_poses_))
+  {
+    // Even without pruning, keep the oldest pose anchored so a window with
+    // few cone matches cannot leave the solver without a gauge.
+    if (localization_mode_ && !poses_.empty()) {
+      poses_.front().vertex->setFixed(true);
+    }
+    return;
+  }
+
+  while (poses_.size() > static_cast<std::size_t>(localization_window_poses_)) {
+    PoseRecord & oldest = poses_.front();
+    if (optimizer_.vertex(oldest.graph_id) == oldest.vertex) {
+      // Removes the vertex together with its odometry/observation/prior
+      // edges; landmarks are fixed so no map information is lost.
+      optimizer_.removeVertex(oldest.vertex);
+    }
+    poses_.erase(poses_.begin());
+  }
+
+  // The new oldest pose carries the discarded history as a hard anchor
+  // (first-order marginalization).
+  poses_.front().vertex->setFixed(true);
+}
+
+void GraphSlamNode::publishStatus()
+{
+  if (!status_pub_ || !converged_pub_) {
+    return;
+  }
+
+  std_msgs::msg::String status;
+  if (localization_mode_) {
+    status.data = "localization";
+  } else if (map_converged_) {
+    status.data = "mapping_converged";
+  } else {
+    status.data = "mapping";
+  }
+  status_pub_->publish(status);
+
+  std_msgs::msg::Bool converged;
+  converged.data = map_converged_;
+  converged_pub_->publish(converged);
 }
 
 GraphSlamNode::ConeColor GraphSlamNode::colorFromTag(const std::string & tag)
@@ -2221,7 +2390,7 @@ bool GraphSlamNode::loadMapCsv(const std::string & path, std::string * error)
     // Seed with enough observations to count as confirmed and be published.
     const std::size_t seed_obs =
       static_cast<std::size_t>(std::max(landmark_confirm_observations_, 1));
-    LandmarkRecord record{vertex->id(), colorFromTag(tag), vertex, cov, seed_obs, 0, 0U, {}};
+    LandmarkRecord record{vertex->id(), colorFromTag(tag), vertex, cov, seed_obs, 0, 0.0, {}};
     landmarks_.push_back(record);
     voteLandmarkColor(landmarks_.back(), colorFromTag(tag));
     ++loaded;

@@ -80,6 +80,39 @@ If localization is lost, use RViz's **2D Pose Estimate** tool (fixed frame
 re-anchors at the clicked pose (keeping the fixed map), and re-localizes from
 there.
 
+## Trackdrive lifecycle (automatic mapping -> localization)
+
+With `auto_localization_after_lap` (default on) the node runs the full
+trackdrive lifecycle without operator input:
+
+1. **Mapping**: lap 1 builds the map as usual. The lap origin is captured
+   `lap_origin_capture_distance` (15 m) into the drive so it sits on the
+   racing line rather than the spawn pose.
+2. **Lap completion**: once the map has converged (loop closures reconciled)
+   and the car has traveled at least `lap_min_distance` and returned within
+   `lap_return_radius` / `lap_return_yaw` of the lap origin, the node freezes
+   every landmark, auto-saves the map CSV to `map_save_dir`, and switches to
+   localization.
+3. **Localization**: only the most recent `localization_window_poses` pose
+   vertices are kept (the oldest is fixed as the anchor), so the graph stays
+   bounded for arbitrarily many laps — full-batch optimization never outgrows
+   real time.
+
+The lifecycle is published (latched) on:
+
+- `/graph_slam/status` (`std_msgs/String`): `mapping`, `mapping_converged`,
+  or `localization` — RViz HUD via `/graph_slam/status_overlay`.
+- `/graph_slam/map_converged` (`std_msgs/Bool`): planning can switch from
+  local to global planning on this flag.
+
+## Wheel-encoder odometry
+
+`ros2 run eufs_graph_slam wheel_odometry` integrates rear wheel speeds (RPM,
+`/ros_can/wheel_speeds`) with an IMU yaw rate (`/imu/data`; bicycle-model
+steering fallback) into `/wheel_odometry/car_state` — a GNSS-independent
+odometry source for `car_state_topic`, keeping the GNSS prior as the only
+absolute channel. On the real car only the two input topics change.
+
 ## GUI
 
 `graph_slam.launch.py` starts a control GUI (`gui:=true`, default) alongside

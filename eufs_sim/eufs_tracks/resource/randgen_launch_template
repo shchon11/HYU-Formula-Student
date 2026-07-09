@@ -35,6 +35,22 @@
   <!-- Publish ground truth -->
   <arg name="pub_ground_truth" default="true"/>
 
+  <!-- Simulated perception cone visibility -->
+  <arg name="perception_camera_view_distance" default="15"/>
+  <arg name="perception_lidar_view_distance" default="100"/>
+  <arg name="perception_lidar_x_view_distance" default="20"/>
+  <arg name="perception_lidar_y_view_distance" default="20"/>
+  <arg name="perception_lidar_min_view_distance" default="1"/>
+  <arg name="perception_camera_min_view_distance" default="0.5"/>
+  <arg name="perception_camera_fov" default="2.09"/>
+  <arg name="perception_lidar_fov" default="3.141593"/>
+  <arg name="perception_lidar_on" default="true"/>
+  <arg name="perception_detection_probability" default="1.0"/>
+  <arg name="camera_cones_view_distance" default="13"/>
+  <arg name="camera_cones_min_view_distance" default="0.5"/>
+  <arg name="camera_cones_fov" default="2.09"/>
+  <arg name="camera_cones_detection_probability" default="1.0"/>
+
   <!-- Initial vehicle pose -->
   <arg name="x" default="%PLACEX%"/>
   <arg name="y" default="%PLACEY%"/>
@@ -69,6 +85,20 @@
     <arg name="publish_gt_tf" value="$(var publish_gt_tf)"/>
     <arg name="pub_ground_truth" value="$(var pub_ground_truth)"/>
     <arg name="launch_group" value="$(var launch_group)"/>
+    <arg name="perception_camera_view_distance" value="$(var perception_camera_view_distance)"/>
+    <arg name="perception_lidar_view_distance" value="$(var perception_lidar_view_distance)"/>
+    <arg name="perception_lidar_x_view_distance" value="$(var perception_lidar_x_view_distance)"/>
+    <arg name="perception_lidar_y_view_distance" value="$(var perception_lidar_y_view_distance)"/>
+    <arg name="perception_lidar_min_view_distance" value="$(var perception_lidar_min_view_distance)"/>
+    <arg name="perception_camera_min_view_distance" value="$(var perception_camera_min_view_distance)"/>
+    <arg name="perception_camera_fov" value="$(var perception_camera_fov)"/>
+    <arg name="perception_lidar_fov" value="$(var perception_lidar_fov)"/>
+    <arg name="perception_lidar_on" value="$(var perception_lidar_on)"/>
+    <arg name="perception_detection_probability" value="$(var perception_detection_probability)"/>
+    <arg name="camera_cones_view_distance" value="$(var camera_cones_view_distance)"/>
+    <arg name="camera_cones_min_view_distance" value="$(var camera_cones_min_view_distance)"/>
+    <arg name="camera_cones_fov" value="$(var camera_cones_fov)"/>
+    <arg name="camera_cones_detection_probability" value="$(var camera_cones_detection_probability)"/>
   </include>
 
 </launch>

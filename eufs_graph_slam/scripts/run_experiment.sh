@@ -76,16 +76,21 @@ ros2 launch eufs_launcher simulation.launch.py \
     > "$LOG_DIR/sim.log" 2>&1 &
 PIDS+=($!)
 
-echo "== waiting for /ground_truth/state =="
+echo "== waiting for simulator =="
+# Log-marker based wait: `ros2 topic echo` can flake on fresh DDS discovery
+# even when the simulator is fully up, so trust the plugin-load log instead.
 for i in $(seq 1 60); do
-    if timeout 3 ros2 topic echo /ground_truth/state --once > /dev/null 2>&1; then
+    if grep -q "RaceCarModelPlugin Loaded" "$LOG_DIR/sim.log" 2>/dev/null; then
         break
     fi
     if [ "$i" = 60 ]; then
         echo "ERROR: simulator did not come up" >&2
+        tail -5 "$LOG_DIR/sim.log" >&2
         exit 1
     fi
+    sleep 2
 done
+sleep 3
 echo "simulator up"
 
 # The simulator now publishes drifting odometry natively on the localisation

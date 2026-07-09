@@ -15,6 +15,80 @@ from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
 
+PERCEPTION_XACRO_ARGS = [
+    (
+        'perception_camera_view_distance',
+        '15',
+        'Camera range used by the /cones simulated perception plugin.',
+    ),
+    (
+        'perception_lidar_view_distance',
+        '100',
+        'Radial lidar range used by the /cones simulated perception plugin.',
+    ),
+    (
+        'perception_lidar_x_view_distance',
+        '20',
+        'Forward/back lidar clipping range used by simulated perception.',
+    ),
+    (
+        'perception_lidar_y_view_distance',
+        '20',
+        'Lateral lidar clipping range used by simulated perception.',
+    ),
+    (
+        'perception_lidar_min_view_distance',
+        '1',
+        'Minimum lidar range used by simulated perception.',
+    ),
+    (
+        'perception_camera_min_view_distance',
+        '0.5',
+        'Minimum camera range used by simulated perception.',
+    ),
+    (
+        'perception_camera_fov',
+        '2.09',
+        'Camera FOV in radians used by the /cones simulated perception plugin.',
+    ),
+    (
+        'perception_lidar_fov',
+        '3.141593',
+        'Lidar FOV in radians used by the /cones simulated perception plugin.',
+    ),
+    (
+        'perception_lidar_on',
+        'true',
+        'Whether lidar-only cones are included in simulated perception.',
+    ),
+    (
+        'perception_detection_probability',
+        '1.0',
+        'Probability that an in-range /cones simulated perception cone is published.',
+    ),
+    (
+        'camera_cones_view_distance',
+        '13',
+        'Camera range used by /camera_*/cones oracle topics.',
+    ),
+    (
+        'camera_cones_min_view_distance',
+        '0.5',
+        'Minimum camera range used by /camera_*/cones oracle topics.',
+    ),
+    (
+        'camera_cones_fov',
+        '2.09',
+        'Camera FOV in radians used by /camera_*/cones oracle topics.',
+    ),
+    (
+        'camera_cones_detection_probability',
+        '1.0',
+        'Probability that an in-range /camera_*/cones oracle cone is published.',
+    ),
+]
+
+
 def spawn_car(context, *args, **kwargs):
     # Get the values of the arguments
     launch_group = get_argument(context, 'launch_group')
@@ -32,6 +106,10 @@ def spawn_car(context, *args, **kwargs):
     roll = get_argument(context, 'roll')
     pitch = get_argument(context, 'pitch')
     yaw = get_argument(context, 'yaw')
+    perception_mappings = {
+        name: get_argument(context, name)
+        for name, _, _ in PERCEPTION_XACRO_ARGS
+    }
 
     simulate_perception = 'true' if launch_group == 'no_perception' else 'false'
     config_file = join(get_package_share_directory('eufs_racecar'), 'robots', robot_name,
@@ -62,6 +140,7 @@ def spawn_car(context, *args, **kwargs):
                                  'simulate_perception': simulate_perception,
                                  'pub_ground_truth': pub_ground_truth,
                                  'bounding_box_settings': bounding_boxes_file,
+                                 **perception_mappings,
                              })
     out = xacro.open_output(urdf_path)
     out.write(doc.toprettyxml(indent='  '))
@@ -153,6 +232,11 @@ def spawn_car(context, *args, **kwargs):
 
 
 def generate_launch_description():
+    perception_arguments = [
+        DeclareLaunchArgument(name, default_value=default, description=description)
+        for name, default, description in PERCEPTION_XACRO_ARGS
+    ]
+
     return LaunchDescription([
         # Launch Arguments
         DeclareLaunchArgument('launch_group', default_value='default',
@@ -204,6 +288,9 @@ def generate_launch_description():
                               description='If the gazebo_ros_race_car_model '
                                           'should publish the ground truth '
                                           'tf'),
+        DeclareLaunchArgument('pub_ground_truth', default_value='true',
+                              description='Publish ground truth topics'),
+        *perception_arguments,
 
         DeclareLaunchArgument('x', default_value='0',
                               description='Vehicle initial x position'),

@@ -99,6 +99,7 @@ class GazeboGroundTruthCones : public gazebo::ModelPlugin {
   void addNoiseToConeArray(std::vector<eufs_msgs::msg::ConeWithCovariance> &cone_array,
                            ignition::math::Vector3d noise);
   double GaussianKernel(double mu, double sigma);
+  bool shouldDetectCone();
 
   // Returns pointer to cone array at random given weights
   std::string pickColorWithProbability(const YAML::Node weights);
@@ -164,6 +165,7 @@ class GazeboGroundTruthCones : public gazebo::ModelPlugin {
   double camera_a;
   double camera_b;
   double camera_noise_percentage;
+  double perception_detection_probability;
   bool lidar_on;
   bool pub_ground_truth;
   YAML::Node recolor_config;

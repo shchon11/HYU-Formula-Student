@@ -605,6 +605,34 @@ ros2 launch eufs_perception_baseline perception_baseline.launch.py \
   publish_empty_on_sync:=false
 ```
 
+Sparse simulator oracle tuning:
+
+```bash
+ros2 launch eufs_launcher simulation.launch.py \
+  launch_group:=default \
+  camera_cones_view_distance:=8 \
+  camera_cones_fov:=1.4 \
+  camera_cones_detection_probability:=0.45
+```
+
+`oracle_cones_topic:=/camera_0/cones`를 쓰는 adapter 모드에서는
+`camera_cones_*` 값이 oracle 입력 cone 수를 줄인다.
+
+Simulator direct `/cones` tuning:
+
+```bash
+ros2 launch eufs_launcher simulation.launch.py \
+  launch_group:=no_perception \
+  perception_lidar_on:=false \
+  perception_camera_view_distance:=8 \
+  perception_camera_fov:=1.4 \
+  perception_detection_probability:=0.45
+```
+
+simulator가 직접 `/cones`를 publish하는 `launch_group:=no_perception` 경로에서는
+`perception_*` 값을 줄인다. 이 경로와 oracle adapter를 동시에 실행하면 `/cones`
+publisher가 둘이 될 수 있으므로 하나만 켠다.
+
 Graph SLAM:
 
 ```bash
