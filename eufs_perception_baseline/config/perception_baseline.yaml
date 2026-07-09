@@ -76,13 +76,16 @@ yolov8_bbox_node:
   ros__parameters:
     image_topic: /zed/left/image_rect_color
     bbox_topic: /yolo_bounding_boxes
-    # FSOCO fine-tuned YOLOv8n cone detector. Keep this as an absolute path
-    # because the generated training artifact is intentionally outside git.
-    model_path: /home/dohyun/FS/artifacts/yolov8/fsoco_yolov8n/weights/best.pt
+    # FSOCO fine-tuned YOLOv8n cone detector. Absolute path to the checkpoint
+    # kept under eufs_perception_baseline/models (weights themselves stay out of
+    # git). Drop best.pt here when the checkpoint arrives, or override this path.
+    model_path: /home/shchon11/fsk/src/eufs_perception_baseline/models/fsoco_yolov8n/weights/best.pt
     confidence_threshold: 0.25
     iou_threshold: 0.45
     imgsz: 640
-    device: ""
+    # GPU inference on cuda:0 (NVIDIA MX450). Set to "cpu" to force CPU.
+    # Use "cuda:0" (not "0") so launch serializes it as a string, not an int.
+    device: "cuda:0"
     max_det: 100
     # Map FSOCO class names to the EUFS cone color contract.
     class_map: "blue_cone:blue,yellow_cone:yellow,orange_cone:orange,large_orange_cone:big_orange,unknown_cone:unknown"

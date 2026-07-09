@@ -125,7 +125,11 @@ class SimEllipseD(Node):
         self.datum_lon = self.declare_parameter("datum_longitude", 127.0455).value
         self.datum_alt = self.declare_parameter("datum_altitude", 50.0).value
 
-        self.ekf_rate = self.declare_parameter("ekf_rate", 25.0).value
+        # Real Ellipse-D EKF/INS output runs at up to 200 Hz (datasheet); the
+        # internal GNSS update stays at 5 Hz regardless of this output rate.
+        # Effective rate is min(ekf_rate, /ground_truth/state rate) in SIM time;
+        # wall-clock rate additionally scales with Gazebo's real-time factor.
+        self.ekf_rate = self.declare_parameter("ekf_rate", 200.0).value
 
         # --- datasheet-derived 1-sigma constants -------------------------
         self.sigma_pos = {

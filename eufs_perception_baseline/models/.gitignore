@@ -1,0 +1,7 @@
+# Model checkpoints are large binaries kept out of git.
+# Track the directory layout (.gitkeep, README) but not the weights.
+*.pt
+*.pth
+*.onnx
+*.engine
+*.weights

@@ -60,6 +60,16 @@ def generate_launch_description():
                 description="Simulate odometer aiding (0.5%/distance outage drift).",
             ),
             DeclareLaunchArgument(
+                "ekf_rate",
+                default_value="200.0",
+                description=(
+                    "Simulated Ellipse-D EKF output rate in Hz (sim time). The "
+                    "real unit outputs up to 200 Hz; effective rate is capped "
+                    "by the /ground_truth/state rate and, on the wall clock, "
+                    "by Gazebo's real-time factor."
+                ),
+            ),
+            DeclareLaunchArgument(
                 "slam",
                 default_value="true",
                 description="Also launch graph SLAM pointed at the INS odometry.",
@@ -87,6 +97,7 @@ def generate_launch_description():
                             "correction_schedule"
                         ),
                         "odometer_aided": LaunchConfiguration("odometer_aided"),
+                        "ekf_rate": LaunchConfiguration("ekf_rate"),
                     }
                 ],
             ),

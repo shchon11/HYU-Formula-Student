@@ -63,10 +63,11 @@
         <origin xyz="0.0 0.0 0.4" rpy="0 0 0"/>
     </xacro:sensor_gps>
 
-    <xacro:VLP-16R parent="chassis" name="velodyne" topic="/velodyne_points" hz="10" active="$(arg simulate_perception)">
-        <origin xyz="-0.15 0.0 0.79" rpy="0 ${1*M_PI/180.0} 0"/>
-        <!--<origin xyz="-0.15 0.0 0.79" rpy="0 ${1*M_PI/180.0} 0"/>-->
-        <!--<origin xyz="1.6 0.0 0.25" rpy="0 ${1*M_PI/180.0} 0"/>-->
+    <!-- Real car: VLP-16 (16 channels) mounted on the nose cone.
+         lasers must be passed explicitly — the VLP-16R macro default is 40. -->
+    <xacro:VLP-16R parent="chassis" name="velodyne" topic="/velodyne_points" hz="10" lasers="16" active="$(arg simulate_perception)">
+        <origin xyz="1.6 0.0 0.25" rpy="0 ${1*M_PI/180.0} 0"/>
+        <!-- main-hoop mount (previous): <origin xyz="-0.15 0.0 0.79" rpy="0 ${1*M_PI/180.0} 0"/> -->
     </xacro:VLP-16R>
 
     <xacro:zed_camera parent="chassis" prefix="zed" active="$(arg simulate_perception)">
