@@ -2,6 +2,8 @@ planning_state_machine_node:
   ros__parameters:
     frenet_odom_topic: "/car_state/frenet/odom"
     global_waypoints_topic: "/global_waypoints"
+    graph_slam_status_topic: "/graph_slam/status"
+    global_path_valid_topic: "/planning/global_path_valid"
     cone_map_topic: "/cones"
     stop_zone_s_start_topic: "/stop_zone_s_start"
     stop_zone_s_end_topic: "/stop_zone_s_end"
@@ -12,7 +14,7 @@ planning_state_machine_node:
     final_lap_start_count: 3
 
     frenet_odom_timeout_sec: 0.5
-    global_waypoints_timeout_sec: 2.0
+    global_path_valid_timeout_sec: 0.5
     cone_map_timeout_sec: 1.0
     stop_zone_timeout_sec: 1.0
 

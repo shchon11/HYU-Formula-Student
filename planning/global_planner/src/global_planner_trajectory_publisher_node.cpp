@@ -1,10 +1,7 @@
 #include "global_planner_trajectory_publisher_node.hpp"
 
 #include <algorithm>
-#include <array>
 #include <chrono>
-#include <cmath>
-#include <fstream>
 #include <functional>
 #include <sstream>
 #include <system_error>
@@ -14,80 +11,6 @@
 
 namespace global_planner
 {
-namespace
-{
-
-constexpr std::size_t kExpectedColumnCount = 7;
-constexpr std::array<const char *, kExpectedColumnCount> kExpectedHeader = {
-  "s_m", "x_m", "y_m", "psi_rad", "kappa_radpm", "vx_mps", "ax_mps2"};
-
-std::string trim(const std::string & value)
-{
-  const auto first = value.find_first_not_of(" \t\r\n");
-  if (first == std::string::npos) {
-    return "";
-  }
-  const auto last = value.find_last_not_of(" \t\r\n");
-  return value.substr(first, last - first + 1);
-}
-
-std::string removeUtf8Bom(std::string value)
-{
-  if (value.size() >= 3U &&
-    static_cast<unsigned char>(value[0]) == 0xEF &&
-    static_cast<unsigned char>(value[1]) == 0xBB &&
-    static_cast<unsigned char>(value[2]) == 0xBF)
-  {
-    value.erase(0, 3);
-  }
-  return value;
-}
-
-std::vector<std::string> splitSemicolon(const std::string & line)
-{
-  std::vector<std::string> tokens;
-  std::stringstream stream(line);
-  std::string token;
-  while (std::getline(stream, token, ';')) {
-    tokens.push_back(trim(token));
-  }
-  return tokens;
-}
-
-bool parseFiniteDouble(const std::string & token, double & output)
-{
-  try {
-    std::size_t parsed_chars = 0;
-    const double value = std::stod(token, &parsed_chars);
-    if (parsed_chars != token.size() || !std::isfinite(value)) {
-      return false;
-    }
-    output = value;
-    return true;
-  } catch (const std::exception &) {
-    return false;
-  }
-}
-
-bool isExpectedHeader(const std::vector<std::string> & tokens)
-{
-  if (tokens.size() != kExpectedColumnCount) {
-    return false;
-  }
-  for (std::size_t i = 0; i < kExpectedColumnCount; ++i) {
-    if (tokens[i] != kExpectedHeader[i]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-double pointDistance(const TrajectoryPoint & a, const TrajectoryPoint & b)
-{
-  return std::hypot(b.x - a.x, b.y - a.y);
-}
-
-}  // namespace
 
 GlobalPlannerTrajectoryPublisherNode::GlobalPlannerTrajectoryPublisherNode()
 : Node("global_planner_trajectory_publisher_node")
@@ -100,8 +23,14 @@ GlobalPlannerTrajectoryPublisherNode::GlobalPlannerTrajectoryPublisherNode()
     create_publisher<eufs_msgs::msg::WaypointArrayStamped>(
     global_waypoints_topic_,
     latched_qos);
+  const auto heartbeat_qos = rclcpp::QoS(1).reliable();
+  global_path_valid_pub_ =
+    create_publisher<std_msgs::msg::Bool>(global_path_valid_topic_, heartbeat_qos);
 
   RCLCPP_INFO(get_logger(), "global_waypoints_topic=%s", global_waypoints_topic_.c_str());
+  RCLCPP_INFO(get_logger(), "global_path_valid_topic=%s", global_path_valid_topic_.c_str());
+
+  publishValidityHeartbeat();
 
   checkAndReloadTrajectory();
 
@@ -110,6 +39,12 @@ GlobalPlannerTrajectoryPublisherNode::GlobalPlannerTrajectoryPublisherNode()
   reload_timer_ = create_wall_timer(
     std::chrono::duration_cast<std::chrono::nanoseconds>(period),
     std::bind(&GlobalPlannerTrajectoryPublisherNode::checkAndReloadTrajectory, this));
+
+  const auto heartbeat_period = std::chrono::duration<double>(
+    1.0 / std::max(0.1, valid_heartbeat_hz_));
+  valid_heartbeat_timer_ = create_wall_timer(
+    std::chrono::duration_cast<std::chrono::nanoseconds>(heartbeat_period),
+    std::bind(&GlobalPlannerTrajectoryPublisherNode::publishValidityHeartbeat, this));
 }
 
 void GlobalPlannerTrajectoryPublisherNode::declareParameters()
@@ -119,8 +54,10 @@ void GlobalPlannerTrajectoryPublisherNode::declareParameters()
   declare_parameter<std::string>("map_name", "");
   declare_parameter<std::string>("trajectory_filename", "traj_race_cl.csv");
   declare_parameter<std::string>("global_waypoints_topic", "/global_waypoints");
+  declare_parameter<std::string>("global_path_valid_topic", "/planning/global_path_valid");
   declare_parameter<std::string>("frame_id", "map");
   declare_parameter<double>("reload_period_sec", 1.0);
+  declare_parameter<double>("valid_heartbeat_hz", 5.0);
   declare_parameter<double>("duplicate_point_tolerance", 1.0e-4);
   declare_parameter<int>("min_waypoint_count", 3);
   declare_parameter<bool>("recompute_s_if_invalid", true);
@@ -133,8 +70,10 @@ void GlobalPlannerTrajectoryPublisherNode::loadParameters()
   map_name_ = get_parameter("map_name").as_string();
   trajectory_filename_ = get_parameter("trajectory_filename").as_string();
   global_waypoints_topic_ = get_parameter("global_waypoints_topic").as_string();
+  global_path_valid_topic_ = get_parameter("global_path_valid_topic").as_string();
   frame_id_ = get_parameter("frame_id").as_string();
   reload_period_sec_ = get_parameter("reload_period_sec").as_double();
+  valid_heartbeat_hz_ = get_parameter("valid_heartbeat_hz").as_double();
   duplicate_point_tolerance_ = get_parameter("duplicate_point_tolerance").as_double();
   min_waypoint_count_ = get_parameter("min_waypoint_count").as_int();
   recompute_s_if_invalid_ = get_parameter("recompute_s_if_invalid").as_bool();
@@ -146,6 +85,10 @@ void GlobalPlannerTrajectoryPublisherNode::loadParameters()
   if (duplicate_point_tolerance_ < 0.0) {
     RCLCPP_WARN(get_logger(), "duplicate_point_tolerance must be >= 0. Clamping to 0.");
     duplicate_point_tolerance_ = 0.0;
+  }
+  if (valid_heartbeat_hz_ <= 0.0) {
+    RCLCPP_WARN(get_logger(), "valid_heartbeat_hz must be > 0. Clamping to 0.1.");
+    valid_heartbeat_hz_ = 0.1;
   }
 }
 
@@ -171,161 +114,10 @@ bool GlobalPlannerTrajectoryPublisherNode::resolveTrajectoryPath(
   return true;
 }
 
-bool GlobalPlannerTrajectoryPublisherNode::loadTrajectoryCsv(
-  const std::filesystem::path & path,
-  std::vector<TrajectoryPoint> & points,
-  std::string & error_message) const
+TrajectoryValidationOptions GlobalPlannerTrajectoryPublisherNode::trajectoryValidationOptions() const
 {
-  std::ifstream file(path);
-  if (!file.is_open()) {
-    error_message = "failed to open trajectory CSV: " + path.string();
-    return false;
-  }
-
-  points.clear();
-
-  bool header_seen = false;
-  std::string line;
-  std::size_t line_number = 0;
-  std::size_t malformed_rows = 0;
-
-  while (std::getline(file, line)) {
-    ++line_number;
-    line = trim(removeUtf8Bom(line));
-    if (line.empty()) {
-      continue;
-    }
-
-    if (!line.empty() && line.front() == '#') {
-      line = trim(line.substr(1));
-      if (line.empty()) {
-        continue;
-      }
-    }
-
-    const auto tokens = splitSemicolon(line);
-    if (!header_seen) {
-      if (isExpectedHeader(tokens)) {
-        header_seen = true;
-        continue;
-      }
-
-      if (tokens.size() == kExpectedColumnCount && tokens.front() == kExpectedHeader.front()) {
-        error_message = "CSV header invalid at line " + std::to_string(line_number);
-        return false;
-      }
-
-      continue;
-    }
-
-    if (tokens.size() != kExpectedColumnCount) {
-      ++malformed_rows;
-      RCLCPP_WARN(
-        get_logger(),
-        "Skipping malformed trajectory row %zu: expected %zu columns, got %zu",
-        line_number,
-        kExpectedColumnCount,
-        tokens.size());
-      continue;
-    }
-
-    TrajectoryPoint point;
-    if (!parseFiniteDouble(tokens[0], point.s) ||
-      !parseFiniteDouble(tokens[1], point.x) ||
-      !parseFiniteDouble(tokens[2], point.y) ||
-      !parseFiniteDouble(tokens[3], point.psi) ||
-      !parseFiniteDouble(tokens[4], point.kappa) ||
-      !parseFiniteDouble(tokens[5], point.velocity) ||
-      !parseFiniteDouble(tokens[6], point.acceleration))
-    {
-      ++malformed_rows;
-      RCLCPP_WARN(
-        get_logger(),
-        "Skipping malformed trajectory row %zu: numeric conversion failed or non-finite value",
-        line_number);
-      continue;
-    }
-
-    points.push_back(point);
-  }
-
-  if (!header_seen) {
-    error_message = "CSV header invalid or missing";
-    return false;
-  }
-
-  if (malformed_rows > 0U) {
-    RCLCPP_WARN(get_logger(), "Skipped %zu malformed trajectory row(s).", malformed_rows);
-  }
-  return true;
-}
-
-bool GlobalPlannerTrajectoryPublisherNode::validateTrajectory(
-  std::vector<TrajectoryPoint> & points,
-  std::string & error_message) const
-{
-  if (points.size() < static_cast<std::size_t>(min_waypoint_count_)) {
-    error_message =
-      "valid waypoint count is below min_waypoint_count: " + std::to_string(points.size());
-    return false;
-  }
-
-  std::vector<TrajectoryPoint> deduplicated;
-  deduplicated.reserve(points.size());
-  deduplicated.push_back(points.front());
-
-  std::size_t duplicate_count = 0;
-  for (std::size_t i = 1; i < points.size(); ++i) {
-    if (!std::isfinite(points[i].s) || !std::isfinite(points[i].x) || !std::isfinite(points[i].y)) {
-      error_message = "trajectory contains non-finite s/x/y after parsing";
-      return false;
-    }
-
-    if (pointDistance(deduplicated.back(), points[i]) <= duplicate_point_tolerance_) {
-      ++duplicate_count;
-      continue;
-    }
-    deduplicated.push_back(points[i]);
-  }
-
-  if (duplicate_count > 0U) {
-    RCLCPP_WARN(
-      get_logger(),
-      "Removed %zu duplicate trajectory waypoint(s); remaining=%zu",
-      duplicate_count,
-      deduplicated.size());
-  }
-
-  if (deduplicated.size() < static_cast<std::size_t>(min_waypoint_count_)) {
-    error_message =
-      "waypoint count after duplicate removal is below min_waypoint_count: " +
-      std::to_string(deduplicated.size());
-    return false;
-  }
-
-  bool s_is_strictly_increasing = true;
-  for (std::size_t i = 1; i < deduplicated.size(); ++i) {
-    if (!(deduplicated[i].s > deduplicated[i - 1].s)) {
-      s_is_strictly_increasing = false;
-      break;
-    }
-  }
-
-  if (!s_is_strictly_increasing) {
-    if (!recompute_s_if_invalid_) {
-      error_message = "trajectory s_m is not strictly increasing";
-      return false;
-    }
-
-    deduplicated.front().s = 0.0;
-    for (std::size_t i = 1; i < deduplicated.size(); ++i) {
-      deduplicated[i].s = deduplicated[i - 1].s + pointDistance(deduplicated[i - 1], deduplicated[i]);
-    }
-    RCLCPP_WARN(get_logger(), "Invalid s_m sequence detected; recomputed s from x/y distance.");
-  }
-
-  points = std::move(deduplicated);
-  return true;
+  return TrajectoryValidationOptions{
+    duplicate_point_tolerance_, min_waypoint_count_, recompute_s_if_invalid_};
 }
 
 eufs_msgs::msg::WaypointArrayStamped GlobalPlannerTrajectoryPublisherNode::buildWaypointMessage(
@@ -356,6 +148,35 @@ eufs_msgs::msg::WaypointArrayStamped GlobalPlannerTrajectoryPublisherNode::build
   return msg;
 }
 
+void GlobalPlannerTrajectoryPublisherNode::setGlobalPathValid(bool valid)
+{
+  if (global_path_is_valid_ == valid) {
+    return;
+  }
+
+  global_path_is_valid_ = valid;
+  if (valid) {
+    true_heartbeat_ready_ = false;
+  } else {
+    true_heartbeat_ready_ = true;
+    publishValidityHeartbeat();
+  }
+  RCLCPP_INFO(
+    get_logger(), "Global path validity changed: %s", valid ? "true" : "false");
+}
+
+void GlobalPlannerTrajectoryPublisherNode::publishValidityHeartbeat()
+{
+  if (global_path_is_valid_ && !true_heartbeat_ready_) {
+    true_heartbeat_ready_ = true;
+    return;
+  }
+
+  std_msgs::msg::Bool msg;
+  msg.data = global_path_is_valid_;
+  global_path_valid_pub_->publish(msg);
+}
+
 void GlobalPlannerTrajectoryPublisherNode::checkAndReloadTrajectory()
 {
   std::filesystem::path trajectory_path;
@@ -364,6 +185,7 @@ void GlobalPlannerTrajectoryPublisherNode::checkAndReloadTrajectory()
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 5000,
       "%s", error_message.c_str());
+    setGlobalPathValid(false);
     return;
   }
 
@@ -377,6 +199,7 @@ void GlobalPlannerTrajectoryPublisherNode::checkAndReloadTrajectory()
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 5000,
       "Trajectory CSV does not exist yet: %s", trajectory_path.string().c_str());
+    setGlobalPathValid(false);
     return;
   }
 
@@ -388,6 +211,7 @@ void GlobalPlannerTrajectoryPublisherNode::checkAndReloadTrajectory()
       "Failed to read last_write_time for %s: %s",
       trajectory_path.string().c_str(),
       time_error.message().c_str());
+    setGlobalPathValid(false);
     return;
   }
 
@@ -398,8 +222,8 @@ void GlobalPlannerTrajectoryPublisherNode::checkAndReloadTrajectory()
   }
 
   std::vector<TrajectoryPoint> candidate_points;
-  if (!loadTrajectoryCsv(trajectory_path, candidate_points, error_message) ||
-    !validateTrajectory(candidate_points, error_message))
+  if (!loadTrajectoryCsv(trajectory_path, get_logger(), candidate_points, error_message) ||
+    !validateTrajectory(candidate_points, trajectoryValidationOptions(), get_logger(), error_message))
   {
     last_failed_write_time_ = write_time;
     has_last_failed_write_time_ = true;
@@ -407,6 +231,7 @@ void GlobalPlannerTrajectoryPublisherNode::checkAndReloadTrajectory()
     if (has_valid_trajectory_) {
       RCLCPP_WARN(get_logger(), "Keeping previous valid trajectory.");
     }
+    setGlobalPathValid(false);
     return;
   }
 
@@ -424,6 +249,7 @@ void GlobalPlannerTrajectoryPublisherNode::checkAndReloadTrajectory()
     total_length);
 
   publishTrajectory();
+  setGlobalPathValid(true);
 }
 
 void GlobalPlannerTrajectoryPublisherNode::publishTrajectory()

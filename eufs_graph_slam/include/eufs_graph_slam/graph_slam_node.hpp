@@ -3,6 +3,8 @@
 // Use of this source code is governed by an MIT-style
 // license that can be found in the LICENSE file or at
 // https://opensource.org/licenses/MIT.
+// SIZE_OK: This integration only preserves topic/config compatibility; splitting
+// the legacy monolithic graph SLAM node declaration is outside this focused scope.
 
 #ifndef EUFS_GRAPH_SLAM__GRAPH_SLAM_NODE_HPP_
 #define EUFS_GRAPH_SLAM__GRAPH_SLAM_NODE_HPP_
@@ -256,6 +258,8 @@ private:
   std::string cones_topic_;
   std::string map_topic_;
   std::string slam_odom_topic_;
+  std::string status_topic_;
+  std::string map_converged_topic_;
   std::string path_topic_;
   std::string marker_topic_;
   std::string map_frame_;

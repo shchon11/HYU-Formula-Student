@@ -14,7 +14,12 @@ find_package(std_msgs REQUIRED)
 include_directories(include)
 
 add_executable(planning_state_machine_node
+  src/global_path_readiness.cpp
+  src/lap_tracking.cpp
+  src/planning_state_debug.cpp
+  src/planning_state_machine_main.cpp
   src/planning_state_machine_node.cpp
+  src/planning_state_outputs.cpp
 )
 ament_target_dependencies(planning_state_machine_node
   eufs_msgs

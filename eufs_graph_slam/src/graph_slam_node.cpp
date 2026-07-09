@@ -3,6 +3,8 @@
 // Use of this source code is governed by an MIT-style
 // license that can be found in the LICENSE file or at
 // https://opensource.org/licenses/MIT.
+// SIZE_OK: This integration only preserves topic/config compatibility; splitting
+// the legacy monolithic graph SLAM node is outside this focused scope.
 
 #include "eufs_graph_slam/graph_slam_node.hpp"
 
@@ -110,8 +112,12 @@ GraphSlamNode::GraphSlamNode()
   car_state_topic_ =
     declare_parameter<std::string>("car_state_topic", "/odometry_integration/car_state");
   cones_topic_ = declare_parameter<std::string>("cones_topic", "/cones");
-  map_topic_ = declare_parameter<std::string>("map_topic", "/graph_slam/map");
-  slam_odom_topic_ = declare_parameter<std::string>("slam_odom_topic", "/graph_slam/odom");
+  map_topic_ = declare_parameter<std::string>("map_topic", "/localization/cone_map");
+  slam_odom_topic_ =
+    declare_parameter<std::string>("slam_odom_topic", "/localization/ego_odom");
+  status_topic_ = declare_parameter<std::string>("status_topic", "~/status");
+  map_converged_topic_ =
+    declare_parameter<std::string>("map_converged_topic", "~/map_converged");
   path_topic_ = declare_parameter<std::string>("path_topic", "/graph_slam/path");
   marker_topic_ = declare_parameter<std::string>("marker_topic", "/graph_slam/markers");
   map_frame_ = declare_parameter<std::string>("map_frame", "map");
@@ -346,8 +352,8 @@ GraphSlamNode::GraphSlamNode()
     create_publisher<visualization_msgs::msg::MarkerArray>(marker_topic_, transient_qos);
   // Latched status so planning (local vs global) and RViz always see the
   // current SLAM lifecycle even when subscribing late.
-  status_pub_ = create_publisher<std_msgs::msg::String>("~/status", transient_qos);
-  converged_pub_ = create_publisher<std_msgs::msg::Bool>("~/map_converged", transient_qos);
+  status_pub_ = create_publisher<std_msgs::msg::String>(status_topic_, transient_qos);
+  converged_pub_ = create_publisher<std_msgs::msg::Bool>(map_converged_topic_, transient_qos);
 
   if (publish_tf_) {
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
@@ -2369,7 +2375,7 @@ void GraphSlamNode::publishStatus()
   status_pub_->publish(status);
 
   std_msgs::msg::Bool converged;
-  converged.data = map_converged_;
+  converged.data = map_converged_ || (localization_mode_ && !landmarks_.empty());
   converged_pub_->publish(converged);
 }
 

@@ -1,7 +1,73 @@
 # global_planner
 
-Publishes the offline peanut raceline as `/global_waypoints` and RViz debug
-markers as `/global_planner/debug/markers`.
+`global_planner` provides two mutually exclusive global waypoint producers and
+the local waypoint window publisher used by the planning stack.
+
+- `planner_node` consumes Graph SLAM localization outputs and generates a
+  conservative centerline/global waypoint path from blue/yellow cone
+  boundaries. It is a phase-1 integration generator, not a production
+  racing-line optimizer.
+- `global_planner_trajectory_publisher_node` preserves the existing offline CSV
+  workflow for debug and replay launches.
+- `wpnt_publisher_node` republishes the next local window on `/path_waypoints`
+  only while the global path validity heartbeat is fresh.
+
+## SLAM Planning Contract
+
+Default topics:
+
+| Topic | Type | QoS | Owner |
+| --- | --- | --- | --- |
+| `/localization/cone_map` | `eufs_msgs/msg/ConeArrayWithCovariance` | reliable transient-local | `graph_slam` |
+| `/localization/ego_odom` | `nav_msgs/msg/Odometry` | reliable volatile | `graph_slam` |
+| `/graph_slam/status` | `std_msgs/msg/String` | reliable transient-local | `graph_slam` |
+| `/global_waypoints` | `eufs_msgs/msg/WaypointArrayStamped` | reliable transient-local | selected global waypoint writer |
+| `/planning/global_path_valid` | `std_msgs/msg/Bool` | reliable volatile | selected global waypoint writer |
+| `/path_waypoints` | `eufs_msgs/msg/WaypointArrayStamped` | reliable volatile | `wpnt_publisher_node` |
+
+Only one node may write `/global_waypoints` and `/planning/global_path_valid`
+in a launch. Use `slam_global_planner.launch.py planner_source:=slam` for the
+Graph SLAM path generator, or `planner_source:=csv` for the CSV publisher. Do
+not run both writers on the default topics; remap both output topics if a
+comparison launch needs both producers.
+
+`/planning/global_path_valid` is a heartbeat, not a latched state. It is
+published as reliable volatile `std_msgs/Bool`: `false` on startup, while Graph
+SLAM is not in `localization`, on stale inputs, or after path generation fails;
+`true` repeats only while the currently published `/global_waypoints` snapshot
+is still valid. Consumers clear cached state on `false` or timeout and require a
+new `/global_waypoints` snapshot after invalidation before accepting recovered
+true heartbeats.
+
+The phase-1 SLAM planner consumes the existing
+`ConeArrayWithCovariance` map. A planner-specific `SlamConeMap.msg` with
+landmark IDs, versions, and richer lifecycle metadata is intentionally deferred
+to a later compatible schema phase.
+
+## SLAM Integration Launch
+
+```bash
+cd /home/shchon11/fsk
+export EUFS_MASTER=$PWD
+source /opt/ros/humble/setup.zsh
+source install/setup.zsh
+
+ros2 launch global_planner slam_global_planner.launch.py planner_source:=slam
+```
+
+This launch starts `planner_node`, `frenet_odom_node`, and
+`wpnt_publisher_node`. It wires `frenet_odom_node` to
+`/localization/ego_odom`, not `/ground_truth/odom`, and uses the selected writer
+as the sole owner of `/global_waypoints` and `/planning/global_path_valid`.
+
+For CSV replay/debug with the same consumer gating:
+
+```bash
+ros2 launch global_planner slam_global_planner.launch.py planner_source:=csv
+```
+
+The older CSV launch remains available and keeps its conservative
+`/ground_truth/odom` default.
 
 ## RViz debug visualization
 
@@ -48,7 +114,7 @@ python3 csv_to_track_mask.py --cone-csv ../../eufs_sim/eufs_tracks/csv/peanut.cs
 python3 lane_generator.py --headless
 ```
 
-## Generate Minimum Curvature Global Path
+## Generate Offline Minimum Curvature CSV
 
 Run this after `outputs/peanut/centerline.csv` has been generated.
 
@@ -62,3 +128,6 @@ This updates:
 ```text
 outputs/peanut/traj_race_cl.csv
 ```
+
+The generated CSV can be replayed by `global_planner_trajectory_publisher_node`.
+That offline workflow is separate from the runtime SLAM `planner_node`.

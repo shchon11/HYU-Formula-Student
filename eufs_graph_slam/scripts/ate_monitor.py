@@ -4,9 +4,10 @@
 # Use of this source code is governed by an MIT-style
 # license that can be found in the LICENSE file or at
 # https://opensource.org/licenses/MIT.
-"""Live SLAM-vs-ground-truth error monitor for RViz.
+"""
+Live SLAM-vs-ground-truth error monitor for RViz.
 
-Compares the graph SLAM pose (`/graph_slam/odom`) against ground truth
+Compares the graph SLAM pose (`/localization/ego_odom`) against ground truth
 (`/ground_truth/state`), interpolating ground truth to each SLAM stamp, and
 publishes:
 
@@ -77,7 +78,7 @@ class ATEMonitor(Node):
             depth=1, reliability=ReliabilityPolicy.RELIABLE,
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(
-            String, "/graph_slam/status", self.on_status, status_qos)
+            String, args.status_topic, self.on_status, status_qos)
 
         latched = QoSProfile(
             depth=1, reliability=ReliabilityPolicy.RELIABLE,
@@ -193,7 +194,7 @@ class ATEMonitor(Node):
         self.marker_pub.publish(arr)
 
     def publish_overlay(self, text, err_frac):
-        """Fixed top-left HUD via rviz_2d_overlay_plugins."""
+        """Render a fixed top-left HUD via rviz_2d_overlay_plugins."""
         try:
             ov = OverlayText()
             ov.action = OverlayText.ADD
@@ -251,12 +252,18 @@ class ATEMonitor(Node):
             self.status_overlay_pub = None
 
 
-def main():
+def build_arg_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--slam-odom", default="/graph_slam/odom")
+    parser.add_argument("--slam-odom", default="/localization/ego_odom")
+    parser.add_argument("--status-topic", default="/graph_slam/status")
     parser.add_argument("--gt-topic", default="/ground_truth/state")
     parser.add_argument("--map-frame", default="map")
     parser.add_argument("--text-height", type=float, default=2.0)
+    return parser
+
+
+def main():
+    parser = build_arg_parser()
     argv = rclpy.utilities.remove_ros_args(sys.argv)
     args = parser.parse_args(argv[1:])
 

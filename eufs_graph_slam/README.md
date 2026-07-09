@@ -9,14 +9,41 @@ The node subscribes to:
 
 It publishes:
 
-- `/graph_slam/map` (`eufs_msgs/msg/ConeArrayWithCovariance`)
-- `/graph_slam/odom` (`nav_msgs/msg/Odometry`)
+- `/localization/cone_map` (`eufs_msgs/msg/ConeArrayWithCovariance`)
+- `/localization/ego_odom` (`nav_msgs/msg/Odometry`)
 - `/graph_slam/path` (`nav_msgs/msg/Path`)
 - `/graph_slam/markers` (`visualization_msgs/msg/MarkerArray`)
+- `status_topic`, default `~/status` (`std_msgs/msg/String`)
+- `map_converged_topic`, default `~/map_converged` (`std_msgs/msg/Bool`)
 
 When TF publishing is enabled, the node owns `map -> odom` and
 `odom -> base_footprint`. The simulator ground-truth TF publisher must stay
 disabled so `base_footprint` has one parent.
+
+## Planner-facing contract
+
+Graph SLAM owns the localization outputs consumed by the planning integration:
+
+- `/localization/cone_map` is a reliable transient-local
+  `eufs_msgs/msg/ConeArrayWithCovariance` map snapshot.
+- `/localization/ego_odom` is the live `nav_msgs/msg/Odometry` ego pose stream.
+- `/graph_slam/status` remains Graph-SLAM-owned lifecycle state with values
+  `mapping`, `mapping_converged`, and `localization`.
+- `/graph_slam/map_converged` remains a latched map convergence signal.
+
+The planning stack only allows global waypoint use when `/graph_slam/status` is
+`localization`. Planner liveness is not inferred from the status topic; it comes
+from the selected global waypoint writer's reliable volatile
+`/planning/global_path_valid` heartbeat.
+
+Graph SLAM does not publish `/global_waypoints` or
+`/planning/global_path_valid`. Those topics must have one writer in any launch:
+the SLAM `planner_node` or the CSV global planner, never both on the default
+topics.
+
+The phase-1 planner consumes the existing `ConeArrayWithCovariance` map. A
+planner-friendly `SlamConeMap.msg` with landmark IDs/versioning is deferred to a
+later compatible schema phase.
 
 ## Build
 
@@ -66,8 +93,9 @@ Set `localization_mode:=true load_map_path:=<csv>` to localize against a saved
 map instead of building one. The loaded cones become **fixed** landmarks
 (`setFixed(true)`); mapping, deletion, and merging are disabled, and the
 optimizer moves only the pose to fit the fixed map — so drift is corrected
-against a known map. The loaded map is published once on `/graph_slam/map`
-(latched) for preview.
+against a known map. The loaded map is published once on the configured
+`map_topic` (latched) for preview; the default is the planner-facing
+`/localization/cone_map` topic.
 
 ```bash
 ros2 launch eufs_graph_slam graph_slam.launch.py \
@@ -99,10 +127,21 @@ trackdrive lifecycle without operator input:
 
 The lifecycle is published (latched) on:
 
-- `/graph_slam/status` (`std_msgs/String`): `mapping`, `mapping_converged`,
-  or `localization` — RViz HUD via `/graph_slam/status_overlay`.
-- `/graph_slam/map_converged` (`std_msgs/Bool`): planning can switch from
-  local to global planning on this flag.
+- `status_topic`, default `~/status` (`std_msgs/String`): `mapping`,
+  `mapping_converged`, or `localization` — RViz HUD via
+  `/graph_slam/status_overlay`.
+- `map_converged_topic`, default `~/map_converged` (`std_msgs/Bool`):
+  planning can switch from local to global planning on this flag. It also
+  publishes true in localization mode after a fixed map has been loaded.
+
+The map and odometry output topics are launch parameters. For an older tool
+that still expects the legacy Graph SLAM names, start with:
+
+```bash
+ros2 launch eufs_graph_slam graph_slam.launch.py \
+  map_topic:=/graph_slam/map \
+  slam_odom_topic:=/graph_slam/odom
+```
 
 ## Wheel-encoder odometry
 
@@ -143,7 +182,7 @@ published covariance.
   exclusive callback groups: car state in one, cones + a 250 ms optimization
   timer in the other. The state callback only *tries* to take the graph lock;
   when optimization holds it, live odometry is dead-reckoned from the last
-  keyframe snapshot instead of blocking, so `/graph_slam/odom` and TF keep
+  keyframe snapshot instead of blocking, so `/localization/ego_odom` and TF keep
   the input rate.
 - The optimizer uses g2o's sparse `LinearSolverEigen`, so the whole session
   (`max_optimization_poses`) stays inside periodic Levenberg-Marquardt runs
@@ -199,7 +238,9 @@ Parameters live in `config/graph_slam.yaml`.
   not depend on SLAM output.
 - `evaluate_slam.py` — reports trajectory ATE for SLAM vs the raw odometry
   input, and map quality (matches, RMSE, duplicates, false positives, colour
-  accuracy) against the track CSV.
+  accuracy) against the track CSV. It listens to `/localization/ego_odom` and
+  `/localization/cone_map` by default; use `--slam-odom /graph_slam/odom` and
+  `--map-topic /graph_slam/map` for legacy runs.
 
 The drifting odometry the node consumes is produced by the simulator itself:
 the race-car plugin publishes ground truth on `/ground_truth/state` and a

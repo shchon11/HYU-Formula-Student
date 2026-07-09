@@ -4,7 +4,8 @@
 # Use of this source code is governed by an MIT-style
 # license that can be found in the LICENSE file or at
 # https://opensource.org/licenses/MIT.
-"""Wheel-encoder odometry for EUFS graph SLAM.
+"""
+Wheel-encoder odometry for EUFS graph SLAM.
 
 Integrates rear-wheel speeds (RPM) with an IMU yaw rate into a drifting SE2
 pose and publishes it as a CarState on ``/wheel_odometry/car_state`` — a

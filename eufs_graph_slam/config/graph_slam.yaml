@@ -5,8 +5,10 @@ graph_slam:
     car_state_topic: /odometry_integration/car_state
     cones_topic: /cones
 
-    map_topic: /graph_slam/map
-    slam_odom_topic: /graph_slam/odom
+    map_topic: /localization/cone_map
+    slam_odom_topic: /localization/ego_odom
+    status_topic: ~/status
+    map_converged_topic: ~/map_converged
     path_topic: /graph_slam/path
     marker_topic: /graph_slam/markers
 

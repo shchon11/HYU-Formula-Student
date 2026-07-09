@@ -87,6 +87,10 @@ target_link_libraries(crccosy
 add_executable(frenet_odom_node
   src/frenet_odom_node.cpp
   src/clcs_frenet_converter.cpp
+  src/clcs_build_diagnostics.cpp
+  src/frenet_odom_messages.cpp
+  src/frenet_odom_parameters.cpp
+  src/global_path_validity_state.cpp
 )
 target_include_directories(frenet_odom_node PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include

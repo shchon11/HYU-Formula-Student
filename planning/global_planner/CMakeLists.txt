@@ -8,12 +8,14 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(eufs_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 
 add_executable(global_planner_trajectory_publisher_node
   src/global_planner_trajectory_publisher_node.cpp
+  src/trajectory_csv.cpp
 )
 target_include_directories(global_planner_trajectory_publisher_node PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -21,6 +23,7 @@ target_include_directories(global_planner_trajectory_publisher_node PRIVATE
 ament_target_dependencies(global_planner_trajectory_publisher_node
   rclcpp
   eufs_msgs
+  std_msgs
 )
 
 add_executable(global_planner_debug_visualizer_node
@@ -35,7 +38,25 @@ ament_target_dependencies(global_planner_debug_visualizer_node
   visualization_msgs
 )
 
+add_executable(planner_node
+  src/planner_node.cpp
+  src/planner_geometry.cpp
+  src/slam_boundary_ordering.cpp
+  src/slam_centerline_builder.cpp
+)
+target_include_directories(planner_node PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+ament_target_dependencies(planner_node
+  rclcpp
+  eufs_msgs
+  std_msgs
+  nav_msgs
+)
+
 add_executable(wpnt_publisher_node
+  src/global_path_validity_gate.cpp
+  src/path_snapshot.cpp
   src/wpnt_publisher_node.cpp
 )
 target_include_directories(wpnt_publisher_node PRIVATE
@@ -44,6 +65,7 @@ target_include_directories(wpnt_publisher_node PRIVATE
 ament_target_dependencies(wpnt_publisher_node
   rclcpp
   eufs_msgs
+  std_msgs
   nav_msgs
   geometry_msgs
 )
@@ -51,6 +73,7 @@ ament_target_dependencies(wpnt_publisher_node
 install(TARGETS
   global_planner_trajectory_publisher_node
   global_planner_debug_visualizer_node
+  planner_node
   wpnt_publisher_node
   DESTINATION lib/${PROJECT_NAME}
 )

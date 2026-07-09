@@ -26,6 +26,10 @@ def generate_launch_description():
     params_file = LaunchConfiguration("params_file")
     use_sim_time = LaunchConfiguration("use_sim_time")
     car_state_topic = LaunchConfiguration("car_state_topic")
+    map_topic = LaunchConfiguration("map_topic")
+    slam_odom_topic = LaunchConfiguration("slam_odom_topic")
+    status_topic = LaunchConfiguration("status_topic")
+    map_converged_topic = LaunchConfiguration("map_converged_topic")
     map_frame = LaunchConfiguration("map_frame")
     odom_frame = LaunchConfiguration("odom_frame")
     slam_base_frame = LaunchConfiguration("slam_base_frame")
@@ -34,6 +38,7 @@ def generate_launch_description():
     load_map_path = LaunchConfiguration("load_map_path")
     gui = LaunchConfiguration("gui")
     ate_monitor = LaunchConfiguration("ate_monitor")
+    ate_status_topic = LaunchConfiguration("ate_status_topic")
 
     return LaunchDescription(
         [
@@ -57,6 +62,26 @@ def generate_launch_description():
                 "car_state_topic",
                 default_value="/odometry_integration/car_state",
                 description="CarState topic used as the graph SLAM motion input.",
+            ),
+            DeclareLaunchArgument(
+                "map_topic",
+                default_value="/localization/cone_map",
+                description="Planner-facing cone map topic published by graph SLAM.",
+            ),
+            DeclareLaunchArgument(
+                "slam_odom_topic",
+                default_value="/localization/ego_odom",
+                description="Planner-facing ego odometry topic published by graph SLAM.",
+            ),
+            DeclareLaunchArgument(
+                "status_topic",
+                default_value="~/status",
+                description="Latched graph SLAM lifecycle String topic.",
+            ),
+            DeclareLaunchArgument(
+                "map_converged_topic",
+                default_value="~/map_converged",
+                description="Latched graph SLAM map-ready/converged Bool topic.",
             ),
             DeclareLaunchArgument(
                 "map_frame",
@@ -102,6 +127,11 @@ def generate_launch_description():
                 description="Publish live SLAM-vs-ground-truth error markers for RViz.",
             ),
             DeclareLaunchArgument(
+                "ate_status_topic",
+                default_value="/graph_slam/status",
+                description="Graph SLAM lifecycle status topic consumed by ate_monitor.",
+            ),
+            DeclareLaunchArgument(
                 "ros_localhost_only",
                 default_value="1",
                 description="Limit ROS discovery to localhost.",
@@ -120,6 +150,10 @@ def generate_launch_description():
                     {
                         "use_sim_time": use_sim_time,
                         "car_state_topic": car_state_topic,
+                        "map_topic": map_topic,
+                        "slam_odom_topic": slam_odom_topic,
+                        "status_topic": status_topic,
+                        "map_converged_topic": map_converged_topic,
                         "map_frame": map_frame,
                         "odom_frame": odom_frame,
                         "slam_base_frame": slam_base_frame,
@@ -135,7 +169,7 @@ def generate_launch_description():
                 executable="slam_gui",
                 name="slam_gui",
                 output="screen",
-                arguments=["--map-dir", DEFAULT_MAP_DIR],
+                arguments=["--map-dir", DEFAULT_MAP_DIR, "--map-topic", map_topic],
                 condition=IfCondition(gui),
             ),
             Node(
@@ -143,6 +177,12 @@ def generate_launch_description():
                 executable="ate_monitor",
                 name="ate_monitor",
                 output="screen",
+                arguments=[
+                    "--slam-odom",
+                    slam_odom_topic,
+                    "--status-topic",
+                    ate_status_topic,
+                ],
                 parameters=[{"use_sim_time": use_sim_time}],
                 condition=IfCondition(ate_monitor),
             ),

@@ -3,7 +3,8 @@
 # Use of this source code is governed by an MIT-style
 # license that can be found in the LICENSE file or at
 # https://opensource.org/licenses/MIT.
-"""Simulated Ellipse-D INS pipeline: sim INS -> SBG bridge -> graph SLAM.
+"""
+Simulated Ellipse-D INS pipeline: sim INS -> SBG bridge -> graph SLAM.
 
 One-command harness for running the real-hardware GNSS/INS pipeline against
 the EUFS simulator. The bridge output is remapped to /ins_odom/car_state

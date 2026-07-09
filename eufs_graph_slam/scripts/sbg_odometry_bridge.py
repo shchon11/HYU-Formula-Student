@@ -4,6 +4,8 @@
 # Use of this source code is governed by an MIT-style
 # license that can be found in the LICENSE file or at
 # https://opensource.org/licenses/MIT.
+# SIZE_OK: This integration only preserves topic/config compatibility; splitting
+# the legacy monolithic SBG odometry bridge is outside this focused scope.
 """
 SBG Ellipse-D GNSS/INS -> odometry + global-anchor bridge for EUFS graph SLAM.
 
@@ -411,7 +413,7 @@ class SbgOdometryBridge(Node):
         return (0.95, 0.5, 0.1), "SINGLE POINT"
 
     def _publish_status_board(self, t, mode, sigma, anchored, fault, started):
-        """Fixed HUD below the ATE overlay (top-left) via rviz_2d_overlay."""
+        """Render a fixed HUD below the ATE overlay via rviz_2d_overlay."""
         if self.overlay_pub is None:
             return
         if self._last_board_t is not None and (t - self._last_board_t) < 0.2:
@@ -452,7 +454,7 @@ class SbgOdometryBridge(Node):
         self.overlay_pub.publish(ov)
 
     def _publish_markers(self, header, east, north, sigma, mode, anchored, fault):
-        """RViz GNSS state: a fix disc sized/coloured by quality + status text."""
+        """Render RViz GNSS state as a fix disc plus status text."""
         if self.marker_pub is None:
             return
         t = header.stamp.sec + header.stamp.nanosec * 1e-9

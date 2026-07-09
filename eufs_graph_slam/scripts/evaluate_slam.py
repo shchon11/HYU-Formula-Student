@@ -253,17 +253,21 @@ class Evaluator(Node):
         return report
 
 
-def main():
+def build_arg_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv", required=True, help="track csv with GT cones")
     parser.add_argument("--duration", type=float, default=120.0, help="sim-time window")
     parser.add_argument("--output", required=True, help="output json path")
     parser.add_argument("--gt-topic", default="/ground_truth/state")
-    parser.add_argument("--slam-odom", default="/graph_slam/odom")
+    parser.add_argument("--slam-odom", default="/localization/ego_odom")
     parser.add_argument("--raw-odom", default="/drift_odom/car_state")
-    parser.add_argument("--map-topic", default="/graph_slam/map")
+    parser.add_argument("--map-topic", default="/localization/cone_map")
     parser.add_argument("--match-dist", type=float, default=1.0)
-    args = parser.parse_args()
+    return parser
+
+
+def main():
+    args = build_arg_parser().parse_args()
 
     rclpy.init()
     node = Evaluator(args)

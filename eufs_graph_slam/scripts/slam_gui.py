@@ -4,7 +4,8 @@
 # Use of this source code is governed by an MIT-style
 # license that can be found in the LICENSE file or at
 # https://opensource.org/licenses/MIT.
-"""Control GUI for the EUFS graph SLAM node.
+"""
+Control GUI for the EUFS graph SLAM node.
 
 Two modes:
 - Mapping (SLAM): build and refine a map; save it to the map directory.
@@ -69,7 +70,7 @@ def read_map_csv(path):
 class GuiNode(Node):
     """ROS side: service clients, parameter client, live-map subscription."""
 
-    def __init__(self, slam_ns):
+    def __init__(self, slam_ns, map_topic):
         super().__init__("slam_gui")
         self.slam_ns = slam_ns.rstrip("/")
         self.save_cli = self.create_client(Trigger, f"{self.slam_ns}/save_map")
@@ -85,7 +86,7 @@ class GuiNode(Node):
         )
         self.live_cones = 0
         self.create_subscription(
-            ConeArrayWithCovariance, f"{self.slam_ns}/map", self.on_map, latched)
+            ConeArrayWithCovariance, map_topic, self.on_map, latched)
 
     def on_map(self, msg):
         self.live_cones = (
@@ -257,10 +258,16 @@ class MainWindow(QtWidgets.QWidget):
         self.node.set_load_path(path, after_param)
 
 
-def main():
+def build_arg_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--slam-ns", default="/graph_slam")
+    parser.add_argument("--map-topic", default="/localization/cone_map")
     parser.add_argument("--map-dir", default="")
+    return parser
+
+
+def main():
+    parser = build_arg_parser()
     argv = rclpy.utilities.remove_ros_args(sys.argv)
     args = parser.parse_args(argv[1:])
     map_dir = args.map_dir or os.path.join(
@@ -268,7 +275,7 @@ def main():
     map_dir = os.path.normpath(map_dir)
 
     rclpy.init()
-    node = GuiNode(args.slam_ns)
+    node = GuiNode(args.slam_ns, args.map_topic)
     spin_thread = threading.Thread(
         target=rclpy.spin, args=(node,), daemon=True)
     spin_thread.start()
