@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -19,7 +20,10 @@ struct ConeSet
   std::vector<Point2> orange;
   std::vector<Point2> big_orange;
   std::vector<Point2> unknown;
+  bool input_overflow{false};
 };
+
+constexpr std::size_t kMaxBoundaryCones = 512U;
 
 struct PlannerConfig
 {
@@ -34,11 +38,13 @@ struct PlannerConfig
   double max_traversal_gap_m{6.0};
   double max_heading_change_rad{1.047};
   double waypoint_spacing_m{0.5};
+  double max_start_distance_m{4.0};
   double two_sided_horizon_m{20.0};
   double fallback_horizon_m{8.0};
   double fallback_offset_m{1.5};
   double two_sided_speed_mps{3.0};
   double fallback_speed_mps{1.5};
+  bool allow_partial_boundary{false};
 };
 
 enum class PathKind

@@ -18,7 +18,7 @@ double normalizeAngle(double angle);
 std::vector<Point2> cropToRoi(const std::vector<Point2> & input, const PlannerConfig & config);
 std::vector<Point2> deduplicate(
   std::vector<Point2> points, double tolerance, bool exact_only = false);
-std::vector<Point2> delaunayMidpoints(
+std::vector<Point2> boundaryMidpoints(
   const std::vector<Point2> & blue, const std::vector<Point2> & yellow,
   const PlannerConfig & config);
 std::vector<Point2> forwardTraversal(const std::vector<Point2> & points, const PlannerConfig & config);

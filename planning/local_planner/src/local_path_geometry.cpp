@@ -124,9 +124,6 @@ std::vector<Point2> forwardTraversal(const std::vector<Point2> & points, const P
   std::optional<std::size_t> seed;
   std::tuple<double, double, double, double> seed_key;
   for (std::size_t index = 0; index < points.size(); ++index) {
-    if (points[index].x < 0.0) {
-      continue;
-    }
     const auto key = std::make_tuple(
       std::hypot(points[index].x, points[index].y), points[index].x,
       std::abs(points[index].y), points[index].y);

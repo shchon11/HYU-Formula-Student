@@ -73,7 +73,7 @@ flowchart LR
 
 | 단계 | path_source | 무슨 일이 |
 |---|---|---|
-| **랩 1 · 탐험** | `LOCAL` | 맵 없음. local_planner가 **라이브 `/cones`로 즉석 경로** 생성, SLAM은 주행하며 콘맵 축적 |
+| **랩 1 · 탐험** | `LOCAL` | SLAM이 누적한 **콘맵과 현재 pose로 local 경로** 생성, SLAM은 주행하며 콘맵 보강 |
 | **핸드오프** | — | 랩 완주 → SLAM `localization` 전환 → global_planner가 콘맵에서 **레이스라인** 생성 → selector가 안전 전환 |
 | **랩 2+ · 레이싱** | `GLOBAL_FULL` | 컨트롤러가 레이스라인 롤링 윈도우 추종. **CTE HUD**가 추종 오차(d) 표시 |
 | **종료** | — | state_machine이 스톱존 감지 → `stop_request` → 제동 |
@@ -178,7 +178,7 @@ race peanut gazebo_gui:=true    # 트랙 뒤 인자는 simulation.launch.py로 �
 ### 자주 쓰는 변형
 ```bash
 pbring enable_controller:=false      # 주행 없이 계획만 (수동 개입: teleop)
-pbring local_source_mode:=slam_map   # local 경로를 라이브콘 대신 SLAM맵 기반으로
+pbring local_source_mode:=live_cones # local 경로 live perception 진단 override
 pbring planner_source:=csv           # global을 오프라인 raceline CSV로
 # 저장맵으로 localization 바로 시작 (랩1 탐험 생략):
 pbring graph_slam_localization_mode:=true \

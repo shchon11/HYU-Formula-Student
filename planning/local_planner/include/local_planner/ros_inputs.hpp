@@ -18,6 +18,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/header.hpp>
+#include <std_msgs/msg/string.hpp>
 
 #include "local_planner/input_policy.hpp"
 
@@ -33,6 +34,7 @@ struct LocalPlannerInputTopics
   std::string cones;
   std::string slam_map;
   std::string odom;
+  std::string slam_status;
 };
 
 struct LiveInputPair
@@ -80,6 +82,7 @@ private:
   void processLivePair(
     const ConeArray::ConstSharedPtr & cones, const Odometry::ConstSharedPtr & odom);
   void receiveSlamMap(const ConeArray::SharedPtr message);
+  void receiveSlamStatus(const std_msgs::msg::String::ConstSharedPtr message);
   void processSlamOdom(const Odometry::SharedPtr message);
   SteadyTime receiptFor(
     const std::map<std::int64_t, SteadyTime> & receipts,
@@ -96,6 +99,7 @@ private:
   message_filters::Subscriber<Odometry> live_odom_subscriber_;
   std::unique_ptr<Synchronizer> synchronizer_;
   rclcpp::Subscription<ConeArray>::SharedPtr slam_map_subscription_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr slam_status_subscription_;
   rclcpp::Subscription<Odometry>::SharedPtr slam_odom_subscription_;
 
   std::mutex mutex_;
@@ -103,6 +107,10 @@ private:
   std::map<std::int64_t, SteadyTime> odom_receipts_;
   ConeArray::SharedPtr latched_map_;
   SteadyTime latched_map_receive_time_{};
+  std::string last_slam_status_;
+  bool mapping_reset_floor_valid_{false};
+  std::int64_t mapping_reset_stamp_key_{0};
+  std::int64_t latest_odom_stamp_key_{0};
 };
 
 }

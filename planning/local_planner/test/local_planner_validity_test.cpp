@@ -27,6 +27,7 @@ TEST(LocalPlannerValidity, ValidPathSurvivesUnmatchedRawConeAndOdomCallbacks)
   ShutdownGuard shutdown_guard;
 
   rclcpp::NodeOptions planner_options;
+  planner_options.append_parameter_override("source_mode", "live_cones");
   planner_options.append_parameter_override("cones_topic", "/t9_local_planner/cones");
   planner_options.append_parameter_override("odom_topic", "/t9_local_planner/odom");
   planner_options.append_parameter_override(
@@ -125,6 +126,7 @@ TEST(LocalPlannerValidity, SingleInvalidBuildRetainsFreshPathUntilInputAgeExpire
   ShutdownGuard shutdown_guard;
 
   rclcpp::NodeOptions planner_options;
+  planner_options.append_parameter_override("source_mode", "live_cones");
   planner_options.append_parameter_override("cones_topic", "/t9_retention/cones");
   planner_options.append_parameter_override("odom_topic", "/t9_retention/odom");
   planner_options.append_parameter_override("waypoints_topic", "/t9_retention/waypoints");

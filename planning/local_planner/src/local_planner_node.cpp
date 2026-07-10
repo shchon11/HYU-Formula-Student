@@ -9,13 +9,15 @@ namespace local_planner
 
 LocalPlannerNode::LocalPlannerNode(const rclcpp::NodeOptions & options)
 : Node("local_planner_node", options),
-  source_mode_(parseSourceMode(declare_parameter<std::string>("source_mode", "live_cones")))
+  source_mode_(parseSourceMode(declare_parameter<std::string>("source_mode", "slam_map")))
 {
   const auto cones_topic = declare_parameter<std::string>("cones_topic", "/cones");
   const auto slam_map_topic = declare_parameter<std::string>(
     "slam_map_topic", "/localization/cone_map");
   const auto odom_topic = declare_parameter<std::string>(
     "odom_topic", "/localization/ego_odom");
+  const auto slam_status_topic = declare_parameter<std::string>(
+    "slam_status_topic", "/graph_slam/status");
   const auto waypoints_topic = declare_parameter<std::string>(
     "waypoints_topic", "/planning/local_waypoints");
   const auto path_topic = declare_parameter<std::string>(
@@ -41,11 +43,14 @@ LocalPlannerNode::LocalPlannerNode(const rclcpp::NodeOptions & options)
   planner_config_.max_heading_change_rad = declare_parameter<double>(
     "max_heading_change_rad", 1.047);
   planner_config_.waypoint_spacing_m = declare_parameter<double>("waypoint_spacing_m", 0.5);
+  planner_config_.max_start_distance_m = declare_parameter<double>("max_start_distance_m", 4.0);
   planner_config_.two_sided_horizon_m = declare_parameter<double>("two_sided_horizon_m", 20.0);
   planner_config_.fallback_horizon_m = declare_parameter<double>("fallback_horizon_m", 8.0);
   planner_config_.fallback_offset_m = declare_parameter<double>("fallback_offset_m", 1.5);
   planner_config_.two_sided_speed_mps = declare_parameter<double>("two_sided_speed_mps", 3.0);
   planner_config_.fallback_speed_mps = declare_parameter<double>("fallback_speed_mps", 1.5);
+  planner_config_.allow_partial_boundary = declare_parameter<bool>(
+    "allow_partial_boundary", source_mode_ == SourceMode::kSlamMap);
 
   if (!std::isfinite(max_stamp_skew_sec_) || max_stamp_skew_sec_ < 0.0 ||
     !std::isfinite(max_input_age_sec_) || max_input_age_sec_ <= 0.0 ||
@@ -58,7 +63,8 @@ LocalPlannerNode::LocalPlannerNode(const rclcpp::NodeOptions & options)
     *this, LocalPlannerOutputTopics{waypoints_topic, path_topic, validity_topic},
     max_input_age_sec_, heartbeat_hz_);
   inputs_ = std::make_unique<LocalPlannerInputs>(
-    *this, source_mode_, LocalPlannerInputTopics{cones_topic, slam_map_topic, odom_topic},
+    *this, source_mode_,
+    LocalPlannerInputTopics{cones_topic, slam_map_topic, odom_topic, slam_status_topic},
     max_stamp_skew_sec_, [this] {output_->invalidateImmediately();},
     [this](const LiveInputPair & input) {processLivePair(input);},
     [this](const SlamMapInput & input) {processSlamMap(input);});
@@ -91,6 +97,8 @@ void LocalPlannerNode::processSlamMap(const SlamMapInput & input)
   const auto validation = validateSlamMapInput(
     headerMetadata(input.map->header, input.map_receive_time), odom_metadata, max_input_age_sec_);
   if (!validation.valid) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 2000, "SLAM local input invalid: %s", validation.reason.c_str());
     output_->invalidateImmediately();
     return;
   }
@@ -99,6 +107,8 @@ void LocalPlannerNode::processSlamMap(const SlamMapInput & input)
   if (result.valid) {
     output_->publishPath(result, *input.odom, input.odom->header.stamp, input.odom_receive_time);
   } else {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 2000, "SLAM local path invalid: %s", result.reason.c_str());
     output_->invalidateImmediately();
   }
 }

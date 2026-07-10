@@ -1,9 +1,10 @@
 local_planner_node:
   ros__parameters:
-    source_mode: live_cones
+    source_mode: slam_map
     cones_topic: /cones
     slam_map_topic: /localization/cone_map
     odom_topic: /localization/ego_odom
+    slam_status_topic: /graph_slam/status
     waypoints_topic: /planning/local_waypoints
     path_topic: /planning/local_waypoints/path
     validity_topic: /planning/local_path_valid
@@ -21,6 +22,7 @@ local_planner_node:
     max_traversal_gap_m: 6.0
     max_heading_change_rad: 1.047
     waypoint_spacing_m: 0.5
+    max_start_distance_m: 4.0
     two_sided_horizon_m: 20.0
     fallback_horizon_m: 8.0
     fallback_offset_m: 1.5

@@ -119,6 +119,10 @@ BuildResult finishPath(
     result.reason = "fewer than two ordered raw points";
     return result;
   }
+  if (distance(raw_path.front(), {0.0, 0.0}) > config.max_start_distance_m) {
+    result.reason = "path starts too far from ego pose";
+    return result;
+  }
   if (pathSelfIntersects(raw_path)) {
     result.reason = "ordered path self-intersects";
     return result;

@@ -58,13 +58,17 @@ Point2 mapToEgo(const Point2 & point, const OdomMetadata & odom)
 }
 
 template<typename ConeContainer, typename Transform>
-std::vector<Point2> conePoints(const ConeContainer & cones, Transform transform)
+std::vector<Point2> conePoints(
+  const ConeContainer & cones, Transform transform, bool & input_overflow)
 {
   std::vector<Point2> points;
-  points.reserve(cones.size());
-  for (const auto & cone : cones) {
+  const std::size_t count = std::min(cones.size(), kMaxBoundaryCones);
+  points.reserve(count);
+  for (std::size_t index = 0; index < count; ++index) {
+    const auto & cone = cones[index];
     points.push_back(transform(Point2{cone.point.x, cone.point.y}));
   }
+  input_overflow = input_overflow || cones.size() > kMaxBoundaryCones;
   return points;
 }
 
@@ -93,24 +97,28 @@ OdomMetadata odomMetadata(const Odometry & odom, SteadyTime receive_time)
 ConeSet liveConeSet(const ConeArray & message)
 {
   const auto identity = [](const Point2 & point) {return point;};
+  bool input_overflow = false;
   return ConeSet{
-    conePoints(message.blue_cones, identity),
-    conePoints(message.yellow_cones, identity),
-    conePoints(message.orange_cones, identity),
-    conePoints(message.big_orange_cones, identity),
-    conePoints(message.unknown_color_cones, identity),
+    conePoints(message.blue_cones, identity, input_overflow),
+    conePoints(message.yellow_cones, identity, input_overflow),
+    {},
+    {},
+    {},
+    input_overflow,
   };
 }
 
 ConeSet slamConeSet(const ConeArray & message, const OdomMetadata & odom)
 {
   const auto transform = [&odom](const Point2 & point) {return mapToEgo(point, odom);};
+  bool input_overflow = false;
   return ConeSet{
-    conePoints(message.blue_cones, transform),
-    conePoints(message.yellow_cones, transform),
-    conePoints(message.orange_cones, transform),
-    conePoints(message.big_orange_cones, transform),
-    conePoints(message.unknown_color_cones, transform),
+    conePoints(message.blue_cones, transform, input_overflow),
+    conePoints(message.yellow_cones, transform, input_overflow),
+    {},
+    {},
+    {},
+    input_overflow,
   };
 }
 
@@ -154,6 +162,11 @@ void LocalPlannerInputs::configureSlamMapSource()
   slam_map_subscription_ = node_.create_subscription<ConeArray>(
     topics_.slam_map, map_qos,
     std::bind(&LocalPlannerInputs::receiveSlamMap, this, std::placeholders::_1));
+  if (!topics_.slam_status.empty()) {
+    slam_status_subscription_ = node_.create_subscription<std_msgs::msg::String>(
+      topics_.slam_status, map_qos,
+      std::bind(&LocalPlannerInputs::receiveSlamStatus, this, std::placeholders::_1));
+  }
   slam_odom_subscription_ = node_.create_subscription<Odometry>(
     topics_.odom, odom_qos,
     std::bind(&LocalPlannerInputs::processSlamOdom, this, std::placeholders::_1));
@@ -205,10 +218,39 @@ void LocalPlannerInputs::processLivePair(
 
 void LocalPlannerInputs::receiveSlamMap(const ConeArray::SharedPtr message)
 {
+  const auto map_stamp_key = stampKey(message->header.stamp);
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (mapping_reset_floor_valid_ && map_stamp_key <= mapping_reset_stamp_key_) {
+      return;
+    }
     latched_map_ = message;
     latched_map_receive_time_ = std::chrono::steady_clock::now();
+  }
+}
+
+void LocalPlannerInputs::receiveSlamStatus(
+  const std_msgs::msg::String::ConstSharedPtr message)
+{
+  bool invalidate = false;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const bool entering_mapping = message->data == "mapping" &&
+      !last_slam_status_.empty() && last_slam_status_ != "mapping";
+    if (entering_mapping) {
+      latched_map_.reset();
+      latched_map_receive_time_ = SteadyTime{};
+      mapping_reset_stamp_key_ = latest_odom_stamp_key_;
+      mapping_reset_floor_valid_ = true;
+      invalidate = true;
+    }
+    if (message->data == "localization") {
+      mapping_reset_floor_valid_ = false;
+    }
+    last_slam_status_ = message->data;
+  }
+  if (invalidate) {
+    invalidate_();
   }
 }
 
@@ -217,6 +259,7 @@ void LocalPlannerInputs::processSlamOdom(const Odometry::SharedPtr message)
   SlamMapInput input{nullptr, message, SteadyTime{}, std::chrono::steady_clock::now()};
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    latest_odom_stamp_key_ = stampKey(message->header.stamp);
     input.map = latched_map_;
     input.map_receive_time = latched_map_receive_time_;
   }

@@ -12,7 +12,6 @@ find_package(eufs_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
-find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc)
 
 add_library(local_planner_core
   src/input_policy.cpp
@@ -28,9 +27,7 @@ target_include_directories(local_planner_core
     $<INSTALL_INTERFACE:include>
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${OpenCV_INCLUDE_DIRS}
 )
-target_link_libraries(local_planner_core ${OpenCV_LIBS})
 
 add_executable(local_planner_node
   src/local_planner_main.cpp
@@ -41,7 +38,6 @@ add_executable(local_planner_node
 target_compile_features(local_planner_node PUBLIC cxx_std_17)
 target_include_directories(local_planner_node PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
-  ${OpenCV_INCLUDE_DIRS}
 )
 target_link_libraries(local_planner_node local_planner_core)
 ament_target_dependencies(local_planner_node
@@ -65,7 +61,12 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(local_planner_test test/local_planner_test.cpp)
   target_link_libraries(local_planner_test local_planner_core)
-  target_include_directories(local_planner_test PRIVATE ${OpenCV_INCLUDE_DIRS})
+
+  ament_add_gtest(local_planner_input_policy_test test/local_planner_input_policy_test.cpp)
+  target_link_libraries(local_planner_input_policy_test local_planner_core)
+
+  ament_add_gtest(local_planner_robustness_test test/local_planner_robustness_test.cpp)
+  target_link_libraries(local_planner_robustness_test local_planner_core)
 
   ament_add_gtest(local_planner_validity_test
     test/local_planner_validity_test.cpp
@@ -74,8 +75,7 @@ if(BUILD_TESTING)
     src/ros_outputs.cpp)
   target_link_libraries(local_planner_validity_test local_planner_core)
   target_include_directories(local_planner_validity_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${OpenCV_INCLUDE_DIRS})
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
   ament_target_dependencies(local_planner_validity_test
     rclcpp
     message_filters
@@ -91,8 +91,7 @@ if(BUILD_TESTING)
     src/ros_outputs.cpp)
   target_link_libraries(local_planner_stale_recovery_test local_planner_core)
   target_include_directories(local_planner_stale_recovery_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${OpenCV_INCLUDE_DIRS})
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
   ament_target_dependencies(local_planner_stale_recovery_test
     rclcpp
     message_filters
@@ -108,8 +107,7 @@ if(BUILD_TESTING)
     src/ros_outputs.cpp)
   target_link_libraries(local_planner_slam_validity_test local_planner_core)
   target_include_directories(local_planner_slam_validity_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${OpenCV_INCLUDE_DIRS})
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
   ament_target_dependencies(local_planner_slam_validity_test
     rclcpp
     message_filters

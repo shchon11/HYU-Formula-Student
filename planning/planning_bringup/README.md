@@ -41,7 +41,7 @@ selector's chosen local or global candidate. This launch never publishes
 | Argument | Default | Purpose |
 | --- | --- | --- |
 | `planner_source` | `slam` | Select the exclusive global waypoint writer. |
-| `local_source_mode` | `live_cones` | Select `live_cones` or `slam_map` local inputs. |
+| `local_source_mode` | `slam_map` | Build local paths from the latched SLAM cone map and ego pose. `live_cones` is an explicit diagnostic override. |
 | `enable_controller` | `true` | Start the sole `/cmd` writer. |
 | `start_graph_slam` | `true` | Start graph SLAM with the integrated graph. |
 | `graph_slam_localization_mode` | `false` | Enable saved-map localization. |

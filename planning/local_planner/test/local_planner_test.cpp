@@ -1,11 +1,9 @@
 #include <cmath>
 #include <limits>
-#include <stdexcept>
 #include <vector>
 
 #include <gtest/gtest.h>
 
-#include "local_planner/input_policy.hpp"
 #include "local_planner/local_path_builder.hpp"
 
 namespace local_planner
@@ -32,16 +30,6 @@ ConeSet simulatorLikeTwoBlueThreeYellow()
   cones.big_orange = {{2.0, 0.0}};
   cones.unknown = {{1.5, 0.2}, {2.5, -0.2}};
   return cones;
-}
-
-HeaderMetadata header(const std::string & frame, std::int32_t sec, std::uint32_t nanosec, double age)
-{
-  return HeaderMetadata{frame, sec, nanosec, age};
-}
-
-OdomMetadata odom(double age = 0.0)
-{
-  return OdomMetadata{header("map", 10, 0, age), "base_footprint", {1.0, 2.0}, 0.25};
 }
 
 bool expectStrictFinitePath(const BuildResult & result, double speed)
@@ -72,7 +60,7 @@ void expectInvalidEmptyPath(const BuildResult & result, const char * invalid_mes
   EXPECT_TRUE(result.waypoints.empty());
 }
 
-TEST(LocalPathBuilder, TwoSidedDelaunayUsesDeterministicTraversalAndDedupe)
+TEST(LocalPathBuilder, TwoSidedUsesDeterministicBoundaryTraversalAndDedupe)
 {
   auto cones = straightTwoSided();
   cones.blue.push_back({4.01, 2.0});
@@ -98,6 +86,86 @@ TEST(LocalPathBuilder, SimulatorLikeTwoBlueThreeYellowIgnoresNonBoundaryNoise)
     return;
   }
   EXPECT_EQ(result.kind, PathKind::kTwoSided);
+}
+
+TEST(LocalPathBuilder, TwoSidedPathPairsOrderedMapBoundariesThroughCurve)
+{
+  ConeSet cones;
+  cones.blue = {{0.0, 2.0}, {2.0, 2.2}, {4.0, 2.8}, {6.0, 3.8}, {8.0, 5.0}};
+  cones.yellow = {{0.0, -2.0}, {2.0, -2.2}, {4.0, -1.8}, {6.0, -0.2}, {8.0, 1.0}};
+
+  PlannerConfig config;
+  config.allow_partial_boundary = true;
+  const auto result = buildLocalPath(cones, config);
+
+  if (!expectStrictFinitePath(result, 3.0)) {
+    return;
+  }
+  EXPECT_EQ(result.kind, PathKind::kTwoSided);
+  EXPECT_NEAR(result.waypoints.front().x, 0.0, 0.2);
+  EXPECT_NEAR(result.waypoints.front().y, 0.0, 0.2);
+  for (std::size_t index = 1; index < result.waypoints.size(); ++index) {
+    EXPECT_GE(result.waypoints[index].x, result.waypoints[index - 1U].x);
+  }
+}
+
+TEST(LocalPathBuilder, SparseMapUsesNearestUsableBoundaryAtReducedSpeed)
+{
+  ConeSet cones;
+  cones.blue = {{6.0, 2.8}, {9.0, 3.0}};
+  cones.yellow = {{0.7, -2.6}, {6.0, -1.8}, {9.0, -1.7}};
+
+  PlannerConfig config;
+  config.allow_partial_boundary = true;
+  const auto result = buildLocalPath(cones, config);
+
+  if (!expectStrictFinitePath(result, 1.5)) {
+    return;
+  }
+  EXPECT_EQ(result.kind, PathKind::kYellowOnly);
+  EXPECT_LT(result.waypoints.front().x, 2.0);
+}
+
+TEST(LocalPathBuilder, MapModeCanUseConnectedPrefixBeforeUnmappedGap)
+{
+  ConeSet cones;
+  cones.yellow = {{0.0, -1.5}, {2.0, -1.5}, {4.0, -1.5}, {12.0, -1.5}};
+  PlannerConfig config;
+  config.allow_partial_boundary = true;
+
+  const auto result = buildLocalPath(cones, config);
+
+  if (!expectStrictFinitePath(result, 1.5)) {
+    return;
+  }
+  EXPECT_EQ(result.kind, PathKind::kYellowOnly);
+  EXPECT_LE(result.waypoints.back().x, 8.0);
+}
+
+TEST(LocalPathBuilder, StrictModeRejectsTruncatedTwoSidedBoundary)
+{
+  ConeSet cones;
+  cones.blue = {{0.0, 2.0}, {2.0, 2.0}, {4.0, 2.0}, {6.0, 2.0}};
+  cones.yellow = {{0.0, -2.0}, {2.0, -2.0}, {4.0, -2.0}, {12.0, -2.0}};
+
+  expectInvalidEmptyPath(buildLocalPath(cones));
+}
+
+TEST(LocalPathBuilder, MapModeSeedsOneSidedTraversalAtNearestBehindCone)
+{
+  ConeSet cones;
+  cones.yellow = {{-0.8, -1.5}, {2.0, -1.5}, {4.0, -1.5}, {6.0, -1.5}};
+  PlannerConfig config;
+  config.allow_partial_boundary = true;
+
+  const auto result = buildLocalPath(cones, config);
+
+  if (!expectStrictFinitePath(result, 1.5)) {
+    return;
+  }
+  EXPECT_EQ(result.kind, PathKind::kYellowOnly);
+  EXPECT_LT(result.waypoints.front().x, 0.0);
+  EXPECT_LT(std::hypot(result.waypoints.front().x, result.waypoints.front().y), 4.0);
 }
 
 TEST(LocalPathBuilder, BlueOnlyOffsetsRightAtFallbackSpeed)
@@ -216,70 +284,6 @@ TEST(LocalPathBuilder, EmptyAndNoiseOnlyInputsFailClosed)
   noise_only.unknown = {{4.0, 0.0}};
   const auto noise = buildLocalPath(noise_only);
   expectInvalidEmptyPath(noise);
-}
-
-TEST(LocalPathBuilder, ExcessiveGapHeadingAndSelfIntersectionFailClosed)
-{
-  ConeSet gap;
-  gap.blue = {{0.0, 1.5}, {1.0, 1.5}, {8.0, 1.5}};
-  const auto gap_result = buildLocalPath(gap);
-  ASSERT_TRUE(gap_result.evaluated);
-  EXPECT_FALSE(gap_result.valid);
-
-  ConeSet heading;
-  heading.yellow = {{0.0, -1.5}, {1.0, -1.5}, {1.1, 2.0}};
-  const auto heading_result = buildLocalPath(heading);
-  ASSERT_TRUE(heading_result.evaluated);
-  EXPECT_FALSE(heading_result.valid);
-
-  EXPECT_TRUE(pathSelfIntersects({{0.0, 0.0}, {2.0, 2.0}, {0.0, 2.0}, {2.0, 0.0}}));
-}
-
-TEST(InputPolicy, LiveInputRejectsWrongFramesZeroStampsSkewAndStaleness)
-{
-  const auto valid = validateLiveInput(header("base_footprint", 10, 50000000U, 0.1), odom());
-  ASSERT_TRUE(valid.evaluated);
-  EXPECT_TRUE(valid.valid) << valid.reason;
-
-  EXPECT_FALSE(validateLiveInput(header("camera", 10, 0, 0.0), odom()).valid);
-  EXPECT_FALSE(validateLiveInput(header("base_footprint", 0, 0, 0.0), odom()).valid);
-  EXPECT_FALSE(
-    validateLiveInput(header("base_footprint", 10, 110000001U, 0.0), odom()).valid);
-  EXPECT_FALSE(
-    validateLiveInput(header("base_footprint", 10, 0, 0.51), odom()).valid);
-  auto wrong_odom = odom();
-  wrong_odom.header.frame_id = "odom";
-  EXPECT_FALSE(validateLiveInput(header("base_footprint", 10, 0, 0.0), wrong_odom).valid);
-}
-
-TEST(InputPolicy, LiveInputRejectsStaleAndSkewedPairsThenAcceptsFreshRecovery)
-{
-  const auto fresh_cones = header("base_footprint", 10, 0, 0.0);
-  const auto fresh_odom = odom();
-  EXPECT_TRUE(validateLiveInput(fresh_cones, fresh_odom).valid);
-
-  EXPECT_FALSE(validateLiveInput(
-      header("base_footprint", 10, 0, 0.500001), fresh_odom).valid);
-  EXPECT_TRUE(validateLiveInput(fresh_cones, fresh_odom).valid);
-
-  EXPECT_FALSE(validateLiveInput(
-      header("base_footprint", 10, 100000001U, 0.0), fresh_odom).valid);
-  EXPECT_TRUE(validateLiveInput(fresh_cones, fresh_odom).valid);
-}
-
-TEST(InputPolicy, SlamMapUsesLatchedMapAndFreshOdomWithoutAutoSwitch)
-{
-  const auto latched_map = header("map", 1, 1, 50.0);
-  const auto valid = validateSlamMapInput(latched_map, odom(0.1));
-  ASSERT_TRUE(valid.evaluated);
-  EXPECT_TRUE(valid.valid) << valid.reason;
-  EXPECT_TRUE(acceptsSource(SourceMode::kSlamMap, SourceMode::kSlamMap));
-  EXPECT_FALSE(acceptsSource(SourceMode::kSlamMap, SourceMode::kLiveCones));
-  EXPECT_FALSE(acceptsSource(SourceMode::kLiveCones, SourceMode::kSlamMap));
-  EXPECT_THROW(parseSourceMode("automatic"), std::invalid_argument);
-  EXPECT_FALSE(validateSlamMapInput(header("base_footprint", 1, 1, 0.0), odom()).valid);
-  EXPECT_FALSE(validateSlamMapInput(header("map", 0, 0, 0.0), odom()).valid);
-  EXPECT_FALSE(validateSlamMapInput(latched_map, odom(0.51)).valid);
 }
 
 }

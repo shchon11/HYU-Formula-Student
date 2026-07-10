@@ -28,6 +28,7 @@ TEST(LocalPlannerValidity, StaleMatchedPairInvalidatesThenFreshPairRecovers)
   ShutdownGuard shutdown_guard;
 
   rclcpp::NodeOptions planner_options;
+  planner_options.append_parameter_override("source_mode", "live_cones");
   planner_options.append_parameter_override("cones_topic", "/t9_stale_recovery/cones");
   planner_options.append_parameter_override("odom_topic", "/t9_stale_recovery/odom");
   planner_options.append_parameter_override(

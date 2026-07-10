@@ -75,9 +75,9 @@ def generate_launch_description() -> LaunchDescription:
             ),
             DeclareLaunchArgument(
                 "local_source_mode",
-                default_value="live_cones",
+                default_value="slam_map",
                 choices=["live_cones", "slam_map"],
-                description="Local planner input source.",
+                description="Local planner input source; slam_map uses the latched map and ego pose.",
             ),
         ]
     )
@@ -160,6 +160,7 @@ def generate_launch_description() -> LaunchDescription:
                 "cones_topic": values["cones_topic"],
                 "slam_map_topic": values["cone_map_topic"],
                 "odom_topic": values["ego_odom_topic"],
+                "slam_status_topic": values["graph_slam_status_topic"],
                 "waypoints_topic": values["local_waypoints_topic"],
                 "path_topic": values["local_path_topic"],
                 "validity_topic": values["local_path_valid_topic"],
