@@ -100,6 +100,13 @@ void PlanningStack::populate()
   raceline->subProp("Line Width")->setValue(0.12f);
   raceline->subProp("Offset")->subProp("Z")->setValue(0.05f);
 
+  rviz_common::Display * local_path = addTopicDisplay(
+    "rviz_default_plugins/Path", "Local Path (lap 1)", "/planning/local_waypoints/path");
+  local_path->subProp("Color")->setValue(QColor(255, 170, 0));
+  local_path->subProp("Line Style")->setValue("Billboards");
+  local_path->subProp("Line Width")->setValue(0.08f);
+  local_path->subProp("Offset")->subProp("Z")->setValue(0.08f);
+
   rviz_common::Display * window = addTopicDisplay(
     "rviz_default_plugins/Path", "Local Window", "/path_waypoints/path");
   window->subProp("Color")->setValue(QColor(255, 255, 255));

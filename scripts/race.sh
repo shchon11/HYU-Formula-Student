@@ -45,12 +45,12 @@ tmux new-session -d -s "$SESSION" -n FSK
 # 0 · Simulator + perception ────────────────────────────────────────────────
 P_SIM=$(tmux list-panes -t "$SESSION" -F '#{pane_id}' | head -1)
 tmux send-keys -t "$P_SIM" \
-  "$SRC echo '[① SIM + PERCEPTION]'; ros2 launch eufs_launcher simulation.launch.py track:=$TRACK gazebo_gui:=false rviz:=true perception:=true $EXTRA" C-m
+  "$SRC echo '[① SIM + PERCEPTION]'; ros2 launch eufs_launcher simulation.launch.py track:=$TRACK gazebo_gui:=false rviz:=true show_rqt_gui:=false perception:=true $EXTRA" C-m
 
 # 1 · Full planning graph (starts its OWN graph_slam) ────────────────────────
 P_PLAN=$(tmux split-window -h -t "$P_SIM" -P -F '#{pane_id}')
 tmux send-keys -t "$P_PLAN" \
-  "$SRC echo '[② PLANNING: slam+global+local+SM+selector+controller] waiting for car…'; $WAIT_CAR; ros2 launch planning_bringup local_global_planning.launch.py graph_slam_ate_monitor:=true" C-m
+  "$SRC echo '[② PLANNING: slam+global+local+SM+selector+controller] waiting for car…'; $WAIT_CAR; ros2 launch planning_bringup local_global_planning.launch.py graph_slam_ate_monitor:=true local_max_stamp_skew_sec:=2.0 local_max_input_age_sec:=3.0 local_max_start_distance_m:=8.0" C-m
 
 # 2 · Arm the mission — then the controller drives autonomously ──────────────
 P_DRIVE=$(tmux split-window -v -t "$P_SIM" -P -F '#{pane_id}')

@@ -42,6 +42,9 @@ ARGUMENTS = (
     ("stop_zone_s_start_topic", "/stop_zone_s_start", "Final stop-zone start position."),
     ("stop_zone_s_end_topic", "/stop_zone_s_end", "Final stop-zone end position."),
     ("stop_zone_valid_topic", "/stop_zone_valid", "Final stop-zone validity."),
+    ("local_max_stamp_skew_sec", "0.1", "Local planner cones/odom stamp-skew gate (sec, sim time)."),
+    ("local_max_input_age_sec", "0.5", "Local planner input freshness gate (sec, sim time)."),
+    ("local_max_start_distance_m", "4.0", "Max distance from ego to the local path start (m)."),
     ("enable_controller", "true", "Start the sole /cmd writer."),
     ("cmd_topic", "/cmd", "Controller command output."),
 )
@@ -157,6 +160,9 @@ def generate_launch_description() -> LaunchDescription:
             values["local_params_file"],
             {
                 "source_mode": values["local_source_mode"],
+                "max_stamp_skew_sec": values["local_max_stamp_skew_sec"],
+                "max_input_age_sec": values["local_max_input_age_sec"],
+                "max_start_distance_m": values["local_max_start_distance_m"],
                 "cones_topic": values["cones_topic"],
                 "slam_map_topic": values["cone_map_topic"],
                 "odom_topic": values["ego_odom_topic"],
