@@ -53,7 +53,14 @@ flowchart LR
 
 ## ⚡ Quick Start
 
-> 이미 빌드·의존성이 끝났다면 터미널 4개에서:
+**한 방에 (권장)** — tmux 창 하나에 전체 스택이 단계별 pane으로 뜨고, 순서·미션까지 자동:
+
+```bash
+race                     # = race small_track   |   종료: race stop
+```
+
+<details>
+<summary>또는 <b>수동으로 터미널 4개</b></summary>
 
 ```bash
 simfull track:=small_track gazebo_gui:=true rviz:=true   # ① 시뮬 + perception
@@ -62,6 +69,7 @@ plan && smachine                                         # ③④ planning + 상
 mission                                                  # 미션 ON → 5초 뒤 주행 가능
 teleop                                                   # 키보드로 한 바퀴 주행
 ```
+</details>
 
 주행으로 한 바퀴 돌면 `/localization/cone_map`이 채워지고, SLAM이 `localization`으로 전환되면 `/global_waypoints`(초록 레이스라인)가 RViz에 뜹니다.
 
@@ -140,6 +148,9 @@ if [ -n "$ZSH_VERSION" ]; then _fsk_ext=zsh; else _fsk_ext=bash; fi
 # 워크스페이스
 alias fsk='cd "$EUFS_MASTER"'
 alias fsb='cd "$EUFS_MASTER" && colcon build --symlink-install && source install/setup.$_fsk_ext'
+
+# 전체 스택 한 방 (tmux) — race stop 으로 종료, race attach 로 재접속
+alias race='$EUFS_MASTER/src/scripts/race.sh'
 
 # 실행 (① 시뮬 · 퍼셉션)
 alias sim='ros2 launch eufs_launcher eufs_launcher.launch.py'          # 런처 GUI
