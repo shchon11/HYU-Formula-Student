@@ -45,7 +45,7 @@ tmux new-session -d -s "$SESSION" -n FSK
 # 0 · Simulator + perception ────────────────────────────────────────────────
 P_SIM=$(tmux list-panes -t "$SESSION" -F '#{pane_id}' | head -1)
 tmux send-keys -t "$P_SIM" \
-  "$SRC echo '[① SIM + PERCEPTION]'; ros2 launch eufs_launcher simulation.launch.py track:=$TRACK gazebo_gui:=true rviz:=true perception:=true $EXTRA" C-m
+  "$SRC echo '[① SIM + PERCEPTION]'; ros2 launch eufs_launcher simulation.launch.py track:=$TRACK gazebo_gui:=false rviz:=true perception:=true $EXTRA" C-m
 
 # 1 · Full planning graph (starts its OWN graph_slam) ────────────────────────
 P_PLAN=$(tmux split-window -h -t "$P_SIM" -P -F '#{pane_id}')

@@ -150,7 +150,7 @@ alias fsb='cd "$EUFS_MASTER" && colcon build --symlink-install && source install
 
 # 실행
 alias race='$EUFS_MASTER/src/scripts/race.sh'      # 자율주행 전체 한 방 (tmux). 종료: race stop
-alias simfull='ros2 launch eufs_launcher simulation.launch.py perception:=true gazebo_gui:=true rviz:=true'
+alias simfull='ros2 launch eufs_launcher simulation.launch.py perception:=true rviz:=true'
 alias pbring='ros2 launch planning_bringup local_global_planning.launch.py'
 alias teleop='ros2 run eufs_teleop teleop'
 
@@ -171,7 +171,7 @@ alias rv='rviz2 -d "$EUFS_MASTER/install/eufs_launcher/share/eufs_launcher/confi
 ```bash
 race                # small_track
 race skidpad        # 트랙 지정
-race peanut gazebo_gui:=false   # 트랙 뒤 인자는 simulation.launch.py로 전달
+race peanut gazebo_gui:=true    # 트랙 뒤 인자는 simulation.launch.py로 전달 (가제보 창 켜기)
 ```
 모니터 pane에서 `path_source: LOCAL → GLOBAL_FULL` 전환과 CTE를 실시간으로 봅니다.
 
