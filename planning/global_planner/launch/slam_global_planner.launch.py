@@ -8,6 +8,11 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    path_waypoints_topic = LaunchConfiguration(
+        "path_waypoints_topic", default="/path_waypoints"
+    )
+    path_topic = LaunchConfiguration("path_topic", default="/path_waypoints/path")
+    use_sim_time = LaunchConfiguration("use_sim_time", default="false")
     default_params = PathJoinSubstitution([
         FindPackageShare("global_planner"),
         "config",
@@ -50,6 +55,24 @@ def generate_launch_description():
         default_value="/planning/global_path_valid",
         description="Reliable volatile global path validity heartbeat topic.",
     )
+    path_waypoints_topic_arg = DeclareLaunchArgument(
+        "path_waypoints_topic",
+        default_value="/path_waypoints",
+        description=(
+            "Rolling global waypoint window published by wpnt_publisher_node; "
+            "the integrated launch overrides it to /planning/global_path_waypoints."
+        ),
+    )
+    path_topic_arg = DeclareLaunchArgument(
+        "path_topic",
+        default_value="/path_waypoints/path",
+        description="RViz path matching the rolling global waypoint window.",
+    )
+    use_sim_time_arg = DeclareLaunchArgument(
+        "use_sim_time",
+        default_value="false",
+        description="Use ROS simulated time for all nodes started by this launch.",
+    )
 
     slam_writer = Node(
         package="global_planner",
@@ -65,6 +88,7 @@ def generate_launch_description():
                 "graph_slam_status_topic": LaunchConfiguration("graph_slam_status_topic"),
                 "global_waypoints_topic": LaunchConfiguration("global_waypoints_topic"),
                 "global_path_valid_topic": LaunchConfiguration("global_path_valid_topic"),
+                "use_sim_time": use_sim_time,
             },
         ],
     )
@@ -80,6 +104,7 @@ def generate_launch_description():
             {
                 "global_waypoints_topic": LaunchConfiguration("global_waypoints_topic"),
                 "global_path_valid_topic": LaunchConfiguration("global_path_valid_topic"),
+                "use_sim_time": use_sim_time,
             },
         ],
     )
@@ -95,6 +120,7 @@ def generate_launch_description():
                 "odom_topic": LaunchConfiguration("ego_odom_topic"),
                 "waypoint_topic": LaunchConfiguration("global_waypoints_topic"),
                 "global_path_valid_topic": LaunchConfiguration("global_path_valid_topic"),
+                "use_sim_time": use_sim_time,
             },
         ],
     )
@@ -109,6 +135,9 @@ def generate_launch_description():
             {
                 "global_waypoints_topic": LaunchConfiguration("global_waypoints_topic"),
                 "global_path_valid_topic": LaunchConfiguration("global_path_valid_topic"),
+                "path_waypoints_topic": path_waypoints_topic,
+                "path_topic": path_topic,
+                "use_sim_time": use_sim_time,
             },
         ],
     )
@@ -121,6 +150,9 @@ def generate_launch_description():
         graph_slam_status_topic_arg,
         global_waypoints_topic_arg,
         global_path_valid_topic_arg,
+        path_waypoints_topic_arg,
+        path_topic_arg,
+        use_sim_time_arg,
         slam_writer,
         csv_writer,
         frenet_odom,

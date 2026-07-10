@@ -1,0 +1,189 @@
+#include "pure_pursuit_controller/controller.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
+
+namespace pure_pursuit_controller
+{
+namespace
+{
+
+bool isFiniteGeometry(const PathPoint & point)
+{
+  return std::isfinite(point.x_m) && std::isfinite(point.y_m);
+}
+
+bool isFinitePose(const EgoState & ego)
+{
+  return std::isfinite(ego.x_m) && std::isfinite(ego.y_m) && std::isfinite(ego.yaw_rad);
+}
+
+bool isFresh(double age_sec, double timeout_sec)
+{
+  return std::isfinite(age_sec) && age_sec >= 0.0 && age_sec <= timeout_sec;
+}
+
+bool isValidConfig(const ControllerConfig & config)
+{
+  return std::isfinite(config.wheelbase_m) && config.wheelbase_m > 0.0 &&
+         std::isfinite(config.lookahead_m) && config.lookahead_m > 0.0 &&
+         std::isfinite(config.max_steering_rad) && config.max_steering_rad > 0.0 &&
+         std::isfinite(config.command_rate_hz) && config.command_rate_hz > 0.0 &&
+         std::isfinite(config.input_timeout_sec) && config.input_timeout_sec >= 0.0 &&
+         std::isfinite(config.max_speed_mps) && config.max_speed_mps >= 0.0 &&
+         std::isfinite(config.longitudinal_kp) && config.longitudinal_kp >= 0.0 &&
+         std::isfinite(config.min_acceleration_mps2) &&
+         std::isfinite(config.max_acceleration_mps2) &&
+         config.min_acceleration_mps2 <= config.max_acceleration_mps2;
+}
+
+}
+
+DriveCommand brakeCommand()
+{
+  return DriveCommand{};
+}
+
+std::chrono::nanoseconds commandPeriod(const ControllerConfig & config)
+{
+  if (!std::isfinite(config.command_rate_hz) || config.command_rate_hz <= 0.0) {
+    throw std::invalid_argument("command_rate_hz must be finite and positive");
+  }
+  return std::chrono::nanoseconds{
+    static_cast<std::chrono::nanoseconds::rep>(std::llround(1.0e9 / config.command_rate_hz))};
+}
+
+std::optional<double> yawFromQuaternion(double x, double y, double z, double w)
+{
+  if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(w)) {
+    return std::nullopt;
+  }
+  const double norm_squared = x * x + y * y + z * z + w * w;
+  if (!std::isfinite(norm_squared) || norm_squared <= 1.0e-12) {
+    return std::nullopt;
+  }
+  const double sin_yaw = 2.0 * (w * z + x * y) / norm_squared;
+  const double cos_yaw = 1.0 - 2.0 * (y * y + z * z) / norm_squared;
+  const double yaw = std::atan2(sin_yaw, cos_yaw);
+  if (!std::isfinite(yaw)) {
+    return std::nullopt;
+  }
+  return yaw;
+}
+
+std::optional<std::size_t> findNearestWaypoint(
+  const std::vector<PathPoint> & path, const EgoState & ego)
+{
+  if (path.empty() || !isFinitePose(ego)) {
+    return std::nullopt;
+  }
+
+  std::optional<std::size_t> nearest_index;
+  double nearest_distance_squared = std::numeric_limits<double>::infinity();
+  for (std::size_t index = 0U; index < path.size(); ++index) {
+    if (!isFiniteGeometry(path[index])) {
+      return std::nullopt;
+    }
+    const double dx = path[index].x_m - ego.x_m;
+    const double dy = path[index].y_m - ego.y_m;
+    const double distance_squared = dx * dx + dy * dy;
+    if (!std::isfinite(distance_squared)) {
+      return std::nullopt;
+    }
+    if (distance_squared < nearest_distance_squared) {
+      nearest_distance_squared = distance_squared;
+      nearest_index = index;
+    }
+  }
+  return nearest_index;
+}
+
+std::optional<TargetPoint> selectTarget(
+  const std::vector<PathPoint> & path, const EgoState & ego, double lookahead_m)
+{
+  if (!std::isfinite(lookahead_m) || lookahead_m <= 0.0) {
+    return std::nullopt;
+  }
+  const auto nearest_index = findNearestWaypoint(path, ego);
+  if (!nearest_index.has_value()) {
+    return std::nullopt;
+  }
+
+  std::optional<std::size_t> target_index;
+  double cumulative_distance = 0.0;
+  for (std::size_t index = nearest_index.value() + 1U; index < path.size(); ++index) {
+    const double dx = path[index].x_m - path[index - 1U].x_m;
+    const double dy = path[index].y_m - path[index - 1U].y_m;
+    cumulative_distance += std::hypot(dx, dy);
+    if (!std::isfinite(cumulative_distance)) {
+      return std::nullopt;
+    }
+    if (cumulative_distance >= lookahead_m) {
+      target_index = index;
+      break;
+    }
+  }
+  if (!target_index.has_value()) {
+    target_index = path.size() - 1U;
+  }
+
+  const PathPoint & point = path[target_index.value()];
+  const double dx = point.x_m - ego.x_m;
+  const double dy = point.y_m - ego.y_m;
+  const double cosine = std::cos(ego.yaw_rad);
+  const double sine = std::sin(ego.yaw_rad);
+  const double x_body = cosine * dx + sine * dy;
+  const double y_body = -sine * dx + cosine * dy;
+  if (!std::isfinite(x_body) || !std::isfinite(y_body) || x_body <= 0.0) {
+    return std::nullopt;
+  }
+  return TargetPoint{point, target_index.value(), x_body, y_body};
+}
+
+DriveCommand computeCommand(const ControllerInput & input, const ControllerConfig & config)
+{
+  if (!isValidConfig(config) || !input.path_received || !input.validity_received ||
+    !input.stop_received || !input.odom_received || !input.path_frame_valid ||
+    !input.odom_frame_valid || !input.selected_path_valid || input.stop_requested ||
+    !isFresh(input.path_age_sec, config.input_timeout_sec) ||
+    !isFresh(input.validity_age_sec, config.input_timeout_sec) ||
+    !isFresh(input.stop_age_sec, config.input_timeout_sec) ||
+    !isFresh(input.odom_age_sec, config.input_timeout_sec) || !input.ego.has_value() ||
+    !isFinitePose(input.ego.value()))
+  {
+    return brakeCommand();
+  }
+
+  const auto target = selectTarget(input.path, input.ego.value(), config.lookahead_m);
+  if (!target.has_value()) {
+    return brakeCommand();
+  }
+  const double lookahead_squared =
+    target->x_body_m * target->x_body_m + target->y_body_m * target->y_body_m;
+  if (!std::isfinite(lookahead_squared) || lookahead_squared <= 0.0) {
+    return brakeCommand();
+  }
+
+  double target_speed = 0.0;
+  if (std::isfinite(target->point.vx_mps) && target->point.vx_mps > 0.0) {
+    target_speed = target->point.vx_mps;
+  } else if (std::isfinite(target->point.speed_mps) && target->point.speed_mps > 0.0) {
+    target_speed = target->point.speed_mps;
+  }
+  target_speed = std::clamp(target_speed, 0.0, config.max_speed_mps);
+
+  const double current_speed = std::isfinite(input.ego->longitudinal_speed_mps) ?
+    std::max(0.0, input.ego->longitudinal_speed_mps) : 0.0;
+  const double acceleration = std::clamp(
+    config.longitudinal_kp * (target_speed - current_speed),
+    config.min_acceleration_mps2, config.max_acceleration_mps2);
+  const double steering = std::clamp(
+    std::atan2(
+      2.0 * config.wheelbase_m * target->y_body_m, lookahead_squared),
+    -config.max_steering_rad, config.max_steering_rad);
+  return DriveCommand{target_speed, acceleration, steering};
+}
+
+}

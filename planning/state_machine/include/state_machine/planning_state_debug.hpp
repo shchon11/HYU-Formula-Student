@@ -40,6 +40,19 @@ struct PlanningStateDebugSnapshot
   std::size_t orange_cone_count{0U};
   std::size_t big_orange_cone_count{0U};
   std::size_t unknown_cone_count{0U};
+  bool local_path_valid_received{false};
+  bool local_path_valid{false};
+  bool local_path_valid_fresh{false};
+  double local_path_valid_time_sec{0.0};
+  bool global_handoff_received{false};
+  bool global_handoff_ready{false};
+  bool global_handoff_fresh{false};
+  bool global_handoff_dwell_ready{false};
+  double global_handoff_time_sec{0.0};
+  bool lap_path_valid{false};
+  bool lap_armed{false};
+  double lap_path_length{0.0};
+  std::uint64_t lap_path_generation{0U};
 };
 
 PathSource selectPathSource(PlanningState state, int lap_count, int final_lap_start_count);

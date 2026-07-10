@@ -1,0 +1,9 @@
+10:    trajectory_csv_path: ""
+11:    output_root: "/home/shchon11/fsk/src/planning/trajectory_generator/outputs"
+34:    ego_odom_topic: "/localization/ego_odom"
+65:    frenet_odom_topic: "/car_state/frenet/odom"
+78:    # localization stack, override launch arg odom_topic:=/pf/pose/odom.
+79:    odom_topic: "/ground_truth/odom"
+84:    frenet_odom_topic: "/car_state/frenet/odom"
+93:    output_root: "/home/shchon11/fsk/src/planning/trajectory_generator/outputs"
+config_inspection_exit_status=0

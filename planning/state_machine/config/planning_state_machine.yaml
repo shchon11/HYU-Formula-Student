@@ -4,6 +4,8 @@ planning_state_machine_node:
     global_waypoints_topic: "/global_waypoints"
     graph_slam_status_topic: "/graph_slam/status"
     global_path_valid_topic: "/planning/global_path_valid"
+    local_path_valid_topic: "/planning/local_path_valid"
+    global_handoff_ready_topic: "/planning/global_handoff_ready"
     cone_map_topic: "/cones"
     stop_zone_s_start_topic: "/stop_zone_s_start"
     stop_zone_s_end_topic: "/stop_zone_s_end"
@@ -15,8 +17,12 @@ planning_state_machine_node:
 
     frenet_odom_timeout_sec: 0.5
     global_path_valid_timeout_sec: 0.5
+    global_handoff_timeout_sec: 0.5
+    global_entry_dwell_sec: 0.5
     cone_map_timeout_sec: 1.0
     stop_zone_timeout_sec: 1.0
+    lap_path_closure_tolerance_m: 1.0
+    lap_closing_duplicate_tolerance_m: 0.05
 
     final_path_end_threshold: 2.0
     stop_zone_s_margin: 0.0

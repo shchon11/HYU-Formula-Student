@@ -59,6 +59,8 @@ phase로 defer되어 있다.
 | `/global_waypoints` | `eufs_msgs/msg/WaypointArrayStamped` | reliable transient-local QoS로 받는 latched global waypoint snapshot. non-empty snapshot만 accept한다. |
 | `/graph_slam/status` | `std_msgs/msg/String` | reliable transient-local QoS로 받는 Graph SLAM lifecycle state. 최신 latched 값이 `localization`일 때만 global path를 사용할 수 있다. status message age만으로 demote하지 않는다. |
 | `/planning/global_path_valid` | `std_msgs/msg/Bool` | reliable volatile QoS로 받는 global path validity heartbeat. `false` 또는 timeout이면 기존 waypoint snapshot을 invalidation하고 새 snapshot을 기다린다. |
+| `/planning/local_path_valid` | `std_msgs/msg/Bool` | reliable volatile QoS로 받는 local planner validity heartbeat. 값, 수신 여부, 수신 시각, freshness를 debug에 기록하며 state/STOP 전이에는 사용하지 않는다. |
+| `/planning/global_handoff_ready` | `std_msgs/msg/Bool` | reliable volatile QoS로 받는 selector continuity heartbeat. fresh true가 연속 dwell을 만족할 때만 LOCAL에서 GLOBAL로 진입한다. |
 | `/cones` | `eufs_msgs/msg/ConeArrayWithCovariance` | `base_footprint` 기준 local perception cone observation. 색상별 cone 개수와 freshness를 저장한다. |
 | `/stop_zone_s_start` | `std_msgs/msg/Float64` | stop zone 시작 지점의 global path projection `s` |
 | `/stop_zone_s_end` | `std_msgs/msg/Float64` | stop zone 끝 지점의 global path projection `s` |
@@ -88,6 +90,8 @@ planning/state_machine/config/planning_state_machine.yaml
 | `global_waypoints_topic` | `/global_waypoints` | latched global waypoint 입력 topic |
 | `graph_slam_status_topic` | `/graph_slam/status` | Graph SLAM lifecycle status 입력 topic |
 | `global_path_valid_topic` | `/planning/global_path_valid` | global path validity heartbeat 입력 topic |
+| `local_path_valid_topic` | `/planning/local_path_valid` | local path validity heartbeat 입력 topic |
+| `global_handoff_ready_topic` | `/planning/global_handoff_ready` | local/global continuity handoff heartbeat 입력 topic |
 | `cone_map_topic` | `/cones` | local perception cone 입력 topic. 기존 파라미터 이름은 호환을 위해 유지한다. |
 | `stop_zone_s_start_topic` | `/stop_zone_s_start` | stop zone 시작 `s` 입력 topic |
 | `stop_zone_s_end_topic` | `/stop_zone_s_end` | stop zone 끝 `s` 입력 topic |
@@ -97,8 +101,12 @@ planning/state_machine/config/planning_state_machine.yaml
 | `final_lap_start_count` | `3` | final stop path source로 넘어가는 lap count |
 | `frenet_odom_timeout_sec` | `0.5` | Frenet odometry freshness timeout |
 | `global_path_valid_timeout_sec` | `0.5` | `/planning/global_path_valid` true heartbeat freshness timeout |
+| `global_handoff_timeout_sec` | `0.5` | `/planning/global_handoff_ready` heartbeat freshness timeout |
+| `global_entry_dwell_sec` | `0.5` | GLOBAL 진입 전 fresh true handoff가 연속 유지되어야 하는 시간 |
 | `cone_map_timeout_sec` | `1.0` | Cone map freshness timeout |
 | `stop_zone_timeout_sec` | `1.0` | stop zone detector freshness timeout |
+| `lap_path_closure_tolerance_m` | `1.0` | lap tracking에서 closed global path로 인정하는 최대 first/last XY 거리 |
+| `lap_closing_duplicate_tolerance_m` | `0.05` | closing duplicate 인코딩으로 판단해 `last.s_m`을 그대로 length로 쓰는 first/last XY 거리 |
 | `final_path_end_threshold` | `2.0` | final path end 판단 거리 threshold |
 | `stop_zone_s_margin` | `0.0` | stop zone `s` 범위 판정 margin |
 | `max_abs_d_for_global` | `2.0` | GLOBAL 전이 허용 lateral error |
@@ -111,10 +119,15 @@ planning/state_machine/config/planning_state_machine.yaml
 
 `LOCAL -> GLOBAL` 조건:
 
-- `lap_count >= 1`
 - global path가 ready: non-empty `/global_waypoints` snapshot, fresh true `/planning/global_path_valid`, and Graph SLAM status `localization`
 - Frenet odometry가 fresh
 - `abs(current_d) <= max_abs_d_for_global`
+- `/planning/global_handoff_ready`가 `global_handoff_timeout_sec` 이내의 fresh true이며 `global_entry_dwell_sec` 동안 연속 유지됨
+
+Handoff는 GLOBAL 진입 gate에만 사용한다. false 또는 stale이면 dwell 시작 시각을
+reset하지만, 이미 GLOBAL인 state를 handoff만으로 demote하거나 STOP으로 바꾸지 않는다.
+Local/global planner heartbeat loss도 mission STOP으로 변환하지 않는다. 기존 global path
+validity/status/invalidation 조건만 GLOBAL에서 LOCAL로 demote한다.
 
 `planner_node`가 만드는 runtime global path는 blue/yellow cone boundaries의
 conservative centerline/global waypoint generator 결과이다. Production
@@ -155,10 +168,30 @@ racing-line optimizer가 아니며, offline minimum-curvature CSV workflow와
 - `stop_request = true`
 - state는 계속 `STOP` 유지
 
+## Lap Counting
+
+이 process가 `/graph_slam/status`에서 `mapping` 또는 `mapping_converged` 직후
+`localization`을 직접 관측하면 discovery lap을 한 번만 반영해
+`lap_count = max(lap_count, 1)`로 만든다. 시작 시 첫 status가 `localization`인
+loaded-map 실행은 lap을 만들지 않는다.
+
+Frenet wrap lap은 frame이 정확히 `map`이고 waypoint가 3개 이상인 global path만
+사용한다. 모든 XY와 `s_m`은 finite여야 하고 `s_m`은 strictly increasing이어야 하며,
+first/last XY 거리는 `lap_path_closure_tolerance_m` 이하여야 한다. Closure가
+`lap_closing_duplicate_tolerance_m` 이하이면 normalized length는 `last.s_m`, 그보다
+크면 `last.s_m + closure`이다. Length가 20 m 미만이면 lap tracking을 disable한다.
+
+`zone = min(5.0, 0.1 * length)`이다. 두 개의 연속 fresh Frenet sample이 모두
+`zone < s < length-zone`에 있고 positive `s` progress를 보인 뒤에만 arm한다. Armed
+상태에서 previous `s >= length-zone`, next `s <= zone`인 forward seam wrap을 관측하면
+lap을 한 번 증가시키고 disarm한다. 다시 middle progress를 관측해야 re-arm하며 count
+cooldown은 2초이다. Accepted path generation 변경, stale/non-finite sample, seam이 아닌
+backward jump는 count 없이 disarm한다. Closing duplicate와 non-duplicate 인코딩은 같은
+normalized length 기준을 사용한다.
+
 ## TODO
 
 - start/finish gate detection 구현
-- lap count 자동 증가 조건 구현
 - stop zone detector 입력을 만드는 `stop_zone_detector_node` 구현
 - closed-loop wrap-around를 고려한 final path end 판정 개선
 

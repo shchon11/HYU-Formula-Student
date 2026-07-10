@@ -87,7 +87,25 @@ std::string makePlanningStateDebugString(const PlanningStateDebugSnapshot & snap
      << " cones_yellow=" << snapshot.yellow_cone_count
      << " cones_orange=" << snapshot.orange_cone_count
      << " cones_big_orange=" << snapshot.big_orange_cone_count
-     << " cones_unknown=" << snapshot.unknown_cone_count;
+     << " cones_unknown=" << snapshot.unknown_cone_count
+     << " local_path_valid_received=" << (
+      snapshot.local_path_valid_received ? "true" : "false")
+     << " local_path_valid=" << (snapshot.local_path_valid ? "true" : "false")
+     << " local_path_valid_fresh=" << (
+      snapshot.local_path_valid_fresh ? "true" : "false")
+     << " local_path_valid_time_sec=" << snapshot.local_path_valid_time_sec
+     << " global_handoff_received=" << (
+      snapshot.global_handoff_received ? "true" : "false")
+     << " global_handoff_ready=" << (snapshot.global_handoff_ready ? "true" : "false")
+     << " global_handoff_fresh=" << (
+      snapshot.global_handoff_fresh ? "true" : "false")
+     << " global_handoff_dwell_ready=" << (
+      snapshot.global_handoff_dwell_ready ? "true" : "false")
+     << " global_handoff_time_sec=" << snapshot.global_handoff_time_sec
+     << " lap_path_valid=" << (snapshot.lap_path_valid ? "true" : "false")
+     << " lap_armed=" << (snapshot.lap_armed ? "true" : "false")
+     << " lap_path_length=" << snapshot.lap_path_length
+     << " lap_path_generation=" << snapshot.lap_path_generation;
 
   return ss.str();
 }

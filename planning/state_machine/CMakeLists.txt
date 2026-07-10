@@ -13,20 +13,39 @@ find_package(std_msgs REQUIRED)
 
 include_directories(include)
 
-add_executable(planning_state_machine_node
+add_library(state_machine_core
   src/global_path_readiness.cpp
   src/lap_tracking.cpp
   src/planning_state_debug.cpp
-  src/planning_state_machine_main.cpp
   src/planning_state_machine_node.cpp
   src/planning_state_outputs.cpp
 )
-ament_target_dependencies(planning_state_machine_node
+target_include_directories(state_machine_core PUBLIC include)
+ament_target_dependencies(state_machine_core
   eufs_msgs
   nav_msgs
   rclcpp
   std_msgs
 )
+
+add_executable(planning_state_machine_node
+  src/planning_state_machine_main.cpp
+)
+target_link_libraries(planning_state_machine_node state_machine_core)
+ament_target_dependencies(planning_state_machine_node rclcpp)
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+
+  ament_add_gtest(planning_state_machine_policy_test
+    test/planning_state_machine_policy_test.cpp
+  )
+  target_link_libraries(planning_state_machine_policy_test state_machine_core)
+  ament_target_dependencies(planning_state_machine_policy_test
+    eufs_msgs
+    rclcpp
+  )
+endif()
 
 install(TARGETS
   planning_state_machine_node

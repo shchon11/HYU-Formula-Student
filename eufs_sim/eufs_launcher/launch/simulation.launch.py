@@ -39,7 +39,7 @@ def _default_python_executable():
 PERCEPTION_LAUNCH_ARGUMENTS = [
     (
         'perception_camera_view_distance',
-        '8',
+        '12',
         'Camera range used by the /cones simulated perception plugin.',
     ),
     (
@@ -79,7 +79,7 @@ PERCEPTION_LAUNCH_ARGUMENTS = [
     ),
     (
         'perception_lidar_on',
-        'false',
+        'true',
         'Whether lidar-only cones are included in simulated perception.',
     ),
     (
@@ -89,7 +89,7 @@ PERCEPTION_LAUNCH_ARGUMENTS = [
     ),
     (
         'camera_cones_view_distance',
-        '13',
+        '10',
         'Camera range used by /camera_*/cones oracle topics.',
     ),
     (

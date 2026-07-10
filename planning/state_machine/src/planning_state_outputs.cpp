@@ -49,7 +49,7 @@ void PlanningStateMachineNode::publishOutputs()
     stop_zone_valid_,
     stop_zone_s_start_,
     stop_zone_s_end_,
-    isGlobalPathReady(),
+    global_path_readiness_.ready(now(), global_path_valid_timeout_sec_),
     stop_request,
     closest_segment_id_,
     cone_frame_id_,
@@ -57,7 +57,22 @@ void PlanningStateMachineNode::publishOutputs()
     yellow_cone_count_,
     orange_cone_count_,
     big_orange_cone_count_,
-    unknown_cone_count_});
+    unknown_cone_count_,
+    has_local_path_valid_,
+    local_path_valid_,
+    hasFreshLocalPathValid(),
+    has_local_path_valid_ ? last_local_path_valid_time_.seconds() : 0.0,
+    global_path_readiness_.hasHandoff(),
+    global_path_readiness_.handoffReady(),
+    global_path_readiness_.hasFreshHandoff(now(), global_handoff_timeout_sec_),
+    global_path_readiness_.handoffDwellReady(
+      now(), global_handoff_timeout_sec_, global_entry_dwell_sec_),
+    global_path_readiness_.hasHandoff() ?
+    global_path_readiness_.lastHandoffTime().seconds() : 0.0,
+    lap_tracking_policy_ && lap_tracking_policy_->pathValid(),
+    lap_tracking_policy_ && lap_tracking_policy_->armed(),
+    lap_tracking_policy_ ? lap_tracking_policy_->pathLength() : 0.0,
+    lap_tracking_policy_ ? lap_tracking_policy_->acceptedPathGeneration() : 0U});
   debug_pub_->publish(debug_msg);
 }
 

@@ -60,6 +60,23 @@ This launch starts `planner_node`, `frenet_odom_node`, and
 `/localization/ego_odom`, not `/ground_truth/odom`, and uses the selected writer
 as the sole owner of `/global_waypoints` and `/planning/global_path_valid`.
 
+The standalone rolling-window and time defaults are preserved:
+
+| Launch argument | Default | Description |
+| --- | --- | --- |
+| `path_waypoints_topic` | `/path_waypoints` | Rolling global waypoint window published by `wpnt_publisher_node`; the integrated launch overrides it to `/planning/global_path_waypoints`. |
+| `path_topic` | `/path_waypoints/path` | RViz path matching the rolling global waypoint window. |
+| `use_sim_time` | `false` | Use ROS simulated time for all nodes started by this launch. |
+
+Override the rolling window only from an integrated launch, for example:
+
+```bash
+ros2 launch global_planner slam_global_planner.launch.py \
+  path_waypoints_topic:=/planning/global_path_waypoints \
+  path_topic:=/planning/global_path_waypoints/path \
+  use_sim_time:=true
+```
+
 For CSV replay/debug with the same consumer gating:
 
 ```bash
