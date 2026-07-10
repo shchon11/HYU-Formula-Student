@@ -26,6 +26,7 @@ class YoloV8BBoxNode(Node):
         self.bridge = CvBridge()
         self._warn_if_coco_smoke_test_model()
         self.model = self._load_model()
+        self._resolve_device()
 
         sensor_qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
@@ -114,6 +115,34 @@ class YoloV8BBoxNode(Node):
                 "or run inside the project Docker image that provides it."
             ) from exc
         return YOLO(self.model_path)
+
+    def _resolve_device(self) -> None:
+        """Fall back to CPU when a CUDA device is requested but unavailable.
+
+        Without this, a dead/faulted GPU makes every frame's inference raise
+        "Invalid CUDA 'device=0'" and get skipped, so the node silently
+        publishes zero detections. Degrading to CPU keeps perception running
+        (slower) instead of producing nothing.
+        """
+        wants_cuda = self.device.lower() in {"cuda", "gpu"} or self.device.lower().startswith(
+            "cuda:"
+        ) or self.device.isdigit() or "," in self.device
+        if not wants_cuda:
+            return
+        try:
+            import torch
+
+            available = torch.cuda.is_available()
+        except Exception as exc:  # noqa: BLE001
+            available = False
+            self.get_logger().warn(f"CUDA availability check failed ({exc}); using CPU.")
+        if not available:
+            self.get_logger().warn(
+                f"Requested device '{self.device}' but CUDA is unavailable "
+                "(faulted GPU or no driver). Falling back to device='cpu'. "
+                "Fix the GPU (often a reboot) and restart for GPU inference."
+            )
+            self.device = "cpu"
 
     def _warn_if_coco_smoke_test_model(self) -> None:
         if not looks_like_coco_pretrained_yolov8_weight(self.model_path):

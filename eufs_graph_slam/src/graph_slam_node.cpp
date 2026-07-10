@@ -481,7 +481,15 @@ void GraphSlamNode::resetGraph()
   next_edge_id_ = 0;
   keyframes_since_last_optimization_ = 0;
   last_cone_pose_graph_id_ = -1;
-  gnss_prior_suppressed_ = false;
+  // Start GNSS priors suppressed after a reset. The graph re-anchors at the
+  // car's current odometry, so the fresh map frame does not match the GNSS
+  // ENU frame until (if ever) it is proven consistent. Re-arming immediately
+  // lets a mode-4 fix drag the pose toward the ENU origin (~0,0) for the few
+  // keyframes before the residual gate re-suppresses it — and any cones
+  // observed during that slide get baked into the map at the wrong place.
+  // maybeAddGnssPrior re-arms this only once the fix agrees within
+  // gnss_prior_rearm_max_residual of the cone-anchored pose.
+  gnss_prior_suppressed_ = true;
   gnss_prior_suppress_until_sec_ = 0.0;
   map_converged_ = false;
   loop_closure_seen_since_optimize_ = false;
@@ -2087,20 +2095,29 @@ void GraphSlamNode::publishMarkers(const rclcpp::Time & stamp)
     ConeColor::BigOrange,
     ConeColor::Unknown};
 
-  int marker_id = 1;
+  // Landmarks render as the same 3D cone meshes Gazebo uses on the track so
+  // the SLAM map is visually comparable to the simulated world. Unknown-color
+  // landmarks reuse the small-cone mesh with a grey tint (materials off).
+  const auto meshForColor = [](ConeColor color) -> std::pair<std::string, bool> {
+      switch (color) {
+        case ConeColor::Blue:
+          return {"package://eufs_tracks/meshes/cone_blue.dae", true};
+        case ConeColor::Yellow:
+          return {"package://eufs_tracks/meshes/cone_yellow.dae", true};
+        case ConeColor::Orange:
+          return {"package://eufs_tracks/meshes/cone.dae", true};
+        case ConeColor::BigOrange:
+          return {"package://eufs_tracks/meshes/cone_big.dae", true};
+        case ConeColor::Unknown:
+        default:
+          return {"package://eufs_tracks/meshes/cone.dae", false};
+      }
+    };
+
   for (ConeColor color : colors) {
-    visualization_msgs::msg::Marker landmark_marker;
-    landmark_marker.header.frame_id = map_frame_;
-    landmark_marker.header.stamp = stamp;
-    landmark_marker.ns = colorName(color) + "_landmarks";
-    landmark_marker.id = marker_id++;
-    landmark_marker.type = visualization_msgs::msg::Marker::SPHERE_LIST;
-    landmark_marker.action = visualization_msgs::msg::Marker::ADD;
-    landmark_marker.pose.orientation.w = 1.0;
-    landmark_marker.scale.x = marker_scale_;
-    landmark_marker.scale.y = marker_scale_;
-    landmark_marker.scale.z = marker_scale_;
-    landmark_marker.color = colorToRgba(color, 0.95);
+    const auto mesh_spec = meshForColor(color);
+    const std::string ns = colorName(color) + "_landmarks";
+    int cone_id = 0;
 
     for (const LandmarkRecord & landmark : landmarks_) {
       if (landmark.color != color ||
@@ -2110,15 +2127,28 @@ void GraphSlamNode::publishMarkers(const rclcpp::Time & stamp)
         continue;
       }
 
-      geometry_msgs::msg::Point point;
+      visualization_msgs::msg::Marker landmark_marker;
+      landmark_marker.header.frame_id = map_frame_;
+      landmark_marker.header.stamp = stamp;
+      landmark_marker.ns = ns;
+      landmark_marker.id = cone_id++;
+      landmark_marker.type = visualization_msgs::msg::Marker::MESH_RESOURCE;
+      landmark_marker.action = visualization_msgs::msg::Marker::ADD;
+      landmark_marker.mesh_resource = mesh_spec.first;
+      landmark_marker.mesh_use_embedded_materials = mesh_spec.second;
       const Eigen::Vector2d estimate = landmark.vertex->estimate();
-      point.x = estimate.x();
-      point.y = estimate.y();
-      point.z = 0.15;
-      landmark_marker.points.push_back(point);
+      landmark_marker.pose.position.x = estimate.x();
+      landmark_marker.pose.position.y = estimate.y();
+      landmark_marker.pose.position.z = 0.0;
+      landmark_marker.pose.orientation.w = 1.0;
+      landmark_marker.scale.x = 1.0;
+      landmark_marker.scale.y = 1.0;
+      landmark_marker.scale.z = 1.0;
+      if (!mesh_spec.second) {
+        landmark_marker.color = colorToRgba(color, 0.9);
+      }
+      markers.markers.push_back(landmark_marker);
     }
-
-    markers.markers.push_back(landmark_marker);
   }
 
   marker_pub_->publish(markers);
