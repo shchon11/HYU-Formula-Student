@@ -73,6 +73,12 @@ std::optional<double> yawFromQuaternion(double x, double y, double z, double w)
   return yaw;
 }
 
+bool hasExpectedOdometryFrameIds(
+  const std::string_view header_frame_id, const std::string_view child_frame_id)
+{
+  return header_frame_id == "map" && child_frame_id == "base_footprint";
+}
+
 std::optional<std::size_t> findNearestWaypoint(
   const std::vector<PathPoint> & path, const EgoState & ego)
 {

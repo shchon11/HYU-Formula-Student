@@ -66,6 +66,57 @@ if(BUILD_TESTING)
   ament_add_gtest(local_planner_test test/local_planner_test.cpp)
   target_link_libraries(local_planner_test local_planner_core)
   target_include_directories(local_planner_test PRIVATE ${OpenCV_INCLUDE_DIRS})
+
+  ament_add_gtest(local_planner_validity_test
+    test/local_planner_validity_test.cpp
+    src/local_planner_node.cpp
+    src/ros_inputs.cpp
+    src/ros_outputs.cpp)
+  target_link_libraries(local_planner_validity_test local_planner_core)
+  target_include_directories(local_planner_validity_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${OpenCV_INCLUDE_DIRS})
+  ament_target_dependencies(local_planner_validity_test
+    rclcpp
+    message_filters
+    eufs_msgs
+    nav_msgs
+    geometry_msgs
+    std_msgs)
+
+  ament_add_gtest(local_planner_stale_recovery_test
+    test/local_planner_stale_recovery_test.cpp
+    src/local_planner_node.cpp
+    src/ros_inputs.cpp
+    src/ros_outputs.cpp)
+  target_link_libraries(local_planner_stale_recovery_test local_planner_core)
+  target_include_directories(local_planner_stale_recovery_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${OpenCV_INCLUDE_DIRS})
+  ament_target_dependencies(local_planner_stale_recovery_test
+    rclcpp
+    message_filters
+    eufs_msgs
+    nav_msgs
+    geometry_msgs
+    std_msgs)
+
+  ament_add_gtest(local_planner_slam_validity_test
+    test/local_planner_slam_validity_test.cpp
+    src/local_planner_node.cpp
+    src/ros_inputs.cpp
+    src/ros_outputs.cpp)
+  target_link_libraries(local_planner_slam_validity_test local_planner_core)
+  target_include_directories(local_planner_slam_validity_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${OpenCV_INCLUDE_DIRS})
+  ament_target_dependencies(local_planner_slam_validity_test
+    rclcpp
+    message_filters
+    eufs_msgs
+    nav_msgs
+    geometry_msgs
+    std_msgs)
 endif()
 
 ament_export_include_directories(include)

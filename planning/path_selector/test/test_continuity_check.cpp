@@ -91,6 +91,31 @@ TEST(ContinuityCheckTest, RejectsStaleMalformedOrWrongFramePath)
     ContinuityFailure::WrongPathFrame);
 }
 
+TEST(ContinuityCheckTest, AcceptsBoundedFutureHeaderStampsButRejectsLargerSkew)
+{
+  const ContinuityCheck check;
+  auto path_with_observed_skew = makeCandidate({{0.0, 0.0}, {6.0, 0.0}});
+  path_with_observed_skew.path->header.stamp.sec = 10;
+  path_with_observed_skew.path->header.stamp.nanosec = 211000000U;
+  auto path_beyond_tolerance = path_with_observed_skew;
+  path_beyond_tolerance.path->header.stamp.nanosec = 250000001U;
+
+  auto odom_with_observed_skew = OdometryInput{makeOdometry(), kReceiveSec};
+  odom_with_observed_skew.odometry->header.stamp.sec = 10;
+  odom_with_observed_skew.odometry->header.stamp.nanosec = 211000000U;
+  auto odom_beyond_tolerance = odom_with_observed_skew;
+  odom_beyond_tolerance.odometry->header.stamp.nanosec = 250000001U;
+
+  EXPECT_TRUE(check.validateCandidate(path_with_observed_skew, kNowSec, kNowSec).ready);
+  EXPECT_EQ(
+    check.validateCandidate(path_beyond_tolerance, kNowSec, kNowSec).failure,
+    ContinuityFailure::StalePath);
+  EXPECT_TRUE(check.validateOdometry(odom_with_observed_skew, kNowSec, kNowSec).ready);
+  EXPECT_EQ(
+    check.validateOdometry(odom_beyond_tolerance, kNowSec, kNowSec).failure,
+    ContinuityFailure::StaleOdometry);
+}
+
 TEST(ContinuityCheckTest, ContinuityReadyRequiresBoundedPositionHeadingAndLength)
 {
   const ContinuityCheck check;

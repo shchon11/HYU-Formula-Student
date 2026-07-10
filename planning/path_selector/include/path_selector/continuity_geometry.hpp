@@ -10,9 +10,11 @@ namespace path_selector::continuity_geometry
 {
 
 constexpr double kGeometryEpsilon = 1.0e-9;
+constexpr double kMaxFutureHeaderStampSkewSec = 0.25;
 
 double stampSeconds(const builtin_interfaces::msg::Time & stamp);
 bool isFresh(double event_time_sec, double now_sec, double timeout_sec);
+bool isStampFresh(double event_time_sec, double now_sec, double timeout_sec);
 bool finiteWaypoint(const eufs_msgs::msg::Waypoint & waypoint);
 bool hasNonzeroSegment(const eufs_msgs::msg::WaypointArrayStamped & path);
 double forwardLength(const eufs_msgs::msg::WaypointArrayStamped & path);

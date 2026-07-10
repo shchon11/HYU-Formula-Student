@@ -33,7 +33,8 @@ public:
   void publishPath(
     const BuildResult & result, const Odometry & odom,
     const builtin_interfaces::msg::Time & stamp, SteadyTime receive_time);
-  void invalidate();
+  void retainUntilStale();
+  void invalidateImmediately();
 
 private:
   void publishHeartbeat();

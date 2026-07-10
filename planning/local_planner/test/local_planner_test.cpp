@@ -23,6 +23,17 @@ ConeSet straightTwoSided()
   return cones;
 }
 
+ConeSet simulatorLikeTwoBlueThreeYellow()
+{
+  ConeSet cones;
+  cones.blue = {{0.0, 2.0}, {4.0, 2.0}};
+  cones.yellow = {{0.0, -2.0}, {2.0, -2.0}, {4.0, -2.0}};
+  cones.orange = {{1.0, 0.0}, {3.0, 0.0}};
+  cones.big_orange = {{2.0, 0.0}};
+  cones.unknown = {{1.5, 0.2}, {2.5, -0.2}};
+  return cones;
+}
+
 HeaderMetadata header(const std::string & frame, std::int32_t sec, std::uint32_t nanosec, double age)
 {
   return HeaderMetadata{frame, sec, nanosec, age};
@@ -54,6 +65,13 @@ bool expectStrictFinitePath(const BuildResult & result, double speed)
   return true;
 }
 
+void expectInvalidEmptyPath(const BuildResult & result, const char * invalid_message = "")
+{
+  ASSERT_TRUE(result.evaluated);
+  EXPECT_FALSE(result.valid) << invalid_message;
+  EXPECT_TRUE(result.waypoints.empty());
+}
+
 TEST(LocalPathBuilder, TwoSidedDelaunayUsesDeterministicTraversalAndDedupe)
 {
   auto cones = straightTwoSided();
@@ -70,6 +88,16 @@ TEST(LocalPathBuilder, TwoSidedDelaunayUsesDeterministicTraversalAndDedupe)
     EXPECT_DOUBLE_EQ(first.waypoints[index].y, second.waypoints[index].y);
   }
   EXPECT_EQ(first.kind, PathKind::kTwoSided);
+}
+
+TEST(LocalPathBuilder, SimulatorLikeTwoBlueThreeYellowIgnoresNonBoundaryNoise)
+{
+  const auto result = buildLocalPath(simulatorLikeTwoBlueThreeYellow());
+
+  if (!expectStrictFinitePath(result, 3.0)) {
+    return;
+  }
+  EXPECT_EQ(result.kind, PathKind::kTwoSided);
 }
 
 TEST(LocalPathBuilder, BlueOnlyOffsetsRightAtFallbackSpeed)
@@ -105,9 +133,7 @@ TEST(LocalPathBuilder, OneSidedGapCannotReturnValidTruncatedPrefix)
 
   const auto result = buildLocalPath(cones);
 
-  ASSERT_TRUE(result.evaluated);
-  EXPECT_FALSE(result.valid) << "one-sided traversal must not publish the 0,2,4 prefix";
-  EXPECT_TRUE(result.waypoints.empty());
+  expectInvalidEmptyPath(result, "one-sided traversal must not publish the 0,2,4 prefix");
 }
 
 TEST(LocalPathBuilder, OneSidedHeadingCannotReturnValidTruncatedPrefix)
@@ -117,9 +143,7 @@ TEST(LocalPathBuilder, OneSidedHeadingCannotReturnValidTruncatedPrefix)
 
   const auto result = buildLocalPath(cones);
 
-  ASSERT_TRUE(result.evaluated);
-  EXPECT_FALSE(result.valid) << "one-sided traversal must not publish before a heading stop";
-  EXPECT_TRUE(result.waypoints.empty());
+  expectInvalidEmptyPath(result, "one-sided traversal must not publish before a heading stop");
 }
 
 TEST(LocalPathBuilder, NonBoundaryColorsAreIgnoredButCannotFormPath)
@@ -142,6 +166,28 @@ TEST(LocalPathBuilder, NonBoundaryColorsAreIgnoredButCannotFormPath)
   EXPECT_FALSE(invalid.valid);
 }
 
+TEST(LocalPathBuilder, OutOfRoiAndNonFiniteConesAreIgnored)
+{
+  auto usable = straightTwoSided();
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double infinity = std::numeric_limits<double>::infinity();
+  usable.blue.insert(usable.blue.end(), {{nan, 2.0}, {infinity, 2.0}, {21.0, 2.0}, {4.0, 8.1}});
+  usable.yellow.insert(
+    usable.yellow.end(), {{0.0, nan}, {0.0, infinity}, {-1.1, -2.0}, {4.0, -8.1}});
+
+  const auto result = buildLocalPath(usable);
+  if (!expectStrictFinitePath(result, 3.0)) {
+    return;
+  }
+  EXPECT_EQ(result.kind, PathKind::kTwoSided);
+
+  ConeSet unusable;
+  unusable.blue = {{nan, 1.5}, {21.0, 1.5}, {0.0, 8.1}};
+  unusable.yellow = {{0.0, nan}, {infinity, -1.5}};
+  const auto invalid = buildLocalPath(unusable);
+  expectInvalidEmptyPath(invalid);
+}
+
 TEST(LocalPathBuilder, MixedSparseAndUnknownOnlyFailClosed)
 {
   ConeSet mixed;
@@ -157,6 +203,19 @@ TEST(LocalPathBuilder, MixedSparseAndUnknownOnlyFailClosed)
   const auto unknown_result = buildLocalPath(unknown_only);
   ASSERT_TRUE(unknown_result.evaluated);
   EXPECT_FALSE(unknown_result.valid);
+}
+
+TEST(LocalPathBuilder, EmptyAndNoiseOnlyInputsFailClosed)
+{
+  const auto empty = buildLocalPath(ConeSet{});
+  expectInvalidEmptyPath(empty);
+
+  ConeSet noise_only;
+  noise_only.orange = {{1.0, 0.0}, {2.0, 0.0}};
+  noise_only.big_orange = {{3.0, 0.0}};
+  noise_only.unknown = {{4.0, 0.0}};
+  const auto noise = buildLocalPath(noise_only);
+  expectInvalidEmptyPath(noise);
 }
 
 TEST(LocalPathBuilder, ExcessiveGapHeadingAndSelfIntersectionFailClosed)
@@ -191,6 +250,21 @@ TEST(InputPolicy, LiveInputRejectsWrongFramesZeroStampsSkewAndStaleness)
   auto wrong_odom = odom();
   wrong_odom.header.frame_id = "odom";
   EXPECT_FALSE(validateLiveInput(header("base_footprint", 10, 0, 0.0), wrong_odom).valid);
+}
+
+TEST(InputPolicy, LiveInputRejectsStaleAndSkewedPairsThenAcceptsFreshRecovery)
+{
+  const auto fresh_cones = header("base_footprint", 10, 0, 0.0);
+  const auto fresh_odom = odom();
+  EXPECT_TRUE(validateLiveInput(fresh_cones, fresh_odom).valid);
+
+  EXPECT_FALSE(validateLiveInput(
+      header("base_footprint", 10, 0, 0.500001), fresh_odom).valid);
+  EXPECT_TRUE(validateLiveInput(fresh_cones, fresh_odom).valid);
+
+  EXPECT_FALSE(validateLiveInput(
+      header("base_footprint", 10, 100000001U, 0.0), fresh_odom).valid);
+  EXPECT_TRUE(validateLiveInput(fresh_cones, fresh_odom).valid);
 }
 
 TEST(InputPolicy, SlamMapUsesLatchedMapAndFreshOdomWithoutAutoSwitch)

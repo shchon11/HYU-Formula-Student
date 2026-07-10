@@ -180,8 +180,7 @@ void PathSelectorNode::publishHeartbeat()
       state.source_receive_time_sec,
       receive_now_sec,
       local_validation.ready && odometry_validation.ready && local_trimmed.success(),
-      global_validation.ready && odometry_validation.ready && global_trimmed.success(),
-      continuity.ready});
+      global_validation.ready && odometry_validation.ready && global_trimmed.success()});
 
   const eufs_msgs::msg::WaypointArrayStamped * selected_path = nullptr;
   if (decision.valid() && decision.selected_candidate == SelectedCandidate::Local) {

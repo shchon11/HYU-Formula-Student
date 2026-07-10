@@ -99,10 +99,15 @@ TEST(PurePursuitController, SteeringAndAccelerationAreClamped)
 TEST(PurePursuitController, VxPriorityFallsBackToSpeedThenZero)
 {
   const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double infinity = std::numeric_limits<double>::infinity();
   EXPECT_DOUBLE_EQ(computeCommand(readyInput(straightPath(2.0, 3.0))).speed_mps, 2.0);
   EXPECT_DOUBLE_EQ(computeCommand(readyInput(straightPath(nan, 3.0))).speed_mps, 3.0);
   EXPECT_DOUBLE_EQ(computeCommand(readyInput(straightPath(-1.0, 4.0))).speed_mps, 4.0);
   EXPECT_DOUBLE_EQ(computeCommand(readyInput(straightPath(nan, nan))).speed_mps, 0.0);
+  EXPECT_DOUBLE_EQ(computeCommand(readyInput(straightPath(infinity, 3.0))).speed_mps, 3.0);
+  EXPECT_DOUBLE_EQ(computeCommand(readyInput(straightPath(-infinity, 3.0))).speed_mps, 3.0);
+  EXPECT_DOUBLE_EQ(computeCommand(readyInput(straightPath(nan, infinity))).speed_mps, 0.0);
+  EXPECT_DOUBLE_EQ(computeCommand(readyInput(straightPath(nan, -infinity))).speed_mps, 0.0);
 
   auto nonfinite_speed = readyInput(straightPath(1.0, 1.0));
   nonfinite_speed.ego->longitudinal_speed_mps = nan;
@@ -133,10 +138,14 @@ TEST(PurePursuitController, InvalidStaleOrStopCommandsBrake)
   auto stale_validity = boundary;
   stale_validity.validity_age_sec = 0.500001;
   expectExactBrake(computeCommand(stale_validity, config));
+  stale_validity.validity_age_sec = 0.0;
+  EXPECT_GT(computeCommand(stale_validity, config).speed_mps, 0.0);
 
   auto stale_odom = boundary;
   stale_odom.odom_age_sec = 0.500001;
   expectExactBrake(computeCommand(stale_odom, config));
+  stale_odom.odom_age_sec = 0.0;
+  EXPECT_GT(computeCommand(stale_odom, config).speed_mps, 0.0);
 
   auto missing_stop = boundary;
   missing_stop.stop_received = false;
@@ -145,6 +154,8 @@ TEST(PurePursuitController, InvalidStaleOrStopCommandsBrake)
   auto stale_stop = boundary;
   stale_stop.stop_age_sec = 0.500001;
   expectExactBrake(computeCommand(stale_stop, config));
+  stale_stop.stop_age_sec = 0.0;
+  EXPECT_GT(computeCommand(stale_stop, config).speed_mps, 0.0);
 
   auto stopped = boundary;
   stopped.stop_requested = true;
@@ -158,9 +169,40 @@ TEST(PurePursuitController, InvalidStaleOrStopCommandsBrake)
   malformed_odom.ego->yaw_rad = std::numeric_limits<double>::quiet_NaN();
   expectExactBrake(computeCommand(malformed_odom, config));
 
+  auto missing_path = boundary;
+  missing_path.path_received = false;
+  expectExactBrake(computeCommand(missing_path, config));
+
+  auto missing_validity = boundary;
+  missing_validity.validity_received = false;
+  expectExactBrake(computeCommand(missing_validity, config));
+
+  auto missing_odom = boundary;
+  missing_odom.odom_received = false;
+  expectExactBrake(computeCommand(missing_odom, config));
+
+  auto nonfinite_path_age = boundary;
+  nonfinite_path_age.path_age_sec = std::numeric_limits<double>::infinity();
+  expectExactBrake(computeCommand(nonfinite_path_age, config));
+
   EXPECT_FALSE(yawFromQuaternion(0.0, 0.0, 0.0, 0.0).has_value());
   EXPECT_FALSE(yawFromQuaternion(0.0, 0.0, 0.0, std::numeric_limits<double>::infinity()).has_value());
   EXPECT_TRUE(yawFromQuaternion(0.0, 0.0, 0.0, 1.0).has_value());
+}
+
+TEST(PurePursuitController, OdomFrameContractRequiresMapAndBaseFootprint)
+{
+  auto wrong_child = readyInput(straightPath(2.0, 2.0));
+  wrong_child.odom_frame_valid = hasExpectedOdometryFrameIds("map", "odom");
+
+  EXPECT_FALSE(hasExpectedOdometryFrameIds("map", "odom"));
+  expectExactBrake(computeCommand(wrong_child));
+
+  auto valid_odom = readyInput(straightPath(2.0, 2.0));
+  valid_odom.odom_frame_valid = hasExpectedOdometryFrameIds("map", "base_footprint");
+
+  EXPECT_TRUE(hasExpectedOdometryFrameIds("map", "base_footprint"));
+  EXPECT_GT(computeCommand(valid_odom).speed_mps, 0.0);
 }
 
 TEST(PurePursuitController, NoForwardTargetCommandsBrake)
@@ -178,6 +220,15 @@ TEST(PurePursuitController, NoForwardTargetCommandsBrake)
     PathPoint{2.0, 0.0, 2.0, 2.0},
   });
   EXPECT_DOUBLE_EQ(computeCommand(final_point_front).speed_mps, 2.0);
+
+  auto empty = readyInput({});
+  expectExactBrake(computeCommand(empty));
+
+  auto zero_target = readyInput({
+    PathPoint{0.0, 0.0, 2.0, 2.0},
+    PathPoint{0.0, 0.0, 2.0, 2.0},
+  });
+  expectExactBrake(computeCommand(zero_target));
 }
 
 }

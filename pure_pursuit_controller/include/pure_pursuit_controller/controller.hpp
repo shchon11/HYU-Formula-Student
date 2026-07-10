@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstddef>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 namespace pure_pursuit_controller
@@ -76,6 +77,9 @@ DriveCommand brakeCommand();
 std::chrono::nanoseconds commandPeriod(const ControllerConfig & config);
 
 std::optional<double> yawFromQuaternion(double x, double y, double z, double w);
+
+bool hasExpectedOdometryFrameIds(
+  std::string_view header_frame_id, std::string_view child_frame_id);
 
 std::optional<std::size_t> findNearestWaypoint(
   const std::vector<PathPoint> & path, const EgoState & ego);

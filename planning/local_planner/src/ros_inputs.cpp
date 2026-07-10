@@ -169,7 +169,6 @@ void LocalPlannerInputs::recordLiveCones(const ConeArray::ConstSharedPtr & messa
       cone_receipts_.erase(cone_receipts_.begin());
     }
   }
-  invalidate_();
 }
 
 void LocalPlannerInputs::recordLiveOdom(const Odometry::ConstSharedPtr & message)
@@ -182,7 +181,6 @@ void LocalPlannerInputs::recordLiveOdom(const Odometry::ConstSharedPtr & message
       odom_receipts_.erase(odom_receipts_.begin());
     }
   }
-  invalidate_();
 }
 
 SteadyTime LocalPlannerInputs::receiptFor(
@@ -212,7 +210,6 @@ void LocalPlannerInputs::receiveSlamMap(const ConeArray::SharedPtr message)
     latched_map_ = message;
     latched_map_receive_time_ = std::chrono::steady_clock::now();
   }
-  invalidate_();
 }
 
 void LocalPlannerInputs::processSlamOdom(const Odometry::SharedPtr message)
@@ -223,10 +220,11 @@ void LocalPlannerInputs::processSlamOdom(const Odometry::SharedPtr message)
     input.map = latched_map_;
     input.map_receive_time = latched_map_receive_time_;
   }
-  invalidate_();
-  if (input.map) {
-    slam_map_callback_(input);
+  if (!input.map) {
+    invalidate_();
+    return;
   }
+  slam_map_callback_(input);
 }
 
 }

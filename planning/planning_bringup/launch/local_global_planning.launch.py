@@ -115,6 +115,9 @@ def generate_launch_description() -> LaunchDescription:
             "gui": values["graph_slam_gui"],
             "ate_monitor": values["graph_slam_ate_monitor"],
             "ate_status_topic": values["graph_slam_status_topic"],
+            # CTE monitor inputs must follow this launch's topic overrides.
+            "frenet_odom_topic": values["frenet_odom_topic"],
+            "global_path_valid_topic": values["global_path_valid_topic"],
         }.items(),
     )
     global_planner_launch = IncludeLaunchDescription(

@@ -51,7 +51,7 @@ CandidateValidation ContinuityCheck::validateCandidate(
     return {false, ContinuityFailure::WrongPathFrame};
   }
   const double stamp_sec = continuity_geometry::stampSeconds(path.header.stamp);
-  if (stamp_sec <= 0.0 || !continuity_geometry::isFresh(
+  if (stamp_sec <= 0.0 || !continuity_geometry::isStampFresh(
       stamp_sec, stamp_now_sec, thresholds_.timeout_sec)) {
     return {
       false,
@@ -84,7 +84,7 @@ CandidateValidation ContinuityCheck::validateOdometry(
     return {false, ContinuityFailure::WrongOdometryFrame};
   }
   const double stamp_sec = continuity_geometry::stampSeconds(odometry.header.stamp);
-  if (stamp_sec <= 0.0 || !continuity_geometry::isFresh(
+  if (stamp_sec <= 0.0 || !continuity_geometry::isStampFresh(
       stamp_sec, stamp_now_sec, thresholds_.timeout_sec)) {
     return {
       false,

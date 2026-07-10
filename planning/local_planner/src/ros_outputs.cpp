@@ -106,7 +106,15 @@ void LocalPlannerOutput::publishPath(
   last_valid_receive_time_ = receive_time;
 }
 
-void LocalPlannerOutput::invalidate()
+void LocalPlannerOutput::retainUntilStale()
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (last_valid_receive_time_ == SteadyTime{}) {
+    current_valid_ = false;
+  }
+}
+
+void LocalPlannerOutput::invalidateImmediately()
 {
   std::lock_guard<std::mutex> lock(mutex_);
   current_valid_ = false;

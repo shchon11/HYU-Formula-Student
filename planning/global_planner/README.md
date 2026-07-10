@@ -9,8 +9,11 @@ the local waypoint window publisher used by the planning stack.
   racing-line optimizer.
 - `global_planner_trajectory_publisher_node` preserves the existing offline CSV
   workflow for debug and replay launches.
-- `wpnt_publisher_node` republishes the next local window on `/path_waypoints`
-  only while the global path validity heartbeat is fresh.
+- `wpnt_publisher_node` republishes the next global window on its configured
+  output topic only while the global path validity heartbeat is fresh. The
+  standalone default is `/path_waypoints`; integrated bringup remaps this
+  output to `/planning/global_path_waypoints` so the selector owns the final
+  `/path_waypoints` topic.
 
 ## SLAM Planning Contract
 
@@ -23,13 +26,17 @@ Default topics:
 | `/graph_slam/status` | `std_msgs/msg/String` | reliable transient-local | `graph_slam` |
 | `/global_waypoints` | `eufs_msgs/msg/WaypointArrayStamped` | reliable transient-local | selected global waypoint writer |
 | `/planning/global_path_valid` | `std_msgs/msg/Bool` | reliable volatile | selected global waypoint writer |
-| `/path_waypoints` | `eufs_msgs/msg/WaypointArrayStamped` | reliable volatile | `wpnt_publisher_node` |
+| `/path_waypoints` | `eufs_msgs/msg/WaypointArrayStamped` | reliable volatile | `path_selector_node` in integrated bringup |
 
 Only one node may write `/global_waypoints` and `/planning/global_path_valid`
 in a launch. Use `slam_global_planner.launch.py planner_source:=slam` for the
 Graph SLAM path generator, or `planner_source:=csv` for the CSV publisher. Do
 not run both writers on the default topics; remap both output topics if a
 comparison launch needs both producers.
+
+In the integrated bringup, `path_selector_node` is the sole
+`/path_waypoints` writer and the global window is consumed through
+`/planning/global_path_waypoints`.
 
 `/planning/global_path_valid` is a heartbeat, not a latched state. It is
 published as reliable volatile `std_msgs/Bool`: `false` on startup, while Graph
@@ -76,6 +83,12 @@ ros2 launch global_planner slam_global_planner.launch.py \
   path_topic:=/planning/global_path_waypoints/path \
   use_sim_time:=true
 ```
+
+The integrated handoff gate requires a non-empty global snapshot, a fresh true
+`/planning/global_path_valid` heartbeat, fresh Frenet odometry, and a continuous
+`/planning/global_handoff_ready` dwell before the state machine selects
+`GLOBAL_FULL`. A false or stale validity heartbeat invalidates the accepted
+snapshot; a new snapshot is required for recovery.
 
 For CSV replay/debug with the same consumer gating:
 

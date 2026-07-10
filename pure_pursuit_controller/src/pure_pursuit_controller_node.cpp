@@ -94,7 +94,8 @@ private:
   void onOdom(const nav_msgs::msg::Odometry::SharedPtr message)
   {
     input_.odom_received = true;
-    input_.odom_frame_valid = message->header.frame_id == "map";
+    input_.odom_frame_valid = hasExpectedOdometryFrameIds(
+      message->header.frame_id, message->child_frame_id);
     const auto & position = message->pose.pose.position;
     const auto & orientation = message->pose.pose.orientation;
     const auto yaw = yawFromQuaternion(

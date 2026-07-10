@@ -59,7 +59,7 @@ LocalPlannerNode::LocalPlannerNode(const rclcpp::NodeOptions & options)
     max_input_age_sec_, heartbeat_hz_);
   inputs_ = std::make_unique<LocalPlannerInputs>(
     *this, source_mode_, LocalPlannerInputTopics{cones_topic, slam_map_topic, odom_topic},
-    max_stamp_skew_sec_, [this] {output_->invalidate();},
+    max_stamp_skew_sec_, [this] {output_->invalidateImmediately();},
     [this](const LiveInputPair & input) {processLivePair(input);},
     [this](const SlamMapInput & input) {processSlamMap(input);});
 }
@@ -71,13 +71,13 @@ void LocalPlannerNode::processLivePair(const LiveInputPair & input)
     headerMetadata(input.cones->header, input.cones_receive_time), odom_metadata,
     max_stamp_skew_sec_, max_input_age_sec_);
   if (!validation.valid) {
-    output_->invalidate();
+    output_->invalidateImmediately();
     return;
   }
 
   const auto result = buildLocalPath(liveConeSet(*input.cones), planner_config_);
   if (!result.valid) {
-    output_->invalidate();
+    output_->retainUntilStale();
     return;
   }
   output_->publishPath(
@@ -91,12 +91,15 @@ void LocalPlannerNode::processSlamMap(const SlamMapInput & input)
   const auto validation = validateSlamMapInput(
     headerMetadata(input.map->header, input.map_receive_time), odom_metadata, max_input_age_sec_);
   if (!validation.valid) {
+    output_->invalidateImmediately();
     return;
   }
 
   const auto result = buildLocalPath(slamConeSet(*input.map, odom_metadata), planner_config_);
   if (result.valid) {
     output_->publishPath(result, *input.odom, input.odom->header.stamp, input.odom_receive_time);
+  } else {
+    output_->invalidateImmediately();
   }
 }
 

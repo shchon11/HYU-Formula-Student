@@ -12,7 +12,7 @@ namespace
 
 SelectionInputs freshInputs(const std::string & source)
 {
-  return SelectionInputs{source, 9.8, 10.0, true, true, true};
+  return SelectionInputs{source, 9.8, 10.0, true, true};
 }
 
 TEST(SelectionPolicyTest, LocalSelectsOnlyLocalCandidate)
@@ -31,6 +31,17 @@ TEST(SelectionPolicyTest, GlobalFullSelectsOnlyGlobalCandidate)
 
   EXPECT_TRUE(result.valid());
   EXPECT_EQ(result.requested_source, RequestedSource::GlobalFull);
+  EXPECT_EQ(result.selected_candidate, SelectedCandidate::Global);
+  EXPECT_EQ(result.failure, SelectionFailure::None);
+}
+
+TEST(SelectionPolicyTest, GlobalFullSelectsWhenEntryHandoffIsNotReady)
+{
+  auto inputs = freshInputs("GLOBAL_FULL");
+
+  const auto result = SelectionPolicy().decide(inputs);
+
+  EXPECT_TRUE(result.valid());
   EXPECT_EQ(result.selected_candidate, SelectedCandidate::Global);
   EXPECT_EQ(result.failure, SelectionFailure::None);
 }
@@ -81,7 +92,6 @@ TEST(SelectionPolicyTest, NeverFallsBackBehindStateMachine)
   auto global_inputs = freshInputs("GLOBAL_FULL");
   global_inputs.global_candidate_ready = false;
   auto discontinuous_inputs = freshInputs("GLOBAL_FINAL_STOP");
-  discontinuous_inputs.global_handoff_ready = false;
 
   const auto local = SelectionPolicy().decide(local_inputs);
   const auto global = SelectionPolicy().decide(global_inputs);
@@ -91,8 +101,9 @@ TEST(SelectionPolicyTest, NeverFallsBackBehindStateMachine)
   EXPECT_EQ(local.failure, SelectionFailure::LocalUnavailable);
   EXPECT_EQ(global.selected_candidate, SelectedCandidate::None);
   EXPECT_EQ(global.failure, SelectionFailure::GlobalUnavailable);
-  EXPECT_EQ(discontinuous.selected_candidate, SelectedCandidate::None);
-  EXPECT_EQ(discontinuous.failure, SelectionFailure::HandoffNotReady);
+  EXPECT_TRUE(discontinuous.valid());
+  EXPECT_EQ(discontinuous.selected_candidate, SelectedCandidate::Global);
+  EXPECT_EQ(discontinuous.failure, SelectionFailure::None);
 }
 
 }

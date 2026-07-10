@@ -24,6 +24,15 @@ bool isFresh(double event_time_sec, double now_sec, double timeout_sec)
   return age_sec >= 0.0 && age_sec <= timeout_sec;
 }
 
+bool isStampFresh(double event_time_sec, double now_sec, double timeout_sec)
+{
+  if (!std::isfinite(event_time_sec) || !std::isfinite(now_sec)) {
+    return false;
+  }
+  const double age_sec = now_sec - event_time_sec;
+  return age_sec >= -kMaxFutureHeaderStampSkewSec && age_sec <= timeout_sec;
+}
+
 bool finiteWaypoint(const eufs_msgs::msg::Waypoint & waypoint)
 {
   return std::isfinite(waypoint.position.x) && std::isfinite(waypoint.position.y) &&
