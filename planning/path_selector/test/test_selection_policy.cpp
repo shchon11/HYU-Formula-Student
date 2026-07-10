@@ -12,7 +12,7 @@ namespace
 
 SelectionInputs freshInputs(const std::string & source)
 {
-  return SelectionInputs{source, 9.8, 10.0, true, true};
+  return SelectionInputs{source, 9.8, 10.0, true, true, true, false};
 }
 
 TEST(SelectionPolicyTest, LocalSelectsOnlyLocalCandidate)
@@ -35,9 +35,23 @@ TEST(SelectionPolicyTest, GlobalFullSelectsOnlyGlobalCandidate)
   EXPECT_EQ(result.failure, SelectionFailure::None);
 }
 
-TEST(SelectionPolicyTest, GlobalFullSelectsWhenEntryHandoffIsNotReady)
+TEST(SelectionPolicyTest, GlobalEntryRequiresHandoffReadiness)
 {
   auto inputs = freshInputs("GLOBAL_FULL");
+  inputs.global_handoff_ready = false;
+
+  const auto result = SelectionPolicy().decide(inputs);
+
+  EXPECT_FALSE(result.valid());
+  EXPECT_EQ(result.selected_candidate, SelectedCandidate::None);
+  EXPECT_EQ(result.failure, SelectionFailure::HandoffNotReady);
+}
+
+TEST(SelectionPolicyTest, ActiveGlobalDoesNotRegateOnTransientHandoffLoss)
+{
+  auto inputs = freshInputs("GLOBAL_FULL");
+  inputs.global_handoff_ready = false;
+  inputs.global_entry_handoff_consumed = true;
 
   const auto result = SelectionPolicy().decide(inputs);
 
@@ -92,6 +106,8 @@ TEST(SelectionPolicyTest, NeverFallsBackBehindStateMachine)
   auto global_inputs = freshInputs("GLOBAL_FULL");
   global_inputs.global_candidate_ready = false;
   auto discontinuous_inputs = freshInputs("GLOBAL_FINAL_STOP");
+  discontinuous_inputs.global_handoff_ready = false;
+  discontinuous_inputs.global_entry_handoff_consumed = true;
 
   const auto local = SelectionPolicy().decide(local_inputs);
   const auto global = SelectionPolicy().decide(global_inputs);

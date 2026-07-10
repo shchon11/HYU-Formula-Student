@@ -102,6 +102,9 @@ void PathSelectorNode::onPathSource(const std_msgs::msg::String::SharedPtr messa
   std::lock_guard<std::mutex> lock(state_mutex_);
   state_.requested_source = message->data;
   state_.source_receive_time_sec = steadyNowSec();
+  if (message->data == "LOCAL") {
+    state_.global_entry_handoff_consumed = false;
+  }
 }
 
 void PathSelectorNode::onLocalPath(
@@ -180,7 +183,9 @@ void PathSelectorNode::publishHeartbeat()
       state.source_receive_time_sec,
       receive_now_sec,
       local_validation.ready && odometry_validation.ready && local_trimmed.success(),
-      global_validation.ready && odometry_validation.ready && global_trimmed.success()});
+      global_validation.ready && odometry_validation.ready && global_trimmed.success(),
+      continuity.ready,
+      state.global_entry_handoff_consumed});
 
   const eufs_msgs::msg::WaypointArrayStamped * selected_path = nullptr;
   if (decision.valid() && decision.selected_candidate == SelectedCandidate::Local) {
@@ -190,6 +195,15 @@ void PathSelectorNode::publishHeartbeat()
     selected_path = &*global_trimmed.path;
   }
   const bool selected_valid = selected_path != nullptr;
+
+  if (selected_valid && decision.selected_candidate == SelectedCandidate::Global &&
+    !state.global_entry_handoff_consumed)
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    if (state_.requested_source == state.requested_source) {
+      state_.global_entry_handoff_consumed = true;
+    }
+  }
 
   std_msgs::msg::Bool handoff_message;
   handoff_message.data = continuity.ready;

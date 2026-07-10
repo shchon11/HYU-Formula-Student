@@ -11,7 +11,7 @@ ARGUMENTS = (
     ("use_sim_time", "true", "Use the simulator clock for every planning node."),
     ("start_graph_slam", "true", "Start graph SLAM with the planning graph."),
     ("graph_slam_gui", "false", "Start the graph SLAM GUI."),
-    ("graph_slam_ate_monitor", "true", "Start the path-tracking CTE monitor (HUD + /planning/cte)."),
+    ("graph_slam_ate_monitor", "false", "Start the path-tracking CTE monitor (HUD + /planning/cte)."),
     ("graph_slam_localization_mode", "false", "Localize against a saved graph SLAM map."),
     ("graph_slam_load_map_path", "", "Saved graph SLAM map for localization mode."),
     ("graph_slam_publish_tf", "true", "Allow graph SLAM to publish the map TF."),

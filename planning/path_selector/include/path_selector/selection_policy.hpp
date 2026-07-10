@@ -32,6 +32,7 @@ enum class SelectionFailure
   UnknownSource,
   LocalUnavailable,
   GlobalUnavailable,
+  HandoffNotReady,
 };
 
 struct SelectionInputs
@@ -41,6 +42,8 @@ struct SelectionInputs
   double now_sec{0.0};
   bool local_candidate_ready{false};
   bool global_candidate_ready{false};
+  bool global_handoff_ready{false};
+  bool global_entry_handoff_consumed{false};
 };
 
 struct SelectionDecision

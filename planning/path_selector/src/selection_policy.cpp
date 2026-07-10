@@ -41,6 +41,10 @@ SelectionDecision SelectionPolicy::decide(const SelectionInputs & inputs) const
         return {
           requested_source, SelectedCandidate::None, SelectionFailure::GlobalUnavailable};
       }
+      if (!inputs.global_entry_handoff_consumed && !inputs.global_handoff_ready) {
+        return {
+          requested_source, SelectedCandidate::None, SelectionFailure::HandoffNotReady};
+      }
       return {requested_source, SelectedCandidate::Global, SelectionFailure::None};
     case RequestedSource::Stop:
       return {requested_source, SelectedCandidate::None, SelectionFailure::StopRequested};
@@ -127,6 +131,8 @@ const char * toString(SelectionFailure failure)
       return "local_unavailable";
     case SelectionFailure::GlobalUnavailable:
       return "global_unavailable";
+    case SelectionFailure::HandoffNotReady:
+      return "handoff_not_ready";
   }
   return "unknown_source";
 }

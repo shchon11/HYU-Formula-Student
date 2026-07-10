@@ -31,6 +31,7 @@ private:
     CandidateInput local;
     CandidateInput global;
     OdometryInput odometry;
+    bool global_entry_handoff_consumed{false};
   };
 
   void onPathSource(const std_msgs::msg::String::SharedPtr message);
