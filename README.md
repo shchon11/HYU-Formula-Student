@@ -2,7 +2,7 @@
 
 # 🏎️ HYU Formula Student — Autonomous Stack
 
-**Perception → SLAM → Planning**, all driven inside the EUFS Gazebo simulator.
+**Perception → SLAM → Planning → Control**, 시뮬레이터에서 완전 자율주행까지.
 
 ![ROS 2](https://img.shields.io/badge/ROS_2-Humble-22314E?logo=ros&logoColor=white)
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-22.04-E95420?logo=ubuntu&logoColor=white)
@@ -14,70 +14,71 @@
 
 ---
 
-## 🧭 파이프라인 한눈에
+## ⚡ Quick Start
 
-```mermaid
-flowchart LR
-    subgraph S1["① SIM + PERCEPTION"]
-        direction TB
-        ZED["ZED 카메라"] --> YOLO["yolov8_bbox_node<br/>(GPU→CPU 폴백)"]
-        VLP["VLP-16 라이다"] --> FUSE["fusion<br/>(LiDAR×BBox)"]
-        YOLO --> FUSE
-    end
-    subgraph S2["② SLAM"]
-        direction TB
-        INS["sim INS → SBG bridge"] --> GS["graph_slam"]
-    end
-    subgraph S3["③ PLANNING"]
-        direction TB
-        PL["planner_node<br/>(콘맵→센터라인)"] --> FR["frenet + wpnt"]
-    end
-    subgraph S4["④ STATE MACHINE"]
-        SM["lap · stop-zone · state"]
-    end
-
-    FUSE -->|"/cones"| GS
-    GS -->|"/localization/cone_map<br/>/localization/ego_odom"| PL
-    PL -->|"/global_waypoints"| SM
-    FR --> SM
+```bash
+race            # 이거 하나. sim+perception+planning 전체가 뜨고 차가 스스로 달림
+race stop       # 전부 종료   |   race attach — 재접속
 ```
 
-| 단계 | alias | 입력 → 출력 |
-|---|---|---|
-| ① Sim + Perception | `simfull` | 센서 → **`/cones`** (콘 검출) |
-| ② SLAM | `slam` | `/cones` + INS → **`/localization/cone_map`, `/localization/ego_odom`** |
-| ③ Planning | `plan` | 콘맵 → **`/global_waypoints`** (전역 레이스라인) |
-| ④ State machine | `smachine` | 랩/스톱존/주행 상태 |
+tmux 창 하나에 4개 pane이 뜹니다: ①sim+perception ②planning(SLAM+global/local+상태기계+selector+controller) ③미션 자동 ARM ④라이브 모니터(path_source/state/lap/CTE). **teleop 불필요** — 컨트롤러가 유일한 `/cmd` writer로 직접 주행합니다.
+
+<details>
+<summary><b>모듈별로 따로 띄우려면</b></summary>
+
+```bash
+simfull track:=small_track    # ① sim + YOLO perception (+RViz)
+pbring                        # ② planning 전체 (자체 graph_slam 포함 — slam 계열과 같이 켜지 말 것)
+mission                       # ③ 미션 ARM → 5초 뒤 자율주행 시작
+```
+계획만 보고 싶으면 `pbring enable_controller:=false`, 수동 주행은 그 상태에서 `teleop`.
+</details>
 
 ---
 
-## ⚡ Quick Start
+## 🧭 파이프라인
 
-**한 방에 (권장)** — tmux 창 하나에 전체 스택이 단계별 pane으로 뜨고, 순서·미션까지 자동:
+```mermaid
+flowchart LR
+    subgraph SP["SIM + PERCEPTION"]
+        direction TB
+        ZED["ZED 카메라"] --> YOLO["YOLOv8<br/>(GPU, CPU 폴백)"]
+        VLP["VLP-16"] --> FUSE["LiDAR×BBox fusion"]
+        YOLO --> FUSE
+    end
+    subgraph SL["SLAM"]
+        GS["graph_slam<br/>(mapping→localization)"]
+    end
+    subgraph PL["PLANNING"]
+        direction TB
+        LP["local_planner<br/>(라이브 콘→즉석 경로)"]
+        GP["global_planner<br/>(콘맵→레이스라인)"]
+        SM["state_machine<br/>(랩·전환·정지)"]
+        SEL["path_selector"]
+    end
+    CTRL["pure_pursuit<br/>controller"]
 
-```bash
-race                     # = race small_track   |   종료: race stop
+    FUSE -->|"/cones"| GS
+    FUSE -->|"/cones"| LP
+    GS -->|"cone_map · ego_odom · status"| GP
+    GS -->|"ego_odom"| LP
+    LP -->|"local_waypoints"| SEL
+    GP -->|"global 윈도우"| SEL
+    SM -->|"path_source"| SEL
+    SEL -->|"/path_waypoints"| CTRL
+    CTRL -->|"/cmd"| SP
 ```
 
-<details>
-<summary>또는 <b>수동으로 터미널 4개</b></summary>
+**2단계 주행 시나리오** — 이게 설계의 핵심입니다:
 
-```bash
-simfull track:=small_track gazebo_gui:=true rviz:=true   # ① 시뮬 + perception
-slam                                                     # ② SLAM
-plan && smachine                                         # ③④ planning + 상태기계
-mission                                                  # 미션 ON → 5초 뒤 주행 가능
-teleop                                                   # 키보드로 한 바퀴 주행
-```
-</details>
+| 단계 | path_source | 무슨 일이 |
+|---|---|---|
+| **랩 1 · 탐험** | `LOCAL` | 맵 없음. local_planner가 **라이브 `/cones`로 즉석 경로** 생성, SLAM은 주행하며 콘맵 축적 |
+| **핸드오프** | — | 랩 완주 → SLAM `localization` 전환 → global_planner가 콘맵에서 **레이스라인** 생성 → selector가 안전 전환 |
+| **랩 2+ · 레이싱** | `GLOBAL_FULL` | 컨트롤러가 레이스라인 롤링 윈도우 추종. **CTE HUD**가 추종 오차(d) 표시 |
+| **종료** | — | state_machine이 스톱존 감지 → `stop_request` → 제동 |
 
-주행으로 한 바퀴 돌면 `/localization/cone_map`이 채워지고, SLAM이 `localization`으로 전환되면 `/global_waypoints`(초록 레이스라인)가 RViz에 뜹니다.
-
-<details>
-<summary><b>❗ 처음이라 아직 셋업 전이라면 → 아래 Setup부터</b></summary>
-
-`simfull` 같은 alias는 <a href="#4-shell-aliases">Shell aliases</a>를 `.zshrc`/`.bashrc`에 넣어야 동작합니다.
-</details>
+컨트롤러는 항상 `/path_waypoints` 하나만 봅니다 — local이냐 global이냐는 selector가 숨겨줍니다.
 
 ---
 
@@ -93,18 +94,17 @@ sudo apt update && sudo apt install -y \
   python3-pandas python3-opencv \
   libeigen3-dev libboost-dev libspdlog-dev libomp-dev
 
-# rosdep 최초 1회
-sudo rosdep init 2>/dev/null; rosdep update
+sudo rosdep init 2>/dev/null; rosdep update   # 최초 1회
 ```
 
 | 패키지 | 쓰는 곳 |
 |---|---|
 | `gazebo` + `gazebo-*` | 시뮬레이터 |
-| `sbg-driver` | SLAM의 INS/GNSS 브리지 |
+| `sbg-driver` | INS/GNSS 브리지 (ins_pipeline) |
 | `libg2o` | graph SLAM 최적화 |
-| `rviz-2d-overlay-plugins` | RViz HUD 오버레이 |
+| `rviz-2d-overlay-plugins` | RViz HUD (CTE/상태/GNSS) |
 | `eigen / boost / spdlog / omp` | frenet_conversion (CLCS) |
-| `pandas / opencv` | trajectory_generator, perception |
+| `pandas / opencv` | eufs_launcher·eufs_tracks (pandas), trajectory_generator·perception (opencv) |
 
 ### 2. 외부 소스 & 파이썬 환경
 
@@ -115,7 +115,7 @@ git clone --depth 1 https://github.com/CommonRoad/commonroad-clcs.git ~/commonro
 # (b) trajectory_generator용 (시스템 파이썬)
 python3 -m pip install --user quadprog
 
-# (c) YOLO 추론 전용 격리 venv (torch가 ROS numpy를 깨지 않도록 분리)
+# (c) YOLO 전용 격리 venv (torch가 ROS numpy를 깨지 않도록)
 python3 -m venv --system-site-packages ~/fsk/.venv-yolo
 source ~/fsk/.venv-yolo/bin/activate
 pip install -U pip
@@ -125,19 +125,19 @@ pip uninstall -y opencv-python              # 시스템 cv2 사용
 deactivate
 ```
 
-> YOLO 체크포인트는 `eufs_perception_baseline/models/fsoco_yolov8n/weights/best.pt`에 둡니다. simulation launch가 이 venv를 자동 감지합니다.
+> YOLO 체크포인트는 `eufs_perception_baseline/models/fsoco_yolov8n/weights/best.pt`. launch가 venv를 자동 감지하고, GPU가 죽어 있으면 CPU로 자동 폴백합니다.
 
 ### 3. 빌드
 
 ```bash
 cd ~/fsk && export EUFS_MASTER=$PWD
-rosdep install --from-paths src --ignore-src -r -y   # 나머지 ROS 의존성
+rosdep install --from-paths src --ignore-src -r -y
 colcon build --symlink-install
 ```
 
 ### 4. Shell aliases
 
-`~/.zshrc` (또는 `~/.bashrc`) 맨 아래에 붙여넣으세요 — bash·zsh 공용입니다:
+`~/.zshrc`(또는 `~/.bashrc`) 맨 아래에 — bash·zsh 공용:
 
 ```bash
 # ===== HYU Formula Student =====
@@ -145,82 +145,79 @@ export EUFS_MASTER="$HOME/fsk"
 if [ -n "$ZSH_VERSION" ]; then _fsk_ext=zsh; else _fsk_ext=bash; fi
 [ -f "$EUFS_MASTER/install/setup.$_fsk_ext" ] && source "$EUFS_MASTER/install/setup.$_fsk_ext"
 
-# 워크스페이스
 alias fsk='cd "$EUFS_MASTER"'
 alias fsb='cd "$EUFS_MASTER" && colcon build --symlink-install && source install/setup.$_fsk_ext'
 
-# 전체 스택 한 방 (tmux) — race stop 으로 종료, race attach 로 재접속
-alias race='$EUFS_MASTER/src/scripts/race.sh'
-
-# 실행 (① 시뮬 · 퍼셉션)
-alias sim='ros2 launch eufs_launcher eufs_launcher.launch.py'          # 런처 GUI
-alias simrun='ros2 launch eufs_launcher simulation.launch.py'          # 직접 실행 (track:=, perception:=)
-alias simfull='ros2 launch eufs_launcher simulation.launch.py perception:=true'   # 시뮬+YOLO
-
-# 실행 (② SLAM)
-alias slam='ros2 launch eufs_graph_slam ins_pipeline.launch.py'        # INS→SBG→graph SLAM
-alias slamcore='ros2 launch eufs_graph_slam graph_slam.launch.py'      # graph SLAM 단독
-
-# 실행 (③④ Planning)
-alias plan='ros2 launch global_planner slam_global_planner.launch.py'         # SLAM 콘맵→레이스라인
-alias plancsv='ros2 launch global_planner slam_global_planner.launch.py planner_source:=csv'
-alias smachine='ros2 launch state_machine planning_state_machine.launch.py'
+# 실행
+alias race='$EUFS_MASTER/src/scripts/race.sh'      # 자율주행 전체 한 방 (tmux). 종료: race stop
+alias simfull='ros2 launch eufs_launcher simulation.launch.py perception:=true gazebo_gui:=true rviz:=true'
+alias pbring='ros2 launch planning_bringup local_global_planning.launch.py'
 alias teleop='ros2 run eufs_teleop teleop'
 
-# 헬퍼 (주행 게이트 & 리셋)
-alias mission='ros2 service call /ros_can/set_mission eufs_msgs/srv/SetCanState "{ami_state: 14}"'  # TRACKDRIVE
-alias asstate='ros2 topic echo --once /ros_can/state_str'             # 미션/AS 상태
+# 헬퍼
+alias mission='ros2 service call /ros_can/set_mission eufs_msgs/srv/SetCanState "{ami_state: 14}"'
 alias resetcar='ros2 service call /ros_can/reset_vehicle_pos std_srvs/srv/Trigger'
-alias slamreset='ros2 service call /graph_slam/start_mapping std_srvs/srv/Trigger'  # 매핑 모드로 리셋
+alias slamreset='ros2 service call /graph_slam/start_mapping std_srvs/srv/Trigger'
 alias rv='rviz2 -d "$EUFS_MASTER/install/eufs_launcher/share/eufs_launcher/config/default.rviz"'
 ```
 
-적용: 새 터미널 열거나 `source ~/.zshrc`.
+적용: 새 터미널 또는 `source ~/.zshrc`.
 
 ---
 
-## ▶️ Running — 자세히
+## ▶️ Running
 
-**시뮬은 반드시 미션을 걸어야 `/cmd`가 먹습니다.** `mission` → 5초 뒤 `AS_DRIVING` → 주행 가능.
-
+### 자율주행 (기본)
 ```bash
-# 터미널 1 — 시뮬 + perception (YOLO)
-simfull track:=small_track gazebo_gui:=true rviz:=true
+race                # small_track
+race skidpad        # 트랙 지정
+race peanut gazebo_gui:=false   # 트랙 뒤 인자는 simulation.launch.py로 전달
+```
+모니터 pane에서 `path_source: LOCAL → GLOBAL_FULL` 전환과 CTE를 실시간으로 봅니다.
 
-# 터미널 2 — SLAM (sim에선 GNSS 프라이어 꺼도 됨)
-slam                    # 또는:  slam gnss_prior_enable:=false
-
-# 터미널 3 — 미션 걸고 주행
-mission
-teleop                  # w/a/s/d 로 한 바퀴
-
-# 터미널 4 — 콘맵이 양쪽 경계로 차오르면
-plan
-smachine
+### 자주 쓰는 변형
+```bash
+pbring enable_controller:=false      # 주행 없이 계획만 (수동 개입: teleop)
+pbring local_source_mode:=slam_map   # local 경로를 라이브콘 대신 SLAM맵 기반으로
+pbring planner_source:=csv           # global을 오프라인 raceline CSV로
+# 저장맵으로 localization 바로 시작 (랩1 탐험 생략):
+pbring graph_slam_localization_mode:=true \
+       graph_slam_load_map_path:=$EUFS_MASTER/src/eufs_graph_slam/map/small_track_slam.csv
 ```
 
-**🔑 매핑 vs localization** — SLAM은 처음엔 `mapping`(주행하며 맵 생성). 한 바퀴 완주하면 자동으로 `localization`(기존 맵에 위치추정)으로 전환되고, 그때 `planner_node`가 `/global_waypoints`를 만듭니다. 다시 맵을 새로 그리려면 `slamreset`.
+### 진행 확인
+```bash
+ros2 topic echo /planning/path_source   # LOCAL? GLOBAL_FULL?
+ros2 topic echo /planning/cte           # 경로 추종 횡오차 d(m)
+ros2 topic echo --once /ros_can/state_str
+```
 
-**자주 쓰는 트랙**: `small_track` · `skidpad` · `acceleration` · `peanut` · `comp_2021` · `rand`
+### INS/SBG 파이프라인 (선택)
+실제 하드웨어 GNSS/INS 경로를 시뮬에서 검증할 때:
+```bash
+ros2 launch eufs_graph_slam ins_pipeline.launch.py    # pbring의 graph_slam과 동시 사용 금지
+```
 
 ---
 
-## 🗺️ Pipeline reference
+## 🗺️ Reference
 
 <details>
 <summary><b>핵심 토픽</b></summary>
 
-| 토픽 | 타입 | 발행 |
+| 토픽 | 타입 | 의미 |
 |---|---|---|
-| `/zed/left/image_rect_color` | `sensor_msgs/Image` | 시뮬 ZED |
-| `/velodyne_points` | `sensor_msgs/PointCloud2` | 시뮬 VLP-16 |
-| `/cones` | `eufs_msgs/ConeArrayWithCovariance` | perception fusion (base_footprint) |
-| `/localization/cone_map` | `eufs_msgs/ConeArrayWithCovariance` | graph SLAM 콘 맵 (map) |
-| `/localization/ego_odom` | `nav_msgs/Odometry` | graph SLAM 위치추정 |
-| `/graph_slam/status` | `std_msgs/String` | `mapping` / `localization` |
-| `/global_waypoints` | `eufs_msgs/WaypointArrayStamped` | 전역 레이스라인 |
-| `/global_waypoints/path` | `nav_msgs/Path` | RViz 시각화용 미러 |
-| `/cmd` | `ackermann_msgs/AckermannDriveStamped` | 차량 제어 입력 |
+| `/cones` | `ConeArrayWithCovariance` | perception 콘 검출 (base_footprint) |
+| `/localization/cone_map` | `ConeArrayWithCovariance` | SLAM 콘 맵 (map) |
+| `/localization/ego_odom` | `Odometry` | SLAM 위치추정 |
+| `/graph_slam/status` | `String` | `mapping` / `localization` |
+| `/global_waypoints` (+`/path`) | `WaypointArrayStamped` | 전역 레이스라인 (latched) |
+| `/planning/local_waypoints` (+`/path`) | `WaypointArrayStamped` | 로컬 즉석 경로 |
+| `/planning/path_source` | `String` | 상태기계의 경로 선택 (`LOCAL`/`GLOBAL_FULL`/`GLOBAL_FINAL_STOP`/`STOP`) |
+| `/path_waypoints` (+`/path`) | `WaypointArrayStamped` | **selector 확정 경로 = 컨트롤러 입력** |
+| `/car_state/frenet/odom` | `Odometry` | Frenet (x=s, y=d) — global 기준 |
+| `/planning/cte`, `/planning/cte_rmse` | `Float32` | 추종 횡오차 d, 누적 RMSE |
+| `/cmd` | `AckermannDriveStamped` | 컨트롤러 출력 (유일 writer) |
 
 </details>
 
@@ -239,26 +236,32 @@ ros2 service call /graph_slam/save_map       std_srvs/srv/Trigger               
 
 ## 🎛️ RViz
 
-`simfull ... rviz:=true` 또는 `rv`로 실행. 디스플레이가 **Sensors / Perception / SLAM / Planning / HUD** 그룹으로 정리돼 있고 콘은 실제 3D 메시로 보입니다.
+`race`/`simfull`이 정리된 config로 RViz를 띄웁니다 (또는 `rv`). 디스플레이는 **Sensors / Perception / SLAM / Planning / HUD** 그룹, 콘은 실제 3D 메시.
 
-> **원클릭 프리셋** — 다른 RViz 세션에서도 `Add → By display type → fsk_rviz_presets → FSK Full Stack` 하면 토픽·QoS까지 세팅된 그룹이 통째로 추가됩니다.
+- **HUD (좌상단 스택)**: `PATH CTE`(레이스라인 대비 d·RMSE·max — global 단계에서 활성) → `SLAM 상태` → `GNSS`(INS 파이프라인 실행 시에만 채워짐)
+- **원클릭 프리셋**: 아무 RViz에서나 `Add → By display type → fsk_rviz_presets → FSK Full Stack` — 토픽·QoS까지 세팅된 그룹이 통째로 추가
 
 ---
 
 ## 🧩 Packages
 
 ```
-eufs_sim/                 시뮬레이터 (Gazebo world, 차량 URDF, 센서, 플러그인, 런처)
+eufs_sim/                 시뮬레이터 (Gazebo, 차량 URDF, 센서, 플러그인, 런처)
 eufs_msgs/                EUFS 메시지/서비스
-eufs_graph_slam/          graph SLAM + INS/SBG 브리지 (ins_pipeline)
+eufs_graph_slam/          graph SLAM + INS/SBG 브리지 + CTE 모니터
 eufs_perception_baseline/ YOLOv8 + LiDAR-camera fusion → /cones
 eufs_teleop/              키보드 주행
 fsk_rviz_presets/         RViz 원클릭 디스플레이 그룹
+pure_pursuit_controller/  경로 추종 제어 → /cmd (planning과 분리된 control 계층)
+scripts/                  race.sh (자율 전체 스택 tmux 런처)
 planning/
-  ├─ global_planner/      SLAM 콘맵 → 전역 레이스라인 (planner_node)
-  ├─ frenet_conversion/   전역경로 → Frenet (CommonRoad-CLCS)
-  ├─ state_machine/       랩/스톱존/주행 상태
-  └─ trajectory_generator 오프라인 raceline (CSV)
+  ├─ planning_bringup/    ★ planning 전체 조립 launch (아래 전부 + graph_slam + controller)
+  ├─ local_planner/       라이브 콘 → 즉석 로컬 경로 (랩 1)
+  ├─ global_planner/      SLAM 콘맵 → 전역 레이스라인
+  ├─ frenet_conversion/   전역경로 기준 Frenet (s,d) — CTE의 원천
+  ├─ state_machine/       랩 카운트 · local↔global 전환 · 스톱존
+  ├─ path_selector/       local/global 중 컨트롤러가 따를 경로 확정
+  └─ trajectory_generator/ 오프라인 raceline (CSV)
 ```
 
 ---
@@ -266,39 +269,45 @@ planning/
 ## 🩹 Troubleshooting
 
 <details>
-<summary><b>주행해도 <code>/localization/cone_map</code>이 안 채워짐</b></summary>
+<summary><b>차가 안 움직임</b></summary>
 
-SLAM이 `localization` 모드면 새 콘을 안 쌓습니다. `asstate`로 확인하고, 매핑을 새로 하려면 `slamreset` (start_mapping) 후 주행하세요.
+미션 미설정이 대부분. `race`는 자동 ARM하지만 수동 실행이면 `mission` → `/ros_can/state_str`가 `AS:DRIVING`인지 확인. `/reset_world`는 차를 못 되돌리니 `resetcar`.
 </details>
 
 <details>
-<summary><b><code>/cmd</code>를 보내도 차가 안 움직임</b></summary>
+<summary><b>주행해도 콘맵이 안 참 / 전역경로가 안 생김</b></summary>
 
-미션이 안 걸림. `mission` 실행 → `asstate`가 `AS:DRIVING` 되면 주행 가능. `/reset_world`는 차를 안 되돌리니 `resetcar`를 쓰세요.
+SLAM이 `localization` 모드면 새 콘을 안 쌓습니다 — `slamreset`으로 매핑 모드 복귀 후 주행. 전역경로는 **랩 완주 → localization 전환 후** 생성됩니다 (`/graph_slam/status` 확인).
 </details>
 
 <details>
-<summary><b>perception 결과(/cones)가 안 나옴</b></summary>
+<summary><b>perception 결과(/cones)가 안 나옴 / 매핑이 너무 느림</b></summary>
 
-YOLO가 CUDA를 못 쓰면 로그에 `Invalid CUDA device=0`. GPU 폴트면 재부팅이 필요하고, 그 전까지는 노드가 자동으로 **CPU 폴백**해서 계속 동작합니다 (느림). 시뮬 콘만 빠르게 보려면 `simrun ... perception:=false launch_group:=no_perception`.
+GPU가 죽으면(과거 Xid 폴트) YOLO가 CPU 폴백으로 돌며 CPU를 포화시켜 RTF가 붕괴합니다 → 재부팅으로 GPU 복구가 근본 해결. `nvidia-smi`와 `/cones` rate 확인.
 </details>
 
 <details>
-<summary><b><code>ros2 topic hz</code> 레이트가 이상하게 낮음</b></summary>
+<summary><b>CTE HUD가 계속 "waiting"</b></summary>
 
-`hz`는 벽시계 기준이라 Gazebo 실시간계수(RTF)만큼 낮게 보입니다 (YOLO+렌더링이 무거우면 RTF↓). SLAM 정확도는 sim-time 기반이라 무관합니다.
+정상일 수 있음 — CTE는 **전역 레이스라인 기준**이라 global 단계 전(랩 1 local 주행)엔 데이터가 없습니다. global 전환 후에도 waiting이면 `/planning/global_path_valid` 확인.
 </details>
 
 <details>
-<summary><b>런처 GUI(<code>sim</code>)에서 perception이 안 켜짐</b></summary>
+<summary><b><code>ros2 topic hz</code>가 이상하게 낮음</b></summary>
 
-GUI 런처는 perception 인자를 전달하지 못합니다. 실제 파이프라인은 `simfull`(또는 `simrun perception:=true`)로 실행하세요.
+`hz`는 벽시계 기준 → Gazebo RTF만큼 낮게 보입니다. 알고리즘은 sim-time 기반이라 무관.
 </details>
 
 <details>
-<summary><b><code>eufs_msgs</code> / Gazebo 플러그인을 못 찾음</b></summary>
+<summary><b>graph_slam이 두 개 뜸 / TF 충돌</b></summary>
 
-워크스페이스를 source 안 했을 때입니다. `fsk && sor` (또는 새 터미널). 빌드가 필요하면 `fsb`.
+`pbring`(또는 `race`)은 자체 graph_slam을 띄웁니다 — `ins_pipeline.launch.py`나 `graph_slam.launch.py`를 동시에 켜지 마세요.
+</details>
+
+<details>
+<summary><b>빌드/토픽이 안 보임</b></summary>
+
+워크스페이스 미소싱. 새 터미널을 열거나 `fsk && source install/setup.zsh`. 빌드는 `fsb`.
 </details>
 
 ---
