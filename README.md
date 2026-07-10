@@ -1,511 +1,297 @@
-> **저작권 및 라이선스 안내**  
-> 이 문서는 EUFS Formula Student Simulator 관련 내용을 정리한 문서입니다.  
-> 원본 프로젝트 및 저작권/라이선스 정보는 EUFS GitLab 저장소를 따릅니다: <https://gitlab.com/eufs>
+<div align="center">
 
-# Formula Student Simulator
+# 🏎️ HYU Formula Student — Autonomous Stack
 
+**Perception → SLAM → Planning**, all driven inside the EUFS Gazebo simulator.
 
-## 0. Quick Start: 의존성 설치
+![ROS 2](https://img.shields.io/badge/ROS_2-Humble-22314E?logo=ros&logoColor=white)
+![Ubuntu](https://img.shields.io/badge/Ubuntu-22.04-E95420?logo=ubuntu&logoColor=white)
+![Gazebo](https://img.shields.io/badge/Gazebo-11-FF6C00?logo=gazebo&logoColor=white)
+![YOLOv8](https://img.shields.io/badge/YOLOv8-FSOCO-00FFAA)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
-ROS 2 Humble이 이미 설치되어 있다는 전제에서, 시뮬레이터에 필요한 패키지는 아래처럼 설치합니다.
+</div>
 
-```bash
-sudo apt update
-sudo apt install -y \
-  python3-colcon-common-extensions \
-  python3-rosdep \
-  python3-pandas \
-  gazebo \
-  ros-humble-gazebo-dev \
-  ros-humble-gazebo-ros \
-  ros-humble-gazebo-plugins
+---
+
+## 🧭 파이프라인 한눈에
+
+```mermaid
+flowchart LR
+    subgraph S1["① SIM + PERCEPTION"]
+        direction TB
+        ZED["ZED 카메라"] --> YOLO["yolov8_bbox_node<br/>(GPU→CPU 폴백)"]
+        VLP["VLP-16 라이다"] --> FUSE["fusion<br/>(LiDAR×BBox)"]
+        YOLO --> FUSE
+    end
+    subgraph S2["② SLAM"]
+        direction TB
+        INS["sim INS → SBG bridge"] --> GS["graph_slam"]
+    end
+    subgraph S3["③ PLANNING"]
+        direction TB
+        PL["planner_node<br/>(콘맵→센터라인)"] --> FR["frenet + wpnt"]
+    end
+    subgraph S4["④ STATE MACHINE"]
+        SM["lap · stop-zone · state"]
+    end
+
+    FUSE -->|"/cones"| GS
+    GS -->|"/localization/cone_map<br/>/localization/ego_odom"| PL
+    PL -->|"/global_waypoints"| SM
+    FR --> SM
 ```
 
-`rosdep`을 처음 쓰는 PC라면 한 번만 초기화합니다.
+| 단계 | alias | 입력 → 출력 |
+|---|---|---|
+| ① Sim + Perception | `simfull` | 센서 → **`/cones`** (콘 검출) |
+| ② SLAM | `slam` | `/cones` + INS → **`/localization/cone_map`, `/localization/ego_odom`** |
+| ③ Planning | `plan` | 콘맵 → **`/global_waypoints`** (전역 레이스라인) |
+| ④ State machine | `smachine` | 랩/스톱존/주행 상태 |
+
+---
+
+## ⚡ Quick Start
+
+> 이미 빌드·의존성이 끝났다면 터미널 4개에서:
 
 ```bash
-sudo rosdep init
-rosdep update
+simfull track:=small_track gazebo_gui:=true rviz:=true   # ① 시뮬 + perception
+slam                                                     # ② SLAM
+plan && smachine                                         # ③④ planning + 상태기계
+mission                                                  # 미션 ON → 5초 뒤 주행 가능
+teleop                                                   # 키보드로 한 바퀴 주행
 ```
 
-워크스페이스 의존성 확인 및 설치:
+주행으로 한 바퀴 돌면 `/localization/cone_map`이 채워지고, SLAM이 `localization`으로 전환되면 `/global_waypoints`(초록 레이스라인)가 RViz에 뜹니다.
+
+<details>
+<summary><b>❗ 처음이라 아직 셋업 전이라면 → 아래 Setup부터</b></summary>
+
+`simfull` 같은 alias는 <a href="#4-shell-aliases">Shell aliases</a>를 `.zshrc`/`.bashrc`에 넣어야 동작합니다.
+</details>
+
+---
+
+## 🛠️ Setup
+
+### 1. 시스템 의존성 (apt)
 
 ```bash
-cd /home/shchon11/formula_student
-source /opt/ros/humble/setup.zsh
+sudo apt update && sudo apt install -y \
+  python3-colcon-common-extensions python3-rosdep python3-vcstool python3-venv \
+  gazebo ros-humble-gazebo-dev ros-humble-gazebo-ros ros-humble-gazebo-plugins \
+  ros-humble-sbg-driver ros-humble-libg2o ros-humble-rviz-2d-overlay-plugins \
+  python3-pandas python3-opencv \
+  libeigen3-dev libboost-dev libspdlog-dev libomp-dev
 
-rosdep check --from-paths . --ignore-src
-rosdep install --from-paths . --ignore-src -r -y
+# rosdep 최초 1회
+sudo rosdep init 2>/dev/null; rosdep update
 ```
 
-설치 확인:
+| 패키지 | 쓰는 곳 |
+|---|---|
+| `gazebo` + `gazebo-*` | 시뮬레이터 |
+| `sbg-driver` | SLAM의 INS/GNSS 브리지 |
+| `libg2o` | graph SLAM 최적화 |
+| `rviz-2d-overlay-plugins` | RViz HUD 오버레이 |
+| `eigen / boost / spdlog / omp` | frenet_conversion (CLCS) |
+| `pandas / opencv` | trajectory_generator, perception |
+
+### 2. 외부 소스 & 파이썬 환경
 
 ```bash
-dpkg -l | grep -E "python3-pandas|gazebo|ros-humble-gazebo"
-gazebo --version
+# (a) frenet_conversion이 컴파일하는 CommonRoad-CLCS
+git clone --depth 1 https://github.com/CommonRoad/commonroad-clcs.git ~/commonroad-clcs
+
+# (b) trajectory_generator용 (시스템 파이썬)
+python3 -m pip install --user quadprog
+
+# (c) YOLO 추론 전용 격리 venv (torch가 ROS numpy를 깨지 않도록 분리)
+python3 -m venv --system-site-packages ~/fsk/.venv-yolo
+source ~/fsk/.venv-yolo/bin/activate
+pip install -U pip
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124  # GPU
+pip install ultralytics "numpy<2"          # numpy<2 = ROS/cv_bridge ABI 호환
+pip uninstall -y opencv-python              # 시스템 cv2 사용
+deactivate
 ```
 
-## 1. 기본 구조
+> YOLO 체크포인트는 `eufs_perception_baseline/models/fsoco_yolov8n/weights/best.pt`에 둡니다. simulation launch가 이 venv를 자동 감지합니다.
 
-현재 워크스페이스는 보통 아래처럼 둡니다.
-
-```bash
-/home/shchon11/formula_student
-├── eufs_sim
-├── eufs_msgs
-├── build
-├── install
-└── log
-```
-
-주요 패키지 역할은 다음과 같습니다.
-
-| 패키지 | 역할 |
-| --- | --- |
-| `eufs_launcher` | 시뮬레이터 실행 GUI 및 launch 진입점 |
-| `eufs_tracks` | Gazebo world, 트랙 launch 파일 |
-| `eufs_racecar` | 차량 URDF, mesh, 차량 spawn launch |
-| `eufs_plugins` | Gazebo 차량 모델, 콘 ground truth, bounding box plugin |
-| `eufs_rqt` | 미션 제어 GUI, 수동 조향 GUI |
-| `eufs_models` | 차량 동역학 모델 |
-| `eufs_msgs` | EUFS 전용 ROS 2 message/service |
-
-## 2. 시스템 패키지 설치 확인
-
-설치 확인:
+### 3. 빌드
 
 ```bash
-dpkg -l | grep -E "python3-pandas|gazebo|ros-humble-gazebo"
-gazebo --version
-```
-
-ROS 의존성 확인:
-
-```bash
-cd /home/shchon11/formula_student
-source /opt/ros/humble/setup.zsh
-rosdep check --from-paths . --ignore-src
-```
-
-부족한 의존성이 있으면:
-
-```bash
-rosdep install --from-paths . --ignore-src -r -y
-```
-
-## 3. 빌드
-
-`eufs_tracks` launch 파일에서 `EUFS_MASTER` 환경변수를 사용하므로 워크스페이스 루트를 지정해둡니다.
-
-```bash
-cd /home/shchon11/formula_student
-export EUFS_MASTER=$PWD
-
-source /opt/ros/humble/setup.zsh
+cd ~/fsk && export EUFS_MASTER=$PWD
+rosdep install --from-paths src --ignore-src -r -y   # 나머지 ROS 의존성
 colcon build --symlink-install
-source install/setup.zsh
 ```
 
-`eufs_plugins`만 다시 빌드하고 싶으면:
+### 4. Shell aliases
+
+`~/.zshrc` (또는 `~/.bashrc`) 맨 아래에 붙여넣으세요 — bash·zsh 공용입니다:
 
 ```bash
-colcon build --symlink-install --packages-select eufs_plugins
-source install/setup.zsh
+# ===== HYU Formula Student =====
+export EUFS_MASTER="$HOME/fsk"
+if [ -n "$ZSH_VERSION" ]; then _fsk_ext=zsh; else _fsk_ext=bash; fi
+[ -f "$EUFS_MASTER/install/setup.$_fsk_ext" ] && source "$EUFS_MASTER/install/setup.$_fsk_ext"
+
+# 워크스페이스
+alias fsk='cd "$EUFS_MASTER"'
+alias fsb='cd "$EUFS_MASTER" && colcon build --symlink-install && source install/setup.$_fsk_ext'
+
+# 실행 (① 시뮬 · 퍼셉션)
+alias sim='ros2 launch eufs_launcher eufs_launcher.launch.py'          # 런처 GUI
+alias simrun='ros2 launch eufs_launcher simulation.launch.py'          # 직접 실행 (track:=, perception:=)
+alias simfull='ros2 launch eufs_launcher simulation.launch.py perception:=true'   # 시뮬+YOLO
+
+# 실행 (② SLAM)
+alias slam='ros2 launch eufs_graph_slam ins_pipeline.launch.py'        # INS→SBG→graph SLAM
+alias slamcore='ros2 launch eufs_graph_slam graph_slam.launch.py'      # graph SLAM 단독
+
+# 실행 (③④ Planning)
+alias plan='ros2 launch global_planner slam_global_planner.launch.py'         # SLAM 콘맵→레이스라인
+alias plancsv='ros2 launch global_planner slam_global_planner.launch.py planner_source:=csv'
+alias smachine='ros2 launch state_machine planning_state_machine.launch.py'
+alias teleop='ros2 run eufs_teleop teleop'
+
+# 헬퍼 (주행 게이트 & 리셋)
+alias mission='ros2 service call /ros_can/set_mission eufs_msgs/srv/SetCanState "{ami_state: 14}"'  # TRACKDRIVE
+alias asstate='ros2 topic echo --once /ros_can/state_str'             # 미션/AS 상태
+alias resetcar='ros2 service call /ros_can/reset_vehicle_pos std_srvs/srv/Trigger'
+alias slamreset='ros2 service call /graph_slam/start_mapping std_srvs/srv/Trigger'  # 매핑 모드로 리셋
+alias rv='rviz2 -d "$EUFS_MASTER/install/eufs_launcher/share/eufs_launcher/config/default.rviz"'
 ```
 
-## 4. 실행 방법
+적용: 새 터미널 열거나 `source ~/.zshrc`.
 
-### 런처 GUI로 실행
+---
+
+## ▶️ Running — 자세히
+
+**시뮬은 반드시 미션을 걸어야 `/cmd`가 먹습니다.** `mission` → 5초 뒤 `AS_DRIVING` → 주행 가능.
 
 ```bash
-cd /home/shchon11/formula_student
-export EUFS_MASTER=$PWD
-source /opt/ros/humble/setup.zsh
-source install/setup.zsh
+# 터미널 1 — 시뮬 + perception (YOLO)
+simfull track:=small_track gazebo_gui:=true rviz:=true
 
-ros2 launch eufs_launcher eufs_launcher.launch.py
+# 터미널 2 — SLAM (sim에선 GNSS 프라이어 꺼도 됨)
+slam                    # 또는:  slam gnss_prior_enable:=false
+
+# 터미널 3 — 미션 걸고 주행
+mission
+teleop                  # w/a/s/d 로 한 바퀴
+
+# 터미널 4 — 콘맵이 양쪽 경계로 차오르면
+plan
+smachine
 ```
 
-런처에서 트랙, 차량 모델, command mode, RViz, Gazebo GUI, simulated perception 사용 여부를 선택한 뒤 `Launch!`를 누릅니다.
+**🔑 매핑 vs localization** — SLAM은 처음엔 `mapping`(주행하며 맵 생성). 한 바퀴 완주하면 자동으로 `localization`(기존 맵에 위치추정)으로 전환되고, 그때 `planner_node`가 `/global_waypoints`를 만듭니다. 다시 맵을 새로 그리려면 `slamreset`.
 
-### 런처 없이 바로 실행
+**자주 쓰는 트랙**: `small_track` · `skidpad` · `acceleration` · `peanut` · `comp_2021` · `rand`
+
+---
+
+## 🗺️ Pipeline reference
+
+<details>
+<summary><b>핵심 토픽</b></summary>
+
+| 토픽 | 타입 | 발행 |
+|---|---|---|
+| `/zed/left/image_rect_color` | `sensor_msgs/Image` | 시뮬 ZED |
+| `/velodyne_points` | `sensor_msgs/PointCloud2` | 시뮬 VLP-16 |
+| `/cones` | `eufs_msgs/ConeArrayWithCovariance` | perception fusion (base_footprint) |
+| `/localization/cone_map` | `eufs_msgs/ConeArrayWithCovariance` | graph SLAM 콘 맵 (map) |
+| `/localization/ego_odom` | `nav_msgs/Odometry` | graph SLAM 위치추정 |
+| `/graph_slam/status` | `std_msgs/String` | `mapping` / `localization` |
+| `/global_waypoints` | `eufs_msgs/WaypointArrayStamped` | 전역 레이스라인 |
+| `/global_waypoints/path` | `nav_msgs/Path` | RViz 시각화용 미러 |
+| `/cmd` | `ackermann_msgs/AckermannDriveStamped` | 차량 제어 입력 |
+
+</details>
+
+<details>
+<summary><b>주요 서비스</b></summary>
 
 ```bash
-ros2 launch eufs_launcher simulation.launch.py \
-  track:=small_track \
-  gazebo_gui:=true \
-  rviz:=true \
-  launch_group:=no_perception \
-  commandMode:=acceleration
+ros2 service call /ros_can/set_mission eufs_msgs/srv/SetCanState '{ami_state: 14}'  # 주행 미션
+ros2 service call /ros_can/reset_vehicle_pos std_srvs/srv/Trigger                   # 차 원위치
+ros2 service call /graph_slam/start_mapping  std_srvs/srv/Trigger                   # 매핑 모드
+ros2 service call /graph_slam/save_map       std_srvs/srv/Trigger                   # 맵 CSV 저장
+```
+</details>
+
+---
+
+## 🎛️ RViz
+
+`simfull ... rviz:=true` 또는 `rv`로 실행. 디스플레이가 **Sensors / Perception / SLAM / Planning / HUD** 그룹으로 정리돼 있고 콘은 실제 3D 메시로 보입니다.
+
+> **원클릭 프리셋** — 다른 RViz 세션에서도 `Add → By display type → fsk_rviz_presets → FSK Full Stack` 하면 토픽·QoS까지 세팅된 그룹이 통째로 추가됩니다.
+
+---
+
+## 🧩 Packages
+
+```
+eufs_sim/                 시뮬레이터 (Gazebo world, 차량 URDF, 센서, 플러그인, 런처)
+eufs_msgs/                EUFS 메시지/서비스
+eufs_graph_slam/          graph SLAM + INS/SBG 브리지 (ins_pipeline)
+eufs_perception_baseline/ YOLOv8 + LiDAR-camera fusion → /cones
+eufs_teleop/              키보드 주행
+fsk_rviz_presets/         RViz 원클릭 디스플레이 그룹
+planning/
+  ├─ global_planner/      SLAM 콘맵 → 전역 레이스라인 (planner_node)
+  ├─ frenet_conversion/   전역경로 → Frenet (CommonRoad-CLCS)
+  ├─ state_machine/       랩/스톱존/주행 상태
+  └─ trajectory_generator 오프라인 raceline (CSV)
 ```
 
-자주 쓰는 트랙:
+---
 
-```text
-small_track
-acceleration
-skidpad
-rectangle
-comp_2021
-rand
-empty
-peanut
-garden_light
-boa_constrictor
-its_a_mess
-hairpins_increasing_difficulty
-```
+## 🩹 Troubleshooting
 
-주요 launch 옵션:
+<details>
+<summary><b>주행해도 <code>/localization/cone_map</code>이 안 채워짐</b></summary>
 
-| 옵션 | 예시 | 설명 |
-| --- | --- | --- |
-| `track` | `small_track` | 실행할 트랙 |
-| `gazebo_gui` | `true` | Gazebo 화면 표시 |
-| `rviz` | `true` | RViz 실행 |
-| `launch_group` | `no_perception` | simulated perception 사용 |
-| `commandMode` | `acceleration` 또는 `velocity` | `/cmd` 해석 방식 |
-| `publish_gt_tf` | `true` | ground truth TF 발행 |
-| `pub_ground_truth` | `true` | ground truth topic 발행 |
-| `robot_name` | `eufs` 또는 `ads-dv` | 차량 URDF 선택 |
-| `vehicleModel` | `DynamicBicycle` 또는 `PointMass` | 차량 모델 |
-| `vehicleModelConfig` | `configDry.yaml` | 차량 파라미터 preset |
+SLAM이 `localization` 모드면 새 콘을 안 쌓습니다. `asstate`로 확인하고, 매핑을 새로 하려면 `slamreset` (start_mapping) 후 주행하세요.
+</details>
 
-`eufs_graph_slam`을 localization TF로 쓸 때는 `publish_gt_tf:=false`로 두고 graph_slam의
-기본 `map -> base_footprint` TF를 사용합니다. 둘을 동시에 켜면 같은 TF를 두 노드가
-발행할 수 있습니다.
+<details>
+<summary><b><code>/cmd</code>를 보내도 차가 안 움직임</b></summary>
 
-## 5. 기본 상호작용
+미션이 안 걸림. `mission` 실행 → `asstate`가 `AS:DRIVING` 되면 주행 가능. `/reset_world`는 차를 안 되돌리니 `resetcar`를 쓰세요.
+</details>
 
-시뮬레이터가 켜지면 보통 아래 세 가지 창을 사용합니다.
+<details>
+<summary><b>perception 결과(/cones)가 안 나옴</b></summary>
 
-| 도구 | 역할 |
-| --- | --- |
-| Gazebo | 실제 월드, 차량, 콘 확인 |
-| RViz | 토픽, TF, 차량 상태, 콘 시각화 |
-| RQT | 미션 선택, 수동 조작, 리셋, EBS |
+YOLO가 CUDA를 못 쓰면 로그에 `Invalid CUDA device=0`. GPU 폴트면 재부팅이 필요하고, 그 전까지는 노드가 자동으로 **CPU 폴백**해서 계속 동작합니다 (느림). 시뮬 콘만 빠르게 보려면 `simrun ... perception:=false launch_group:=no_perception`.
+</details>
 
-### RQT로 수동 주행
+<details>
+<summary><b><code>ros2 topic hz</code> 레이트가 이상하게 낮음</b></summary>
 
-1. Mission Control에서 `Manual Drive`를 누릅니다.
-2. Robot Steering GUI의 topic이 `/cmd`인지 확인합니다.
-3. 세로 슬라이더로 가속도 또는 속도를 줍니다.
-4. 가로 슬라이더로 조향각을 줍니다.
-5. `Stop` 버튼으로 명령을 0으로 되돌립니다.
+`hz`는 벽시계 기준이라 Gazebo 실시간계수(RTF)만큼 낮게 보입니다 (YOLO+렌더링이 무거우면 RTF↓). SLAM 정확도는 sim-time 기반이라 무관합니다.
+</details>
 
-`commandMode:=acceleration`이면 세로 입력은 `acceleration`으로 해석됩니다.
-`commandMode:=velocity`이면 세로 입력은 `speed`로 해석됩니다.
+<details>
+<summary><b>런처 GUI(<code>sim</code>)에서 perception이 안 켜짐</b></summary>
 
-## 6. 터미널에서 차량 명령 보내기
+GUI 런처는 perception 인자를 전달하지 못합니다. 실제 파이프라인은 `simfull`(또는 `simrun perception:=true`)로 실행하세요.
+</details>
 
-먼저 수동 미션으로 전환합니다.
+<details>
+<summary><b><code>eufs_msgs</code> / Gazebo 플러그인을 못 찾음</b></summary>
 
-```bash
-ros2 service call /ros_can/set_mission eufs_msgs/srv/SetCanState \
-  "{ami_state: 21, as_state: 0}"
-```
+워크스페이스를 source 안 했을 때입니다. `fsk && sor` (또는 새 터미널). 빌드가 필요하면 `fsb`.
+</details>
 
-`acceleration` mode 예시:
+---
 
-```bash
-ros2 topic pub -r 20 /cmd ackermann_msgs/msg/AckermannDriveStamped \
-  "{drive: {steering_angle: 0.0, acceleration: 0.5, speed: 0.0}}"
-```
-
-`velocity` mode 예시:
-
-```bash
-ros2 topic pub -r 20 /cmd ackermann_msgs/msg/AckermannDriveStamped \
-  "{drive: {steering_angle: 0.1, speed: 2.0, acceleration: 0.0}}"
-```
-
-주의: `/cmd`는 지속적으로 publish해야 합니다. 마지막 명령 이후 1초 이상 새 명령이 없으면 차량 plugin이 감속 명령을 넣습니다.
-
-## 7. 주요 토픽
-
-상태 머신:
-
-```bash
-ros2 topic echo /ros_can/state_str
-ros2 topic echo /ros_can/state
-```
-
-차량 상태:
-
-```bash
-ros2 topic echo /ground_truth/state
-ros2 topic echo /odometry_integration/car_state
-ros2 topic echo /ground_truth/odom
-ros2 topic echo /ros_can/wheel_speeds
-ros2 topic echo /ground_truth/wheel_speeds
-```
-
-콘과 perception:
-
-```bash
-ros2 topic echo /ground_truth/track
-ros2 topic echo /ground_truth/cones
-ros2 topic echo /cones
-ros2 topic echo /camera_0/cones
-ros2 topic echo /camera_1/cones
-```
-
-Bounding box:
-
-```bash
-ros2 topic echo /ground_truth/bounding_boxes
-ros2 topic echo /noisy_bounding_boxes
-ros2 topic echo /custom_camera_info
-```
-
-센서:
-
-```bash
-ros2 topic echo /velodyne_points
-ros2 topic echo /gps
-ros2 topic echo /imu/data
-ros2 topic echo /camera/imu/data
-ros2 topic echo /sbg/magnetic
-```
-
-카메라 관련 토픽은 실행 모드에 따라 다릅니다.
-
-`launch_group:=no_perception` 또는 런처의 `Use Simulated Perception` 체크 상태에서는 raw ZED 이미지 대신 추상화된 perception 결과를 봅니다.
-
-```bash
-ros2 topic echo /camera_0/cones
-ros2 topic echo /camera_1/cones
-ros2 topic echo /ground_truth/bounding_boxes
-ros2 topic echo /noisy_bounding_boxes
-ros2 topic echo /custom_camera_info
-```
-
-raw ZED 이미지가 필요하면 `Use Simulated Perception`을 끄거나 `launch_group:=default`로 실행합니다.
-
-```bash
-ros2 launch eufs_launcher simulation.launch.py \
-  track:=small_track \
-  gazebo_gui:=true \
-  rviz:=true \
-  launch_group:=default \
-  commandMode:=acceleration
-```
-
-이때 확인할 카메라 토픽:
-
-```bash
-ros2 topic echo /zed/left/camera_info
-ros2 topic echo /zed/right/camera_info
-ros2 topic hz /zed/left/image_rect_color
-ros2 topic hz /zed/right/image_rect_color
-ros2 topic hz /zed/depth/image_raw
-ros2 topic hz /zed/points
-```
-
-이미지는 `echo`보다 `rqt_image_view`로 보는 것이 편합니다.
-
-```bash
-ros2 run rqt_image_view rqt_image_view /zed/left/image_rect_color
-```
-
-## 8. 센서 Configuration 수정
-
-센서의 장착 위치는 차량 URDF xacro에서 바꿉니다.
-
-```bash
-eufs_sim/eufs_racecar/robots/eufs/robot.urdf.xacro
-eufs_sim/eufs_racecar/robots/ads-dv/robot.urdf.xacro
-```
-
-예를 들어 `eufs` 차량의 ZED 위치/자세는 아래 줄의 `origin`을 수정합니다.
-
-```xml
-<xacro:zed_camera parent="chassis" prefix="zed" active="$(arg simulate_perception)">
-  <origin xyz="-0.08 0.0 0.76" rpy="0 0 0"/>
-</xacro:zed_camera>
-```
-
-센서 고유 파라미터는 각 센서 xacro macro에서 수정하거나, macro 호출부에 인자로 넘깁니다.
-
-| 센서 | 설정 파일 | 주요 값 |
-| --- | --- | --- |
-| IMU | `eufs_sim/eufs_sensors/urdf/imu.urdf.xacro` | `noise`, `update_rate`, `topic_prefix` |
-| GPS | `eufs_sim/eufs_sensors/urdf/gps.urdf.xacro` | `update_rate`, position/velocity noise |
-| LiDAR VLP-16R | `eufs_sim/eufs_sensors/urdf/VLP-16R.urdf.xacro` | `hz`, `lasers`, `samples`, `min_range`, `max_range`, `noise`, `min_angle`, `max_angle`, `topic` |
-| ZED camera | `eufs_sim/eufs_sensors/urdf/zed.urdf.xacro` | `update_rate`, `horizontal_fov`, image `width/height`, clipping range, image noise, topic remapping |
-| Magnetometer | `eufs_sim/eufs_sensors/urdf/magnetometer.urdf.xacro` | topic, noise |
-
-LiDAR 예시:
-
-```xml
-<xacro:VLP-16R
-  parent="chassis"
-  name="velodyne"
-  topic="/velodyne_points"
-  hz="10"
-  lasers="40"
-  samples="350"
-  min_range="0.2"
-  max_range="100.0"
-  noise="0.008"
-  active="$(arg simulate_perception)">
-  <origin xyz="-0.15 0.0 0.79" rpy="0 ${1*M_PI/180.0} 0"/>
-</xacro:VLP-16R>
-```
-
-차량 동역학 파라미터는 센서가 아니라 vehicle model preset입니다.
-
-```bash
-eufs_sim/eufs_racecar/robots/eufs/configDry.yaml
-eufs_sim/eufs_racecar/robots/eufs/configWet.yaml
-eufs_sim/eufs_racecar/robots/ads-dv/configDry.yaml
-eufs_sim/eufs_racecar/robots/ads-dv/configWet.yaml
-```
-
-simulated perception과 ground truth plugin의 거리/FOV/noise는 아래 파일에서 수정합니다.
-
-```bash
-eufs_sim/eufs_plugins/urdf/eufs_plugins.gazebo.xacro
-```
-
-예: `/camera_0/cones`, `/camera_1/cones`의 FOV/거리/noise는 `gz_camera_0_cones`, `gz_camera_1_cones` plugin 블록에서 조정합니다.
-
-수정 후에는 관련 패키지를 다시 빌드하고 시뮬레이션을 재시작해야 합니다.
-
-```bash
-colcon build --symlink-install --packages-select eufs_sensors eufs_racecar eufs_plugins
-source install/setup.zsh
-```
-
-## 9. 주요 서비스
-
-상태 머신 리셋:
-
-```bash
-ros2 service call /ros_can/reset std_srvs/srv/Trigger "{}"
-```
-
-차량 위치 리셋:
-
-```bash
-ros2 service call /ros_can/reset_vehicle_pos std_srvs/srv/Trigger "{}"
-```
-
-콘 위치 리셋:
-
-```bash
-ros2 service call /ros_can/reset_cone_pos std_srvs/srv/Trigger "{}"
-```
-
-비상정지:
-
-```bash
-ros2 service call /ros_can/ebs std_srvs/srv/Trigger "{}"
-```
-
-현재 command mode 확인:
-
-```bash
-ros2 service call /race_car_model/command_mode std_srvs/srv/Trigger "{}"
-```
-
-## 10. 상태 머신 흐름
-
-기본 상태는 다음처럼 움직입니다.
-
-```text
-AS_OFF
-  -> 미션 선택
-AS_READY
-  -> 약 5초 뒤
-AS_DRIVING
-  -> /ros_can/mission_completed true
-AS_FINISHED
-```
-
-`AMI_MANUAL`은 수동 조작용입니다. 이 경우 `AS_DRIVING` 상태가 아니어도 차량 plugin의 `canDrive()` 조건을 통과합니다.
-
-미션 번호:
-
-| 값 | 의미 |
-| --- | --- |
-| `10` | `AMI_NOT_SELECTED` |
-| `11` | `AMI_ACCELERATION` |
-| `12` | `AMI_SKIDPAD` |
-| `13` | `AMI_AUTOCROSS` |
-| `14` | `AMI_TRACK_DRIVE` |
-| `15` | `AMI_AUTONOMOUS_DEMO` |
-| `20` | `AMI_JOYSTICK` |
-| `21` | `AMI_MANUAL` |
-
-## 11. Troubleshooting
-
-### Gazebo plugin을 못 찾는 경우
-
-`EUFS_MASTER`와 setup sourcing을 확인합니다.
-
-```bash
-cd /home/shchon11/formula_student
-export EUFS_MASTER=$PWD
-source /opt/ros/humble/setup.zsh
-source install/setup.zsh
-```
-
-plugin library가 있는지도 확인합니다.
-
-```bash
-ls install/eufs_plugins/lib
-```
-
-### `eufs_msgs`를 못 찾는 경우
-
-워크스페이스 전체를 빌드하고 setup을 다시 source합니다.
-
-```bash
-colcon build --symlink-install
-source install/setup.zsh
-ros2 interface show eufs_msgs/msg/CanState
-```
-
-### Protobuf 충돌이 나는 경우
-
-이 환경에는 `/usr/local`에 오래된 Protobuf가 있을 수 있습니다. Gazebo Classic은 Ubuntu Jammy의 system Protobuf와 맞춰 빌드되어 있으므로, `eufs_plugins/CMakeLists.txt`에서 system Protobuf를 우선 사용하도록 처리했습니다.
-
-확인 명령:
-
-```bash
-which protoc
-protoc --version
-pkg-config --modversion protobuf
-```
-
-장기적으로는 `/usr/local`에 수동 설치된 오래된 Protobuf를 제거하거나 비활성화하는 것이 가장 깔끔합니다.
-
-### RQT GUI에서 `setGeometry`, `setMaximum`, `setMinimum` float 에러가 나는 경우
-
-ROS 2 Humble/Jammy의 PyQt는 일부 Qt 함수에 `float` 인자를 허용하지 않습니다. 이 레포에서는 런처와 조향 GUI에서 해당 값을 `int`로 변환하도록 패치했습니다.
-
-수정 후 아래 패키지를 다시 빌드합니다.
-
-```bash
-colcon build --symlink-install --packages-select eufs_launcher eufs_rqt
-source install/setup.zsh
-```
-
-### `/cmd`를 보내도 차가 안 움직이는 경우
-
-아래를 확인합니다.
-
-```bash
-ros2 topic echo /ros_can/state_str
-ros2 service call /race_car_model/command_mode std_srvs/srv/Trigger "{}"
-```
-
-수동 조작이면 먼저 `AMI_MANUAL`로 바꿉니다.
-
-```bash
-ros2 service call /ros_can/set_mission eufs_msgs/srv/SetCanState \
-  "{ami_state: 21, as_state: 0}"
-```
-
-그리고 `/cmd`를 1회가 아니라 지속적으로 publish합니다.
+<div align="center">
+<sub>Built on <a href="https://gitlab.com/eufs">EUFS Simulator</a> (MIT). © HYU Formula Student.</sub>
+</div>
