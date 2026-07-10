@@ -32,8 +32,8 @@ perception_baseline_node:
     min_variance: 0.0001
 
     roi_min_x: 0.5
-    roi_max_x: 30.0
-    roi_abs_y: 15.0
+    roi_max_x: 40.0
+    roi_abs_y: 18.0
     roi_min_z: -0.2
     roi_max_z: 1.5
     ground_min_z: 0.05
@@ -45,30 +45,36 @@ perception_baseline_node:
     self_mask_min_z: -0.4
     self_mask_max_z: 1.4
 
-    cluster_eps: 0.35
-    cluster_min_points: 3
+    # Loosened for sparse LiDAR: accept clusters with fewer points and larger
+    # neighbourhood so cones farther than a couple of metres still fuse.
+    cluster_eps: 0.60
+    cluster_min_points: 2
     cluster_min_height: 0.02
-    cluster_max_height: 0.80
-    cluster_max_width: 0.90
+    cluster_max_height: 0.90
+    cluster_max_width: 1.00
 
     min_bbox_probability: 0.0
     min_projected_points: 1
     min_project_depth: 0.2
 
+    # Sparse association carries the far cones. Everything here is loosened a
+    # lot: fewer points per band (down to a single point past the near zone),
+    # the lenient mid band extended out to 18 m, and the far YOLO
+    # probability / bbox-size / depth-span gates relaxed.
     sparse_association_enabled: true
-    sparse_bbox_margin_px: 4.0
-    sparse_bbox_margin_ratio: 0.15
-    sparse_near_range_m: 6.0
-    sparse_far_range_m: 12.0
-    sparse_near_min_points: 4
-    sparse_mid_min_points: 3
-    sparse_far_min_points: 2
-    sparse_far_min_probability: 0.25
-    sparse_far_min_bbox_width_px: 4.0
-    sparse_far_min_bbox_height_px: 4.0
-    sparse_max_depth_span_m: 1.0
-    sparse_max_depth_span_ratio: 0.35
-    sparse_max_width: 0.90
+    sparse_bbox_margin_px: 8.0
+    sparse_bbox_margin_ratio: 0.30
+    sparse_near_range_m: 4.0
+    sparse_far_range_m: 18.0
+    sparse_near_min_points: 2
+    sparse_mid_min_points: 1
+    sparse_far_min_points: 1
+    sparse_far_min_probability: 0.10
+    sparse_far_min_bbox_width_px: 2.0
+    sparse_far_min_bbox_height_px: 2.0
+    sparse_max_depth_span_m: 2.0
+    sparse_max_depth_span_ratio: 0.60
+    sparse_max_width: 1.00
     sparse_variance_x: 0.12
     sparse_variance_y: 0.12
 
