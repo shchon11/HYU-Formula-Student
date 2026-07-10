@@ -1,6 +1,8 @@
 #include "global_planner/slam_centerline_builder.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <sstream>
 
 #include "global_planner/slam_boundary_ordering.hpp"
@@ -9,6 +11,38 @@ namespace global_planner
 {
 namespace
 {
+
+// Closest point to `query` on the polyline `poly` (projected onto each segment,
+// not just the nearest vertex). Used to pair a boundary sample with the true
+// opposite-boundary point instead of assuming both boundaries share an
+// arc-length parameterisation — the latter mismatches whenever the two sides
+// have unequal length or offset start points (i.e. any full-loop map).
+PlannerPoint closestPointOnPolyline(
+  const PlannerPoint & query, const std::vector<PlannerPoint> & poly)
+{
+  PlannerPoint best = poly.front();
+  double best_d2 = std::numeric_limits<double>::max();
+  for (std::size_t i = 0; i + 1U < poly.size(); ++i) {
+    const PlannerPoint & a = poly[i];
+    const PlannerPoint & b = poly[i + 1U];
+    const double vx = b.x - a.x;
+    const double vy = b.y - a.y;
+    const double len2 = vx * vx + vy * vy;
+    double t = 0.0;
+    if (len2 > 0.0) {
+      t = std::clamp(((query.x - a.x) * vx + (query.y - a.y) * vy) / len2, 0.0, 1.0);
+    }
+    const PlannerPoint proj{a.x + t * vx, a.y + t * vy};
+    const double dx = query.x - proj.x;
+    const double dy = query.y - proj.y;
+    const double d2 = dx * dx + dy * dy;
+    if (d2 < best_d2) {
+      best_d2 = d2;
+      best = proj;
+    }
+  }
+  return best;
+}
 
 std::vector<PlannerPoint> finiteConePoints(
   const std::vector<eufs_msgs::msg::ConeWithCovariance> & cones)
@@ -107,15 +141,19 @@ bool buildCenterlineFromSlamMap(
     return false;
   }
 
-  const double paired_length = std::min(blue_arc.back(), yellow_arc.back());
+  // Sample evenly along the blue boundary and pair each sample with the closest
+  // point on the yellow boundary. Nearest-point pairing (not shared arc-length
+  // ratio) keeps the pairing local, so it stays correct on full-loop maps where
+  // the two sides differ in length — e.g. loading a saved map in localization.
   const std::size_t pair_count = std::max<std::size_t>(
-    2U, static_cast<std::size_t>(std::ceil(paired_length / config.waypoint_spacing_m)) + 1U);
+    2U, static_cast<std::size_t>(std::ceil(blue_arc.back() / config.waypoint_spacing_m)) + 1U);
+  (void)yellow_arc;
   std::vector<PlannerPoint> centerline;
   centerline.reserve(pair_count + 1U);
   for (std::size_t i = 0; i < pair_count; ++i) {
     const double ratio = static_cast<double>(i) / static_cast<double>(pair_count - 1U);
     const auto blue = interpolateAtArcLength(ordered_blue, blue_arc, ratio * blue_arc.back());
-    const auto yellow = interpolateAtArcLength(ordered_yellow, yellow_arc, ratio * yellow_arc.back());
+    const auto yellow = closestPointOnPolyline(blue, ordered_yellow);
     const double width = distance(blue, yellow);
     if (width < config.min_track_width_m || width > config.max_track_width_m) {
       std::ostringstream stream;
