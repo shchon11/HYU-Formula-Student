@@ -9,6 +9,7 @@
 #include "global_planner/planner_geometry.hpp"
 #include "global_planner/slam_centerline_builder.hpp"
 #include "nav_msgs/msg/odometry.hpp"
+#include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/string.hpp"
@@ -76,6 +77,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr graph_slam_status_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr map_converged_sub_;
   rclcpp::Publisher<eufs_msgs::msg::WaypointArrayStamped>::SharedPtr global_waypoints_pub_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr global_path_viz_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr global_path_valid_pub_;
   rclcpp::TimerBase::SharedPtr heartbeat_timer_;
 };

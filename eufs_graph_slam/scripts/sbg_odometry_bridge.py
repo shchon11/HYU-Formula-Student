@@ -100,7 +100,9 @@ class SbgOdometryBridge(Node):
         self.health_topic = self.declare_parameter(
             "health_topic", "/sbg_bridge/status"
         ).value
-        self.publish_markers = self.declare_parameter("publish_markers", True).value
+        # Default off: the 2-sigma fix disc reads like a floating pie chart in
+        # RViz. Re-enable with publish_markers:=true when debugging GNSS.
+        self.publish_markers = self.declare_parameter("publish_markers", False).value
         self.marker_topic = self.declare_parameter(
             "marker_topic", "/gnss/markers"
         ).value
@@ -437,12 +439,13 @@ class SbgOdometryBridge(Node):
 
         ov = OverlayText()
         ov.action = OverlayText.ADD
-        # The ATE overlay sits at (12, 12) with height 110; park this just
-        # below it (the RViz TextOverlay display must not overtake position).
-        ov.width = 240
+        # HUD stack (left edge, 8px gaps): ATE box (12,12,h110) -> SLAM status
+        # box (12,130,h34) -> this GNSS box (12,172). Keep the three publishers
+        # in sync when moving any of them.
+        ov.width = 220
         ov.height = 96
         ov.horizontal_distance = 12
-        ov.vertical_distance = 130
+        ov.vertical_distance = 172
         ov.horizontal_alignment = OverlayText.LEFT
         ov.vertical_alignment = OverlayText.TOP
         ov.bg_color = ColorRGBA(r=0.0, g=0.0, b=0.0, a=0.55)

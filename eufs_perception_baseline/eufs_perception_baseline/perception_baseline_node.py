@@ -1536,59 +1536,62 @@ class PerceptionBaselineNode(Node):
     def _viz_topic_for(topic: str) -> str:
         return topic.rstrip("/") + "/viz"
 
+    # Real 3D cone meshes — the same assets Gazebo places on the track, so the
+    # detections in RViz look identical to the simulated cones. The `unknown`
+    # class reuses the small-cone mesh with a grey tint (materials disabled).
+    _CONE_MESHES = {
+        "blue": ("package://eufs_tracks/meshes/cone_blue.dae", None),
+        "yellow": ("package://eufs_tracks/meshes/cone_yellow.dae", None),
+        "orange": ("package://eufs_tracks/meshes/cone.dae", None),
+        "big_orange": ("package://eufs_tracks/meshes/cone_big.dae", None),
+        "unknown": ("package://eufs_tracks/meshes/cone.dae", (0.6, 0.6, 0.6, 0.9)),
+    }
+
     @classmethod
     def _cones_to_markers(
         cls,
         msg: ConeArrayWithCovariance,
-        marker_scale: float = 0.25,
+        marker_scale: float = 0.25,  # noqa: ARG003 — kept for call compatibility
     ) -> MarkerArray:
         markers = MarkerArray()
         markers.markers.append(cls._clear_marker(msg.header))
-        markers.markers.extend(
-            [
-                cls._cone_list_marker(
-                    msg.header,
-                    "blue",
-                    0,
-                    msg.blue_cones,
-                    (0.0, 0.2, 1.0, 0.95),
-                    marker_scale,
-                ),
-                cls._cone_list_marker(
-                    msg.header,
-                    "yellow",
-                    1,
-                    msg.yellow_cones,
-                    (1.0, 0.9, 0.0, 0.95),
-                    marker_scale,
-                ),
-                cls._cone_list_marker(
-                    msg.header,
-                    "orange",
-                    2,
-                    msg.orange_cones,
-                    (1.0, 0.45, 0.0, 0.95),
-                    marker_scale,
-                ),
-                cls._cone_list_marker(
-                    msg.header,
-                    "big_orange",
-                    3,
-                    msg.big_orange_cones,
-                    (1.0, 0.2, 0.0, 0.95),
-                    marker_scale,
-                ),
-                cls._cone_list_marker(
-                    msg.header,
-                    "unknown",
-                    4,
-                    msg.unknown_color_cones,
-                    (0.7, 0.7, 0.7, 0.95),
-                    marker_scale,
-                ),
-            ]
-        )
+        cone_sets = [
+            ("blue", msg.blue_cones),
+            ("yellow", msg.yellow_cones),
+            ("orange", msg.orange_cones),
+            ("big_orange", msg.big_orange_cones),
+            ("unknown", msg.unknown_color_cones),
+        ]
+        for namespace, cones in cone_sets:
+            mesh, tint = cls._CONE_MESHES[namespace]
+            for i, cone in enumerate(cones):
+                markers.markers.append(
+                    cls._cone_mesh_marker(msg.header, namespace, i, cone, mesh, tint)
+                )
         return markers
+
+    @staticmethod
+    def _cone_mesh_marker(header, namespace, marker_id, cone, mesh, tint) -> Marker:
+        marker = Marker()
+        marker.header = header
+        marker.ns = namespace
+        marker.id = marker_id
+        marker.type = Marker.MESH_RESOURCE
+        marker.action = Marker.ADD
+        marker.mesh_resource = mesh
+        marker.pose.position.x = float(cone.point.x)
+        marker.pose.position.y = float(cone.point.y)
+        marker.pose.position.z = float(cone.point.z)
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = 1.0
+        marker.scale.y = 1.0
+        marker.scale.z = 1.0
+        if tint is None:
+            marker.mesh_use_embedded_materials = True
+        else:
+            marker.mesh_use_embedded_materials = False
+            marker.color.r, marker.color.g, marker.color.b, marker.color.a = tint
+        return marker
 
     @staticmethod
     def _clear_marker(header) -> Marker:

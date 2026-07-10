@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "eufs_msgs/msg/waypoint.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
 
 namespace global_planner
 {
@@ -38,6 +39,9 @@ PlannerNode::PlannerNode()
 
   global_waypoints_pub_ = create_publisher<eufs_msgs::msg::WaypointArrayStamped>(
     global_waypoints_topic_, latched_qos);
+  // RViz-friendly mirror of the waypoint message (nav_msgs/Path, latched).
+  global_path_viz_pub_ = create_publisher<nav_msgs::msg::Path>(
+    global_waypoints_topic_ + "/path", latched_qos);
   global_path_valid_pub_ = create_publisher<std_msgs::msg::Bool>(
     global_path_valid_topic_, valid_qos);
 
@@ -139,6 +143,29 @@ void PlannerNode::onMapConverged(const std_msgs::msg::Bool::SharedPtr msg)
     msg->data ? "true" : "false");
 }
 
+namespace
+{
+
+nav_msgs::msg::Path buildPathMessage(const eufs_msgs::msg::WaypointArrayStamped & msg)
+{
+  nav_msgs::msg::Path path;
+  path.header = msg.header;
+  path.poses.reserve(msg.waypoints.size());
+  for (const auto & wp : msg.waypoints) {
+    geometry_msgs::msg::PoseStamped pose;
+    pose.header = msg.header;
+    pose.pose.position.x = wp.x_m;
+    pose.pose.position.y = wp.y_m;
+    pose.pose.position.z = 0.0;
+    pose.pose.orientation.z = std::sin(0.5 * wp.psi_rad);
+    pose.pose.orientation.w = std::cos(0.5 * wp.psi_rad);
+    path.poses.push_back(pose);
+  }
+  return path;
+}
+
+}  // namespace
+
 void PlannerNode::onHeartbeat()
 {
   std::string reason;
@@ -158,6 +185,7 @@ void PlannerNode::onHeartbeat()
   if (!path_valid_ || published_cone_map_version_ != cone_map_version_) {
     auto waypoint_msg = buildWaypointMessage(waypoints);
     global_waypoints_pub_->publish(waypoint_msg);
+    global_path_viz_pub_->publish(buildPathMessage(waypoint_msg));
     published_cone_map_version_ = cone_map_version_;
     RCLCPP_INFO(
       get_logger(),

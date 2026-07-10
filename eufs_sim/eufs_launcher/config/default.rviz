@@ -5,17 +5,15 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /Global Options1
-        - /Status1
-        - /RobotModel1
-        - /RobotModel1/Description Topic1
-        - /TF1/Frames1
+        - /Perception1
+        - /SLAM1
+        - /Planning1
       Splitter Ratio: 0.6499999761581421
     Tree Height: 1079
   - Class: rviz_common/Selection
     Name: Selection
   - Class: rviz_common/Tool Properties
     Expanded:
-      - /2D Goal Pose1
       - /Publish Point1
     Name: Tool Properties
     Splitter Ratio: 0.5886790156364441
@@ -28,11 +26,11 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: PointCloud2
+    SyncSource: Velodyne
 Visualization Manager:
   Class: ""
   Displays:
-    - Alpha: 0.5
+    - Alpha: 0.30000001192092896
       Cell Size: 1
       Class: rviz_default_plugins/Grid
       Color: 160; 160; 164
@@ -47,7 +45,7 @@ Visualization Manager:
         Y: 0
         Z: 0
       Plane: XY
-      Plane Cell Count: 10
+      Plane Cell Count: 60
       Reference Frame: <Fixed Frame>
       Value: true
     - Alpha: 1
@@ -68,102 +66,6 @@ Visualization Manager:
         Expand Link Details: false
         Expand Tree: false
         Link Tree Style: Links in Alphabetic Order
-        base_footprint:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        chassis:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        gps_base_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        left_front_wheel:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        left_rear_wheel:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        left_steering_hinge:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        right_front_wheel:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        right_rear_wheel:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        right_steering_hinge:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        sbg_base_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        sbg_imu_base_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        velodyne:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        velodyne_base_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        zed_camera_center:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        zed_depth_camera_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        zed_depth_camera_optical_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        zed_imu_base_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        zed_left_camera_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        zed_left_camera_optical_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        zed_right_camera_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        zed_right_camera_optical_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
       Mass Properties:
         Inertia: false
         Mass: false
@@ -172,325 +74,270 @@ Visualization Manager:
       Update Interval: 0
       Value: true
       Visual Enabled: true
-    - Class: eufs_rviz_plugins/ConeArrayWithCovariance
-      Enabled: false
-      Name: Ground Truth Cones
-      Namespaces: ~
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /ground_truth/cones
-      Value: false
-    - Class: eufs_rviz_plugins/ConeArrayWithCovariance
-      Enabled: false
-      Name: Fusion Cones
-      Namespaces: ~
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /cones
-      Value: false
-    - Class: eufs_rviz_plugins/ConeArrayWithCovariance
-      Enabled: true
-      Name: Left Camera Cones
-      Namespaces:
-        cone: true
-        covariance: true
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /camera_0/cones
-      Value: true
-    - Class: eufs_rviz_plugins/ConeArrayWithCovariance
-      Enabled: true
-      Name: Right Camera Cones
-      Namespaces:
-        cone: true
-        covariance: true
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /camera_1/cones
-      Value: true
-    - Class: eufs_rviz_plugins/WaypointArrayStamped
-      Enabled: false
-      Name: WaypointArrayStamped
-      Namespaces: ~
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /trajectory
-      Value: false
-    - Alpha: 1
-      Autocompute Intensity Bounds: true
-      Autocompute Value Bounds:
-        Max Value: 10
-        Min Value: -10
-        Value: true
-      Axis: Z
-      Channel Name: intensity
-      Class: rviz_default_plugins/PointCloud2
-      Color: 255; 255; 255
-      Color Transformer: Intensity
-      Decay Time: 0
-      Enabled: false
-      Invert Rainbow: false
-      Max Color: 255; 255; 255
-      Max Intensity: 0
-      Min Color: 0; 0; 0
-      Min Intensity: 0
-      Name: PointCloud2
-      Position Transformer: XYZ
-      Selectable: true
-      Size (Pixels): 3
-      Size (m): 0.009999999776482582
-      Style: Flat Squares
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        Filter size: 10
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /velodyne_points
-      Use Fixed Frame: true
-      Use rainbow: true
-      Value: false
-    - Alpha: 1
-      Autocompute Intensity Bounds: true
-      Autocompute Value Bounds:
-        Max Value: 10
-        Min Value: -10
-        Value: true
-      Axis: Z
-      Channel Name: intensity
-      Class: rviz_default_plugins/PointCloud2
-      Color: 255; 255; 255
-      Color Transformer: RGB8
-      Decay Time: 0
-      Enabled: false
-      Invert Rainbow: false
-      Max Color: 255; 255; 255
-      Max Intensity: 4096
-      Min Color: 0; 0; 0
-      Min Intensity: 0
-      Name: PointCloud2
-      Position Transformer: XYZ
-      Selectable: true
-      Size (Pixels): 3
-      Size (m): 0.009999999776482582
-      Style: Flat Squares
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        Filter size: 10
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /zed/points
-      Use Fixed Frame: true
-      Use rainbow: true
-      Value: false
-    - Class: eufs_rviz_plugins/ConeArrayWithCovariance
-      Enabled: true
-      Name: Graph SLAM Map
-      Namespaces:
-        cone: true
-        covariance: true
-      Topic:
-        Depth: 5
-        Durability Policy: Transient Local
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /graph_slam/map
-      Value: true
-    - Class: rviz_default_plugins/Path
-      Enabled: true
-      Name: Graph SLAM Path
-      Buffer Length: 1
-      Color: 85; 255; 127
-      Head Diameter: 0.30000001192092896
-      Head Length: 0.20000000298023224
-      Length: 0.30000001192092896
-      Line Style: Lines
-      Line Width: 0.05000000074505806
-      Offset:
-        X: 0
-        Y: 0
-        Z: 0
-      Pose Color: 255; 85; 255
-      Pose Style: None
-      Radius: 0.029999999329447746
-      Shaft Diameter: 0.10000000149011612
-      Shaft Length: 0.10000000149011612
-      Topic:
-        Depth: 5
-        Durability Policy: Transient Local
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /graph_slam/path
-      Value: true
-    - Class: rviz_default_plugins/Odometry
-      Angle Tolerance: 0.10000000149011612
-      Covariance:
-        Orientation:
-          Alpha: 0.5
-          Color: 255; 255; 127
-          Color Style: Unique
-          Frame: Local
-          Offset: 1
-          Scale: 1
-          Value: true
-        Position:
-          Alpha: 0.30000001192092896
-          Color: 204; 51; 204
-          Scale: 1
-          Value: true
-        Value: false
-      Enabled: true
-      Keep: 100
-      Name: Graph SLAM Odometry
-      Position Tolerance: 0.10000000149011612
-      Shape:
-        Alpha: 1
-        Axes Length: 1
-        Axes Radius: 0.10000000149011612
-        Color: 255; 25; 0
-        Head Length: 0.30000001192092896
-        Head Radius: 0.10000000149011612
-        Shaft Length: 1
-        Shaft Radius: 0.05000000074505806
-        Value: Arrow
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /graph_slam/odom
-      Value: true
-    - Class: rviz_default_plugins/MarkerArray
-      Enabled: true
-      Marker Topic:
-        Depth: 5
-        Durability Policy: Transient Local
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /graph_slam/markers
-      Name: Graph SLAM Markers
-      Namespaces:
-        landmarks: true
-        path: true
-      Queue Size: 100
-      Value: true
-    - Class: rviz_default_plugins/MarkerArray
-      Enabled: true
-      Marker Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /gnss/markers
-      Name: GNSS State
-      Namespaces:
-        gnss: true
-      Queue Size: 100
-      Value: true
     - Class: rviz_default_plugins/TF
-      Enabled: true
+      Enabled: false
       Frame Timeout: 15
       Frames:
         All Enabled: false
-        base_footprint:
-          Value: false
-        chassis:
-          Value: false
-        gps_base_link:
-          Value: false
-        left_front_wheel:
-          Value: false
-        left_rear_wheel:
-          Value: false
-        left_steering_hinge:
-          Value: false
-        right_front_wheel:
-          Value: false
-        right_rear_wheel:
-          Value: false
-        right_steering_hinge:
-          Value: false
-        sbg_base_link:
-          Value: false
-        sbg_imu_base_link:
-          Value: false
-        velodyne:
-          Value: false
-        velodyne_base_link:
-          Value: true
-        zed_camera_center:
-          Value: false
-        zed_depth_camera_frame:
-          Value: false
-        zed_depth_camera_optical_frame:
-          Value: false
-        zed_imu_base_link:
-          Value: true
-        zed_left_camera_frame:
-          Value: false
-        zed_left_camera_optical_frame:
-          Value: false
-        zed_right_camera_frame:
-          Value: false
-        zed_right_camera_optical_frame:
-          Value: false
-      Marker Scale: 0.5
+      Marker Scale: 1
       Name: TF
       Show Arrows: false
       Show Axes: true
       Show Names: true
-      Tree:
-        base_footprint:
-          chassis:
-            gps_base_link:
-              {}
-            left_rear_wheel:
-              {}
-            left_steering_hinge:
-              left_front_wheel:
-                {}
-            right_rear_wheel:
-              {}
-            right_steering_hinge:
-              right_front_wheel:
-                {}
-            sbg_base_link:
-              {}
-            sbg_imu_base_link:
-              {}
-            velodyne_base_link:
-              velodyne:
-                {}
-            zed_camera_center:
-              zed_depth_camera_frame:
-                zed_depth_camera_optical_frame:
-                  {}
-              zed_left_camera_frame:
-                zed_left_camera_optical_frame:
-                  {}
-              zed_right_camera_frame:
-                zed_right_camera_optical_frame:
-                  {}
-            zed_imu_base_link:
-              {}
       Update Interval: 0
-      Value: true
+      Value: false
+    - Class: rviz_common/Group
+      Displays:
+        - Alpha: 1
+          Autocompute Intensity Bounds: true
+          Autocompute Value Bounds:
+            Max Value: 10
+            Min Value: -10
+            Value: true
+          Axis: Z
+          Channel Name: intensity
+          Class: rviz_default_plugins/PointCloud2
+          Color: 255; 255; 255
+          Color Transformer: Intensity
+          Decay Time: 0
+          Enabled: true
+          Invert Rainbow: false
+          Max Color: 255; 255; 255
+          Max Intensity: 100
+          Min Color: 0; 0; 0
+          Min Intensity: 0
+          Name: Velodyne
+          Position Transformer: XYZ
+          Selectable: true
+          Size (Pixels): 2
+          Size (m): 0.029999999329447746
+          Style: Points
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /velodyne_points
+          Use Fixed Frame: true
+          Use rainbow: true
+          Value: true
+        - Class: rviz_default_plugins/Image
+          Enabled: false
+          Max Value: 1
+          Median window: 5
+          Min Value: 0
+          Name: ZED Left Image
+          Normalize Range: true
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /zed/left/image_rect_color
+          Value: false
+      Enabled: true
+      Name: Sensors
+    - Class: rviz_common/Group
+      Displays:
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: Live Cones (fusion)
+          Namespaces:
+            {}
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /cones/viz
+          Value: true
+      Enabled: true
+      Name: Perception
+    - Class: rviz_common/Group
+      Displays:
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: SLAM Map (cones + graph)
+          Namespaces:
+            {}
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /graph_slam/markers
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 25; 255; 240
+          Enabled: true
+          Head Diameter: 0.30000001192092896
+          Head Length: 0.20000000298023224
+          Length: 0.30000001192092896
+          Line Style: Lines
+          Line Width: 0.029999999329447746
+          Name: SLAM Path
+          Offset:
+            X: 0
+            Y: 0
+            Z: 0
+          Pose Color: 255; 85; 255
+          Pose Style: None
+          Radius: 0.029999999329447746
+          Shaft Diameter: 0.10000000149011612
+          Shaft Length: 0.10000000149011612
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /graph_slam/path
+          Value: true
+        - Angle Tolerance: 0.10000000149011612
+          Class: rviz_default_plugins/Odometry
+          Covariance:
+            Orientation:
+              Alpha: 0.5
+              Color: 255; 255; 127
+              Color Style: Unique
+              Frame: Local
+              Offset: 1
+              Scale: 1
+              Value: false
+            Position:
+              Alpha: 0.30000001192092896
+              Color: 204; 51; 204
+              Scale: 1
+              Value: false
+            Value: false
+          Enabled: true
+          Keep: 60
+          Name: Ego Odometry
+          Position Tolerance: 0.10000000149011612
+          Shape:
+            Alpha: 1
+            Axes Length: 1
+            Axes Radius: 0.10000000149011612
+            Color: 255; 25; 0
+            Head Length: 0.15000000596046448
+            Head Radius: 0.07999999821186066
+            Shaft Length: 0.5
+            Shaft Radius: 0.03999999910593033
+            Value: Arrow
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /localization/ego_odom
+          Value: true
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: true
+          Name: ATE Label
+          Namespaces:
+            {}
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /graph_slam/ate_markers
+          Value: true
+      Enabled: true
+      Name: SLAM
+    - Class: rviz_common/Group
+      Displays:
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 0; 220; 60
+          Enabled: true
+          Head Diameter: 0.30000001192092896
+          Head Length: 0.20000000298023224
+          Length: 0.30000001192092896
+          Line Style: Billboards
+          Line Width: 0.11999999731779099
+          Name: Global Raceline
+          Offset:
+            X: 0
+            Y: 0
+            Z: 0.05000000074505806
+          Pose Color: 255; 85; 255
+          Pose Style: None
+          Radius: 0.029999999329447746
+          Shaft Diameter: 0.10000000149011612
+          Shaft Length: 0.10000000149011612
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /global_waypoints/path
+          Value: true
+        - Alpha: 1
+          Buffer Length: 1
+          Class: rviz_default_plugins/Path
+          Color: 255; 255; 255
+          Enabled: true
+          Head Diameter: 0.30000001192092896
+          Head Length: 0.20000000298023224
+          Length: 0.30000001192092896
+          Line Style: Billboards
+          Line Width: 0.07999999821186066
+          Name: Local Window
+          Offset:
+            X: 0
+            Y: 0
+            Z: 0.10000000149011612
+          Pose Color: 255; 85; 255
+          Pose Style: None
+          Radius: 0.029999999329447746
+          Shaft Diameter: 0.10000000149011612
+          Shaft Length: 0.10000000149011612
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /path_waypoints/path
+          Value: true
+      Enabled: true
+      Name: Planning
+    - Class: rviz_common/Group
+      Displays:
+        - Class: rviz_2d_overlay_plugins/TextOverlay
+          Enabled: true
+          Name: ATE HUD
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /graph_slam/ate_overlay
+          Value: true
+        - Class: rviz_2d_overlay_plugins/TextOverlay
+          Enabled: true
+          Name: SLAM Status HUD
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /graph_slam/status_overlay
+          Value: true
+        - Class: rviz_2d_overlay_plugins/TextOverlay
+          Enabled: true
+          Name: GNSS HUD
+          Topic:
+            Depth: 1
+            Durability Policy: Transient Local
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /gnss/overlay
+          Value: true
+      Enabled: true
+      Name: HUD
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -515,13 +362,6 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /initialpose
-    - Class: rviz_default_plugins/SetGoal
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /goal_pose
     - Class: rviz_default_plugins/PublishPoint
       Single click: true
       Topic:
@@ -537,25 +377,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 4.639639377593994
+      Distance: 25
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 0.0459451898932457
-        Y: 0.09137588739395142
-        Z: 0.8560234904289246
+        X: 0
+        Y: 0
+        Z: 0
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.46000048518180847
-      Target Frame: <Fixed Frame>
+      Pitch: 0.7853981852531433
+      Target Frame: base_footprint
       Value: Orbit (rviz_default_plugins)
-      Yaw: 2.156496047973633
+      Yaw: 3.1415927410125732
     Saved:
       - Class: rviz_default_plugins/Orbit
         Distance: 8.5
@@ -571,12 +411,28 @@ Visualization Manager:
         Focal Shape Fixed Size: true
         Focal Shape Size: 0.05000000074505806
         Invert Z Axis: false
-        Name: Default POV
+        Name: Chase Cam
         Near Clip Distance: 0.009999999776482582
         Pitch: 0.4000000059604645
-        Target Frame: <Fixed Frame>
+        Target Frame: base_footprint
         Value: Orbit (rviz_default_plugins)
         Yaw: 3.1414999961853027
+      - Angle: 0
+        Class: rviz_default_plugins/TopDownOrtho
+        Enable Stereo Rendering:
+          Stereo Eye Separation: 0.05999999865889549
+          Stereo Focal Distance: 1
+          Swap Stereo Eyes: false
+          Value: false
+        Invert Z Axis: false
+        Name: Track Map (Top-Down)
+        Near Clip Distance: 0.009999999776482582
+        Scale: 12
+        Target Frame: map
+        Value: TopDownOrtho (rviz_default_plugins)
+        X: 0
+        Y: 0
+    Value: true
 Window Geometry:
   Displays:
     collapsed: false
