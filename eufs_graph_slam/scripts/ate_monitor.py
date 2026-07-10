@@ -80,9 +80,12 @@ class ATEMonitor(Node):
         self.create_subscription(
             String, args.status_topic, self.on_status, status_qos)
 
+        # Latched (transient-local) so a late-joining RViz immediately gets the
+        # last HUD/marker instead of waiting for the next publish — and so the
+        # transient-local overlay displays in the shipped config actually match.
         latched = QoSProfile(
             depth=1, reliability=ReliabilityPolicy.RELIABLE,
-            durability=QoSDurabilityPolicy.VOLATILE)
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
         self.marker_pub = self.create_publisher(
             MarkerArray, "/graph_slam/ate_markers", latched)
         self.err_pub = self.create_publisher(Float32, "/graph_slam/pose_error", 10)

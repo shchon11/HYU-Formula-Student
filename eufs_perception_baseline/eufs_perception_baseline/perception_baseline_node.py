@@ -1537,14 +1537,15 @@ class PerceptionBaselineNode(Node):
         return topic.rstrip("/") + "/viz"
 
     # Real 3D cone meshes — the same assets Gazebo places on the track, so the
-    # detections in RViz look identical to the simulated cones. The `unknown`
-    # class reuses the small-cone mesh with a grey tint (materials disabled).
+    # detections in RViz look like the track cones. We tint each mesh with an
+    # explicit solid colour (mesh_use_embedded_materials off) — the .dae files'
+    # embedded materials do not render reliably in RViz (most come out white).
     _CONE_MESHES = {
-        "blue": ("package://eufs_tracks/meshes/cone_blue.dae", None),
-        "yellow": ("package://eufs_tracks/meshes/cone_yellow.dae", None),
-        "orange": ("package://eufs_tracks/meshes/cone.dae", None),
-        "big_orange": ("package://eufs_tracks/meshes/cone_big.dae", None),
-        "unknown": ("package://eufs_tracks/meshes/cone.dae", (0.6, 0.6, 0.6, 0.9)),
+        "blue": ("package://eufs_tracks/meshes/cone_blue.dae", (0.10, 0.30, 1.0, 1.0)),
+        "yellow": ("package://eufs_tracks/meshes/cone_yellow.dae", (1.0, 0.85, 0.0, 1.0)),
+        "orange": ("package://eufs_tracks/meshes/cone.dae", (1.0, 0.45, 0.0, 1.0)),
+        "big_orange": ("package://eufs_tracks/meshes/cone_big.dae", (1.0, 0.25, 0.0, 1.0)),
+        "unknown": ("package://eufs_tracks/meshes/cone.dae", (0.7, 0.7, 0.7, 1.0)),
     }
 
     @classmethod
@@ -1586,11 +1587,8 @@ class PerceptionBaselineNode(Node):
         marker.scale.x = 1.0
         marker.scale.y = 1.0
         marker.scale.z = 1.0
-        if tint is None:
-            marker.mesh_use_embedded_materials = True
-        else:
-            marker.mesh_use_embedded_materials = False
-            marker.color.r, marker.color.g, marker.color.b, marker.color.a = tint
+        marker.mesh_use_embedded_materials = False
+        marker.color.r, marker.color.g, marker.color.b, marker.color.a = tint
         return marker
 
     @staticmethod

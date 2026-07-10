@@ -2096,26 +2096,26 @@ void GraphSlamNode::publishMarkers(const rclcpp::Time & stamp)
     ConeColor::Unknown};
 
   // Landmarks render as the same 3D cone meshes Gazebo uses on the track so
-  // the SLAM map is visually comparable to the simulated world. Unknown-color
-  // landmarks reuse the small-cone mesh with a grey tint (materials off).
-  const auto meshForColor = [](ConeColor color) -> std::pair<std::string, bool> {
+  // the SLAM map is visually comparable to the simulated world. Every mesh is
+  // tinted with an explicit solid colour (embedded materials off) — the .dae
+  // materials do not render reliably in RViz (most come out white).
+  const auto meshForColor = [](ConeColor color) -> std::string {
       switch (color) {
         case ConeColor::Blue:
-          return {"package://eufs_tracks/meshes/cone_blue.dae", true};
+          return "package://eufs_tracks/meshes/cone_blue.dae";
         case ConeColor::Yellow:
-          return {"package://eufs_tracks/meshes/cone_yellow.dae", true};
-        case ConeColor::Orange:
-          return {"package://eufs_tracks/meshes/cone.dae", true};
+          return "package://eufs_tracks/meshes/cone_yellow.dae";
         case ConeColor::BigOrange:
-          return {"package://eufs_tracks/meshes/cone_big.dae", true};
+          return "package://eufs_tracks/meshes/cone_big.dae";
+        case ConeColor::Orange:
         case ConeColor::Unknown:
         default:
-          return {"package://eufs_tracks/meshes/cone.dae", false};
+          return "package://eufs_tracks/meshes/cone.dae";
       }
     };
 
   for (ConeColor color : colors) {
-    const auto mesh_spec = meshForColor(color);
+    const std::string mesh_resource = meshForColor(color);
     const std::string ns = colorName(color) + "_landmarks";
     int cone_id = 0;
 
@@ -2134,8 +2134,8 @@ void GraphSlamNode::publishMarkers(const rclcpp::Time & stamp)
       landmark_marker.id = cone_id++;
       landmark_marker.type = visualization_msgs::msg::Marker::MESH_RESOURCE;
       landmark_marker.action = visualization_msgs::msg::Marker::ADD;
-      landmark_marker.mesh_resource = mesh_spec.first;
-      landmark_marker.mesh_use_embedded_materials = mesh_spec.second;
+      landmark_marker.mesh_resource = mesh_resource;
+      landmark_marker.mesh_use_embedded_materials = false;
       const Eigen::Vector2d estimate = landmark.vertex->estimate();
       landmark_marker.pose.position.x = estimate.x();
       landmark_marker.pose.position.y = estimate.y();
@@ -2144,9 +2144,7 @@ void GraphSlamNode::publishMarkers(const rclcpp::Time & stamp)
       landmark_marker.scale.x = 1.0;
       landmark_marker.scale.y = 1.0;
       landmark_marker.scale.z = 1.0;
-      if (!mesh_spec.second) {
-        landmark_marker.color = colorToRgba(color, 0.9);
-      }
+      landmark_marker.color = colorToRgba(color, 0.95);
       markers.markers.push_back(landmark_marker);
     }
   }
