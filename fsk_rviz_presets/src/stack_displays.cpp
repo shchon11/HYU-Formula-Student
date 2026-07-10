@@ -86,11 +86,6 @@ void SlamStack::populate()
     "Best Effort");
   odom->subProp("Keep")->setValue(60);
 
-  // ate_monitor publishes ate_markers RELIABLE + VOLATILE, so the display must
-  // request VOLATILE (a Transient Local subscriber is QoS-incompatible here).
-  addTopicDisplay(
-    "rviz_default_plugins/MarkerArray", "ATE Label", "/graph_slam/ate_markers",
-    "Reliable", "Volatile");
 }
 
 void PlanningStack::populate()
@@ -117,7 +112,7 @@ void HudStack::populate()
 {
   setName("FSK HUD");
   addTopicDisplay(
-    "rviz_2d_overlay_plugins/TextOverlay", "ATE HUD", "/graph_slam/ate_overlay",
+    "rviz_2d_overlay_plugins/TextOverlay", "Path CTE HUD", "/planning/cte_overlay",
     "Reliable", "Transient Local");
   addTopicDisplay(
     "rviz_2d_overlay_plugins/TextOverlay", "SLAM Status HUD",

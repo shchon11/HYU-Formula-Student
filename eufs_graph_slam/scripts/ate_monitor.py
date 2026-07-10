@@ -5,41 +5,40 @@
 # license that can be found in the LICENSE file or at
 # https://opensource.org/licenses/MIT.
 """
-Live SLAM-vs-ground-truth error monitor for RViz.
+Path-tracking cross-track-error (CTE) monitor for RViz.
 
-Compares the graph SLAM pose (`/localization/ego_odom`) against ground truth
-(`/ground_truth/state`), interpolating ground truth to each SLAM stamp, and
-publishes:
+The planned raceline (/global_waypoints) is the d=0 reference. The ego pose's
+Frenet lateral offset d — published by frenet_odom_node as
+pose.pose.position.y on /car_state/frenet/odom — is treated as the tracking
+error and evaluated ATE-style (running RMSE of d, max |d|). GT-based ATE was
+removed: it needs ground truth, which does not exist on the real car.
 
-- `/graph_slam/ate_markers` (MarkerArray): a text label that follows the car
-  showing the instantaneous position error and the running ATE (RMSE), plus a
-  line connecting the SLAM and ground-truth positions.
-- `/graph_slam/pose_error` and `/graph_slam/ate` (Float32): the same numbers as
-  plain topics for rqt_plot.
+Publishes:
+- /planning/cte_overlay (OverlayText): fixed top-left HUD with the current
+  signed d, running RMSE and max |d|. Greys out to a "waiting" card while the
+  global path is invalid (frenet_odom_node stops publishing then).
+- /planning/cte and /planning/cte_rmse (Float32): the same numbers for
+  rqt_plot.
+- /graph_slam/status_overlay (OverlayText): SLAM lifecycle box (unchanged).
 
-Add a MarkerArray display on `/graph_slam/ate_markers` in RViz (fixed frame
-`map`) to see it live.
+Stats reset each time the global path becomes valid again — a new raceline is
+a new evaluation window.
 """
 
 import argparse
-import bisect
 import math
 import sys
-from collections import deque
+import time
 
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, ReliabilityPolicy
 
-from eufs_msgs.msg import CarState
 from nav_msgs.msg import Odometry
-from std_msgs.msg import ColorRGBA, Float32, String
-from geometry_msgs.msg import Point, Vector3
-from visualization_msgs.msg import Marker, MarkerArray
+from std_msgs.msg import Bool, ColorRGBA, Float32, String
 
-# Optional: a fixed screen-corner HUD needs the rviz_2d_overlay plugin
-# (apt install ros-humble-rviz-2d-overlay-plugins). Without it we fall back to
-# a text marker that follows the car.
+# The fixed screen-corner HUD needs the rviz_2d_overlay plugin
+# (apt install ros-humble-rviz-2d-overlay-plugins).
 try:
     from rviz_2d_overlay_msgs.msg import OverlayText
     HAVE_OVERLAY = True
@@ -47,29 +46,27 @@ except ImportError:
     HAVE_OVERLAY = False
 
 
-def stamp_sec(header):
-    return header.stamp.sec + header.stamp.nanosec * 1e-9
-
-
-class ATEMonitor(Node):
+class CTEMonitor(Node):
+    # Node/executable name stays "ate_monitor" so existing launch arguments
+    # (graph_slam.launch.py ate_monitor:=..., planning_bringup
+    # graph_slam_ate_monitor:=...) keep working unchanged.
     def __init__(self, args):
         super().__init__("ate_monitor")
-        self.set_parameters(
-            [rclpy.parameter.Parameter("use_sim_time", rclpy.Parameter.Type.BOOL, True)]
-        )
-        self.map_frame = args.map_frame
-        self.text_z = args.text_height
+        self.stale_timeout = args.stale_timeout
 
-        self.gt = deque(maxlen=4000)   # (t, x, y)
-        self.gt_t = deque(maxlen=4000)
+        # Running stats over the signed Frenet d (reset on path re-validation).
         self.sum_sq = 0.0
         self.count = 0
-        self.max_err = 0.0
-        self.latest = None             # (sx, sy, gx, gy, err, rmse)
+        self.max_abs = 0.0
+        self.latest = None            # (d, s, rmse)
+        self.last_rx_monotonic = None
+        self.path_valid = False
 
-        best_effort = QoSProfile(depth=50, reliability=ReliabilityPolicy.BEST_EFFORT)
-        self.create_subscription(Odometry, args.slam_odom, self.on_slam, 50)
-        self.create_subscription(CarState, args.gt_topic, self.on_gt, best_effort)
+        self.create_subscription(Odometry, args.frenet_odom, self.on_frenet, 50)
+
+        # Planner heartbeat: reliable volatile (matches planner_node's QoS).
+        self.create_subscription(
+            Bool, args.path_valid_topic, self.on_path_valid, 10)
 
         # SLAM lifecycle (mapping / mapping_converged / localization); the
         # node latches it, so subscribe transient_local to get the last state.
@@ -80,124 +77,88 @@ class ATEMonitor(Node):
         self.create_subscription(
             String, args.status_topic, self.on_status, status_qos)
 
-        # Latched (transient-local) so a late-joining RViz immediately gets the
-        # last HUD/marker instead of waiting for the next publish — and so the
-        # transient-local overlay displays in the shipped config actually match.
+        self.cte_pub = self.create_publisher(Float32, "/planning/cte", 10)
+        self.cte_rmse_pub = self.create_publisher(
+            Float32, "/planning/cte_rmse", 10)
+
+        # Latched (transient-local) so a late-joining RViz immediately gets
+        # the last HUD state — and so the transient-local overlay displays in
+        # the shipped RViz config actually match this publisher's QoS.
         latched = QoSProfile(
             depth=1, reliability=ReliabilityPolicy.RELIABLE,
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
-        self.marker_pub = self.create_publisher(
-            MarkerArray, "/graph_slam/ate_markers", latched)
-        self.err_pub = self.create_publisher(Float32, "/graph_slam/pose_error", 10)
-        self.ate_pub = self.create_publisher(Float32, "/graph_slam/ate", 10)
-
         if HAVE_OVERLAY:
             self.overlay_pub = self.create_publisher(
-                OverlayText, "/graph_slam/ate_overlay", latched)
+                OverlayText, "/planning/cte_overlay", latched)
             self.status_overlay_pub = self.create_publisher(
                 OverlayText, "/graph_slam/status_overlay", latched)
         else:
             self.overlay_pub = None
             self.status_overlay_pub = None
             self.get_logger().warn(
-                "rviz_2d_overlay_plugins not found; ATE shows as a marker above "
-                "the car. Install ros-humble-rviz-2d-overlay-plugins for a fixed "
-                "top-left HUD on /graph_slam/ate_overlay.")
+                "rviz_2d_overlay_plugins not found; install "
+                "ros-humble-rviz-2d-overlay-plugins for the CTE HUD on "
+                "/planning/cte_overlay.")
 
-        self.create_timer(0.1, self.publish_markers)  # 10 Hz refresh
+        self.create_timer(0.1, self.publish_overlays)  # 10 Hz refresh
+
+        self.get_logger().info(
+            f"CTE monitor: frenet d from '{args.frenet_odom}' vs d=0 raceline; "
+            f"validity from '{args.path_valid_topic}'")
 
     def on_status(self, msg):
         self.slam_status = msg.data
 
-    def on_gt(self, msg):
-        t = stamp_sec(msg.header)
-        if self.gt_t and t <= self.gt_t[-1]:
-            return
-        self.gt_t.append(t)
-        self.gt.append((msg.pose.pose.position.x, msg.pose.pose.position.y))
+    def on_path_valid(self, msg):
+        if msg.data and not self.path_valid:
+            # New / re-validated raceline: start a fresh evaluation window.
+            self.sum_sq = 0.0
+            self.count = 0
+            self.max_abs = 0.0
+            self.latest = None
+        self.path_valid = msg.data
 
-    def gt_at(self, t):
-        """Interpolate ground truth to time t; None if out of range."""
-        if len(self.gt_t) < 2 or t < self.gt_t[0] or t > self.gt_t[-1]:
-            return None
-        i = bisect.bisect_left(self.gt_t, t)
-        if i == 0:
-            return self.gt[0]
-        t0, t1 = self.gt_t[i - 1], self.gt_t[i]
-        (x0, y0), (x1, y1) = self.gt[i - 1], self.gt[i]
-        if t1 <= t0:
-            return (x1, y1)
-        a = (t - t0) / (t1 - t0)
-        return (x0 + a * (x1 - x0), y0 + a * (y1 - y0))
-
-    def on_slam(self, msg):
-        t = stamp_sec(msg.header)
-        gt = self.gt_at(t)
-        if gt is None:
+    def on_frenet(self, msg):
+        d = float(msg.pose.pose.position.y)
+        s = float(msg.pose.pose.position.x)
+        if not math.isfinite(d):
             return
-        sx, sy = msg.pose.pose.position.x, msg.pose.pose.position.y
-        err = math.hypot(sx - gt[0], sy - gt[1])
-        self.sum_sq += err * err
+        self.sum_sq += d * d
         self.count += 1
-        self.max_err = max(self.max_err, err)
+        self.max_abs = max(self.max_abs, abs(d))
         rmse = math.sqrt(self.sum_sq / self.count)
-        self.latest = (sx, sy, gt[0], gt[1], err, rmse)
-        self.err_pub.publish(Float32(data=float(err)))
-        self.ate_pub.publish(Float32(data=float(rmse)))
+        self.latest = (d, s, rmse)
+        self.last_rx_monotonic = time.monotonic()
+        self.cte_pub.publish(Float32(data=d))
+        self.cte_rmse_pub.publish(Float32(data=rmse))
 
-    def publish_markers(self):
-        # SLAM lifecycle HUD is independent of ground truth, so it also works
-        # on the real car where no GT/ATE exists.
+    def publish_overlays(self):
         self.publish_status_overlay()
 
-        if self.latest is None:
-            return
-        sx, sy, gx, gy, err, rmse = self.latest
-        now = self.get_clock().now().to_msg()
-        # Green when accurate, red when the error grows.
-        c = min(1.0, err / 1.0)
-        label = (
-            f"SLAM vs GT\nerr  {err:.2f} m\nATE  {rmse:.2f} m\nmax  {self.max_err:.2f} m"
-        )
-
-        if self.overlay_pub is not None:
-            self.publish_overlay(label, c)
-
-        arr = MarkerArray()
-
-        # Text marker above the car only as a fallback when there is no overlay.
         if self.overlay_pub is None:
-            text = Marker()
-            text.header.frame_id = self.map_frame
-            text.header.stamp = now
-            text.ns = "ate"
-            text.id = 0
-            text.type = Marker.TEXT_VIEW_FACING
-            text.action = Marker.ADD
-            text.pose.position = Point(x=sx, y=sy, z=self.text_z)
-            text.pose.orientation.w = 1.0
-            text.scale = Vector3(x=0.0, y=0.0, z=0.6)
-            text.color = ColorRGBA(r=float(c), g=float(1.0 - c), b=0.2, a=1.0)
-            text.text = label
-            arr.markers.append(text)
+            return
 
-        line = Marker()
-        line.header.frame_id = self.map_frame
-        line.header.stamp = now
-        line.ns = "ate"
-        line.id = 1
-        line.type = Marker.LINE_LIST
-        line.action = Marker.ADD
-        line.pose.orientation.w = 1.0
-        line.scale.x = 0.1
-        line.color = ColorRGBA(r=1.0, g=0.3, b=0.0, a=0.9)
-        line.points = [Point(x=sx, y=sy, z=0.0), Point(x=gx, y=gy, z=0.0)]
-        arr.markers.append(line)
+        stale = (
+            self.last_rx_monotonic is None or
+            time.monotonic() - self.last_rx_monotonic > self.stale_timeout)
 
-        self.marker_pub.publish(arr)
+        if stale or self.latest is None:
+            reason = "path invalid" if not self.path_valid else "no frenet odom"
+            self.publish_overlay(
+                f"PATH CTE\nwaiting...\n({reason})", (0.7, 0.7, 0.7))
+            return
 
-    def publish_overlay(self, text, err_frac):
-        """Render a fixed top-left HUD via rviz_2d_overlay_plugins."""
+        d, s, rmse = self.latest
+        # Green when on the line, red once |d| reaches 1 m.
+        c = min(1.0, abs(d) / 1.0)
+        label = (
+            f"PATH CTE\nd    {d:+.2f} m\nrmse {rmse:.2f} m\n"
+            f"max  {self.max_abs:.2f} m"
+        )
+        self.publish_overlay(label, (c, 1.0 - c, 0.3))
+
+    def publish_overlay(self, text, rgb):
+        """Fixed top-left HUD box (12,12) — the top of the HUD stack."""
         try:
             ov = OverlayText()
             ov.action = OverlayText.ADD
@@ -209,15 +170,14 @@ class ATEMonitor(Node):
             ov.vertical_alignment = OverlayText.TOP
             ov.bg_color = ColorRGBA(r=0.0, g=0.0, b=0.0, a=0.55)
             ov.fg_color = ColorRGBA(
-                r=float(err_frac), g=float(1.0 - err_frac), b=0.3, a=1.0)
+                r=float(rgb[0]), g=float(rgb[1]), b=float(rgb[2]), a=1.0)
             ov.line_width = 2
             ov.text_size = 13.0
             ov.font = "DejaVu Sans Mono"
             ov.text = text
             self.overlay_pub.publish(ov)
         except Exception as exc:  # noqa: BLE001
-            self.get_logger().warn(
-                f"OverlayText publish failed ({exc}); falling back to car marker")
+            self.get_logger().warn(f"OverlayText publish failed ({exc})")
             self.overlay_pub = None
 
     STATUS_STYLE = {
@@ -229,7 +189,7 @@ class ATEMonitor(Node):
     }
 
     def publish_status_overlay(self):
-        """SLAM lifecycle box just below the ATE box (does not overlap it)."""
+        """SLAM lifecycle box just below the CTE box (does not overlap it)."""
         if self.status_overlay_pub is None:
             return
         label, (r, g, b) = self.STATUS_STYLE.get(
@@ -257,11 +217,11 @@ class ATEMonitor(Node):
 
 def build_arg_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--slam-odom", default="/localization/ego_odom")
+    parser.add_argument("--frenet-odom", default="/car_state/frenet/odom")
     parser.add_argument("--status-topic", default="/graph_slam/status")
-    parser.add_argument("--gt-topic", default="/ground_truth/state")
-    parser.add_argument("--map-frame", default="map")
-    parser.add_argument("--text-height", type=float, default=2.0)
+    parser.add_argument(
+        "--path-valid-topic", default="/planning/global_path_valid")
+    parser.add_argument("--stale-timeout", type=float, default=1.0)
     return parser
 
 
@@ -271,7 +231,7 @@ def main():
     args = parser.parse_args(argv[1:])
 
     rclpy.init()
-    node = ATEMonitor(args)
+    node = CTEMonitor(args)
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

@@ -439,7 +439,7 @@ class SbgOdometryBridge(Node):
 
         ov = OverlayText()
         ov.action = OverlayText.ADD
-        # HUD stack (left edge, 8px gaps): ATE box (12,12,h110) -> SLAM status
+        # HUD stack (left edge, 8px gaps): CTE box (12,12,h110) -> SLAM status
         # box (12,130,h34) -> this GNSS box (12,172). Keep the three publishers
         # in sync when moving any of them.
         ov.width = 220

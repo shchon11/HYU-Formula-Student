@@ -232,18 +232,6 @@ Visualization Manager:
             Reliability Policy: Best Effort
             Value: /localization/ego_odom
           Value: true
-        - Class: rviz_default_plugins/MarkerArray
-          Enabled: true
-          Name: ATE Label
-          Namespaces:
-            {}
-          Topic:
-            Depth: 5
-            Durability Policy: Volatile
-            History Policy: Keep Last
-            Reliability Policy: Reliable
-            Value: /graph_slam/ate_markers
-          Value: true
       Enabled: true
       Name: SLAM
     - Class: rviz_common/Group
@@ -308,13 +296,13 @@ Visualization Manager:
       Displays:
         - Class: rviz_2d_overlay_plugins/TextOverlay
           Enabled: true
-          Name: ATE HUD
+          Name: Path CTE HUD
           Topic:
             Depth: 1
             Durability Policy: Transient Local
             History Policy: Keep Last
             Reliability Policy: Reliable
-            Value: /graph_slam/ate_overlay
+            Value: /planning/cte_overlay
           Value: true
         - Class: rviz_2d_overlay_plugins/TextOverlay
           Enabled: true

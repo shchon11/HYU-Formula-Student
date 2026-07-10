@@ -10,7 +10,7 @@
          type="fsk_rviz_presets::SlamStack"
          base_class_type="rviz_common::Display">
     <description>
-      One-click group: graph SLAM cone map, pose-graph path, ego odometry and ATE label.
+      One-click group: graph SLAM cone map, pose-graph path and ego odometry.
     </description>
   </class>
   <class name="fsk_rviz_presets/PlanningStack"
@@ -24,7 +24,7 @@
          type="fsk_rviz_presets::HudStack"
          base_class_type="rviz_common::Display">
     <description>
-      One-click group: ATE / SLAM status / GNSS text HUD overlays (non-overlapping stack).
+      One-click group: Path CTE / SLAM status / GNSS text HUD overlays (non-overlapping stack).
     </description>
   </class>
   <class name="fsk_rviz_presets/FullStack"

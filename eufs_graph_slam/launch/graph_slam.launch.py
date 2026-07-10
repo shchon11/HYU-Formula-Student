@@ -124,12 +124,25 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "ate_monitor",
                 default_value="true",
-                description="Publish live SLAM-vs-ground-truth error markers for RViz.",
+                description=(
+                    "Publish the path-tracking CTE HUD (Frenet d vs the "
+                    "d=0 raceline) and the SLAM status overlay."
+                ),
             ),
             DeclareLaunchArgument(
                 "ate_status_topic",
                 default_value="/graph_slam/status",
                 description="Graph SLAM lifecycle status topic consumed by ate_monitor.",
+            ),
+            DeclareLaunchArgument(
+                "frenet_odom_topic",
+                default_value="/car_state/frenet/odom",
+                description="Frenet ego odometry (s,d) consumed by the CTE monitor.",
+            ),
+            DeclareLaunchArgument(
+                "global_path_valid_topic",
+                default_value="/planning/global_path_valid",
+                description="Planner validity heartbeat consumed by the CTE monitor.",
             ),
             DeclareLaunchArgument(
                 "ros_localhost_only",
@@ -178,8 +191,10 @@ def generate_launch_description():
                 name="ate_monitor",
                 output="screen",
                 arguments=[
-                    "--slam-odom",
-                    slam_odom_topic,
+                    "--frenet-odom",
+                    LaunchConfiguration("frenet_odom_topic"),
+                    "--path-valid-topic",
+                    LaunchConfiguration("global_path_valid_topic"),
                     "--status-topic",
                     ate_status_topic,
                 ],
