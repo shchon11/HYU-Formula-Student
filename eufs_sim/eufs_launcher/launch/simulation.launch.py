@@ -130,8 +130,8 @@ def generate_launch_description():
             name='perception_motion_compensation_frame',
             default_value='map',
             description=(
-                "Fixed TF frame for cross-time perception transforms; use "
-                "odom when GraphSLAM owns localization TF"
+                "Fixed TF frame for cross-time perception transforms; map is "
+                "the ground-truth default, use odom when GraphSLAM owns TF"
             )),
 
         DeclareLaunchArgument(

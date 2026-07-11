@@ -25,8 +25,10 @@
 #ifndef EUFS_SIM__EUFS_PLUGINS__GAZEBO_RACE_CAR_MODEL__INCLUDE__GAZEBO_RACE_CAR_MODEL__GAZEBO_ROS_RACE_CAR_HPP_
 #define EUFS_SIM__EUFS_PLUGINS__GAZEBO_RACE_CAR_MODEL__INCLUDE__GAZEBO_RACE_CAR_MODEL__GAZEBO_ROS_RACE_CAR_HPP_
 
+#include <atomic>
 #include <array>
 #include <memory>
+#include <mutex>
 #include <queue>
 #include <string>
 #include <vector>
@@ -88,6 +90,7 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
   void updateState(double dt);
 
   void setPositionFromWorld();
+  void resetVehicleState();
   bool resetVehiclePosition(std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                             std::shared_ptr<std_srvs::srv::Trigger::Response> response);
   void returnCommandMode(std::shared_ptr<std_srvs::srv::Trigger::Request>,
@@ -128,6 +131,7 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
   gazebo::physics::ModelPtr _model;
   gazebo::event::ConnectionPtr _update_connection;
   gazebo::common::Time _last_sim_time, _last_cmd_time;
+  std::atomic<bool> _vehicle_reset_requested;
 
   // Rate to publish ros messages
   double _update_rate;
@@ -184,6 +188,7 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
   // Command queue for control delays
   std::queue<std::shared_ptr<ackermann_msgs::msg::AckermannDriveStamped>> _command_Q;
   std::queue<gazebo::common::Time> _cmd_time_Q;
+  std::mutex _command_mutex;
   double _control_delay;
   // Steering rate limit variables
   double _max_steering_rate, _steering_lock_time;

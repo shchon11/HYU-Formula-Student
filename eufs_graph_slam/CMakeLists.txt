@@ -65,7 +65,7 @@ if(NOT g2o_FOUND)
   add_subdirectory("${G2O_VENDOR_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/g2o_vendor" EXCLUDE_FROM_ALL)
 endif()
 
-foreach(_g2o_target core stuff solver_dense types_slam2d)
+foreach(_g2o_target core stuff solver_eigen types_slam2d)
   if(TARGET g2o::${_g2o_target})
     list(APPEND EUFS_GRAPH_SLAM_G2O_TARGETS g2o::${_g2o_target})
   elseif(TARGET ${_g2o_target})
@@ -121,12 +121,38 @@ install(DIRECTORY include/
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_cmake_test REQUIRED)
   find_package(ament_lint_auto REQUIRED)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
   ament_add_gtest(test_observation_time_alignment
     test/test_observation_time_alignment.cpp)
   target_link_libraries(test_observation_time_alignment
     graph_slam_time_alignment)
+
+  ament_add_gtest(test_graph_slam_node_epoch_gate
+    test/test_graph_slam_node_epoch_gate.cpp
+    src/graph_slam_node.cpp)
+  target_include_directories(test_graph_slam_node_epoch_gate PRIVATE
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
+  ament_target_dependencies(test_graph_slam_node_epoch_gate
+    eufs_msgs
+    geometry_msgs
+    nav_msgs
+    rclcpp
+    std_msgs
+    std_srvs
+    tf2_ros
+    visualization_msgs)
+  target_link_libraries(test_graph_slam_node_epoch_gate
+    Eigen3::Eigen
+    graph_slam_time_alignment
+    ${EUFS_GRAPH_SLAM_G2O_TARGETS})
+
+  ament_add_test(test_graph_slam_config
+    COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/test/test_graph_slam_config.py"
+    GENERATE_RESULT_FOR_RETURN_CODE_ZERO)
 
   set(ament_cmake_cppcheck_ADDITIONAL_INCLUDE_DIRS ${GTEST_INCLUDE_DIRS})
   ament_lint_auto_find_test_dependencies()

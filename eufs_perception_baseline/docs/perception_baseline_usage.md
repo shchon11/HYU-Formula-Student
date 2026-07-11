@@ -582,6 +582,11 @@ adapter-bg and fusion-bg must not run at the same time.
 
 `hyu-docker` helper 없이 container 안에서 직접 실행할 수도 있다.
 
+아래 fusion 예시는 GraphSLAM이 `map -> odom -> base_footprint` TF를 소유하는
+통합 모드이므로 `motion_compensation_frame:=odom`을 사용한다. Simulator의
+ground-truth TF(`publish_gt_tf:=true`)만 사용할 때는 이를 `map`으로 바꾼다.
+두 TF publisher를 동시에 켜면 안 된다.
+
 ```bash
 source /workspace/install/setup.bash
 ```
@@ -592,6 +597,7 @@ Fusion:
 ros2 launch eufs_perception_baseline perception_baseline.launch.py \
   output_cones_topic:=/cones \
   output_frame:=base_footprint \
+  motion_compensation_frame:=odom \
   fusion_enabled:=true \
   publish_empty_on_sync:=false
 ```
@@ -603,9 +609,10 @@ LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7 \
   ros2 launch eufs_perception_baseline perception_baseline.launch.py \
   bbox_source:=yolov8 \
   use_sim_time:=true \
-  python_executable:=/home/dohyun/anaconda3/envs/eufs/bin/python3 \
+  python_executable:=python3 \
   output_cones_topic:=/cones \
   output_frame:=base_footprint \
+  motion_compensation_frame:=odom \
   fusion_enabled:=true \
   publish_empty_on_sync:=false \
   publish_fusion_debug:=true \
@@ -673,6 +680,7 @@ image_sync_tolerance_sec: 0.05
 sync_queue_size: 12
 image_sync_queue_size: 64
 timestamp_reset_threshold_sec: 0.1
+max_future_stamp_lead_sec: 0.09
 publish_empty_on_sync: false
 ```
 
@@ -752,8 +760,27 @@ min_variance: 0.0001
   유지해 측정된 약 0.53초 YOLO 지연을 흡수한다. 1280x720 BGR 두 stream이 모두
   가득 차면 payload만 약 340 MiB이므로, 실제 detector latency와 frame rate를
   측정한 뒤 필요한 margin을 유지하는 범위에서 조정한다.
-- 같은 sensor stream의 timestamp가 기본 0.1초보다 크게 역행하면 모든 sync
-  buffer를 비워 simulation clock의 새 epoch에서 다시 시작한다.
+- 같은 sensor stream에서 duplicate 또는 역순 도착한 timestamp는 해당 메시지만
+  폐기하며, timestamp는 stream별로 엄격히 증가해야 한다. Image/right image,
+  cloud, 선택된 bbox acquisition stamp, oracle stamp는 integer nanosecond로
+  바꾸기 전에 canonical nonzero ROS `Time`(`sec >= 0`,
+  `0 <= nanosec < 1e9`)인지 검사하며 malformed/zero stamp는 폐기한다.
+  기본 0.1초 이상의 ROS clock backward jump 또는 ROS time source 변경만 모든
+  sync buffer를 비우고 TF listener를 재생성해 simulation clock의 새 epoch를
+  시작한다. 정상적인 unregister 경로에서는 기존 TF buffer를 clear 후 재사용하므로
+  publisher가 이미 종료된 one-shot `/tf_static` cache는 유지되고, 이전 `/tf`
+  subscription의 volatile queue는 폐기된다. Unregister 실패 시에는 아직 살아 있는
+  이전 subscription의 재오염을 막기 위해 새 buffer로 격리한다.
+  Galactic이 정상적인 양의 clock tick에도 jump callback을 호출할 수 있어 callback
+  delta를 다시 검사하며, `max_future_stamp_lead_sec`는 rollback 기준보다 작아야 한다.
+  Rollback 직전 clock high watermark를 overflow-safe하게 복원해 replay guard 끝으로
+  저장한다. Clock이 그 지점에 다시 도달하기 전에도 DDS callback 순서 차이를 위해
+  설정된 `max_future_stamp_lead_sec`(기본 90 ms)까지 선행 stamp를 허용하지만, 기존
+  watermark 이상은 exclusive upper fence로 폐기한다. 새 epoch 시작보다 과거인 stamp도
+  폐기한다. Replay 중 다시 rollback되면 active watermark들을 함께 보존하고 inner부터
+  순서대로 해제한다. Timestamp만으로 허용된 replay window 안에서 두 epoch의 payload를 완전히
+  구별할 수는 없지만, 이 lower/upper fence와 buffer/subscription reset이 이전 epoch의
+  watermark 오염 범위를 제한한다.
 - `projection_model: eufs_bbox`는 HYU simulator bbox plugin의 projection convention에
   맞춘 simulated bbox 설정이다. `bbox_source:=yolov8`에서는 실제 ZED image
   projection을 위해 launch가 `yolo_projection_model:=pinhole`을 fusion node에
@@ -768,6 +795,9 @@ min_variance: 0.0001
 - 논문의 exact Tier 3인 RekTNet 7-keypoint/PnP는 weights와 3D keypoint template이
   repository에 없어 재현하지 못한다. 현재 `stereo_sift`는 명시적으로
   paper-inspired 구현이며 synthetic disparity 검증 범위까지만 보장한다.
+- `stereo_fallback_enabled:=true`인데 현재 OpenCV에 `cv2.SIFT_create`가 없으면
+  node는 해당 tier를 조용히 비활성화하지 않고 실행 시 actionable error로 종료한다.
+  project conda 환경을 사용하거나 SIFT-capable OpenCV를 준비해야 한다.
 - 실제 camera detector weight로 바꾸면 bbox clipping, confidence threshold,
   `yolo_class_map`을 다시 조정해야 한다.
 - Headless simulator에서는 camera rendering topic이 충분히 나오지 않을 수 있으므로

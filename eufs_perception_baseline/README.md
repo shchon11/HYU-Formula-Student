@@ -102,7 +102,7 @@ source /home/dohyun/anaconda3/etc/profile.d/conda.sh
 conda activate eufs
 source /opt/ros/galactic/setup.bash
 
-colcon build --packages-select eufs_launcher eufs_perception_baseline --symlink-install
+colcon build --packages-up-to eufs_launcher eufs_perception_baseline --symlink-install
 source install/setup.bash
 ```
 
@@ -354,9 +354,19 @@ TF를 소유하는 실행에서는 SLAM correction jump와 순수 ego motion을 
 이 override를 자동으로 전달한다.
 
 Cloud/bbox queue와 image history는 별도 크기를 사용한다. 기본 64-frame image
-history는 60 Hz에서 약 1.07초를 보존하며, 큰 simulation timestamp rollback은
-모든 sync buffer를 비워 새 clock epoch의 메시지가 이전 epoch에 밀려나지 않게
-한다.
+history는 60 Hz에서 약 1.07초를 보존한다. 센서 timestamp는 stream별로 엄격히
+증가해야 하며 duplicate/역순 메시지는 해당 메시지만 폐기한다. Image, cloud,
+bbox acquisition stamp, oracle stamp는 nanosecond 정규화 전에 canonical nonzero
+ROS `Time`(`sec >= 0`, `0 <= nanosec < 1e9`)인지 검사한다. 설정 threshold 이상의
+ROS clock backward jump 또는 time source 변경은 모든 sync buffer를 비우고 TF listener를
+재생성한다. 정상적인 listener 해제 경로에서는 기존 TF buffer를 clear 후 재사용해
+one-shot publisher가 종료된 뒤에도 cached `/tf_static`을 보존하고, volatile `/tf`
+subscription queue는 폐기한다. 정상적인 양의 `/clock` tick은 reset하지 않는다.
+Rollback에서는 jump 직전 clock high watermark까지 replay guard를 둔다. 그 구간에도
+DDS callback 순서 차이를 흡수하도록 설정된 `max_future_stamp_lead_sec`(기본 90 ms)
+이내의 clock 선행 stamp를 허용하되, 기존 watermark 이상인 stamp는 배제한다. Clock이
+기존 watermark에 도달하면 upper fence가 해제된다. Replay 도중 다시 rollback되면
+inner/outer watermark를 모두 보존하고 각 지점에 도달할 때 순서대로 해제한다.
 
 Source별 covariance base는 dense LiDAR, sparse LiDAR, monocular,
 `stereo_sift`에 대해 각각 `fused_*`, `sparse_*`, `monocular_*`, `stereo_*`

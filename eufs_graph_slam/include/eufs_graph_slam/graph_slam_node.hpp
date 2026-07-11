@@ -13,6 +13,7 @@
 #include <g2o/types/slam2d/vertex_point_xy.h>
 #include <g2o/types/slam2d/vertex_se2.h>
 
+#include <optional>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -44,6 +45,8 @@ public:
   GraphSlamNode();
 
 private:
+  friend class GraphSlamNodeTestPeer;
+
   enum class ConeColor : std::uint8_t
   {
     Blue,
@@ -94,7 +97,14 @@ private:
   };
 
   void configureOptimizer();
-  void resetGraph();
+  void resetGraph(
+    std::int64_t epoch_start_stamp_ns,
+    const std::optional<std::int64_t> & replay_guard_end_stamp_ns = std::nullopt,
+    bool preserve_replay_guards = false);
+  void publishResetTombstones(const rclcpp::Time & stamp);
+  void onClockJump(const rcl_time_jump_t & time_jump);
+  void observeNodeClock(const rclcpp::Time & now);
+  bool isInputStampInCurrentEpoch(std::int64_t stamp_ns, std::int64_t now_ns) const;
 
   void stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg);
   void conesCallback(const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg);
@@ -189,6 +199,8 @@ private:
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr save_graph_srv_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+  rclcpp::JumpHandler::SharedPtr clock_jump_handler_;
+  rclcpp::Clock steady_clock_;
 
   std::vector<PoseRecord> poses_;
   std::vector<LandmarkRecord> landmarks_;
@@ -196,6 +208,8 @@ private:
   Eigen::Matrix3d odom_information_;
 
   std::string car_state_topic_;
+  std::string car_state_frame_;
+  std::string car_state_child_frame_;
   std::string cones_topic_;
   std::string map_topic_;
   std::string slam_odom_topic_;
@@ -211,6 +225,7 @@ private:
   double keyframe_max_dt_;
   double pose_history_duration_;
   double clock_rollback_threshold_;
+  double max_future_stamp_lead_;
   double association_max_distance_;
   double min_observation_range_;
   double max_observation_range_;
@@ -227,6 +242,9 @@ private:
   double landmark_delete_min_interval_;
   double landmark_update_gain_;
   double landmark_update_process_variance_;
+
+  std::int64_t clock_rollback_threshold_ns_;
+  std::int64_t max_future_stamp_lead_ns_;
 
   int optimize_every_n_keyframes_;
   int optimization_iterations_;
@@ -257,6 +275,13 @@ private:
 
   time_alignment::TimedPoseHistory pose_history_;
   std::deque<eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr> pending_cone_messages_;
+  std::unordered_set<std::int64_t> pending_cone_stamps_ns_;
+  std::optional<std::int64_t> last_processed_cone_stamp_ns_;
+  std::optional<std::int64_t> epoch_start_stamp_ns_;
+  std::optional<std::int64_t> replay_guard_end_stamp_ns_;
+  std::vector<std::int64_t> replay_guard_end_stamps_ns_;
+  std::optional<std::int64_t> node_time_high_watermark_ns_;
+  std::uint64_t clock_epoch_;
   std::vector<std::int64_t> keyframe_stamps_ns_;
   std::unordered_set<int> cone_edge_pose_graph_ids_;
 

@@ -221,6 +221,9 @@ def _launch_nodes(context):
                     "timestamp_reset_threshold_sec": LaunchConfiguration(
                         "timestamp_reset_threshold_sec"
                     ),
+                    "max_future_stamp_lead_sec": LaunchConfiguration(
+                        "max_future_stamp_lead_sec"
+                    ),
                     "fusion_enabled": LaunchConfiguration("fusion_enabled"),
                     "publish_fusion_debug": LaunchConfiguration(
                         "publish_fusion_debug"
@@ -510,8 +513,18 @@ def generate_launch_description():
                     "timestamp_reset_threshold_sec",
                 ),
                 description=(
-                    "Per-stream backward timestamp jump that starts a new "
-                    "synchronization epoch."
+                    "Backward ROS clock jump that starts a new synchronization epoch."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "max_future_stamp_lead_sec",
+                default_value=_default(
+                    "perception_baseline_node",
+                    "max_future_stamp_lead_sec",
+                ),
+                description=(
+                    "Maximum seconds a sensor timestamp may lead the node ROS clock, "
+                    "including during bounded rollback replay."
                 ),
             ),
             DeclareLaunchArgument(

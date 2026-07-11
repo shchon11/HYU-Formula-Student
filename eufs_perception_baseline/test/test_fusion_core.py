@@ -15,6 +15,14 @@ from eufs_perception_baseline.fusion_core import (
 )
 
 
+def _sift_available():
+    try:
+        import cv2
+    except ImportError:
+        return False
+    return callable(getattr(cv2, "SIFT_create", None))
+
+
 class GroundPlaneTest(unittest.TestCase):
     def test_ransac_removes_sloped_ground_and_preserves_cone(self):
         rng = np.random.default_rng(7)
@@ -138,6 +146,7 @@ class StereoDepthTest(unittest.TestCase):
     def test_slender_bbox_excludes_outer_edges(self):
         self.assertEqual(slender_bbox((10, 20, 90, 100), 0.5), (30, 20, 70, 100))
 
+    @unittest.skipUnless(_sift_available(), "OpenCV build does not provide SIFT")
     def test_feature_stereo_recovers_known_horizontal_shift(self):
         import cv2
 
@@ -164,6 +173,7 @@ class StereoDepthTest(unittest.TestCase):
         self.assertAlmostEqual(estimate.depth_m, 6.0, delta=0.35)
         self.assertGreaterEqual(estimate.match_count, 1)
 
+    @unittest.skipUnless(_sift_available(), "OpenCV build does not provide SIFT")
     def test_feature_stereo_corrects_principal_point_offset(self):
         import cv2
 

@@ -34,6 +34,29 @@ def _declared_launch_arguments(tree):
     return names
 
 
+def _declared_launch_argument_default(tree, argument_name):
+    for node in ast.walk(tree):
+        if (
+            not isinstance(node, ast.Call)
+            or _call_name(node) != "DeclareLaunchArgument"
+        ):
+            continue
+        name_node = node.args[0] if node.args else None
+        default_node = None
+        for keyword in node.keywords:
+            if keyword.arg == "name":
+                name_node = keyword.value
+            elif keyword.arg == "default_value":
+                default_node = keyword.value
+        if (
+            isinstance(name_node, ast.Constant)
+            and name_node.value == argument_name
+            and isinstance(default_node, ast.Constant)
+        ):
+            return default_node.value
+    raise AssertionError(f"No constant default for {argument_name}")
+
+
 def _node_parameter_contracts(tree):
     contracts = {}
     for node in ast.walk(tree):
@@ -156,6 +179,7 @@ class YoloV8LaunchWiringTest(unittest.TestCase):
                 "sync_queue_size",
                 "image_sync_queue_size",
                 "timestamp_reset_threshold_sec",
+                "max_future_stamp_lead_sec",
                 "motion_compensation_frame",
                 "stereo_fallback_enabled",
                 "python_executable",
@@ -189,6 +213,7 @@ class YoloV8LaunchWiringTest(unittest.TestCase):
                 "sync_queue_size",
                 "image_sync_queue_size",
                 "timestamp_reset_threshold_sec",
+                "max_future_stamp_lead_sec",
                 "motion_compensation_frame",
                 "stereo_fallback_enabled",
             }.issubset(fusion_overrides)
@@ -205,6 +230,10 @@ class YoloV8LaunchWiringTest(unittest.TestCase):
         self.assertEqual(
             0.1,
             self.perception_params["timestamp_reset_threshold_sec"],
+        )
+        self.assertEqual(
+            0.09,
+            self.perception_params["max_future_stamp_lead_sec"],
         )
         self.assertEqual(
             "map",
@@ -262,6 +291,13 @@ class YoloV8LaunchWiringTest(unittest.TestCase):
                 "motion_compensation_frame",
                 "python_executable",
             }.issubset(forwarded)
+        )
+        self.assertEqual(
+            "map",
+            _declared_launch_argument_default(
+                self.simulation_tree,
+                "perception_motion_compensation_frame",
+            ),
         )
 
     def test_fsoco_finetuned_yolov8_defaults_are_preserved(self):

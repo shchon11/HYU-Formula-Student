@@ -67,7 +67,8 @@ class GazeboCameraCones : public gazebo::ModelPlugin {
   GazeboCameraCones();
 
   // Gazebo plugin functions
-  void Load(gazebo::physics::ModelPtr _parent, sdf::ElementPtr _sdf);
+  void Load(gazebo::physics::ModelPtr _parent, sdf::ElementPtr _sdf) override;
+  void Reset() override;
 
   void UpdateChild();
 

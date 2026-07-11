@@ -24,6 +24,11 @@ perception_baseline_node:
     # 60 Hz stereo history must survive measured ~0.53 s YOLO latency.
     image_sync_queue_size: 64
     timestamp_reset_threshold_sec: 0.1
+    # Bounded DDS delivery skew accepted in both normal operation and rollback
+    # replay. 90 ms covers the measured ~80 ms LiDAR-versus-/clock callback
+    # skew while remaining below the 100 ms rollback threshold. During replay,
+    # stamps at/after the old clock watermark are still rejected.
+    max_future_stamp_lead_sec: 0.09
     publish_empty_on_sync: false
     fusion_enabled: true
     publish_fusion_debug: true

@@ -4,6 +4,7 @@
 // license that can be found in the LICENSE file or at
 // https://opensource.org/licenses/MIT.
 
+#include <exception>
 #include <memory>
 
 #include "eufs_graph_slam/graph_slam_node.hpp"
@@ -12,7 +13,16 @@
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<eufs_graph_slam::GraphSlamNode>());
+  int exit_code = 0;
+  try {
+    rclcpp::spin(std::make_shared<eufs_graph_slam::GraphSlamNode>());
+  } catch (const std::exception & error) {
+    RCLCPP_FATAL(
+      rclcpp::get_logger("graph_slam_node"),
+      "GraphSLAM stopped: %s",
+      error.what());
+    exit_code = 1;
+  }
   rclcpp::shutdown();
-  return 0;
+  return exit_code;
 }

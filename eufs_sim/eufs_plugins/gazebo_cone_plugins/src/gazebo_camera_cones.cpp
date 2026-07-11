@@ -124,11 +124,17 @@ void GazeboCameraCones::Load(gazebo::physics::ModelPtr _parent, sdf::ElementPtr 
   RCLCPP_INFO(this->rosnode_->get_logger(), "CameraConesPlugin Loaded");
 }  // GazeboCameraCones
 
+void GazeboCameraCones::Reset() { this->time_last_published = gazebo::common::Time(0, 0); }
+
 void GazeboCameraCones::UpdateChild() {
   // Check if it is time to publish new data
   gazebo::common::Time cur_time = _world->SimTime();
   double dt = (cur_time - time_last_published).Double();
-  if (dt < (1.0 / this->update_rate_)) {
+  if (dt < 0.0) {
+    this->time_last_published = cur_time;
+    dt = 0.0;
+  }
+  if (this->update_rate_ > 0.0 && dt < (1.0 / this->update_rate_)) {
     return;
   }
 

@@ -3,6 +3,8 @@ graph_slam:
     use_sim_time: true
 
     car_state_topic: /odometry_integration/car_state
+    car_state_frame: map
+    car_state_child_frame: base_footprint
     cones_topic: /cones
 
     map_topic: /graph_slam/map
@@ -22,6 +24,8 @@ graph_slam:
     pose_history_duration: 3.0
     pose_history_max_samples: 1024
     clock_rollback_threshold: 0.1
+    # Also bounds valid input lead while replaying after a clock rollback.
+    max_future_stamp_lead: 0.09
     max_pending_cone_messages: 32
 
     association_max_distance: 1.2
@@ -37,7 +41,7 @@ graph_slam:
 
     optimize_every_n_keyframes: 100
     optimize_min_interval: 10.0
-    max_optimization_poses: 100
+    max_optimization_poses: 300
     optimization_iterations: 3
     process_every_cone_message: false
 

@@ -53,12 +53,14 @@ class BoundingBoxesPlugin : public gazebo::ModelPlugin {
   BoundingBoxesPlugin();
 
   // Gazebo plugin functions
-  void Load(gazebo::physics::ModelPtr _parent, sdf::ElementPtr _sdf);
+  void Load(gazebo::physics::ModelPtr _parent, sdf::ElementPtr _sdf) override;
 
  private:
   void cones_callback(const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg);
 
-  void update_msg(eufs_msgs::msg::BoundingBoxes &bounding_boxes_msg, std_msgs::msg::Header header,
+  void update_msg(eufs_msgs::msg::BoundingBoxes &bounding_boxes_msg,
+                  const std_msgs::msg::Header &source_header,
+                  const std_msgs::msg::Header &image_header,
                   std::vector<std::vector<double>> blue_cones,
                   std::vector<std::vector<double>> yellow_cones,
                   std::vector<std::vector<double>> orange_cones,

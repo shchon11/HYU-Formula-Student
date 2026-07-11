@@ -38,7 +38,8 @@ namespace gazebo_plugins {
 namespace eufs_plugins {
 
 RaceCarModelPlugin::RaceCarModelPlugin()
-: _wheel_joint_positions{0.0, 0.0, 0.0, 0.0},
+: _vehicle_reset_requested(false),
+  _wheel_joint_positions{0.0, 0.0, 0.0, 0.0},
   _wheel_joint_velocities{0.0, 0.0, 0.0, 0.0}
 {}
 
@@ -306,6 +307,10 @@ void RaceCarModelPlugin::setPositionFromWorld() {
   RCLCPP_DEBUG(_rosnode->get_logger(), "Got starting offset %f %f %f", _offset.Pos()[0],
                _offset.Pos()[1], _offset.Pos()[2]);
 
+  resetVehicleState();
+}
+
+void RaceCarModelPlugin::resetVehicleState() {
   _state.x = 0.0;
   _state.y = 0.0;
   _state.z = 0.0;
@@ -319,34 +324,23 @@ void RaceCarModelPlugin::setPositionFromWorld() {
   _state.a_x = 0.0;
   _state.a_y = 0.0;
   _state.a_z = 0.0;
+
+  const ignition::math::Vector3d zero(0.0, 0.0, 0.0);
+  _model->SetWorldPose(_offset);
+  _model->SetAngularVel(zero);
+  _model->SetLinearVel(zero);
+  _wheel_joint_positions = {0.0, 0.0, 0.0, 0.0};
+  _wheel_joint_velocities = {0.0, 0.0, 0.0, 0.0};
 }
 
 bool RaceCarModelPlugin::resetVehiclePosition(
     std::shared_ptr<std_srvs::srv::Trigger::Request>,
     std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
-  _state.x = 0.0;
-  _state.y = 0.0;
-  _state.z = 0.0;
-  _state.yaw = 0.0;
-  _state.v_x = 0.0;
-  _state.v_y = 0.0;
-  _state.v_z = 0.0;
-  _state.r_x = 0.0;
-  _state.r_y = 0.0;
-  _state.r_z = 0.0;
-  _state.a_x = 0.0;
-  _state.a_y = 0.0;
-  _state.a_z = 0.0;
-
-  const ignition::math::Vector3d vel(0.0, 0.0, 0.0);
-  const ignition::math::Vector3d angular(0.0, 0.0, 0.0);
-
-  _model->SetWorldPose(_offset);
-  _model->SetAngularVel(angular);
-  _model->SetLinearVel(vel);
-  _wheel_joint_positions = {0.0, 0.0, 0.0, 0.0};
-  _wheel_joint_velocities = {0.0, 0.0, 0.0, 0.0};
-
+  // Gazebo model/state APIs belong to the physics thread. The service runs on
+  // gazebo_ros's executor, so hand the request to update() instead of racing it.
+  _vehicle_reset_requested.store(true);
+  response->success = true;
+  response->message = "Vehicle reset accepted for the next simulation update";
   return response->success;
 }
 
@@ -630,11 +624,46 @@ void RaceCarModelPlugin::publishTf() {
   _tf_br->sendTransform(transform_stamped);
 }
 
-void RaceCarModelPlugin::Reset() { _last_sim_time = 0; }
+void RaceCarModelPlugin::Reset() {
+  // Gazebo may call ModelPlugin::Reset before or after rewinding world time.
+  // Rebase to the value visible now; update() handles a later rewind as a
+  // second epoch boundary without integrating across it.
+  const gazebo::common::Time reset_time = _world->SimTime();
+  _last_sim_time = reset_time;
+  _time_last_published = reset_time;
+
+  {
+    std::lock_guard<std::mutex> lock(_command_mutex);
+    _last_cmd_time = reset_time;
+    while (!_command_Q.empty()) {
+      _command_Q.pop();
+    }
+    while (!_cmd_time_Q.empty()) {
+      _cmd_time_Q.pop();
+    }
+  }
+
+  _des_input = eufs::models::Input();
+  _act_input = eufs::models::Input();
+  _vehicle_reset_requested.store(false);
+  resetVehicleState();
+  _state_machine->resetTime();
+}
 
 void RaceCarModelPlugin::update() {
   gazebo::common::Time curTime = _world->SimTime();
   double dt = (curTime - _last_sim_time).Double();
+  if (dt < 0.0) {
+    // Recover even if a world-time rewind reaches this callback without the
+    // Gazebo Reset hook being delivered first.
+    Reset();
+    return;
+  }
+  if (_vehicle_reset_requested.exchange(false)) {
+    resetVehicleState();
+    _last_sim_time = curTime;
+    return;
+  }
   if (dt < (1 / _update_rate)) {
     return;
   }
@@ -644,17 +673,33 @@ void RaceCarModelPlugin::update() {
 }
 
 void RaceCarModelPlugin::updateState(const double dt) {
-  if (!_command_Q.empty()) {
-    gazebo::common::Time cmd_time = _cmd_time_Q.front();
-    if ((_last_sim_time - cmd_time).Double() >= _control_delay) {
-      std::shared_ptr<ackermann_msgs::msg::AckermannDriveStamped> cmd = _command_Q.front();
-      _des_input.acc = cmd->drive.acceleration;
-      _des_input.vel = cmd->drive.speed;
-      _des_input.delta = cmd->drive.steering_angle;
-
+  gazebo::common::Time last_cmd_time;
+  {
+    std::lock_guard<std::mutex> lock(_command_mutex);
+    while (!_cmd_time_Q.empty() &&
+           (_cmd_time_Q.front() - _last_sim_time).Double() > 0.0) {
+      // A callback sampled the previous epoch after Gazebo invoked Reset but
+      // before World::SimTime() rewound. Remove the paired FIFO entry so it
+      // cannot block every command from the new epoch.
       _command_Q.pop();
       _cmd_time_Q.pop();
     }
+    if ((_last_cmd_time - _last_sim_time).Double() > 0.0) {
+      _last_cmd_time = _last_sim_time;
+    }
+    if (!_command_Q.empty()) {
+      gazebo::common::Time cmd_time = _cmd_time_Q.front();
+      if ((_last_sim_time - cmd_time).Double() >= _control_delay) {
+        std::shared_ptr<ackermann_msgs::msg::AckermannDriveStamped> cmd = _command_Q.front();
+        _des_input.acc = cmd->drive.acceleration;
+        _des_input.vel = cmd->drive.speed;
+        _des_input.delta = cmd->drive.steering_angle;
+
+        _command_Q.pop();
+        _cmd_time_Q.pop();
+      }
+    }
+    last_cmd_time = _last_cmd_time;
   }
 
   if (_command_mode == velocity) {
@@ -663,7 +708,8 @@ void RaceCarModelPlugin::updateState(const double dt) {
   }
 
   // If last command was more than 1s ago, then slow down car
-  _act_input.acc = (_last_sim_time - _last_cmd_time) < 1.0 ? _des_input.acc : -1.0;
+  const double command_age = (_last_sim_time - last_cmd_time).Double();
+  _act_input.acc = command_age >= 0.0 && command_age < 1.0 ? _des_input.acc : -1.0;
   // Make sure steering rate is within limits
   _act_input.delta +=
       (_des_input.delta - _act_input.delta >= 0 ? 1 : -1) *
@@ -709,9 +755,11 @@ void RaceCarModelPlugin::onCmd(const ackermann_msgs::msg::AckermannDriveStamped:
     msg->drive.acceleration = -100;
     msg->drive.speed = 0;
   }
+  std::lock_guard<std::mutex> lock(_command_mutex);
+  const gazebo::common::Time command_time = _world->SimTime();
   _command_Q.push(msg);
-  _cmd_time_Q.push(_world->SimTime());
-  _last_cmd_time = _world->SimTime();
+  _cmd_time_Q.push(command_time);
+  _last_cmd_time = command_time;
 }
 
 std::vector<double> RaceCarModelPlugin::ToQuaternion(std::vector<double> &euler) {
@@ -723,8 +771,7 @@ std::vector<double> RaceCarModelPlugin::ToQuaternion(std::vector<double> &euler)
   double cr = cos(euler[2] * 0.5);
   double sr = sin(euler[2] * 0.5);
 
-  std::vector<double> q;
-  q.reserve(4);
+  std::vector<double> q(4);
   q[0] = cy * cp * sr - sy * sp * cr;  // x
   q[1] = sy * cp * sr + cy * sp * cr;  // y
   q[2] = sy * cp * cr - cy * sp * sr;  // z

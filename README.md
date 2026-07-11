@@ -143,7 +143,7 @@ conda run -n eufs bash -lc '
 
 - `eufs_perception_baseline/README.md`
 - `eufs_perception_baseline/docs/perception_baseline_usage.md`
-- `README_HYU_INTEGRATION.md`
+- `eufs_graph_slam/README.md`
 
 ## 2. 시스템 패키지 설치 확인
 

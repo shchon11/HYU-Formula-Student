@@ -13,6 +13,7 @@ from eufs_msgs.msg import (
     ConeWithCovariance,
 )
 from geometry_msgs.msg import Point
+from rclpy.clock import ClockChange, JumpThreshold
 from rclpy.duration import Duration
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
@@ -41,6 +42,17 @@ except ImportError:
 
 StampKey = Tuple[int, int]
 SyncKey = Tuple[StampKey, StampKey]
+INT64_MAX = (1 << 63) - 1
+INT64_MIN = -(1 << 63)
+
+
+def _sift_available() -> bool:
+    """Return whether the active OpenCV build provides the Tier-3 primitive."""
+    try:
+        import cv2
+    except ImportError:
+        return False
+    return callable(getattr(cv2, "SIFT_create", None))
 
 
 @dataclass
@@ -215,9 +227,29 @@ class PerceptionBaselineNode(Node):
         self.pointcloud_buffer = TimestampBuffer(self.sync_queue_size)
         self.bbox_buffer = TimestampBuffer(self.sync_queue_size)
         self.latest_stream_stamp_ns = {}
+        self.sensor_epoch = 0
+        self.epoch_start_ros_time_ns: Optional[int] = None
+        self.replay_guard_end_ros_time_ns: Optional[int] = None
+        self.replay_guard_ends_ros_time_ns: List[int] = []
+        self._pending_fallback_rollback: Optional[Tuple[int, int]] = None
+        self.last_observed_ros_time_ns = self.get_clock().now().nanoseconds
         self.last_empty_key: Optional[SyncKey] = None
         self.last_fusion_key: Optional[SyncKey] = None
         self.last_warning_time = {}
+        self.clock_jump_handler = self.get_clock().create_jump_callback(
+            JumpThreshold(
+                # Galactic converts None to zero, which schedules this callback
+                # for every positive /clock tick.  Use the largest Duration to
+                # disable practical forward-jump callbacks; the post-callback
+                # still filters delta defensively for version differences.
+                min_forward=Duration(nanoseconds=(1 << 63) - 1),
+                min_backward=Duration(
+                    nanoseconds=-self.timestamp_reset_threshold_ns
+                ),
+                on_clock_change=True,
+            ),
+            post_callback=self._on_clock_jump,
+        )
 
         self.get_logger().info(
             "Publishing SLAM cone observations on "
@@ -270,6 +302,7 @@ class PerceptionBaselineNode(Node):
         self.declare_parameter("sync_queue_size", 12)
         self.declare_parameter("image_sync_queue_size", 64)
         self.declare_parameter("timestamp_reset_threshold_sec", 0.1)
+        self.declare_parameter("max_future_stamp_lead_sec", 0.09)
         self.declare_parameter("publish_empty_on_sync", False)
         self.declare_parameter("fusion_enabled", True)
         self.declare_parameter("publish_fusion_debug", True)
@@ -389,6 +422,9 @@ class PerceptionBaselineNode(Node):
         )
         self.timestamp_reset_threshold_sec = float(
             self.get_parameter("timestamp_reset_threshold_sec").value
+        )
+        self.max_future_stamp_lead_sec = float(
+            self.get_parameter("max_future_stamp_lead_sec").value
         )
         self.publish_empty_on_sync = self._as_bool(
             self.get_parameter("publish_empty_on_sync").value
@@ -569,8 +605,7 @@ class PerceptionBaselineNode(Node):
             raise ValueError("sync_queue_size must be greater than zero")
         if self.image_sync_queue_size <= 0:
             raise ValueError("image_sync_queue_size must be greater than zero")
-        if self.timestamp_reset_threshold_sec <= 0.0:
-            raise ValueError("timestamp_reset_threshold_sec must be positive")
+        self._validate_time_parameters()
         if self.sync_tolerance_sec < 0.0 or self.image_sync_tolerance_sec < 0.0:
             raise ValueError("synchronization tolerances must not be negative")
         if not self.camera_frame:
@@ -579,6 +614,7 @@ class PerceptionBaselineNode(Node):
             raise ValueError("motion_compensation_frame must not be empty")
         if self.stereo_fallback_enabled and not self.right_camera_frame:
             raise ValueError("right_camera_frame must not be empty when stereo is enabled")
+        self._validate_stereo_capability()
         if not (self.roi_min_x < self.roi_max_x):
             raise ValueError("roi_min_x must be less than roi_max_x")
         if not (self.roi_min_z < self.roi_max_z):
@@ -620,10 +656,72 @@ class PerceptionBaselineNode(Node):
             if minimum <= 0.0 or maximum <= minimum:
                 raise ValueError(f"{name} range must satisfy 0 < min < max")
 
+    def _validate_time_parameters(self) -> None:
+        if (
+            not math.isfinite(self.timestamp_reset_threshold_sec)
+            or self.timestamp_reset_threshold_sec <= 0.0
+        ):
+            raise ValueError(
+                "timestamp_reset_threshold_sec must be finite, positive, and "
+                "representable as an int64 nanosecond duration"
+            )
+        if (
+            not math.isfinite(self.max_future_stamp_lead_sec)
+            or self.max_future_stamp_lead_sec <= 0.0
+        ):
+            raise ValueError(
+                "max_future_stamp_lead_sec must be finite, positive, and "
+                "representable as an int64 nanosecond duration"
+            )
+        try:
+            reset_threshold_ns = int(
+                self.timestamp_reset_threshold_sec * 1.0e9
+            )
+        except (OverflowError, ValueError):
+            raise ValueError(
+                "timestamp_reset_threshold_sec must convert to a positive "
+                "int64 nanosecond duration"
+            ) from None
+        try:
+            max_future_ns = int(self.max_future_stamp_lead_sec * 1.0e9)
+        except (OverflowError, ValueError):
+            raise ValueError(
+                "max_future_stamp_lead_sec must convert to a positive int64 "
+                "nanosecond duration"
+            ) from None
+        max_duration_ns = (1 << 63) - 1
+        if reset_threshold_ns <= 0 or reset_threshold_ns > max_duration_ns:
+            raise ValueError(
+                "timestamp_reset_threshold_sec must convert to a positive "
+                "int64 nanosecond duration"
+            )
+        if max_future_ns <= 0 or max_future_ns > max_duration_ns:
+            raise ValueError(
+                "max_future_stamp_lead_sec must convert to a positive int64 "
+                "nanosecond duration"
+            )
+        if max_future_ns >= reset_threshold_ns:
+            raise ValueError(
+                "max_future_stamp_lead_sec must be smaller than "
+                "timestamp_reset_threshold_sec to bound previous-epoch "
+                "watermark contamination after a rollback"
+            )
+        self.timestamp_reset_threshold_ns = reset_threshold_ns
+        self.max_future_stamp_lead_ns = max_future_ns
+
+    def _validate_stereo_capability(self) -> None:
+        if self.stereo_fallback_enabled and not _sift_available():
+            raise RuntimeError(
+                "stereo_fallback_enabled requires an OpenCV build that provides "
+                "cv2.SIFT_create; use the project conda environment, install a "
+                "SIFT-capable OpenCV build, or explicitly disable the Tier-3 fallback"
+            )
+
     def _validate_camera_info(
         self,
         camera_info: CameraInfo,
         image: Optional[Image] = None,
+        expected_frame: Optional[str] = None,
     ) -> None:
         if int(camera_info.width) <= 0 or int(camera_info.height) <= 0:
             raise RuntimeError("CameraInfo width and height must be positive")
@@ -653,6 +751,32 @@ class PerceptionBaselineNode(Node):
                     "Image and CameraInfo frame_id differ: "
                     f"image={image_frame!r}, camera_info={info_frame!r}"
                 )
+            self._validate_camera_frame(
+                image_frame,
+                expected_frame,
+                "Image",
+            )
+        info_frame = str(camera_info.header.frame_id).strip()
+        expected_frame = str(expected_frame or "").strip()
+        if info_frame and expected_frame and info_frame != expected_frame:
+            raise RuntimeError(
+                "CameraInfo frame_id differs from configured camera frame: "
+                f"camera_info={info_frame!r}, configured={expected_frame!r}"
+            )
+
+    @staticmethod
+    def _validate_camera_frame(
+        frame_id: str,
+        expected_frame: Optional[str],
+        source_name: str,
+    ) -> None:
+        actual = str(frame_id or "").strip()
+        expected = str(expected_frame or "").strip()
+        if actual and expected and actual != expected:
+            raise RuntimeError(
+                f"{source_name} frame_id differs from configured camera frame: "
+                f"{source_name.lower()}={actual!r}, configured={expected!r}"
+            )
 
     @staticmethod
     def _camera_matrix(camera_info: CameraInfo) -> np.ndarray:
@@ -673,63 +797,390 @@ class PerceptionBaselineNode(Node):
         return intrinsic.reshape(3, 3).copy()
 
     def _image_callback(self, msg: Image) -> None:
-        stamp_ns = self._stamp_to_ns(msg.header.stamp)
-        self._prepare_sensor_stamp("left_image", stamp_ns)
+        stamp_ns = self._prepare_sensor_message_stamp(
+            "left_image", msg.header.stamp
+        )
+        if stamp_ns is None:
+            return
         self.latest_image = msg
         self.image_buffer.add(stamp_ns, msg)
         self._try_publish_empty_from_sensor_pair()
         self._try_publish_fusion()
 
     def _right_image_callback(self, msg: Image) -> None:
-        stamp_ns = self._stamp_to_ns(msg.header.stamp)
-        self._prepare_sensor_stamp("right_image", stamp_ns)
+        stamp_ns = self._prepare_sensor_message_stamp(
+            "right_image", msg.header.stamp
+        )
+        if stamp_ns is None:
+            return
         self.latest_right_image = msg
         self.right_image_buffer.add(stamp_ns, msg)
         self._try_publish_fusion()
 
     def _pointcloud_callback(self, msg: PointCloud2) -> None:
-        stamp_ns = self._stamp_to_ns(msg.header.stamp)
-        self._prepare_sensor_stamp("pointcloud", stamp_ns)
+        stamp_ns = self._prepare_sensor_message_stamp(
+            "pointcloud", msg.header.stamp
+        )
+        if stamp_ns is None:
+            return
         self.latest_pointcloud = msg
         self.pointcloud_buffer.add(stamp_ns, msg)
         self._try_publish_empty_from_sensor_pair()
         self._try_publish_fusion()
 
     def _bbox_callback(self, msg: BoundingBoxes) -> None:
-        stamp_ns = self._stamp_to_ns(self._bounding_boxes_stamp(msg))
-        self._prepare_sensor_stamp("bboxes", stamp_ns)
+        stamp_ns = self._prepare_sensor_message_stamp(
+            "bboxes", self._bounding_boxes_stamp(msg)
+        )
+        if stamp_ns is None:
+            return
         self.latest_bboxes = msg
         self.bbox_buffer.add(stamp_ns, msg)
         self._try_publish_fusion()
 
-    def _prepare_sensor_stamp(self, stream_name: str, stamp_ns: int) -> None:
-        """Reset buffered synchronization state after a large time rollback."""
-        previous = self.latest_stream_stamp_ns.get(stream_name)
-        reset_threshold_ns = int(
-            round(self.timestamp_reset_threshold_sec * 1.0e9)
+    def _clear_fusion_epoch(
+        self,
+        replay_guard_end_ros_time_ns: Optional[int] = None,
+        epoch_start_ros_time_ns: Optional[int] = None,
+        fallback_rollback: bool = False,
+        preserve_replay_guards: bool = False,
+    ) -> None:
+        """Discard all cross-sensor state at an authoritative clock epoch change."""
+        self.image_buffer.clear()
+        self.right_image_buffer.clear()
+        self.pointcloud_buffer.clear()
+        self.bbox_buffer.clear()
+        self.latest_stream_stamp_ns.clear()
+        self.latest_image = None
+        self.latest_right_image = None
+        self.latest_pointcloud = None
+        self.latest_bboxes = None
+        self.last_empty_key = None
+        self.last_fusion_key = None
+        if epoch_start_ros_time_ns is None:
+            epoch_start_ns = self.get_clock().now().nanoseconds
+        else:
+            epoch_start_ns = int(epoch_start_ros_time_ns)
+        replay_guard_end_ns = self._valid_replay_guard_end(
+            epoch_start_ns,
+            replay_guard_end_ros_time_ns,
         )
-        if previous is not None and stamp_ns < previous - reset_threshold_ns:
-            self.image_buffer.clear()
-            self.right_image_buffer.clear()
-            self.pointcloud_buffer.clear()
-            self.bbox_buffer.clear()
-            self.latest_stream_stamp_ns.clear()
-            self.latest_image = None
-            self.latest_right_image = None
-            self.latest_pointcloud = None
-            self.latest_bboxes = None
-            self.last_empty_key = None
-            self.last_fusion_key = None
+        replay_guard_ends = []
+        if preserve_replay_guards:
+            replay_guard_ends.extend(
+                guard_end_ns
+                for guard_end_ns in getattr(
+                    self,
+                    "replay_guard_ends_ros_time_ns",
+                    [],
+                )
+                if guard_end_ns > epoch_start_ns
+            )
+            existing_guard_end_ns = getattr(
+                self,
+                "replay_guard_end_ros_time_ns",
+                None,
+            )
+            if (
+                existing_guard_end_ns is not None
+                and existing_guard_end_ns > epoch_start_ns
+            ):
+                replay_guard_ends.append(existing_guard_end_ns)
+        if replay_guard_end_ns is not None:
+            replay_guard_ends.append(replay_guard_end_ns)
+        replay_guard_ends = sorted(set(replay_guard_ends))
+        self.epoch_start_ros_time_ns = epoch_start_ns
+        self.replay_guard_ends_ros_time_ns = replay_guard_ends
+        self.replay_guard_end_ros_time_ns = (
+            replay_guard_ends[0] if replay_guard_ends else None
+        )
+        self._pending_fallback_rollback = (
+            (epoch_start_ns, replay_guard_end_ns)
+            if fallback_rollback and replay_guard_end_ns is not None
+            else None
+        )
+        self.last_observed_ros_time_ns = epoch_start_ns
+        self._reset_tf_epoch()
+        self.sensor_epoch += 1
+
+    def _reset_tf_epoch(self) -> None:
+        """Recreate the TF subscription while retaining cached static transforms."""
+        old_listener = self.tf_listener
+        listener_unregistered = False
+        try:
+            old_listener.unregister()
+            listener_unregistered = True
+        except Exception as exc:  # pragma: no cover - rclpy destruction failure
             self._warn_throttled(
-                "sensor_time_reset",
-                "Detected sensor timestamp rollback; cleared fusion buffers "
-                "for the new clock epoch",
+                "tf_listener_reset",
+                f"Old TF listener could not be unregistered after epoch reset: {exc}",
                 period_sec=1.0,
             )
-            previous = None
+        old_buffer = self.tf_buffer
+        old_buffer.clear()
+        # Buffer.clear() retains static TF in Galactic. Reusing that buffer
+        # therefore supports rosbag/one-shot static publishers that have
+        # already exited, while listener recreation flushes queued volatile
+        # /tf. If unregister failed, isolate the still-active old subscription
+        # with a fresh buffer instead of allowing it to repopulate live state.
+        new_buffer = old_buffer if listener_unregistered else Buffer()
+        new_listener = TransformListener(new_buffer, self)
+        self.tf_buffer = new_buffer
+        self.tf_listener = new_listener
+
+    def _on_clock_jump(self, time_jump) -> None:
+        """Start a new epoch only for a source transition or real rollback."""
+        if not self._is_authoritative_clock_epoch_change(time_jump):
+            return
+
+        new_now_ns = int(self.get_clock().now().nanoseconds)
+        clock_change = getattr(time_jump, "clock_change", None)
+        clock_source_changed = clock_change in (
+            ClockChange.ROS_TIME_ACTIVATED,
+            ClockChange.ROS_TIME_DEACTIVATED,
+        )
+        delta_ns = self._clock_jump_delta_ns(time_jump)
+        replay_guard_end_ns = None
+        if not clock_source_changed and delta_ns is not None:
+            replay_guard_end_ns = self._rollback_replay_end_ns(
+                new_now_ns,
+                delta_ns,
+            )
+
+        if self._matches_pending_fallback_rollback(
+            new_now_ns,
+            delta_ns,
+            clock_source_changed,
+        ):
+            self._pending_fallback_rollback = None
+            return
+
+        self._clear_fusion_epoch(
+            replay_guard_end_ros_time_ns=replay_guard_end_ns,
+            epoch_start_ros_time_ns=new_now_ns,
+            preserve_replay_guards=not clock_source_changed,
+        )
+        self._warn_throttled(
+            "sensor_time_reset",
+            "ROS clock changed or moved backward; cleared fusion buffers for "
+            f"sensor epoch {self.sensor_epoch}",
+            period_sec=1.0,
+        )
+
+    def _is_authoritative_clock_epoch_change(self, time_jump) -> bool:
+        """Defensively filter Galactic callbacks that include forward ticks."""
+        if time_jump is None:
+            return False
+
+        clock_change = getattr(time_jump, "clock_change", None)
+        if clock_change in (
+            ClockChange.ROS_TIME_ACTIVATED,
+            ClockChange.ROS_TIME_DEACTIVATED,
+        ):
+            return True
+
+        delta_ns = self._clock_jump_delta_ns(time_jump)
+        if delta_ns is None:
+            return False
+
+        return delta_ns <= -self.timestamp_reset_threshold_ns
+
+    @staticmethod
+    def _clock_jump_delta_ns(time_jump) -> Optional[int]:
+        delta = getattr(time_jump, "delta", None)
+        delta_ns = getattr(delta, "nanoseconds", None)
+        if delta_ns is None:
+            return None
+        try:
+            delta_ns = int(delta_ns)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if delta_ns < INT64_MIN or delta_ns > INT64_MAX:
+            return None
+        return delta_ns
+
+    @staticmethod
+    def _rollback_replay_end_ns(
+        epoch_start_ns: int,
+        clock_delta_ns: int,
+    ) -> Optional[int]:
+        """Recover the pre-rollback high watermark without int64 overflow."""
+        try:
+            epoch_start_ns = int(epoch_start_ns)
+            clock_delta_ns = int(clock_delta_ns)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if (
+            epoch_start_ns < INT64_MIN
+            or epoch_start_ns > INT64_MAX
+            or clock_delta_ns < INT64_MIN
+            or clock_delta_ns >= 0
+        ):
+            return None
+        if epoch_start_ns > INT64_MAX + clock_delta_ns:
+            return INT64_MAX
+        return epoch_start_ns - clock_delta_ns
+
+    @staticmethod
+    def _valid_replay_guard_end(
+        epoch_start_ns: int,
+        replay_guard_end_ns: Optional[int],
+    ) -> Optional[int]:
+        if replay_guard_end_ns is None:
+            return None
+        try:
+            replay_guard_end_ns = int(replay_guard_end_ns)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if (
+            replay_guard_end_ns < INT64_MIN
+            or replay_guard_end_ns <= epoch_start_ns
+            or replay_guard_end_ns > INT64_MAX
+        ):
+            return None
+        return replay_guard_end_ns
+
+    def _matches_pending_fallback_rollback(
+        self,
+        new_now_ns: int,
+        delta_ns: Optional[int],
+        clock_source_changed: bool,
+    ) -> bool:
+        """Suppress the jump callback when the input fallback handled it first."""
+        pending = getattr(self, "_pending_fallback_rollback", None)
+        if pending is None or clock_source_changed or delta_ns is None:
+            return False
+        epoch_start_ns, replay_guard_end_ns = pending
+        expected_delta_ns = epoch_start_ns - replay_guard_end_ns
+        return delta_ns == expected_delta_ns and new_now_ns == epoch_start_ns
+
+    def _prepare_sensor_message_stamp(self, stream_name: str, stamp) -> Optional[int]:
+        """Validate a raw ROS Time before converting it to integer nanoseconds."""
+        if not self._is_canonical_nonzero_stamp(stamp):
+            self._warn_throttled(
+                f"invalid_stamp_{stream_name}",
+                f"Dropping {stream_name} with a non-canonical or zero ROS timestamp",
+                period_sec=1.0,
+            )
+            return None
+        stamp_ns = self._stamp_to_ns(stamp)
+        if not self._prepare_sensor_stamp(stream_name, stamp_ns):
+            return None
+        return stamp_ns
+
+    def _prepare_sensor_stamp(self, stream_name: str, stamp_ns: int) -> bool:
+        """Accept in-epoch stamps while dropping stale or implausibly future data."""
+        clock = self.get_clock()
+        now_ns = clock.now().nanoseconds
+        last_now_ns = self.last_observed_ros_time_ns
+        if (
+            last_now_ns is not None
+            and now_ns <= last_now_ns - self.timestamp_reset_threshold_ns
+        ):
+            self._clear_fusion_epoch(
+                replay_guard_end_ros_time_ns=last_now_ns,
+                epoch_start_ros_time_ns=now_ns,
+                fallback_rollback=True,
+                preserve_replay_guards=True,
+            )
+            now_ns = self.epoch_start_ros_time_ns
+            self._warn_throttled(
+                "observed_ros_time_reset",
+                "Observed the node clock move backward while processing input; "
+                f"started sensor epoch {self.sensor_epoch}",
+                period_sec=1.0,
+            )
+        elif last_now_ns is None or now_ns > last_now_ns:
+            self.last_observed_ros_time_ns = now_ns
+        ros_time_is_active = bool(
+            getattr(clock, "ros_time_is_active", False)
+        )
+        replay_guard_end_ns = getattr(
+            self,
+            "replay_guard_end_ros_time_ns",
+            None,
+        )
+        replay_guard_ends = list(
+            getattr(self, "replay_guard_ends_ros_time_ns", [])
+        )
+        if (
+            replay_guard_end_ns is not None
+            and replay_guard_end_ns not in replay_guard_ends
+        ):
+            replay_guard_ends.append(replay_guard_end_ns)
+        replay_guard_ends = sorted(
+            set(
+                guard_end_ns
+                for guard_end_ns in replay_guard_ends
+                if guard_end_ns > now_ns
+            )
+        )
+        self.replay_guard_ends_ros_time_ns = replay_guard_ends
+        self.replay_guard_end_ros_time_ns = (
+            replay_guard_ends[0] if replay_guard_ends else None
+        )
+        replay_guard_end_ns = self.replay_guard_end_ros_time_ns
+        if replay_guard_end_ns is None:
+            self._pending_fallback_rollback = None
+        replaying_rollback_interval = replay_guard_end_ns is not None
+        max_future_ns = self.max_future_stamp_lead_ns
+        if stamp_ns <= 0:
+            self._warn_throttled(
+                f"invalid_stamp_{stream_name}",
+                f"Dropping {stream_name} with non-positive timestamp {stamp_ns}",
+                period_sec=1.0,
+            )
+            return False
+        epoch_start_ns = self.epoch_start_ros_time_ns
+        if epoch_start_ns is not None and stamp_ns < epoch_start_ns:
+            self._warn_throttled(
+                f"previous_epoch_{stream_name}",
+                f"Dropping {stream_name} timestamp {stamp_ns} before sensor "
+                f"epoch {self.sensor_epoch} start {epoch_start_ns}",
+                period_sec=1.0,
+            )
+            return False
+        if (
+            replaying_rollback_interval
+            and stamp_ns >= replay_guard_end_ns
+        ):
+            self._warn_throttled(
+                f"replay_guard_{stream_name}",
+                f"Dropping {stream_name} timestamp {stamp_ns} at or beyond "
+                f"the pre-rollback clock watermark {replay_guard_end_ns}",
+                period_sec=1.0,
+            )
+            return False
+        if (
+            (replaying_rollback_interval or ros_time_is_active or now_ns > 0)
+            and stamp_ns > now_ns + max_future_ns
+        ):
+            self._warn_throttled(
+                f"future_{stream_name}",
+                f"Dropping {stream_name} timestamp {stamp_ns} more than "
+                f"{max_future_ns * 1.0e-9:.3f} s ahead of ROS time"
+                + (
+                    " while replaying a rolled-back clock interval"
+                    if replaying_rollback_interval
+                    else ""
+                ),
+                period_sec=1.0,
+            )
+            return False
+
+        previous = self.latest_stream_stamp_ns.get(stream_name)
+        if previous is not None and stamp_ns <= previous:
+            self._warn_throttled(
+                f"stale_{stream_name}",
+                f"Dropping duplicate or out-of-order {stream_name} message within sensor "
+                f"epoch {self.sensor_epoch}",
+                period_sec=1.0,
+            )
+            return False
 
         if previous is None or stamp_ns > previous:
             self.latest_stream_stamp_ns[stream_name] = stamp_ns
+        return True
 
     def _camera_info_callback(self, msg: CameraInfo) -> None:
         self.latest_camera_info = msg
@@ -835,9 +1286,21 @@ class PerceptionBaselineNode(Node):
             )
         except TransformException as exc:
             self._warn_throttled("tf", f"Fusion skipped: missing TF ({exc})")
+            if self._drop_failed_pair_if_superseded(
+                bbox_entry,
+                cloud_entry,
+                tolerance_ns,
+            ):
+                self._try_publish_fusion()
             return
         except RuntimeError as exc:
             self._warn_throttled("fusion", f"Fusion skipped: {exc}")
+            if self._drop_failed_pair_if_superseded(
+                bbox_entry,
+                cloud_entry,
+                tolerance_ns,
+            ):
+                self._try_publish_fusion()
             return
 
         # Commit synchronization state only after successful fusion.  This
@@ -915,6 +1378,37 @@ class PerceptionBaselineNode(Node):
             return bbox_entry, cloud_match
         return None
 
+    def _drop_failed_pair_if_superseded(
+        self,
+        bbox_entry,
+        cloud_entry,
+        tolerance_ns: int,
+    ) -> bool:
+        """Drop a failed pair only when a newer synchronized pair is ready."""
+        newer_bboxes = [
+            entry
+            for entry in self.bbox_buffer.entries()
+            if entry.stamp_ns > bbox_entry.stamp_ns
+        ]
+        newer_clouds = [
+            entry
+            for entry in self.pointcloud_buffer.entries()
+            if entry.stamp_ns > cloud_entry.stamp_ns
+        ]
+        newer_pair_ready = any(
+            abs(new_bbox.stamp_ns - new_cloud.stamp_ns) <= tolerance_ns
+            for new_bbox in newer_bboxes
+            for new_cloud in newer_clouds
+        )
+        if not newer_pair_ready:
+            return False
+
+        # Keep a lone pair retryable for normal TF callback ordering, but never
+        # let an irrecoverable old timestamp head-of-line block fresher data.
+        self.bbox_buffer.remove(bbox_entry.stamp_ns)
+        self.pointcloud_buffer.remove(cloud_entry.stamp_ns)
+        return True
+
     @staticmethod
     def _discard_entries_before(buffer, cutoff_ns: int) -> bool:
         removed = False
@@ -934,7 +1428,12 @@ class PerceptionBaselineNode(Node):
         right_image: Optional[Image] = None,
         right_camera_info: Optional[CameraInfo] = None,
     ) -> ConeArrayWithCovariance:
-        self._validate_camera_info(camera_info, left_image)
+        self._validate_camera_info(camera_info, left_image, self.camera_frame)
+        self._validate_camera_frame(
+            bboxes.image_header.frame_id,
+            self.camera_frame,
+            "BoundingBoxes.image_header",
+        )
         detections = self._extract_detections(bboxes, camera_info)
         bbox_stamp = self._bounding_boxes_stamp(bboxes)
         msg = ConeArrayWithCovariance()
@@ -1749,7 +2248,11 @@ class PerceptionBaselineNode(Node):
             )
             return None
         try:
-            self._validate_camera_info(right_camera_info, right_image)
+            self._validate_camera_info(
+                right_camera_info,
+                right_image,
+                self.right_camera_frame,
+            )
             if (
                 int(left_image.width) != int(right_image.width)
                 or int(left_image.height) != int(right_image.height)
@@ -2356,7 +2859,10 @@ class PerceptionBaselineNode(Node):
             target_frame,
             source_frame,
             lookup_time,
-            timeout=Duration(seconds=0.05),
+            # This node uses a single-threaded executor. Blocking here would
+            # prevent the /tf callback that could satisfy the lookup from
+            # running; the synchronized sensor pair is retained and retried.
+            timeout=Duration(seconds=0.0),
         )
         return self._transform_to_matrix(transform.transform)
 
@@ -2381,7 +2887,7 @@ class PerceptionBaselineNode(Node):
             source_frame,
             Time.from_msg(source_stamp),
             self.motion_compensation_frame,
-            timeout=Duration(seconds=0.05),
+            timeout=Duration(seconds=0.0),
         )
         return self._transform_to_matrix(transform.transform)
 
@@ -2422,16 +2928,49 @@ class PerceptionBaselineNode(Node):
         return points.dot(rotation.T) + translation
 
     def _oracle_callback(self, msg: ConeArrayWithCovariance) -> None:
+        stamp_ns = self._prepare_sensor_message_stamp(
+            "oracle", msg.header.stamp
+        )
+        if stamp_ns is None:
+            return
+
         normalized = ConeArrayWithCovariance()
-        normalized.header = msg.header
-        if self.oracle_rewrite_frame:
+        normalized.header.stamp = msg.header.stamp
+        normalized.header.frame_id = msg.header.frame_id
+        transform = None
+        source_frame = str(msg.header.frame_id).strip()
+        if self.oracle_rewrite_frame and source_frame != self.output_frame:
+            if not source_frame:
+                self._warn_throttled(
+                    "oracle_frame",
+                    "Dropping oracle cones without a source frame; coordinates "
+                    "cannot be rewritten safely",
+                )
+                return
+            try:
+                transform = self._lookup_transform_matrix(
+                    self.output_frame,
+                    source_frame,
+                    msg.header.stamp,
+                )
+            except TransformException as exc:
+                self._warn_throttled(
+                    "oracle_tf",
+                    f"Dropping oracle cones because {source_frame} -> "
+                    f"{self.output_frame} TF is unavailable: {exc}",
+                )
+                return
             normalized.header.frame_id = self.output_frame
 
-        normalized.blue_cones = self._normalize_cones(msg.blue_cones)
-        normalized.yellow_cones = self._normalize_cones(msg.yellow_cones)
-        normalized.orange_cones = self._normalize_cones(msg.orange_cones)
-        normalized.big_orange_cones = self._normalize_cones(msg.big_orange_cones)
-        normalized.unknown_color_cones = self._normalize_cones(msg.unknown_color_cones)
+        normalized.blue_cones = self._normalize_cones(msg.blue_cones, transform)
+        normalized.yellow_cones = self._normalize_cones(msg.yellow_cones, transform)
+        normalized.orange_cones = self._normalize_cones(msg.orange_cones, transform)
+        normalized.big_orange_cones = self._normalize_cones(
+            msg.big_orange_cones, transform
+        )
+        normalized.unknown_color_cones = self._normalize_cones(
+            msg.unknown_color_cones, transform
+        )
         self._publish_cones(normalized)
 
     def _publish_cones(self, msg: ConeArrayWithCovariance) -> None:
@@ -2534,17 +3073,35 @@ class PerceptionBaselineNode(Node):
             marker.points.append(point)
         return marker
 
-    def _normalize_cones(self, cones: Iterable[ConeWithCovariance]):
+    def _normalize_cones(
+        self,
+        cones: Iterable[ConeWithCovariance],
+        transform: Optional[np.ndarray] = None,
+    ):
         normalized = []
         for cone in cones:
-            if not self._finite_xy(cone.point.x, cone.point.y):
+            if not self._finite_xyz(cone.point.x, cone.point.y, cone.point.z):
+                continue
+
+            point = np.array(
+                [float(cone.point.x), float(cone.point.y), float(cone.point.z), 1.0],
+                dtype=np.float64,
+            )
+            covariance = np.asarray(
+                self._normalize_covariance(cone.covariance), dtype=np.float64
+            ).reshape(2, 2)
+            if transform is not None:
+                point = transform @ point
+                planar_rotation = transform[:2, :2]
+                covariance = planar_rotation @ covariance @ planar_rotation.T
+            if not self._finite_xy(point[0], point[1]):
                 continue
 
             clean = ConeWithCovariance()
-            clean.point.x = float(cone.point.x)
-            clean.point.y = float(cone.point.y)
+            clean.point.x = float(point[0])
+            clean.point.y = float(point[1])
             clean.point.z = 0.0
-            clean.covariance = self._normalize_covariance(cone.covariance)
+            clean.covariance = self._normalize_covariance(covariance.reshape(-1))
             normalized.append(clean)
         return normalized
 
@@ -2606,6 +3163,27 @@ class PerceptionBaselineNode(Node):
     @staticmethod
     def _finite_xy(x_value: float, y_value: float) -> bool:
         return math.isfinite(float(x_value)) and math.isfinite(float(y_value))
+
+    @staticmethod
+    def _finite_xyz(x_value: float, y_value: float, z_value: float) -> bool:
+        return (
+            math.isfinite(float(x_value))
+            and math.isfinite(float(y_value))
+            and math.isfinite(float(z_value))
+        )
+
+    @staticmethod
+    def _is_canonical_nonzero_stamp(stamp) -> bool:
+        try:
+            seconds = int(stamp.sec)
+            nanoseconds = int(stamp.nanosec)
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            return False
+        return (
+            seconds >= 0
+            and 0 <= nanoseconds < 1_000_000_000
+            and (seconds != 0 or nanoseconds != 0)
+        )
 
     @staticmethod
     def _stamp_to_sec(stamp) -> float:

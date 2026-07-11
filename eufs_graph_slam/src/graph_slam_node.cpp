@@ -9,17 +9,20 @@
 #include <g2o/core/block_solver.h>
 #include <g2o/core/optimization_algorithm_levenberg.h>
 #include <g2o/core/robust_kernel_impl.h>
-#include <g2o/solvers/dense/linear_solver_dense.h>
+#include <g2o/solvers/eigen/linear_solver_eigen.h>
 #include <g2o/types/slam2d/edge_se2.h>
 #include <g2o/types/slam2d/edge_se2_pointxy.h>
 #include <g2o/types/slam2d/types_slam2d.h>
 
-#include <algorithm>
+#include <cinttypes>
 #include <cmath>
+#include <algorithm>
 #include <deque>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -27,6 +30,7 @@
 #include "geometry_msgs/msg/point.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
+#include "eufs_graph_slam/optimizer_policy.hpp"
 #include "visualization_msgs/msg/marker.hpp"
 
 namespace eufs_graph_slam
@@ -49,12 +53,16 @@ g2o::SE2 se2FromPose2d(const time_alignment::Pose2d & pose)
 }  // namespace
 
 GraphSlamNode::GraphSlamNode()
-: Node("graph_slam_node"),
+: Node(
+    "graph_slam_node",
+    rclcpp::NodeOptions().use_clock_thread(false)),
+  steady_clock_(RCL_STEADY_TIME),
   keyframe_distance_(1.0),
   keyframe_yaw_(0.25),
   keyframe_max_dt_(1.0),
   pose_history_duration_(3.0),
   clock_rollback_threshold_(0.1),
+  max_future_stamp_lead_(0.09),
   association_max_distance_(1.2),
   min_observation_range_(0.2),
   max_observation_range_(30.0),
@@ -71,11 +79,13 @@ GraphSlamNode::GraphSlamNode()
   landmark_delete_min_interval_(0.2),
   landmark_update_gain_(1.0),
   landmark_update_process_variance_(0.04),
+  clock_rollback_threshold_ns_(100000000LL),
+  max_future_stamp_lead_ns_(90000000LL),
   optimize_every_n_keyframes_(100),
   optimization_iterations_(3),
   landmark_min_observations_to_publish_(1),
   max_landmarks_(400),
-  max_optimization_poses_(100),
+  max_optimization_poses_(300),
   path_max_poses_to_publish_(1000),
   landmark_missed_observations_to_delete_(6),
   pose_history_max_samples_(1024),
@@ -94,12 +104,16 @@ GraphSlamNode::GraphSlamNode()
   next_vertex_id_(0),
   next_edge_id_(0),
   keyframes_since_last_optimization_(0),
-  pose_history_(time_alignment::PoseHistoryOptions{3000000000LL, 1024U, 100000000LL}),
+  pose_history_(time_alignment::PoseHistoryOptions{3000000000LL, 1024U}),
+  clock_epoch_(0U),
   latest_estimate_(),
   has_latest_pose_(false)
 {
   car_state_topic_ =
     declare_parameter<std::string>("car_state_topic", "/odometry_integration/car_state");
+  car_state_frame_ = declare_parameter<std::string>("car_state_frame", "map");
+  car_state_child_frame_ =
+    declare_parameter<std::string>("car_state_child_frame", "base_footprint");
   cones_topic_ = declare_parameter<std::string>("cones_topic", "/cones");
   map_topic_ = declare_parameter<std::string>("map_topic", "/graph_slam/map");
   slam_odom_topic_ = declare_parameter<std::string>("slam_odom_topic", "/graph_slam/odom");
@@ -117,6 +131,8 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<double>("pose_history_duration", pose_history_duration_);
   clock_rollback_threshold_ =
     declare_parameter<double>("clock_rollback_threshold", clock_rollback_threshold_);
+  max_future_stamp_lead_ =
+    declare_parameter<double>("max_future_stamp_lead", max_future_stamp_lead_);
   association_max_distance_ =
     declare_parameter<double>("association_max_distance", association_max_distance_);
   min_observation_range_ =
@@ -187,8 +203,30 @@ GraphSlamNode::GraphSlamNode()
 
   keyframe_distance_ = std::max(0.0, keyframe_distance_);
   keyframe_yaw_ = std::max(0.0, keyframe_yaw_);
-  pose_history_duration_ = std::max(0.1, pose_history_duration_);
-  clock_rollback_threshold_ = std::max(1e-3, clock_rollback_threshold_);
+  const std::optional<std::int64_t> pose_history_duration_ns =
+    time_alignment::secondsToNanoseconds(pose_history_duration_);
+  if (!pose_history_duration_ns.has_value() || pose_history_duration_ < 0.1) {
+    throw std::invalid_argument(
+            "pose_history_duration must be finite, at least 0.1 s, and representable");
+  }
+  const std::optional<std::int64_t> clock_rollback_threshold_ns =
+    time_alignment::secondsToNanoseconds(clock_rollback_threshold_);
+  if (!clock_rollback_threshold_ns.has_value() || clock_rollback_threshold_ < 1e-3) {
+    throw std::invalid_argument(
+            "clock_rollback_threshold must be finite, at least 0.001 s, and representable");
+  }
+  const std::optional<std::int64_t> max_future_stamp_lead_ns =
+    time_alignment::secondsToNanoseconds(max_future_stamp_lead_);
+  if (!max_future_stamp_lead_ns.has_value() || max_future_stamp_lead_ <= 0.0 ||
+    *max_future_stamp_lead_ns <= 0 ||
+    *max_future_stamp_lead_ns >= *clock_rollback_threshold_ns)
+  {
+    throw std::invalid_argument(
+            "max_future_stamp_lead must be finite, positive, and smaller than "
+            "clock_rollback_threshold to retain a positive rollback separation margin");
+  }
+  clock_rollback_threshold_ns_ = *clock_rollback_threshold_ns;
+  max_future_stamp_lead_ns_ = *max_future_stamp_lead_ns;
   association_max_distance_ = std::max(0.05, association_max_distance_);
   min_observation_range_ = std::max(0.0, min_observation_range_);
   max_observation_range_ = std::max(min_observation_range_, max_observation_range_);
@@ -203,6 +241,10 @@ GraphSlamNode::GraphSlamNode()
     std::max(1, landmark_missed_observations_to_delete_);
   pose_history_max_samples_ = std::max(2, pose_history_max_samples_);
   max_pending_cone_messages_ = std::max(1, max_pending_cone_messages_);
+  if (max_optimization_poses_ < 0) {
+    throw std::invalid_argument(
+            "max_optimization_poses must be non-negative; use 0 only for full-batch optimization");
+  }
   landmark_delete_fov_ =
     std::clamp(landmark_delete_fov_, 0.0, 2.0 * std::acos(-1.0));
   landmark_delete_max_range_ =
@@ -217,6 +259,24 @@ GraphSlamNode::GraphSlamNode()
   optimize_min_interval_ = std::max(0.0, optimize_min_interval_);
   visual_publish_min_interval_ = std::max(0.0, visual_publish_min_interval_);
   tf_stamp_offset_ = std::max(0.0, tf_stamp_offset_);
+  if (map_frame_.empty() || odom_frame_.empty() || slam_base_frame_.empty()) {
+    throw std::invalid_argument("map_frame, odom_frame, and slam_base_frame must be non-empty");
+  }
+  if (map_frame_ == odom_frame_ || map_frame_ == slam_base_frame_ ||
+    odom_frame_ == slam_base_frame_)
+  {
+    throw std::invalid_argument(
+            "map_frame, odom_frame, and slam_base_frame must be pairwise distinct");
+  }
+  if (car_state_frame_ != map_frame_) {
+    throw std::invalid_argument(
+            "car_state_frame must equal map_frame; GraphSLAM does not transform CarState poses");
+  }
+  if (car_state_child_frame_ != slam_base_frame_) {
+    throw std::invalid_argument(
+            "car_state_child_frame must equal slam_base_frame; GraphSLAM does not transform "
+            "CarState child frames");
+  }
   if (tf_stamp_offset_ > 0.0) {
     RCLCPP_WARN(
       get_logger(),
@@ -231,9 +291,8 @@ GraphSlamNode::GraphSlamNode()
 
   pose_history_ = time_alignment::TimedPoseHistory(
     time_alignment::PoseHistoryOptions{
-      static_cast<std::int64_t>(pose_history_duration_ * 1e9),
-      static_cast<std::size_t>(pose_history_max_samples_),
-      static_cast<std::int64_t>(clock_rollback_threshold_ * 1e9)});
+      *pose_history_duration_ns,
+      static_cast<std::size_t>(pose_history_max_samples_)});
 
   odom_information_.setZero();
   odom_information_(0, 0) = 1.0 / (odom_translation_sigma_ * odom_translation_sigma_);
@@ -241,6 +300,15 @@ GraphSlamNode::GraphSlamNode()
   odom_information_(2, 2) = 1.0 / (odom_yaw_sigma_ * odom_yaw_sigma_);
 
   configureOptimizer();
+
+  rcl_jump_threshold_t jump_threshold{};
+  jump_threshold.on_clock_change = true;
+  jump_threshold.min_forward.nanoseconds = std::numeric_limits<std::int64_t>::max();
+  jump_threshold.min_backward.nanoseconds = -clock_rollback_threshold_ns_;
+  clock_jump_handler_ = get_clock()->create_jump_callback(
+    nullptr,
+    std::bind(&GraphSlamNode::onClockJump, this, std::placeholders::_1),
+    jump_threshold);
 
   const auto transient_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
   map_pub_ = create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(map_topic_, transient_qos);
@@ -293,7 +361,7 @@ void GraphSlamNode::configureOptimizer()
 
   using BlockSolverType = g2o::BlockSolver_3_2;
   auto linear_solver =
-    std::make_unique<g2o::LinearSolverDense<BlockSolverType::PoseMatrixType>>();
+    std::make_unique<g2o::LinearSolverEigen<BlockSolverType::PoseMatrixType>>();
   auto block_solver = std::make_unique<BlockSolverType>(std::move(linear_solver));
   auto algorithm =
     std::make_unique<g2o::OptimizationAlgorithmLevenberg>(std::move(block_solver));
@@ -301,13 +369,46 @@ void GraphSlamNode::configureOptimizer()
   optimizer_.setAlgorithm(algorithm.release());
 }
 
-void GraphSlamNode::resetGraph()
+void GraphSlamNode::resetGraph(
+  std::int64_t epoch_start_stamp_ns,
+  const std::optional<std::int64_t> & replay_guard_end_stamp_ns,
+  bool preserve_replay_guards)
 {
+  std::vector<std::int64_t> active_replay_guards;
+  if (preserve_replay_guards) {
+    std::copy_if(
+      replay_guard_end_stamps_ns_.begin(), replay_guard_end_stamps_ns_.end(),
+      std::back_inserter(active_replay_guards),
+      [epoch_start_stamp_ns](std::int64_t guard_end_ns) {
+        return guard_end_ns > epoch_start_stamp_ns;
+      });
+    if (replay_guard_end_stamp_ns_.has_value() &&
+      *replay_guard_end_stamp_ns_ > epoch_start_stamp_ns)
+    {
+      active_replay_guards.push_back(*replay_guard_end_stamp_ns_);
+    }
+  }
+  if (replay_guard_end_stamp_ns.has_value() &&
+    *replay_guard_end_stamp_ns > epoch_start_stamp_ns)
+  {
+    active_replay_guards.push_back(*replay_guard_end_stamp_ns);
+  }
+  std::sort(active_replay_guards.begin(), active_replay_guards.end());
+  active_replay_guards.erase(
+    std::unique(active_replay_guards.begin(), active_replay_guards.end()),
+    active_replay_guards.end());
+
   optimizer_.clear();
   poses_.clear();
   landmarks_.clear();
   pose_history_.clear();
   pending_cone_messages_.clear();
+  pending_cone_stamps_ns_.clear();
+  last_processed_cone_stamp_ns_.reset();
+  epoch_start_stamp_ns_ = epoch_start_stamp_ns;
+  replay_guard_end_stamps_ns_ = std::move(active_replay_guards);
+  replay_guard_end_stamp_ns_ = replay_guard_end_stamps_ns_.empty() ?
+    std::nullopt : std::make_optional(replay_guard_end_stamps_ns_.front());
   keyframe_stamps_ns_.clear();
   cone_edge_pose_graph_ids_.clear();
 
@@ -318,31 +419,162 @@ void GraphSlamNode::resetGraph()
   last_visual_publish_time_sec_ = -1.0;
   last_landmark_delete_time_sec_ = -1.0;
   has_latest_pose_ = false;
+  ++clock_epoch_;
+}
+
+void GraphSlamNode::publishResetTombstones(const rclcpp::Time & stamp)
+{
+  if (map_pub_) {
+    eufs_msgs::msg::ConeArrayWithCovariance map;
+    map.header.frame_id = map_frame_;
+    map.header.stamp = stamp;
+    map_pub_->publish(map);
+  }
+
+  if (path_pub_) {
+    nav_msgs::msg::Path path;
+    path.header.frame_id = map_frame_;
+    path.header.stamp = stamp;
+    path_pub_->publish(path);
+  }
+
+  if (marker_pub_) {
+    visualization_msgs::msg::MarkerArray markers;
+    visualization_msgs::msg::Marker clear_marker;
+    clear_marker.header.frame_id = map_frame_;
+    clear_marker.header.stamp = stamp;
+    clear_marker.action = visualization_msgs::msg::Marker::DELETEALL;
+    markers.markers.push_back(clear_marker);
+    marker_pub_->publish(markers);
+  }
+}
+
+void GraphSlamNode::onClockJump(const rcl_time_jump_t & time_jump)
+{
+  const bool clock_source_changed =
+    time_jump.clock_change == RCL_ROS_TIME_ACTIVATED ||
+    time_jump.clock_change == RCL_ROS_TIME_DEACTIVATED;
+  if (!time_alignment::startsNewClockEpoch(
+      time_jump.delta.nanoseconds, clock_source_changed, clock_rollback_threshold_ns_))
+  {
+    return;
+  }
+
+  const rclcpp::Time reset_stamp = get_clock()->now();
+  const std::optional<std::int64_t> replay_guard_end_stamp_ns =
+    time_alignment::replayGuardEndStamp(
+    reset_stamp.nanoseconds(), time_jump.delta.nanoseconds, clock_source_changed);
+  resetGraph(
+    reset_stamp.nanoseconds(), replay_guard_end_stamp_ns,
+    !clock_source_changed);
+  node_time_high_watermark_ns_ = reset_stamp.nanoseconds();
+  publishResetTombstones(reset_stamp);
+  RCLCPP_WARN_THROTTLE(
+    get_logger(), steady_clock_, 1000,
+    "ROS clock source changed or moved backward by %.6f s; reset GraphSLAM for epoch %" PRIu64,
+    static_cast<double>(time_jump.delta.nanoseconds) * 1e-9,
+    clock_epoch_);
+}
+
+void GraphSlamNode::observeNodeClock(const rclcpp::Time & now)
+{
+  const std::int64_t now_ns = now.nanoseconds();
+  if (node_time_high_watermark_ns_.has_value() &&
+    time_alignment::hasClockRolledBack(
+      *node_time_high_watermark_ns_, now_ns, clock_rollback_threshold_ns_))
+  {
+    const std::int64_t replay_guard_end_stamp_ns = *node_time_high_watermark_ns_;
+    resetGraph(now_ns, replay_guard_end_stamp_ns, true);
+    publishResetTombstones(now);
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), steady_clock_, 1000,
+      "Node clock moved backward without an rcl jump notification; reset GraphSLAM "
+      "for epoch %" PRIu64,
+      clock_epoch_);
+    node_time_high_watermark_ns_ = now_ns;
+    return;
+  }
+  replay_guard_end_stamps_ns_.erase(
+    replay_guard_end_stamps_ns_.begin(),
+    std::upper_bound(
+      replay_guard_end_stamps_ns_.begin(), replay_guard_end_stamps_ns_.end(),
+      now_ns));
+  replay_guard_end_stamp_ns_ = replay_guard_end_stamps_ns_.empty() ?
+    std::nullopt : std::make_optional(replay_guard_end_stamps_ns_.front());
+  node_time_high_watermark_ns_ = node_time_high_watermark_ns_.has_value() ?
+    time_alignment::advanceClockHighWatermark(*node_time_high_watermark_ns_, now_ns) :
+    now_ns;
+}
+
+bool GraphSlamNode::isInputStampInCurrentEpoch(
+  std::int64_t stamp_ns,
+  std::int64_t now_ns) const
+{
+  return time_alignment::isStampInCurrentEpoch(
+    stamp_ns, epoch_start_stamp_ns_, now_ns,
+    replay_guard_end_stamp_ns_, max_future_stamp_lead_ns_);
 }
 
 void GraphSlamNode::stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg)
 {
+  if (msg->header.frame_id != car_state_frame_ ||
+    msg->child_frame_id != car_state_child_frame_)
+  {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), steady_clock_, 5000,
+      "Dropping CarState with frames '%s' -> '%s'; expected '%s' -> '%s'",
+      msg->header.frame_id.c_str(), msg->child_frame_id.c_str(),
+      car_state_frame_.c_str(), car_state_child_frame_.c_str());
+    return;
+  }
+
+  if (!time_alignment::isCanonicalNonzeroStamp(
+      msg->header.stamp.sec, msg->header.stamp.nanosec))
+  {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), steady_clock_, 5000,
+      "Dropping CarState with a zero, negative, or non-canonical timestamp");
+    return;
+  }
+
+  const auto & position = msg->pose.pose.position;
+  const auto & orientation = msg->pose.pose.orientation;
+  if (!time_alignment::isValidPlanarPose(
+      position.x, position.y,
+      orientation.x, orientation.y, orientation.z, orientation.w))
+  {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), steady_clock_, 5000,
+      "Dropping CarState with non-finite position or a non-unit quaternion");
+    return;
+  }
+
   const rclcpp::Time stamp(msg->header.stamp, get_clock()->get_clock_type());
+  const rclcpp::Time now = get_clock()->now();
+  observeNodeClock(now);
+  const std::int64_t now_ns = now.nanoseconds();
+  if ((get_clock()->ros_time_is_active() || now_ns > 0) &&
+    !isInputStampInCurrentEpoch(stamp.nanoseconds(), now_ns))
+  {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), steady_clock_, 5000,
+      "Dropping CarState at %.9f because it is outside the current clock epoch "
+      "or more than %.3f s ahead of ROS time",
+      stamp.seconds(), max_future_stamp_lead_);
+    return;
+  }
+
   const g2o::SE2 raw_odom = poseFromCarState(*msg);
   const time_alignment::TimedPose2d timed_pose{
     stamp.nanoseconds(), pose2dFromSe2(raw_odom)};
   const time_alignment::PushStatus push_status = pose_history_.push(timed_pose);
-  const bool non_forward_sample =
-    push_status == time_alignment::PushStatus::InsertedOutOfOrder ||
-    push_status == time_alignment::PushStatus::ReplacedDuplicate;
-
-  if (push_status == time_alignment::PushStatus::ClockRollback) {
-    RCLCPP_WARN(
-      get_logger(),
-      "CarState clock rolled back by more than %.3f s; resetting graph, pose history, "
-      "and pending cone observations",
-      clock_rollback_threshold_);
-    resetGraph();
-    (void)pose_history_.push(timed_pose);
-  } else if (push_status == time_alignment::PushStatus::IgnoredTooOld) {
+  if (push_status == time_alignment::PushStatus::IgnoredTooOld) {
     RCLCPP_DEBUG(get_logger(), "Ignoring CarState older than the retained pose-history window");
     return;
-  } else if (non_forward_sample) {
+  } else if (push_status == time_alignment::PushStatus::IgnoredDuplicate) {
+    RCLCPP_DEBUG(get_logger(), "Ignoring duplicate CarState at %.9f", stamp.seconds());
+    return;
+  } else if (push_status == time_alignment::PushStatus::InsertedOutOfOrder) {
     RCLCPP_DEBUG(
       get_logger(),
       "Stored non-forward CarState sample at %.9f without changing the live graph pose",
@@ -379,13 +611,15 @@ void GraphSlamNode::conesCallback(
   const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg)
 {
   if (!hasValidConeHeader(*msg)) {
-    if (msg->header.stamp.sec == 0 && msg->header.stamp.nanosec == 0U) {
+    if (!time_alignment::isCanonicalNonzeroStamp(
+        msg->header.stamp.sec, msg->header.stamp.nanosec))
+    {
       RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 5000,
-        "Dropping cone frame with a zero timestamp; observation time cannot be fabricated");
+        get_logger(), steady_clock_, 5000,
+        "Dropping cone frame with a zero, negative, or non-canonical timestamp");
     } else {
       RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 5000,
+        get_logger(), steady_clock_, 5000,
         "Dropping cone frame '%s'; expected observations in '%s'",
         msg->header.frame_id.c_str(), slam_base_frame_.c_str());
     }
@@ -405,8 +639,44 @@ GraphSlamNode::ConeProcessingStatus GraphSlamNode::tryProcessConeMessage(
   }
 
   const rclcpp::Time stamp(msg->header.stamp, get_clock()->get_clock_type());
+  const std::int64_t stamp_ns = stamp.nanoseconds();
+  const rclcpp::Time now = get_clock()->now();
+  observeNodeClock(now);
+  const std::int64_t now_ns = now.nanoseconds();
+  if (!time_alignment::isStrictlyNewerStamp(
+      stamp_ns, last_processed_cone_stamp_ns_))
+  {
+    RCLCPP_DEBUG(
+      get_logger(),
+      "Dropping duplicate or out-of-order cone frame at %.9f in epoch %" PRIu64,
+      stamp.seconds(),
+      clock_epoch_);
+    return ConeProcessingStatus::Invalid;
+  }
+
+  if (get_clock()->ros_time_is_active() || now_ns > 0) {
+    if (!isInputStampInCurrentEpoch(stamp_ns, now_ns)) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), steady_clock_, 5000,
+        "Dropping cone frame at %.9f because it is outside the current clock epoch "
+        "or more than %.3f s ahead of ROS time",
+        stamp.seconds(), max_future_stamp_lead_);
+      return ConeProcessingStatus::Invalid;
+    }
+  }
+  if (!pose_history_.empty() &&
+    time_alignment::exceedsFutureLead(
+      stamp_ns, pose_history_.latestStampNs(), max_future_stamp_lead_ns_))
+  {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), steady_clock_, 5000,
+      "Dropping cone frame at %.9f because it is more than %.3f s ahead of CarState",
+      stamp.seconds(), max_future_stamp_lead_);
+    return ConeProcessingStatus::Invalid;
+  }
+
   const time_alignment::PoseLookup pose_lookup =
-    pose_history_.interpolate(stamp.nanoseconds());
+    pose_history_.interpolate(stamp_ns);
   if (pose_lookup.status == time_alignment::LookupStatus::Empty ||
     pose_lookup.status == time_alignment::LookupStatus::AwaitingFuture)
   {
@@ -414,17 +684,17 @@ GraphSlamNode::ConeProcessingStatus GraphSlamNode::tryProcessConeMessage(
   }
   if (pose_lookup.status == time_alignment::LookupStatus::TooOld) {
     RCLCPP_WARN_THROTTLE(
-      get_logger(), *get_clock(), 5000,
+      get_logger(), steady_clock_, 5000,
       "Dropping cone frame at %.9f because it is older than the retained CarState history",
       stamp.seconds());
     return ConeProcessingStatus::TooOld;
   }
 
   const std::optional<std::size_t> pose_index =
-    time_alignment::latestIndexNotAfter(keyframe_stamps_ns_, stamp.nanoseconds());
+    time_alignment::latestIndexNotAfter(keyframe_stamps_ns_, stamp_ns);
   if (!pose_index.has_value() || *pose_index >= poses_.size()) {
     RCLCPP_WARN_THROTTLE(
-      get_logger(), *get_clock(), 5000,
+      get_logger(), steady_clock_, 5000,
       "Dropping cone frame at %.9f because no causal keyframe exists at or before it",
       stamp.seconds());
     return ConeProcessingStatus::TooOld;
@@ -441,6 +711,7 @@ GraphSlamNode::ConeProcessingStatus GraphSlamNode::tryProcessConeMessage(
   {
     publishGraphVisuals(stamp);
   }
+  last_processed_cone_stamp_ns_ = stamp_ns;
   return ConeProcessingStatus::Processed;
 }
 
@@ -448,6 +719,12 @@ void GraphSlamNode::enqueuePendingConeMessage(
   const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr & msg)
 {
   const std::int64_t stamp_ns = rclcpp::Time(msg->header.stamp).nanoseconds();
+  if (!pending_cone_stamps_ns_.insert(stamp_ns).second) {
+    RCLCPP_DEBUG(
+      get_logger(), "Ignoring duplicate pending cone frame at %.9f",
+      rclcpp::Time(msg->header.stamp).seconds());
+    return;
+  }
   const auto insertion_point = std::upper_bound(
     pending_cone_messages_.begin(), pending_cone_messages_.end(), stamp_ns,
     [](std::int64_t candidate_stamp_ns, const auto & existing) {
@@ -459,9 +736,10 @@ void GraphSlamNode::enqueuePendingConeMessage(
     static_cast<std::size_t>(max_pending_cone_messages_))
   {
     const rclcpp::Time dropped_stamp(pending_cone_messages_.back()->header.stamp);
+    pending_cone_stamps_ns_.erase(dropped_stamp.nanoseconds());
     pending_cone_messages_.pop_back();
     RCLCPP_WARN_THROTTLE(
-      get_logger(), *get_clock(), 5000,
+      get_logger(), steady_clock_, 5000,
       "Future cone queue reached %d frames; dropping farthest frame at %.9f",
       max_pending_cone_messages_, dropped_stamp.seconds());
   }
@@ -472,10 +750,11 @@ void GraphSlamNode::drainPendingConeMessages()
   std::deque<eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr> pending =
     std::move(pending_cone_messages_);
   pending_cone_messages_.clear();
+  pending_cone_stamps_ns_.clear();
 
   for (const auto & msg : pending) {
     if (tryProcessConeMessage(msg) == ConeProcessingStatus::AwaitingFuture) {
-      pending_cone_messages_.push_back(msg);
+      enqueuePendingConeMessage(msg);
     }
   }
 }
@@ -483,8 +762,9 @@ void GraphSlamNode::drainPendingConeMessages()
 bool GraphSlamNode::hasValidConeHeader(
   const eufs_msgs::msg::ConeArrayWithCovariance & msg) const
 {
-  const bool has_stamp = msg.header.stamp.sec != 0 || msg.header.stamp.nanosec != 0U;
-  return has_stamp && msg.header.frame_id == slam_base_frame_;
+  return time_alignment::isCanonicalNonzeroStamp(
+    msg.header.stamp.sec, msg.header.stamp.nanosec) &&
+         msg.header.frame_id == slam_base_frame_;
 }
 
 g2o::SE2 GraphSlamNode::poseFromCarState(const eufs_msgs::msg::CarState & msg) const
@@ -1045,20 +1325,6 @@ void GraphSlamNode::maybeOptimize()
     return;
   }
 
-  if (max_optimization_poses_ > 0 &&
-    poses_.size() > static_cast<std::size_t>(max_optimization_poses_))
-  {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(),
-      *get_clock(),
-      5000,
-      "Skipping graph optimization with %zu poses; max_optimization_poses is %d",
-      poses_.size(),
-      max_optimization_poses_);
-    keyframes_since_last_optimization_ = 0;
-    return;
-  }
-
   const double stamp_sec = poses_.empty() ? 0.0 : poses_.back().stamp.seconds();
   if (optimize_min_interval_ > 0.0 &&
     last_optimization_time_sec_ >= 0.0 &&
@@ -1079,14 +1345,27 @@ void GraphSlamNode::optimizeGraph()
     return;
   }
 
+  std::size_t active_pose_count = 0U;
+  for (std::size_t pose_index = 0U; pose_index < poses_.size(); ++pose_index) {
+    const bool fixed = optimizer_policy::shouldFixPose(
+      pose_index, poses_.size(), max_optimization_poses_);
+    poses_[pose_index].vertex->setFixed(fixed);
+    if (!fixed) {
+      ++active_pose_count;
+    }
+  }
+
   optimizer_.initializeOptimization();
   const int completed_iterations = optimizer_.optimize(optimization_iterations_);
   RCLCPP_DEBUG(
     get_logger(),
-    "g2o optimization completed %d iterations for %zu poses and %zu landmarks",
+    "g2o optimization completed %d iterations with %zu/%zu active poses, "
+    "%zu landmarks, and %zu edges",
     completed_iterations,
+    active_pose_count,
     poses_.size(),
-    landmarks_.size());
+    landmarks_.size(),
+    optimizer_.edges().size());
 }
 
 std::size_t GraphSlamNode::firstPublishedPoseIndex() const
@@ -1350,7 +1629,10 @@ void GraphSlamNode::handleReset(
   std::shared_ptr<std_srvs::srv::Trigger::Response> response)
 {
   (void)request;
-  resetGraph();
+  const rclcpp::Time reset_stamp = get_clock()->now();
+  resetGraph(reset_stamp.nanoseconds());
+  node_time_high_watermark_ns_ = reset_stamp.nanoseconds();
+  publishResetTombstones(reset_stamp);
   response->success = true;
   response->message = "Graph SLAM state reset";
 }

@@ -40,8 +40,9 @@
 
 #include <chrono>  // NOLINT(build/c++11)
 #include <iostream>
-#include <thread>  // NOLINT(build/c++11)
 #include <memory>
+#include <mutex>
+#include <thread>  // NOLINT(build/c++11)
 
 #include <rclcpp/rclcpp.hpp>
 // ROS msgs
@@ -76,6 +77,9 @@ class StateMachine {
 
   void spinOnce(gazebo::common::Time current_time);  ///< Main operational loop
 
+  /// Restart any simulation-time-based transition after a world time reset.
+  void resetTime();
+
   /**
    * Return if the car can drive based on the as_state
    */
@@ -94,6 +98,7 @@ class StateMachine {
                         ///< AS_DRIVING
   double transition_begin_;  ///< the world timestamp in which the transition from AS_READY to
                              ///< AS_DRIVING was begun
+  mutable std::mutex state_mutex_;
 
 
   // High level robot command

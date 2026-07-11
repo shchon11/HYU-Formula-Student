@@ -37,10 +37,9 @@ struct TimedPose2d
 enum class PushStatus
 {
   Inserted,
-  ReplacedDuplicate,
+  IgnoredDuplicate,
   InsertedOutOfOrder,
-  IgnoredTooOld,
-  ClockRollback
+  IgnoredTooOld
 };
 
 enum class LookupStatus
@@ -61,7 +60,6 @@ struct PoseHistoryOptions
 {
   std::int64_t duration_ns;
   std::size_t max_samples;
-  std::int64_t rollback_threshold_ns;
 };
 
 class TimedPoseHistory
@@ -118,6 +116,53 @@ AlignedObservation2d alignObservation(
 std::optional<std::size_t> latestIndexNotAfter(
   const std::vector<std::int64_t> & sorted_stamps_ns,
   std::int64_t stamp_ns);
+
+bool isStrictlyNewerStamp(
+  std::int64_t stamp_ns,
+  const std::optional<std::int64_t> & latest_processed_stamp_ns);
+
+bool exceedsFutureLead(
+  std::int64_t stamp_ns,
+  std::int64_t reference_stamp_ns,
+  std::int64_t max_future_lead_ns);
+
+bool startsNewClockEpoch(
+  std::int64_t delta_ns,
+  bool clock_source_changed,
+  std::int64_t rollback_threshold_ns);
+
+bool hasClockRolledBack(
+  std::int64_t previous_time_ns,
+  std::int64_t current_time_ns,
+  std::int64_t rollback_threshold_ns);
+
+std::int64_t advanceClockHighWatermark(
+  std::int64_t current_high_watermark_ns,
+  std::int64_t observed_time_ns);
+
+std::optional<std::int64_t> secondsToNanoseconds(double seconds);
+
+bool isCanonicalNonzeroStamp(std::int32_t seconds, std::uint32_t nanoseconds);
+
+bool isStampInCurrentEpoch(
+  std::int64_t stamp_ns,
+  const std::optional<std::int64_t> & epoch_start_ns,
+  std::int64_t now_ns,
+  const std::optional<std::int64_t> & replay_guard_end_ns,
+  std::int64_t max_future_lead_ns);
+
+std::optional<std::int64_t> replayGuardEndStamp(
+  std::int64_t epoch_start_ns,
+  std::int64_t clock_delta_ns,
+  bool clock_source_changed);
+
+bool isValidPlanarPose(
+  double x,
+  double y,
+  double qx,
+  double qy,
+  double qz,
+  double qw);
 
 }  // namespace time_alignment
 }  // namespace eufs_graph_slam

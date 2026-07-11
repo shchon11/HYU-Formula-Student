@@ -179,10 +179,11 @@ class YoloV8BBoxNode(Node):
             raise RuntimeError("YOLO model does not expose a class-name table")
 
         configured_names = {str(name).strip().lower() for name in self.class_map}
-        if configured_names and not (configured_names & model_names):
+        missing_names = configured_names - model_names
+        if missing_names:
             raise RuntimeError(
-                "YOLO class_map does not match any model class; "
-                f"model classes={sorted(model_names)}"
+                "YOLO model is missing configured cone classes; "
+                f"missing={sorted(missing_names)}, model classes={sorted(model_names)}"
             )
 
     def _warn_if_coco_smoke_test_model(self) -> None:

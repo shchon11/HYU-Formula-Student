@@ -154,10 +154,23 @@ timestamp with the tighter image tolerance.
 
 Image history is sized separately from the cloud/bbox queues. The default 64
 frames retain about 1.07 seconds at 60 Hz, covering the measured roughly
-0.53-second YOLO delay with margin. A same-stream timestamp rollback greater
-than the configured 0.1-second threshold clears every synchronization buffer
-and starts a new clock epoch; smaller out-of-order arrivals remain sorted by
-timestamp.
+0.53-second YOLO delay with margin. Sensor message ordering never defines a
+clock epoch: out-of-order samples are dropped without clearing other streams.
+An authoritative backward ROS clock jump clears every synchronization buffer
+and recreates the tf2 listener, flushing the volatile `/tf` subscription queue.
+On the normal unregister path it clears and reuses the existing Galactic tf2
+buffer, which retains cached static transforms even if a one-shot `/tf_static`
+writer has already exited. If unregister fails, a fresh buffer isolates the live
+old subscription. The callback defensively ignores positive clock ticks.
+Acquisition stamps must be canonical, nonzero ROS `Time` values before integer
+nanosecond conversion. An epoch-start lower fence rejects pre-rewind data. For a
+rollback, the node reconstructs the pre-rollback clock high watermark. During
+replay it permits only the configured bounded future lead (90 ms by default) to
+absorb DDS clock-versus-sensor callback skew, while an exclusive upper fence
+rejects stamps at or beyond the old watermark. The fence is removed when ROS
+time catches up. Nested rollbacks retain each active watermark and release the
+fences in time order. Timestamp-only inputs still cannot distinguish old payloads
+whose overlapping timestamp falls within the accepted replay window.
 
 The bbox acquisition time is the canonical timestamp of each output array.
 LiDAR points are transformed from cloud time into the bbox-time camera and

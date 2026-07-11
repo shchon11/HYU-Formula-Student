@@ -108,14 +108,18 @@ class YoloV8BBoxNodeTest(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "not readable"):
                     YoloV8BBoxNode._validated_model_path(str(artifact))
 
-    def test_model_class_map_must_overlap_loaded_model_names(self):
+    def test_model_must_contain_every_configured_class(self):
         node = object.__new__(YoloV8BBoxNode)
         node.model = _FailingModel()
         node.class_map = {"blue_cone": "blue"}
         node._validate_model_classes()
 
         node.class_map = {"yellow_cone": "yellow"}
-        with self.assertRaisesRegex(RuntimeError, "does not match"):
+        with self.assertRaisesRegex(RuntimeError, "missing configured cone classes"):
+            node._validate_model_classes()
+
+        node.class_map = {"blue_cone": "blue", "yellow_cone": "yellow"}
+        with self.assertRaisesRegex(RuntimeError, "yellow_cone"):
             node._validate_model_classes()
 
     def test_image_conversion_failure_drops_frame(self):

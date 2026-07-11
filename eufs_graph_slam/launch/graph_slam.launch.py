@@ -17,6 +17,8 @@ def generate_launch_description():
     params_file = LaunchConfiguration("params_file")
     use_sim_time = LaunchConfiguration("use_sim_time")
     car_state_topic = LaunchConfiguration("car_state_topic")
+    car_state_frame = LaunchConfiguration("car_state_frame")
+    car_state_child_frame = LaunchConfiguration("car_state_child_frame")
     map_frame = LaunchConfiguration("map_frame")
     odom_frame = LaunchConfiguration("odom_frame")
     slam_base_frame = LaunchConfiguration("slam_base_frame")
@@ -24,6 +26,7 @@ def generate_launch_description():
     pose_history_duration = LaunchConfiguration("pose_history_duration")
     pose_history_max_samples = LaunchConfiguration("pose_history_max_samples")
     clock_rollback_threshold = LaunchConfiguration("clock_rollback_threshold")
+    max_future_stamp_lead = LaunchConfiguration("max_future_stamp_lead")
     max_pending_cone_messages = LaunchConfiguration("max_pending_cone_messages")
     rviz = LaunchConfiguration("rviz")
     rviz_config = LaunchConfiguration("rviz_config")
@@ -52,6 +55,16 @@ def generate_launch_description():
                 description="CarState topic used as the graph SLAM motion input.",
             ),
             DeclareLaunchArgument(
+                "car_state_frame",
+                default_value="map",
+                description="Required CarState header frame for the raw pose input.",
+            ),
+            DeclareLaunchArgument(
+                "car_state_child_frame",
+                default_value="base_footprint",
+                description="Required CarState child frame.",
+            ),
+            DeclareLaunchArgument(
                 "map_frame",
                 default_value="map",
                 description="Frame used for the optimized SLAM map.",
@@ -70,8 +83,8 @@ def generate_launch_description():
                 "publish_tf",
                 default_value="true",
                 description=(
-                    "Publish map->slam_base_frame TF. Disable simulator publish_gt_tf "
-                    "when this is true."
+                    "Publish map->odom->slam_base_frame TF. Disable simulator "
+                    "publish_gt_tf when this is true."
                 ),
             ),
             DeclareLaunchArgument(
@@ -87,7 +100,15 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "clock_rollback_threshold",
                 default_value="0.1",
-                description="Backward CarState jump in seconds that starts a new graph epoch.",
+                description="Backward ROS clock jump in seconds that starts a graph epoch.",
+            ),
+            DeclareLaunchArgument(
+                "max_future_stamp_lead",
+                default_value="0.09",
+                description=(
+                    "Maximum input lead over ROS time (including rollback replay) "
+                    "and CarState; must be smaller than clock_rollback_threshold."
+                ),
             ),
             DeclareLaunchArgument(
                 "max_pending_cone_messages",
@@ -129,6 +150,8 @@ def generate_launch_description():
                     {
                         "use_sim_time": use_sim_time,
                         "car_state_topic": car_state_topic,
+                        "car_state_frame": car_state_frame,
+                        "car_state_child_frame": car_state_child_frame,
                         "map_frame": map_frame,
                         "odom_frame": odom_frame,
                         "slam_base_frame": slam_base_frame,
@@ -136,6 +159,7 @@ def generate_launch_description():
                         "pose_history_duration": pose_history_duration,
                         "pose_history_max_samples": pose_history_max_samples,
                         "clock_rollback_threshold": clock_rollback_threshold,
+                        "max_future_stamp_lead": max_future_stamp_lead,
                         "max_pending_cone_messages": max_pending_cone_messages,
                     },
                 ],
