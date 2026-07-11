@@ -273,6 +273,56 @@ TEST(LocalPathBuilder, MixedSparseAndUnknownOnlyFailClosed)
   EXPECT_FALSE(unknown_result.valid);
 }
 
+TEST(LocalPathBuilder, PartialBoundarySinglePairBuildsSparsePath)
+{
+  PlannerConfig config;
+  config.allow_partial_boundary = true;
+  ConeSet sparse;
+  sparse.blue = {{4.0, 1.8}};
+  sparse.yellow = {{4.0, -1.8}};
+
+  const auto result = buildLocalPath(sparse, config);
+  ASSERT_TRUE(result.evaluated);
+  ASSERT_TRUE(result.valid) << result.reason;
+  EXPECT_EQ(result.kind, PathKind::kTwoSided);
+  ASSERT_GE(result.waypoints.size(), 5U);
+  EXPECT_LE(std::hypot(result.waypoints.front().x, result.waypoints.front().y), 0.5);
+  for (const auto & waypoint : result.waypoints) {
+    EXPECT_DOUBLE_EQ(waypoint.speed, config.fallback_speed_mps);
+  }
+}
+
+TEST(LocalPathBuilder, PartialBoundaryTwoConeSideOffsetsPath)
+{
+  PlannerConfig config;
+  config.allow_partial_boundary = true;
+  ConeSet sparse;
+  sparse.blue = {{2.0, 1.6}, {6.0, 1.7}};
+
+  const auto result = buildLocalPath(sparse, config);
+  ASSERT_TRUE(result.evaluated);
+  ASSERT_TRUE(result.valid) << result.reason;
+  EXPECT_EQ(result.kind, PathKind::kBlueOnly);
+  ASSERT_GE(result.waypoints.size(), 5U);
+  // Blue is the left boundary: the offset centerline must sit to its right.
+  for (const auto & waypoint : result.waypoints) {
+    EXPECT_LT(waypoint.y, 1.6);
+    EXPECT_DOUBLE_EQ(waypoint.speed, config.fallback_speed_mps);
+  }
+}
+
+TEST(LocalPathBuilder, StrictModeStillFailsClosedOnSparseInputs)
+{
+  ConeSet pair_only;
+  pair_only.blue = {{4.0, 1.8}};
+  pair_only.yellow = {{4.0, -1.8}};
+  expectInvalidEmptyPath(buildLocalPath(pair_only));
+
+  ConeSet two_blue;
+  two_blue.blue = {{2.0, 1.6}, {6.0, 1.7}};
+  expectInvalidEmptyPath(buildLocalPath(two_blue));
+}
+
 TEST(LocalPathBuilder, EmptyAndNoiseOnlyInputsFailClosed)
 {
   const auto empty = buildLocalPath(ConeSet{});
