@@ -1,0 +1,233 @@
+--- ros2 launch show args with workspace ROS_LOG_DIR ---
+ROS_LOG_DIR=/home/dohyun/FS/HYU-Formula-Student/.omo/ulw-loop/evidence/ros-log-fix
+Arguments (pass arguments as '<name>:=<value>'):
+
+    'use_sim_time':
+        Use the simulator clock for perception nodes.
+        (default: 'false')
+
+    'python_executable':
+        Python interpreter used to run perception nodes. Defaults to $CONDA_PREFIX/bin/python3 when a conda env is active.
+        (default: '/home/dohyun/anaconda3/bin/python3')
+
+    'image_topic':
+        no description given
+        (default: '/zed/left/image_rect_color')
+
+    'pointcloud_topic':
+        no description given
+        (default: '/velodyne_points')
+
+    'simulated_bbox_topic':
+        BBox topic used when bbox_source:=simulated.
+        (default: '/noisy_bounding_boxes')
+
+    'bbox_topic':
+        Deprecated alias for simulated_bbox_topic.
+        (default: '')
+
+    'bbox_source':
+        no description given
+        (default: 'simulated')
+
+    'yolo_bbox_topic':
+        BBox topic used when bbox_source:=yolov8.
+        (default: '/yolo_bounding_boxes')
+
+    'yolo_image_topic':
+        ZED image topic consumed by yolov8_bbox_node.
+        (default: '/zed/left/image_rect_color')
+
+    'yolo_camera_info_topic':
+        CameraInfo topic paired with the YOLO image topic.
+        (default: '/zed/left/camera_info')
+
+    'yolo_camera_frame':
+        Camera optical frame paired with the YOLO image topic.
+        (default: 'zed_left_camera_optical_frame')
+
+    'yolo_projection_model':
+        Projection model used by fusion for real ZED images.
+        (default: 'pinhole')
+
+    'camera_info_topic':
+        no description given
+        (default: '/custom_camera_info')
+
+    'camera_frame':
+        no description given
+        (default: 'zed_right_camera_optical_frame')
+
+    'projection_model':
+        no description given
+        (default: 'eufs_bbox')
+
+    'output_cones_topic':
+        no description given
+        (default: '/cones')
+
+    'output_frame':
+        no description given
+        (default: 'base_footprint')
+
+    'oracle_cones_topic':
+        no description given
+        (default: '')
+
+    'publish_empty_on_sync':
+        no description given
+        (default: 'false')
+
+    'sync_tolerance_sec':
+        Maximum timestamp difference between bbox and LiDAR messages accepted by fusion.
+        (default: '0.15')
+
+    'yolo_sync_tolerance_sec':
+        YOLO mode timestamp tolerance between detector image boxes and LiDAR points. Used only when bbox_source:=yolov8.
+        (default: '2.0')
+
+    'marker_scale':
+        RViz sphere-list marker diameter for fused cones.
+        (default: '0.35')
+
+    'fusion_enabled':
+        no description given
+        (default: 'true')
+
+    'publish_fusion_debug':
+        Publish /fusion/debug pointcloud and marker topics.
+        (default: 'true')
+
+    'fusion_debug_prefix':
+        no description given
+        (default: '/fusion/debug')
+
+    'self_mask_enabled':
+        no description given
+        (default: 'true')
+
+    'self_mask_min_x':
+        no description given
+        (default: '-1.5')
+
+    'self_mask_max_x':
+        no description given
+        (default: '1.8')
+
+    'self_mask_abs_y':
+        no description given
+        (default: '0.8')
+
+    'self_mask_min_z':
+        no description given
+        (default: '-0.4')
+
+    'self_mask_max_z':
+        no description given
+        (default: '1.4')
+
+    'sparse_association_enabled':
+        no description given
+        (default: 'true')
+
+    'sparse_bbox_margin_px':
+        no description given
+        (default: '4.0')
+
+    'sparse_bbox_margin_ratio':
+        no description given
+        (default: '0.15')
+
+    'sparse_near_range_m':
+        no description given
+        (default: '6.0')
+
+    'sparse_far_range_m':
+        no description given
+        (default: '12.0')
+
+    'sparse_near_min_points':
+        no description given
+        (default: '4')
+
+    'sparse_mid_min_points':
+        no description given
+        (default: '3')
+
+    'sparse_far_min_points':
+        no description given
+        (default: '2')
+
+    'sparse_far_min_probability':
+        no description given
+        (default: '0.25')
+
+    'sparse_far_min_bbox_width_px':
+        no description given
+        (default: '4.0')
+
+    'sparse_far_min_bbox_height_px':
+        no description given
+        (default: '4.0')
+
+    'sparse_max_depth_span_m':
+        no description given
+        (default: '1.0')
+
+    'sparse_max_depth_span_ratio':
+        no description given
+        (default: '0.35')
+
+    'sparse_max_width':
+        no description given
+        (default: '0.9')
+
+    'sparse_variance_x':
+        no description given
+        (default: '0.12')
+
+    'sparse_variance_y':
+        no description given
+        (default: '0.12')
+
+    'yolo_model_path':
+        no description given
+        (default: '/home/dohyun/FS/artifacts/yolov8/fsoco_yolov8n/weights/best.pt')
+
+    'yolo_confidence_threshold':
+        no description given
+        (default: '0.25')
+
+    'yolo_iou_threshold':
+        no description given
+        (default: '0.45')
+
+    'yolo_imgsz':
+        no description given
+        (default: '640')
+
+    'yolo_device':
+        no description given
+        (default: '')
+
+    'yolo_max_det':
+        no description given
+        (default: '100')
+
+    'yolo_class_map':
+        no description given
+        (default: 'blue_cone:blue,yellow_cone:yellow,orange_cone:orange,large_orange_cone:big_orange,unknown_cone:unknown')
+
+    'yolo_unknown_color_policy':
+        no description given
+        (default: 'unknown')
+
+    'publish_yolo_debug_image':
+        no description given
+        (default: 'false')
+
+    'yolo_debug_image_topic':
+        no description given
+        (default: '/yolo_bounding_boxes/debug_image')
+show_args_exit=0
+cleanup: no ROS launch, RViz, simulator, or container process was started; only launch-argument evidence and ROS log directory were written

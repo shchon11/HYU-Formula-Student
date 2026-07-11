@@ -1,0 +1,17 @@
+fusion_case_found: True
+fusion_bg_case_found: True
+fusion_has_bbox_source_yolov8: False
+fusion_bg_has_bbox_source_yolov8: False
+launch_declares_bbox_source_default_simulated: True
+launch_has_yolov8_condition: True
+launch_routes_yolo_bbox_topic_conditionally: True
+launch_appends_yolov8_node_conditionally: True
+--- scripts/hyu-docker fusion body ---
+exec_in_sim "ros2 launch eufs_perception_baseline perception_baseline.launch.py output_cones_topic:=/cones output_frame:=base_footprint fusion_enabled:=true publish_empty_on_sync:=false"
+    ;;
+--- scripts/hyu-docker fusion-bg body ---
+docker exec -d "${CONTAINER}" bash -lc "source /workspace/install/setup.bash && ros2 launch eufs_perception_baseline perception_baseline.launch.py output_cones_topic:=/cones output_frame:=base_footprint fusion_enabled:=true publish_empty_on_sync:=false > /tmp/perception_fusion.log 2>&1"
+    ;;
+--- verdict ---
+C1_ACTUAL_CAUSE_CONFIRMED: True
+cleanup: no runtime process spawned; only this evidence file was written

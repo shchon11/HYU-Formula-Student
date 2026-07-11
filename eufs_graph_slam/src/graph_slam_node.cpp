@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <deque>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -31,11 +32,29 @@
 namespace eufs_graph_slam
 {
 
+namespace
+{
+
+time_alignment::Pose2d pose2dFromSe2(const g2o::SE2 & pose)
+{
+  return time_alignment::Pose2d{
+    pose.translation().x(), pose.translation().y(), pose.rotation().angle()};
+}
+
+g2o::SE2 se2FromPose2d(const time_alignment::Pose2d & pose)
+{
+  return g2o::SE2(pose.x, pose.y, pose.yaw);
+}
+
+}  // namespace
+
 GraphSlamNode::GraphSlamNode()
 : Node("graph_slam_node"),
   keyframe_distance_(1.0),
   keyframe_yaw_(0.25),
   keyframe_max_dt_(1.0),
+  pose_history_duration_(3.0),
+  clock_rollback_threshold_(0.1),
   association_max_distance_(1.2),
   min_observation_range_(0.2),
   max_observation_range_(30.0),
@@ -59,6 +78,8 @@ GraphSlamNode::GraphSlamNode()
   max_optimization_poses_(100),
   path_max_poses_to_publish_(1000),
   landmark_missed_observations_to_delete_(6),
+  pose_history_max_samples_(1024),
+  max_pending_cone_messages_(32),
   use_cone_covariance_(true),
   process_every_cone_message_(false),
   publish_tf_(true),
@@ -73,7 +94,7 @@ GraphSlamNode::GraphSlamNode()
   next_vertex_id_(0),
   next_edge_id_(0),
   keyframes_since_last_optimization_(0),
-  last_cone_pose_graph_id_(-1),
+  pose_history_(time_alignment::PoseHistoryOptions{3000000000LL, 1024U, 100000000LL}),
   latest_estimate_(),
   has_latest_pose_(false)
 {
@@ -92,6 +113,10 @@ GraphSlamNode::GraphSlamNode()
   keyframe_distance_ = declare_parameter<double>("keyframe_distance", keyframe_distance_);
   keyframe_yaw_ = declare_parameter<double>("keyframe_yaw", keyframe_yaw_);
   keyframe_max_dt_ = declare_parameter<double>("keyframe_max_dt", keyframe_max_dt_);
+  pose_history_duration_ =
+    declare_parameter<double>("pose_history_duration", pose_history_duration_);
+  clock_rollback_threshold_ =
+    declare_parameter<double>("clock_rollback_threshold", clock_rollback_threshold_);
   association_max_distance_ =
     declare_parameter<double>("association_max_distance", association_max_distance_);
   min_observation_range_ =
@@ -140,6 +165,10 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<int>(
     "landmark_missed_observations_to_delete",
     landmark_missed_observations_to_delete_);
+  pose_history_max_samples_ =
+    declare_parameter<int>("pose_history_max_samples", pose_history_max_samples_);
+  max_pending_cone_messages_ =
+    declare_parameter<int>("max_pending_cone_messages", max_pending_cone_messages_);
 
   optimize_min_interval_ =
     declare_parameter<double>("optimize_min_interval", optimize_min_interval_);
@@ -158,6 +187,8 @@ GraphSlamNode::GraphSlamNode()
 
   keyframe_distance_ = std::max(0.0, keyframe_distance_);
   keyframe_yaw_ = std::max(0.0, keyframe_yaw_);
+  pose_history_duration_ = std::max(0.1, pose_history_duration_);
+  clock_rollback_threshold_ = std::max(1e-3, clock_rollback_threshold_);
   association_max_distance_ = std::max(0.05, association_max_distance_);
   min_observation_range_ = std::max(0.0, min_observation_range_);
   max_observation_range_ = std::max(min_observation_range_, max_observation_range_);
@@ -170,6 +201,8 @@ GraphSlamNode::GraphSlamNode()
   landmark_min_observations_to_publish_ = std::max(1, landmark_min_observations_to_publish_);
   landmark_missed_observations_to_delete_ =
     std::max(1, landmark_missed_observations_to_delete_);
+  pose_history_max_samples_ = std::max(2, pose_history_max_samples_);
+  max_pending_cone_messages_ = std::max(1, max_pending_cone_messages_);
   landmark_delete_fov_ =
     std::clamp(landmark_delete_fov_, 0.0, 2.0 * std::acos(-1.0));
   landmark_delete_max_range_ =
@@ -195,6 +228,12 @@ GraphSlamNode::GraphSlamNode()
       slam_base_frame_.c_str());
     tf_stamp_offset_ = 0.0;
   }
+
+  pose_history_ = time_alignment::TimedPoseHistory(
+    time_alignment::PoseHistoryOptions{
+      static_cast<std::int64_t>(pose_history_duration_ * 1e9),
+      static_cast<std::size_t>(pose_history_max_samples_),
+      static_cast<std::int64_t>(clock_rollback_threshold_ * 1e9)});
 
   odom_information_.setZero();
   odom_information_(0, 0) = 1.0 / (odom_translation_sigma_ * odom_translation_sigma_);
@@ -239,9 +278,13 @@ GraphSlamNode::GraphSlamNode()
 
   RCLCPP_INFO(
     get_logger(),
-    "g2o graph SLAM listening to car state '%s' and cones '%s'",
+    "g2o graph SLAM listening to car state '%s' and cones '%s'; "
+    "retaining %.2f s/%d samples and deferring up to %d future cone frames",
     car_state_topic_.c_str(),
-    cones_topic_.c_str());
+    cones_topic_.c_str(),
+    pose_history_duration_,
+    pose_history_max_samples_,
+    max_pending_cone_messages_);
 }
 
 void GraphSlamNode::configureOptimizer()
@@ -263,11 +306,14 @@ void GraphSlamNode::resetGraph()
   optimizer_.clear();
   poses_.clear();
   landmarks_.clear();
+  pose_history_.clear();
+  pending_cone_messages_.clear();
+  keyframe_stamps_ns_.clear();
+  cone_edge_pose_graph_ids_.clear();
 
   next_vertex_id_ = 0;
   next_edge_id_ = 0;
   keyframes_since_last_optimization_ = 0;
-  last_cone_pose_graph_id_ = -1;
   last_optimization_time_sec_ = -1.0;
   last_visual_publish_time_sec_ = -1.0;
   last_landmark_delete_time_sec_ = -1.0;
@@ -276,14 +322,40 @@ void GraphSlamNode::resetGraph()
 
 void GraphSlamNode::stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg)
 {
-  const rclcpp::Time stamp = stampOrNow(msg->header.stamp, get_clock());
+  const rclcpp::Time stamp(msg->header.stamp, get_clock()->get_clock_type());
   const g2o::SE2 raw_odom = poseFromCarState(*msg);
+  const time_alignment::TimedPose2d timed_pose{
+    stamp.nanoseconds(), pose2dFromSe2(raw_odom)};
+  const time_alignment::PushStatus push_status = pose_history_.push(timed_pose);
+  const bool non_forward_sample =
+    push_status == time_alignment::PushStatus::InsertedOutOfOrder ||
+    push_status == time_alignment::PushStatus::ReplacedDuplicate;
+
+  if (push_status == time_alignment::PushStatus::ClockRollback) {
+    RCLCPP_WARN(
+      get_logger(),
+      "CarState clock rolled back by more than %.3f s; resetting graph, pose history, "
+      "and pending cone observations",
+      clock_rollback_threshold_);
+    resetGraph();
+    (void)pose_history_.push(timed_pose);
+  } else if (push_status == time_alignment::PushStatus::IgnoredTooOld) {
+    RCLCPP_DEBUG(get_logger(), "Ignoring CarState older than the retained pose-history window");
+    return;
+  } else if (non_forward_sample) {
+    RCLCPP_DEBUG(
+      get_logger(),
+      "Stored non-forward CarState sample at %.9f without changing the live graph pose",
+      stamp.seconds());
+    return;
+  }
 
   if (poses_.empty()) {
     addInitialPose(raw_odom, stamp);
     latest_estimate_ = poses_.empty() ? raw_odom : poses_.back().vertex->estimate();
     has_latest_pose_ = true;
     publishEstimate();
+    drainPendingConeMessages();
     return;
   }
 
@@ -293,22 +365,73 @@ void GraphSlamNode::stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg)
 
   if (!shouldCreateKeyframe(raw_odom, stamp)) {
     publishLiveEstimate(stamp, live_estimate, raw_odom);
+    drainPendingConeMessages();
     return;
   }
 
   addKeyframe(raw_odom, stamp);
   latest_estimate_ = estimateFromRawOdometry(raw_odom);
   publishEstimate();
+  drainPendingConeMessages();
 }
 
 void GraphSlamNode::conesCallback(
   const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg)
 {
-  if (poses_.empty()) {
+  if (!hasValidConeHeader(*msg)) {
+    if (msg->header.stamp.sec == 0 && msg->header.stamp.nanosec == 0U) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "Dropping cone frame with a zero timestamp; observation time cannot be fabricated");
+    } else {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "Dropping cone frame '%s'; expected observations in '%s'",
+        msg->header.frame_id.c_str(), slam_base_frame_.c_str());
+    }
     return;
   }
 
-  const ObservationUpdate update = addConeObservations(*msg, false);
+  if (tryProcessConeMessage(msg) == ConeProcessingStatus::AwaitingFuture) {
+    enqueuePendingConeMessage(msg);
+  }
+}
+
+GraphSlamNode::ConeProcessingStatus GraphSlamNode::tryProcessConeMessage(
+  const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr & msg)
+{
+  if (!hasValidConeHeader(*msg)) {
+    return ConeProcessingStatus::Invalid;
+  }
+
+  const rclcpp::Time stamp(msg->header.stamp, get_clock()->get_clock_type());
+  const time_alignment::PoseLookup pose_lookup =
+    pose_history_.interpolate(stamp.nanoseconds());
+  if (pose_lookup.status == time_alignment::LookupStatus::Empty ||
+    pose_lookup.status == time_alignment::LookupStatus::AwaitingFuture)
+  {
+    return ConeProcessingStatus::AwaitingFuture;
+  }
+  if (pose_lookup.status == time_alignment::LookupStatus::TooOld) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "Dropping cone frame at %.9f because it is older than the retained CarState history",
+      stamp.seconds());
+    return ConeProcessingStatus::TooOld;
+  }
+
+  const std::optional<std::size_t> pose_index =
+    time_alignment::latestIndexNotAfter(keyframe_stamps_ns_, stamp.nanoseconds());
+  if (!pose_index.has_value() || *pose_index >= poses_.size()) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "Dropping cone frame at %.9f because no causal keyframe exists at or before it",
+      stamp.seconds());
+    return ConeProcessingStatus::TooOld;
+  }
+
+  ObservationUpdate update =
+    addConeObservations(*msg, poses_[*pose_index], pose_lookup.pose);
   if (update.added_edges > 0U) {
     maybeOptimize();
   }
@@ -316,8 +439,52 @@ void GraphSlamNode::conesCallback(
     update.updated_landmarks > 0U ||
     update.deleted_landmarks > 0U)
   {
-    publishGraphVisuals(stampOrNow(msg->header.stamp, get_clock()));
+    publishGraphVisuals(stamp);
   }
+  return ConeProcessingStatus::Processed;
+}
+
+void GraphSlamNode::enqueuePendingConeMessage(
+  const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr & msg)
+{
+  const std::int64_t stamp_ns = rclcpp::Time(msg->header.stamp).nanoseconds();
+  const auto insertion_point = std::upper_bound(
+    pending_cone_messages_.begin(), pending_cone_messages_.end(), stamp_ns,
+    [](std::int64_t candidate_stamp_ns, const auto & existing) {
+      return candidate_stamp_ns < rclcpp::Time(existing->header.stamp).nanoseconds();
+    });
+  pending_cone_messages_.insert(insertion_point, msg);
+
+  if (pending_cone_messages_.size() >
+    static_cast<std::size_t>(max_pending_cone_messages_))
+  {
+    const rclcpp::Time dropped_stamp(pending_cone_messages_.back()->header.stamp);
+    pending_cone_messages_.pop_back();
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "Future cone queue reached %d frames; dropping farthest frame at %.9f",
+      max_pending_cone_messages_, dropped_stamp.seconds());
+  }
+}
+
+void GraphSlamNode::drainPendingConeMessages()
+{
+  std::deque<eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr> pending =
+    std::move(pending_cone_messages_);
+  pending_cone_messages_.clear();
+
+  for (const auto & msg : pending) {
+    if (tryProcessConeMessage(msg) == ConeProcessingStatus::AwaitingFuture) {
+      pending_cone_messages_.push_back(msg);
+    }
+  }
+}
+
+bool GraphSlamNode::hasValidConeHeader(
+  const eufs_msgs::msg::ConeArrayWithCovariance & msg) const
+{
+  const bool has_stamp = msg.header.stamp.sec != 0 || msg.header.stamp.nanosec != 0U;
+  return has_stamp && msg.header.frame_id == slam_base_frame_;
 }
 
 g2o::SE2 GraphSlamNode::poseFromCarState(const eufs_msgs::msg::CarState & msg) const
@@ -372,6 +539,7 @@ void GraphSlamNode::addInitialPose(const g2o::SE2 & raw_odom, const rclcpp::Time
   }
 
   poses_.push_back(PoseRecord{vertex->id(), vertex, raw_odom, stamp});
+  keyframe_stamps_ns_.push_back(stamp.nanoseconds());
   RCLCPP_INFO(
     get_logger(),
     "Initialized graph SLAM at x=%.2f y=%.2f yaw=%.2f",
@@ -415,33 +583,30 @@ void GraphSlamNode::addKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & 
   }
 
   poses_.push_back(PoseRecord{vertex->id(), vertex, raw_odom, stamp});
+  keyframe_stamps_ns_.push_back(stamp.nanoseconds());
   ++keyframes_since_last_optimization_;
 }
 
 GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
   const eufs_msgs::msg::ConeArrayWithCovariance & msg,
-  bool force_process)
+  PoseRecord & pose,
+  const time_alignment::Pose2d & raw_observation_pose)
 {
-  if (poses_.empty()) {
-    return ObservationUpdate{0U, 0U, 0U};
-  }
-
-  PoseRecord & pose = poses_.back();
   const bool add_edges =
-    force_process ||
     process_every_cone_message_ ||
-    last_cone_pose_graph_id_ != pose.graph_id;
+    cone_edge_pose_graph_ids_.find(pose.graph_id) == cone_edge_pose_graph_ids_.end();
   const bool update_landmarks = update_existing_landmarks_;
-  const rclcpp::Time stamp = stampOrNow(msg.header.stamp, get_clock());
-  const bool update_deletions = shouldUpdateLandmarkDeletion(stamp, add_edges);
+  const rclcpp::Time stamp(msg.header.stamp, get_clock()->get_clock_type());
+  const std::vector<ConeObservation> observations = extractConeObservations(msg);
+  const bool update_deletions =
+    shouldUpdateLandmarkDeletion(stamp, add_edges && !observations.empty());
 
   if (!add_edges && !update_landmarks && !update_deletions) {
     return ObservationUpdate{0U, 0U, 0U};
   }
 
   if (!add_edges &&
-    !process_every_cone_message_ &&
-    last_cone_pose_graph_id_ == pose.graph_id)
+    !process_every_cone_message_)
   {
     RCLCPP_DEBUG(
       get_logger(),
@@ -449,12 +614,12 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
       pose.graph_id);
   }
 
-  const std::vector<ConeObservation> observations = extractConeObservations(msg);
-  const g2o::SE2 observation_pose = has_latest_pose_ ? latest_estimate_ : pose.vertex->estimate();
-
-  if (add_edges && !process_every_cone_message_) {
-    last_cone_pose_graph_id_ = pose.graph_id;
-  }
+  const time_alignment::ObservationFrameAlignment frame_alignment =
+    time_alignment::makeObservationFrameAlignment(
+    pose2dFromSe2(pose.raw_odom),
+    pose2dFromSe2(pose.vertex->estimate()),
+    raw_observation_pose);
+  const g2o::SE2 observation_pose = se2FromPose2d(frame_alignment.map_to_observation);
 
   std::size_t added_edges = 0U;
   std::size_t updated_landmarks = 0U;
@@ -462,12 +627,13 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
   observed_landmark_indices.reserve(observations.size());
 
   for (const ConeObservation & observation : observations) {
-    const Eigen::Vector2d graph_map_point = pose.vertex->estimate() * observation.measurement;
-    const Eigen::Vector2d latest_map_point = observation_pose * observation.measurement;
-    const Eigen::Matrix2d map_covariance =
-      covarianceInMapFrame(observation_pose, observation.covariance);
+    const time_alignment::AlignedObservation2d aligned =
+      time_alignment::alignObservation(
+      frame_alignment, observation.measurement, observation.covariance);
+    const ConeObservation keyframe_observation{
+      aligned.keyframe_point, aligned.keyframe_covariance, observation.color};
 
-    const int landmark_index = findAssociatedLandmark(latest_map_point, observation.color);
+    const int landmark_index = findAssociatedLandmark(aligned.map_point, observation.color);
     LandmarkRecord * landmark = nullptr;
     std::size_t observed_index = 0U;
     bool has_observed_index = false;
@@ -480,15 +646,15 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
         landmark->color = observation.color;
       }
       if (update_landmarks &&
-        updateLandmarkEstimate(*landmark, latest_map_point, map_covariance))
+        updateLandmarkEstimate(*landmark, aligned.map_point, aligned.map_covariance))
       {
         ++updated_landmarks;
       }
     } else if (add_edges) {
       landmark =
         addLandmark(
-        graph_map_point,
-        covarianceInMapFrame(pose.vertex->estimate(), observation.covariance),
+        aligned.map_point,
+        aligned.map_covariance,
         observation.color);
       if (landmark != nullptr) {
         observed_index = landmarks_.size() - 1U;
@@ -505,13 +671,18 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
     }
 
     if (add_edges) {
-      addObservationEdge(observation, pose.vertex, *landmark);
-      ++added_edges;
+      if (addObservationEdge(keyframe_observation, pose.vertex, *landmark)) {
+        ++added_edges;
+      }
     }
   }
 
+  if (added_edges > 0U && !process_every_cone_message_) {
+    cone_edge_pose_graph_ids_.insert(pose.graph_id);
+  }
+
   const std::size_t deleted_landmarks = update_deletions ?
-    deleteMissedVisibleLandmarks(pose, observed_landmark_indices) :
+    deleteMissedVisibleLandmarks(observation_pose, observed_landmark_indices) :
     0U;
 
   RCLCPP_DEBUG(
@@ -546,11 +717,11 @@ std::vector<GraphSlamNode::ConeObservation> GraphSlamNode::extractConeObservatio
           continue;
         }
 
-        ConeObservation observation;
-        observation.measurement = Eigen::Vector2d(cone.point.x, cone.point.y);
-        observation.covariance = covarianceFromCone(cone);
-        observation.color = color;
-        observations.push_back(observation);
+        observations.push_back(
+          ConeObservation{
+          Eigen::Vector2d(cone.point.x, cone.point.y),
+          covarianceFromCone(cone),
+          color});
       }
     };
 
@@ -587,29 +758,6 @@ Eigen::Matrix2d GraphSlamNode::covarianceFromCone(
 
   if (covariance.determinant() <= min_observation_variance_ * min_observation_variance_) {
     return default_covariance;
-  }
-
-  return covariance;
-}
-
-Eigen::Matrix2d GraphSlamNode::covarianceInMapFrame(
-  const g2o::SE2 & pose,
-  const Eigen::Matrix2d & local_covariance) const
-{
-  const double yaw = pose.rotation().angle();
-  Eigen::Matrix2d rotation;
-  rotation << std::cos(yaw), -std::sin(yaw),
-    std::sin(yaw), std::cos(yaw);
-
-  Eigen::Matrix2d covariance = rotation * local_covariance * rotation.transpose();
-  covariance = (0.5 * (covariance + covariance.transpose())).eval();
-  covariance(0, 0) = std::max(covariance(0, 0), min_observation_variance_);
-  covariance(1, 1) = std::max(covariance(1, 1), min_observation_variance_);
-
-  if (!covariance.allFinite() ||
-    covariance.determinant() <= min_observation_variance_ * min_observation_variance_)
-  {
-    return Eigen::Matrix2d::Identity() * default_observation_sigma_ * default_observation_sigma_;
   }
 
   return covariance;
@@ -723,7 +871,7 @@ bool GraphSlamNode::updateLandmarkEstimate(
   return update.squaredNorm() > 1e-8;
 }
 
-void GraphSlamNode::addObservationEdge(
+bool GraphSlamNode::addObservationEdge(
   const ConeObservation & observation,
   g2o::VertexSE2 * pose_vertex,
   LandmarkRecord & landmark)
@@ -744,15 +892,16 @@ void GraphSlamNode::addObservationEdge(
   if (!optimizer_.addEdge(edge)) {
     RCLCPP_ERROR(get_logger(), "Failed to add cone observation edge");
     delete edge;
-    return;
+    return false;
   }
 
   ++landmark.observations;
   landmark.consecutive_misses = 0;
+  return true;
 }
 
 std::size_t GraphSlamNode::deleteMissedVisibleLandmarks(
-  const PoseRecord & pose,
+  const g2o::SE2 & observation_pose,
   const std::vector<std::size_t> & observed_landmark_indices)
 {
   if (!delete_stale_landmarks_ || landmarks_.empty()) {
@@ -774,7 +923,7 @@ std::size_t GraphSlamNode::deleteMissedVisibleLandmarks(
       continue;
     }
 
-    if (!landmarkExpectedVisible(pose, landmark)) {
+    if (!landmarkExpectedVisible(observation_pose, landmark)) {
       continue;
     }
 
@@ -803,11 +952,11 @@ std::size_t GraphSlamNode::deleteMissedVisibleLandmarks(
 }
 
 bool GraphSlamNode::landmarkExpectedVisible(
-  const PoseRecord & pose,
+  const g2o::SE2 & observation_pose,
   const LandmarkRecord & landmark) const
 {
   const Eigen::Vector2d relative =
-    pose.vertex->estimate().inverse() * landmark.vertex->estimate();
+    observation_pose.inverse() * landmark.vertex->estimate();
   const double range = relative.norm();
   if (range < min_observation_range_ || range > landmark_delete_max_range_) {
     return false;
@@ -1244,17 +1393,6 @@ geometry_msgs::msg::Quaternion GraphSlamNode::quaternionFromYaw(double yaw)
   q.z = std::sin(0.5 * yaw);
   q.w = std::cos(0.5 * yaw);
   return q;
-}
-
-rclcpp::Time GraphSlamNode::stampOrNow(
-  const builtin_interfaces::msg::Time & stamp,
-  const rclcpp::Clock::SharedPtr & clock)
-{
-  if (stamp.sec == 0 && stamp.nanosec == 0U) {
-    return clock->now();
-  }
-
-  return rclcpp::Time(stamp, clock->get_clock_type());
 }
 
 std_msgs::msg::ColorRGBA GraphSlamNode::colorToRgba(ConeColor color, double alpha)

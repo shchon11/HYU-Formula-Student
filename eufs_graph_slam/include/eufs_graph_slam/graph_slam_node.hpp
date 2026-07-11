@@ -16,17 +16,19 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
-#include "builtin_interfaces/msg/time.hpp"
 #include "eufs_msgs/msg/car_state.hpp"
 #include "eufs_msgs/msg/cone_array_with_covariance.hpp"
 #include "eufs_msgs/msg/cone_with_covariance.hpp"
 #include "geometry_msgs/msg/quaternion.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "nav_msgs/msg/path.hpp"
+#include "eufs_graph_slam/observation_time_alignment.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/color_rgba.hpp"
 #include "std_srvs/srv/trigger.hpp"
@@ -83,11 +85,25 @@ private:
     std::size_t deleted_landmarks;
   };
 
+  enum class ConeProcessingStatus
+  {
+    Processed,
+    AwaitingFuture,
+    TooOld,
+    Invalid
+  };
+
   void configureOptimizer();
   void resetGraph();
 
   void stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg);
   void conesCallback(const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg);
+  ConeProcessingStatus tryProcessConeMessage(
+    const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr & msg);
+  void enqueuePendingConeMessage(
+    const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr & msg);
+  void drainPendingConeMessages();
+  bool hasValidConeHeader(const eufs_msgs::msg::ConeArrayWithCovariance & msg) const;
 
   g2o::SE2 poseFromCarState(const eufs_msgs::msg::CarState & msg) const;
   g2o::SE2 estimateFromRawOdometry(const g2o::SE2 & raw_odom) const;
@@ -97,14 +113,12 @@ private:
 
   ObservationUpdate addConeObservations(
     const eufs_msgs::msg::ConeArrayWithCovariance & msg,
-    bool force_process);
+    PoseRecord & pose,
+    const time_alignment::Pose2d & raw_observation_pose);
   std::vector<ConeObservation> extractConeObservations(
     const eufs_msgs::msg::ConeArrayWithCovariance & msg) const;
   Eigen::Matrix2d covarianceFromCone(
     const eufs_msgs::msg::ConeWithCovariance & cone) const;
-  Eigen::Matrix2d covarianceInMapFrame(
-    const g2o::SE2 & pose,
-    const Eigen::Matrix2d & local_covariance) const;
 
   int findAssociatedLandmark(
     const Eigen::Vector2d & map_point,
@@ -118,15 +132,15 @@ private:
     LandmarkRecord & landmark,
     const Eigen::Vector2d & map_point,
     const Eigen::Matrix2d & covariance);
-  void addObservationEdge(
+  bool addObservationEdge(
     const ConeObservation & observation,
     g2o::VertexSE2 * pose_vertex,
     LandmarkRecord & landmark);
   std::size_t deleteMissedVisibleLandmarks(
-    const PoseRecord & pose,
+    const g2o::SE2 & observation_pose,
     const std::vector<std::size_t> & observed_landmark_indices);
   bool landmarkExpectedVisible(
-    const PoseRecord & pose,
+    const g2o::SE2 & observation_pose,
     const LandmarkRecord & landmark) const;
   bool removeLandmarkAt(std::size_t landmark_index);
   bool shouldUpdateLandmarkDeletion(const rclcpp::Time & stamp, bool force_update);
@@ -161,9 +175,6 @@ private:
   static double normalizeAngle(double angle);
   static double yawFromQuaternion(const geometry_msgs::msg::Quaternion & q);
   static geometry_msgs::msg::Quaternion quaternionFromYaw(double yaw);
-  static rclcpp::Time stampOrNow(
-    const builtin_interfaces::msg::Time & stamp,
-    const rclcpp::Clock::SharedPtr & clock);
   static std_msgs::msg::ColorRGBA colorToRgba(ConeColor color, double alpha);
   static std::string colorName(ConeColor color);
 
@@ -198,6 +209,8 @@ private:
   double keyframe_distance_;
   double keyframe_yaw_;
   double keyframe_max_dt_;
+  double pose_history_duration_;
+  double clock_rollback_threshold_;
   double association_max_distance_;
   double min_observation_range_;
   double max_observation_range_;
@@ -222,6 +235,8 @@ private:
   int max_optimization_poses_;
   int path_max_poses_to_publish_;
   int landmark_missed_observations_to_delete_;
+  int pose_history_max_samples_;
+  int max_pending_cone_messages_;
 
   bool use_cone_covariance_;
   bool process_every_cone_message_;
@@ -239,7 +254,11 @@ private:
   int next_vertex_id_;
   int next_edge_id_;
   int keyframes_since_last_optimization_;
-  int last_cone_pose_graph_id_;
+
+  time_alignment::TimedPoseHistory pose_history_;
+  std::deque<eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr> pending_cone_messages_;
+  std::vector<std::int64_t> keyframe_stamps_ns_;
+  std::unordered_set<int> cone_edge_pose_graph_ids_;
 
   g2o::SE2 latest_estimate_;
   bool has_latest_pose_;

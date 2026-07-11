@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "createdAt": "2026-06-22T06:56:26.629Z",
+  "updatedAt": "2026-06-22T06:59:15.741Z",
+  "briefPath": ".omo/ulw-loop/perception-sync-param-fix/brief.md",
+  "goalsPath": ".omo/ulw-loop/perception-sync-param-fix/goals.json",
+  "ledgerPath": ".omo/ulw-loop/perception-sync-param-fix/ledger.jsonl",
+  "codexGoalMode": "aggregate",
+  "goals": [
+    {
+      "id": "G001-verify-that-perception-baseline-node",
+      "title": "Verify that perception_baseline_node dies because sync_tolerance_sec...",
+      "objective": "Verify that perception_baseline_node dies because sync_tolerance_sec is passed as a string from eufs_perception_baseline launch, then minimally fix the launch typing so bbox_source:=yolov8 starts perception_baseline_node far enough to create /cones and /cones/viz publishers. Tier LIGHT: one launch-file bugfix inside an existing layer; success criteria are static/failing-first proof of string parameter before edit and post-fix launch dry-run/runtime parameter type no longer rejects sync_tolerance_sec.",
+      "status": "pending",
+      "successCriteria": [
+        {
+          "id": "C001",
+          "scenario": "CLI/ROS launch evidence: run ros2 launch eufs_perception_baseline perception_baseline.launch.py bbox_source:=yolov8 with ROS_LOG_DIR under .omo, then inspect the generated perception node params file; PASS after fix when sync_tolerance_sec is numeric 2.0 and no InvalidParameterTypeException appears in launch transcript.",
+          "userModel": "happy",
+          "expectedEvidence": ".omo/ulw-loop/perception-sync-param-fix/evidence/red-perception-params.yaml shows sync_tolerance_sec: '2.0'; .omo/ulw-loop/perception-sync-param-fix/evidence/green-perception-params.yaml shows sync_tolerance_sec: 2.0; green launch transcript lacks InvalidParameterTypeException.",
+          "essential": true,
+          "capturedEvidence": "RED .omo/ulw-loop/perception-sync-param-fix/evidence/red-perception-params.yaml line 39 sync_tolerance_sec: '2.0'; GREEN .omo/ulw-loop/perception-sync-param-fix/evidence/green-perception-params.yaml line 39 sync_tolerance_sec: 2.0; .omo/ulw-loop/perception-sync-param-fix/evidence/green-launch-sync-type.txt contains no InvalidParameterTypeException. cleanup: no live QA process; timeout launch exited; ROS_LOG_DIR kept as evidence under .omo.",
+          "status": "pass",
+          "capturedAt": "2026-06-22T06:58:52.308Z"
+        },
+        {
+          "id": "C002",
+          "scenario": "CLI verification: run python3 -m py_compile eufs_perception_baseline/launch/perception_baseline.launch.py, colcon build --packages-select eufs_perception_baseline --symlink-install, and python3 -m unittest discover -s eufs_perception_baseline/test -p test_yolov8_launch_wiring.py; PASS when all exit 0.",
+          "userModel": "edge",
+          "expectedEvidence": "py_compile exited 0, colcon build reported 1 package finished, unittest ran 4 tests OK.",
+          "essential": true,
+          "capturedEvidence": "python3 -m py_compile eufs_perception_baseline/launch/perception_baseline.launch.py exited 0; colcon build --packages-select eufs_perception_baseline --symlink-install finished 1 package; python3 -m unittest discover -s eufs_perception_baseline/test -p test_yolov8_launch_wiring.py ran 4 tests OK. cleanup: no live QA process or temp server; build artifacts are normal workspace outputs.",
+          "status": "pass",
+          "capturedAt": "2026-06-22T06:58:52.325Z"
+        },
+        {
+          "id": "C003",
+          "scenario": "Regression coverage is included in C002: existing YOLO launch wiring unittest is run after the edit and must remain green.",
+          "userModel": "regression",
+          "expectedEvidence": "python3 -m unittest discover -s eufs_perception_baseline/test -p test_yolov8_launch_wiring.py ran 4 tests OK after the launch typing change.",
+          "essential": false,
+          "capturedEvidence": "Regression evidence covered by C002: python3 -m unittest discover -s eufs_perception_baseline/test -p test_yolov8_launch_wiring.py ran 4 tests OK after the launch typing change. cleanup: no separate QA process; no additional runtime state.",
+          "status": "pass",
+          "capturedAt": "2026-06-22T06:59:15.741Z"
+        }
+      ],
+      "attempt": 0,
+      "createdAt": "2026-06-22T06:56:26.629Z",
+      "updatedAt": "2026-06-22T06:59:15.741Z"
+    }
+  ],
+  "codexObjective": "Complete the durable ulw-loop plan in .omo/ulw-loop/perception-sync-param-fix/goals.json, including later accepted/appended stories, under the original brief constraints; use .omo/ulw-loop/perception-sync-param-fix/ledger.jsonl as the audit trail."
+}

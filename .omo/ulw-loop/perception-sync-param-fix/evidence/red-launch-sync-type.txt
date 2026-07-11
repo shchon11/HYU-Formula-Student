@@ -1,0 +1,57 @@
+[INFO] [launch]: All log files can be found below /home/dohyun/FS/HYU-Formula-Student/.omo/ulw-loop/perception-sync-param-fix/ros-log-red/2026-06-22-15-57-07-602502-dohyun-63
+[INFO] [launch]: Default logging verbosity is set to INFO
+[INFO] [yolov8_bbox_node-1]: process started with pid [65]
+[INFO] [perception_baseline_node-2]: process started with pid [67]
+[yolov8_bbox_node-1] 1782111427.976188 [0]    python3: ddsi_enumerate_interfaces(udp): -1
+[yolov8_bbox_node-1] [ERROR] [1782111427.976214642] [rmw_cyclonedds_cpp]: rmw_create_node: failed to create domain, error Error
+[yolov8_bbox_node-1] 
+[yolov8_bbox_node-1] >>> [rcutils|error_handling.c:108] rcutils_set_error_state()
+[yolov8_bbox_node-1] This error state is being overwritten:
+[yolov8_bbox_node-1] 
+[yolov8_bbox_node-1]   'error not set, at /tmp/binarydeb/ros-galactic-rcl-3.1.4/src/rcl/node.c:261'
+[yolov8_bbox_node-1] 
+[yolov8_bbox_node-1] with this new error message:
+[yolov8_bbox_node-1] 
+[yolov8_bbox_node-1]   'rcl node's rmw handle is invalid, at /tmp/binarydeb/ros-galactic-rcl-3.1.4/src/rcl/node.c:413'
+[yolov8_bbox_node-1] 
+[yolov8_bbox_node-1] rcutils_reset_error() should be called after error handling to avoid this.
+[yolov8_bbox_node-1] <<<
+[yolov8_bbox_node-1] [ERROR] [1782111427.976230653] [rcl]: Failed to fini publisher for node: 1
+[yolov8_bbox_node-1] Traceback (most recent call last):
+[yolov8_bbox_node-1]   File "/home/dohyun/FS/HYU-Formula-Student/install/eufs_perception_baseline/lib/eufs_perception_baseline/yolov8_bbox_node", line 33, in <module>
+[yolov8_bbox_node-1]     sys.exit(load_entry_point('eufs-perception-baseline', 'console_scripts', 'yolov8_bbox_node')())
+[yolov8_bbox_node-1]   File "/home/dohyun/FS/HYU-Formula-Student/build/eufs_perception_baseline/eufs_perception_baseline/yolov8_bbox_node.py", line 215, in main
+[yolov8_bbox_node-1]     node = YoloV8BBoxNode()
+[yolov8_bbox_node-1]   File "/home/dohyun/FS/HYU-Formula-Student/build/eufs_perception_baseline/eufs_perception_baseline/yolov8_bbox_node.py", line 21, in __init__
+[yolov8_bbox_node-1]     super().__init__("yolov8_bbox_node")
+[yolov8_bbox_node-1]   File "/opt/ros/galactic/lib/python3.8/site-packages/rclpy/node.py", line 174, in __init__
+[yolov8_bbox_node-1]     self.__node = _rclpy.Node(
+[yolov8_bbox_node-1] rclpy._rclpy_pybind11.RCLError: error creating node: rcl node's rmw handle is invalid, at /tmp/binarydeb/ros-galactic-rcl-3.1.4/src/rcl/node.c:413
+[ERROR] [yolov8_bbox_node-1]: process has died [pid 65, exit code 1, cmd '/home/dohyun/anaconda3/envs/eufs/bin/python3 /home/dohyun/FS/HYU-Formula-Student/install/eufs_perception_baseline/lib/eufs_perception_baseline/yolov8_bbox_node --ros-args -r __node:=yolov8_bbox_node --params-file /tmp/launch_params_hfd7gmab'].
+[perception_baseline_node-2] 1782111428.060721 [0]    python3: ddsi_enumerate_interfaces(udp): -1
+[perception_baseline_node-2] [ERROR] [1782111428.060752715] [rmw_cyclonedds_cpp]: rmw_create_node: failed to create domain, error Error
+[perception_baseline_node-2] 
+[perception_baseline_node-2] >>> [rcutils|error_handling.c:108] rcutils_set_error_state()
+[perception_baseline_node-2] This error state is being overwritten:
+[perception_baseline_node-2] 
+[perception_baseline_node-2]   'error not set, at /tmp/binarydeb/ros-galactic-rcl-3.1.4/src/rcl/node.c:261'
+[perception_baseline_node-2] 
+[perception_baseline_node-2] with this new error message:
+[perception_baseline_node-2] 
+[perception_baseline_node-2]   'rcl node's rmw handle is invalid, at /tmp/binarydeb/ros-galactic-rcl-3.1.4/src/rcl/node.c:413'
+[perception_baseline_node-2] 
+[perception_baseline_node-2] rcutils_reset_error() should be called after error handling to avoid this.
+[perception_baseline_node-2] <<<
+[perception_baseline_node-2] [ERROR] [1782111428.060777275] [rcl]: Failed to fini publisher for node: 1
+[perception_baseline_node-2] Traceback (most recent call last):
+[perception_baseline_node-2]   File "/home/dohyun/FS/HYU-Formula-Student/install/eufs_perception_baseline/lib/eufs_perception_baseline/perception_baseline_node", line 33, in <module>
+[perception_baseline_node-2]     sys.exit(load_entry_point('eufs-perception-baseline', 'console_scripts', 'perception_baseline_node')())
+[perception_baseline_node-2]   File "/home/dohyun/FS/HYU-Formula-Student/build/eufs_perception_baseline/eufs_perception_baseline/perception_baseline_node.py", line 1727, in main
+[perception_baseline_node-2]     node = PerceptionBaselineNode()
+[perception_baseline_node-2]   File "/home/dohyun/FS/HYU-Formula-Student/build/eufs_perception_baseline/eufs_perception_baseline/perception_baseline_node.py", line 86, in __init__
+[perception_baseline_node-2]     super().__init__("perception_baseline_node")
+[perception_baseline_node-2]   File "/opt/ros/galactic/lib/python3.8/site-packages/rclpy/node.py", line 174, in __init__
+[perception_baseline_node-2]     self.__node = _rclpy.Node(
+[perception_baseline_node-2] rclpy._rclpy_pybind11.RCLError: error creating node: rcl node's rmw handle is invalid, at /tmp/binarydeb/ros-galactic-rcl-3.1.4/src/rcl/node.c:413
+[ERROR] [perception_baseline_node-2]: process has died [pid 67, exit code 1, cmd '/home/dohyun/anaconda3/envs/eufs/bin/python3 /home/dohyun/FS/HYU-Formula-Student/install/eufs_perception_baseline/lib/eufs_perception_baseline/perception_baseline_node --ros-args -r __node:=perception_baseline_node --params-file /tmp/launch_params_yhcvjipw'].
+exit_code=0

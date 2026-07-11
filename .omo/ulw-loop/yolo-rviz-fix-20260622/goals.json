@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "createdAt": "2026-06-22T06:17:02.058Z",
+  "updatedAt": "2026-06-22T06:26:00.976Z",
+  "briefPath": ".omo/ulw-loop/yolo-rviz-fix-20260622/brief.md",
+  "goalsPath": ".omo/ulw-loop/yolo-rviz-fix-20260622/goals.json",
+  "ledgerPath": ".omo/ulw-loop/yolo-rviz-fix-20260622/ledger.jsonl",
+  "codexGoalMode": "aggregate",
+  "goals": [
+    {
+      "id": "G001-fix-the-confirmed-yolo-fusion-rviz-c",
+      "title": "Fix the confirmed YOLO fusion/RViz causes. Deliverable: scripts/hyu-d...",
+      "objective": "Fix the confirmed YOLO fusion/RViz causes. Deliverable: scripts/hyu-docker fusion and fusion-bg must pass bbox_source:=yolov8 so perception_baseline launches yolov8_bbox_node and routes /yolo_bounding_boxes, and graph_slam.rviz must enable the /cones/viz Fusion Cones display. Tier: HEAVY because this touches ROS launch/RViz integration. Success criteria: C1 RED then GREEN parsed CLI evidence for scripts/hyu-docker showing fusion/fusion-bg before change omit bbox_source:=yolov8 and after change include it in both commands, evidence .omo/ulw-loop/evidence/yolo-rviz-fix-c1.txt. C2 RED then GREEN parsed config evidence for graph_slam.rviz showing /cones/viz Fusion Cones before change disabled and after change Enabled/Value true, evidence .omo/ulw-loop/evidence/yolo-rviz-fix-c2.txt. C3 partial runtime launch-argument evidence showing perception_baseline launch accepts bbox_source and yolo_bbox_topic and cleanup receipt, evidence .omo/ulw-loop/evidence/yolo-rviz-fix-c3.txt. Constraints: smallest production change only; do not modify unrelated files; do not commit unless explicitly requested.",
+      "status": "complete",
+      "successCriteria": [
+        {
+          "id": "C001",
+          "scenario": "CLI parsed script scenario: run python3 parser over scripts/hyu-docker. PASS after fix if both fusion and fusion-bg command bodies contain bbox_source:=yolov8, with RED evidence from .omo/ulw-loop/evidence/yolo-rviz-fix-red.txt showing both were false before the patch.",
+          "userModel": "happy",
+          "expectedEvidence": ".omo/ulw-loop/evidence/yolo-rviz-fix-c1.txt",
+          "essential": true,
+          "capturedEvidence": ".omo/ulw-loop/evidence/yolo-rviz-fix-c1.txt: C1_PASS=True; RED showed fusion/fusion-bg omitted bbox_source:=yolov8, GREEN shows both command bodies include bbox_source:=yolov8. cleanup: no runtime process spawned; only evidence file written",
+          "status": "pass",
+          "capturedAt": "2026-06-22T06:20:39.922Z"
+        },
+        {
+          "id": "C002",
+          "scenario": "Parsed RViz config scenario: run python3 parser over eufs_sim/eufs_launcher/config/graph_slam.rviz. PASS after fix if the Fusion Cones block targeting /cones/viz has Enabled true and Value true, with RED evidence from .omo/ulw-loop/evidence/yolo-rviz-fix-red.txt showing it was disabled before the patch.",
+          "userModel": "edge",
+          "expectedEvidence": ".omo/ulw-loop/evidence/yolo-rviz-fix-c2.txt",
+          "essential": true,
+          "capturedEvidence": ".omo/ulw-loop/evidence/yolo-rviz-fix-c2.txt: C2_PASS=True; RED showed /cones/viz Fusion Cones disabled, GREEN exact Fusion Cones block has Enabled:true and Value:true with no false fields in block. cleanup: no runtime process spawned; only evidence file written",
+          "status": "pass",
+          "capturedAt": "2026-06-22T06:20:40.053Z"
+        },
+        {
+          "id": "C003",
+          "scenario": "Partial runtime launch-argument scenario: run source install/setup.bash with ROS_LOG_DIR under .omo/ulw-loop/evidence/ros-log-fix and ros2 launch eufs_perception_baseline perception_baseline.launch.py --show-args. PASS if output includes bbox_source default simulated, yolo_bbox_topic default /yolo_bounding_boxes, and the command exits 0 without starting ROS/RViz/simulator processes.",
+          "userModel": "regression",
+          "expectedEvidence": ".omo/ulw-loop/evidence/yolo-rviz-fix-c3.txt",
+          "essential": false,
+          "capturedEvidence": ".omo/ulw-loop/evidence/yolo-rviz-fix-c3.txt: ros2 launch --show-args exited 0 using workspace ROS_LOG_DIR and output includes bbox_source plus yolo_bbox_topic; .omo/ulw-loop/evidence/yolo-rviz-fix-qa.txt: bash -n exit 0 and pytest launch wiring 4 passed; Docker smoke blocked by daemon socket permission before starting containers. cleanup: no ROS launch, RViz, simulator, container, or persistent process was started",
+          "status": "pass",
+          "capturedAt": "2026-06-22T06:20:40.041Z"
+        }
+      ],
+      "attempt": 1,
+      "createdAt": "2026-06-22T06:17:02.058Z",
+      "updatedAt": "2026-06-22T06:26:00.976Z",
+      "startedAt": "2026-06-22T06:20:07.358Z",
+      "completedAt": "2026-06-22T06:26:00.976Z",
+      "evidence": "Completed scoped YOLO fusion/RViz fix: C1/C2/C3 pass evidence recorded in .omo/ulw-loop/yolo-rviz-fix-20260622/ledger.jsonl; reviewer approved after provenance evidence; Docker smoke limited by daemon socket permission before starting containers."
+    }
+  ],
+  "codexObjective": "Complete the durable ulw-loop plan in .omo/ulw-loop/yolo-rviz-fix-20260622/goals.json, including later accepted/appended stories, under the original brief constraints; use .omo/ulw-loop/yolo-rviz-fix-20260622/ledger.jsonl as the audit trail.",
+  "aggregateCompletion": {
+    "status": "complete",
+    "completedAt": "2026-06-22T06:26:00.976Z",
+    "evidence": "Completed scoped YOLO fusion/RViz fix: C1/C2/C3 pass evidence recorded in .omo/ulw-loop/yolo-rviz-fix-20260622/ledger.jsonl; reviewer approved after provenance evidence; Docker smoke limited by daemon socket permission before starting containers.",
+    "codexGoal": {
+      "goal": {
+        "threadId": "019eedea-26a3-7ff3-a48f-0d03d7ea05f5",
+        "objective": "Complete the durable ulw-loop plan in .omo/ulw-loop/yolo-rviz-fix-20260622/goals.json, including later accepted/appended stories, under the original brief constraints; use .omo/ulw-loop/yolo-rviz-fix-20260622/ledger.jsonl as the audit trail.",
+        "status": "complete",
+        "tokensUsed": 0,
+        "timeUsedSeconds": 2,
+        "createdAt": 1782109543,
+        "updatedAt": 1782109545
+      },
+      "remainingTokens": null
+    }
+  }
+}

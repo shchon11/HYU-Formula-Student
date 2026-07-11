@@ -1,0 +1,17 @@
+--- bash syntax ---
+bash_n_exit=0
+--- pytest launch wiring ---
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-8.3.4, pluggy-1.5.0
+rootdir: /home/dohyun/FS/HYU-Formula-Student/eufs_perception_baseline
+plugins: anyio-4.7.0
+collected 4 items
+
+eufs_perception_baseline/test/test_yolov8_launch_wiring.py ....          [100%]
+
+============================== 4 passed in 0.01s ===============================
+pytest_exit=0
+--- docker status smoke ---
+permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock: Get "http://%2Fvar%2Frun%2Fdocker.sock/v1.45/containers/hyu_eufs_sim/json": dial unix /var/run/docker.sock: connect: operation not permitted
+hyu_docker_status_exit=1
+cleanup: no persistent process started; Docker command failed before starting containers because daemon socket access is not permitted in this shell

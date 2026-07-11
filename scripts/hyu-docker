@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${HYU_IMAGE:-eufs-sim:humble}"
 CONTAINER="${HYU_CONTAINER:-hyu_eufs_sim}"
+YOLO_MODEL_HOST="${HYU_YOLO_MODEL:-${ROOT}/../artifacts/yolov8/fsoco_yolov8n/weights/best.pt}"
+YOLO_MODEL_CONTAINER="/models/fsoco-yolov8n-best.pt"
 
 docker_args=(
   --network host
@@ -31,6 +33,60 @@ fi
 if [ -d /dev/dri ]; then
   gui_args+=(--device /dev/dri)
 fi
+
+yolo_model_is_usable() {
+  case "${YOLO_MODEL_HOST}" in
+    *.pt) ;;
+    *) return 1 ;;
+  esac
+
+  [ -f "${YOLO_MODEL_HOST}" ] && [ -r "${YOLO_MODEL_HOST}" ]
+}
+
+prepare_yolo_model_mount() {
+  if yolo_model_is_usable; then
+    docker_args+=(
+      --volume "${YOLO_MODEL_HOST}:${YOLO_MODEL_CONTAINER}:ro"
+    )
+    return
+  fi
+
+  echo "Warning: YOLO model is not a readable .pt file: ${YOLO_MODEL_HOST}" >&2
+  echo "The simulator will start, but fusion will remain unavailable until it is restarted with a valid HYU_YOLO_MODEL." >&2
+}
+
+require_yolo_model_mount() {
+  local mount_info
+  local mount_source
+  local mount_writable
+
+  if ! yolo_model_is_usable; then
+    echo "YOLO model must be a readable .pt file: ${YOLO_MODEL_HOST}" >&2
+    exit 1
+  fi
+
+  mount_info="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/models/fsoco-yolov8n-best.pt"}}{{.Source}}|{{.RW}}{{end}}{{end}}' "${CONTAINER}")"
+  if [ -z "${mount_info}" ]; then
+    echo "Container ${CONTAINER} has no YOLO model mount at ${YOLO_MODEL_CONTAINER}." >&2
+    echo "Restart the simulator with HYU_YOLO_MODEL=${YOLO_MODEL_HOST}." >&2
+    exit 1
+  fi
+
+  IFS='|' read -r mount_source mount_writable <<< "${mount_info}"
+  if [ "$(readlink -f "${mount_source}")" != "$(readlink -f "${YOLO_MODEL_HOST}")" ]; then
+    echo "Container ${CONTAINER} uses a different YOLO model: ${mount_source}" >&2
+    echo "Restart the simulator with HYU_YOLO_MODEL=${YOLO_MODEL_HOST}." >&2
+    exit 1
+  fi
+  if [ "${mount_writable}" != "false" ]; then
+    echo "YOLO model mount must be read-only: ${YOLO_MODEL_CONTAINER}" >&2
+    exit 1
+  fi
+  if ! docker exec "${CONTAINER}" test -r "${YOLO_MODEL_CONTAINER}"; then
+    echo "YOLO model is not readable inside ${CONTAINER}: ${YOLO_MODEL_CONTAINER}" >&2
+    exit 1
+  fi
+}
 
 exec_in_sim() {
   docker exec "${CONTAINER}" bash -lc "source /workspace/install/setup.bash && $*"
@@ -60,14 +116,17 @@ case "${1:-help}" in
       bash -lc "$(build_command)"
     ;;
   sim-headless)
+    prepare_yolo_model_mount
     docker run --rm --name "${CONTAINER}" "${docker_args[@]}" "${IMAGE}" \
       bash -lc "source install/setup.bash && ros2 launch eufs_launcher simulation.launch.py rviz:=false gazebo_gui:=false show_rqt_gui:=false publish_gt_tf:=false launch_group:=default pub_ground_truth:=true vehicleModelConfig:=configDry.yaml"
     ;;
   sim-gui)
+    prepare_yolo_model_mount
     docker run --rm --name "${CONTAINER}" "${docker_args[@]}" "${gui_args[@]}" "${IMAGE}" \
       bash -lc "source install/setup.bash && ros2 launch eufs_launcher simulation.launch.py rviz:=true gazebo_gui:=true show_rqt_gui:=false publish_gt_tf:=false launch_group:=default pub_ground_truth:=true vehicleModelConfig:=configDry.yaml"
     ;;
   sim-gui-bg)
+    prepare_yolo_model_mount
     docker run -d --rm --name "${CONTAINER}" "${docker_args[@]}" "${gui_args[@]}" "${IMAGE}" \
       bash -lc "source install/setup.bash && ros2 launch eufs_launcher simulation.launch.py rviz:=true gazebo_gui:=true show_rqt_gui:=false publish_gt_tf:=false launch_group:=default pub_ground_truth:=true vehicleModelConfig:=configDry.yaml"
     ;;
@@ -78,10 +137,12 @@ case "${1:-help}" in
     docker exec -d "${CONTAINER}" bash -lc "source /workspace/install/setup.bash && ros2 launch eufs_perception_baseline perception_baseline.launch.py oracle_cones_topic:=/camera_0/cones output_cones_topic:=/cones output_frame:=base_footprint publish_empty_on_sync:=false fusion_enabled:=false > /tmp/perception_adapter.log 2>&1"
     ;;
   fusion)
-    exec_in_sim "ros2 launch eufs_perception_baseline perception_baseline.launch.py output_cones_topic:=/cones output_frame:=base_footprint fusion_enabled:=true bbox_source:=yolov8 publish_empty_on_sync:=false"
+    require_yolo_model_mount
+    exec_in_sim "ros2 launch eufs_perception_baseline perception_baseline.launch.py output_cones_topic:=/cones output_frame:=base_footprint motion_compensation_frame:=odom fusion_enabled:=true bbox_source:=yolov8 publish_empty_on_sync:=false use_sim_time:=true yolo_model_path:=${YOLO_MODEL_CONTAINER}"
     ;;
   fusion-bg)
-    docker exec -d "${CONTAINER}" bash -lc "source /workspace/install/setup.bash && ros2 launch eufs_perception_baseline perception_baseline.launch.py output_cones_topic:=/cones output_frame:=base_footprint fusion_enabled:=true bbox_source:=yolov8 publish_empty_on_sync:=false > /tmp/perception_fusion.log 2>&1"
+    require_yolo_model_mount
+    docker exec -d "${CONTAINER}" bash -lc "source /workspace/install/setup.bash && ros2 launch eufs_perception_baseline perception_baseline.launch.py output_cones_topic:=/cones output_frame:=base_footprint motion_compensation_frame:=odom fusion_enabled:=true bbox_source:=yolov8 publish_empty_on_sync:=false use_sim_time:=true yolo_model_path:=${YOLO_MODEL_CONTAINER} > /tmp/perception_fusion.log 2>&1"
     ;;
   slam)
     exec_in_sim "ros2 launch eufs_graph_slam graph_slam.launch.py publish_tf:=true use_sim_time:=true"

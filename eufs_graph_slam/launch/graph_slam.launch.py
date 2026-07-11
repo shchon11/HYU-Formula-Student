@@ -21,6 +21,10 @@ def generate_launch_description():
     odom_frame = LaunchConfiguration("odom_frame")
     slam_base_frame = LaunchConfiguration("slam_base_frame")
     publish_tf = LaunchConfiguration("publish_tf")
+    pose_history_duration = LaunchConfiguration("pose_history_duration")
+    pose_history_max_samples = LaunchConfiguration("pose_history_max_samples")
+    clock_rollback_threshold = LaunchConfiguration("clock_rollback_threshold")
+    max_pending_cone_messages = LaunchConfiguration("max_pending_cone_messages")
     rviz = LaunchConfiguration("rviz")
     rviz_config = LaunchConfiguration("rviz_config")
 
@@ -71,6 +75,26 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument(
+                "pose_history_duration",
+                default_value="3.0",
+                description="Seconds of CarState history retained for cone-time interpolation.",
+            ),
+            DeclareLaunchArgument(
+                "pose_history_max_samples",
+                default_value="1024",
+                description="Hard sample bound for the CarState interpolation history.",
+            ),
+            DeclareLaunchArgument(
+                "clock_rollback_threshold",
+                default_value="0.1",
+                description="Backward CarState jump in seconds that starts a new graph epoch.",
+            ),
+            DeclareLaunchArgument(
+                "max_pending_cone_messages",
+                default_value="32",
+                description="Bound for cone frames waiting on a future CarState bracket.",
+            ),
+            DeclareLaunchArgument(
                 "ros_localhost_only",
                 default_value="1",
                 description="Limit ROS discovery to localhost.",
@@ -109,6 +133,10 @@ def generate_launch_description():
                         "odom_frame": odom_frame,
                         "slam_base_frame": slam_base_frame,
                         "publish_tf": publish_tf,
+                        "pose_history_duration": pose_history_duration,
+                        "pose_history_max_samples": pose_history_max_samples,
+                        "clock_rollback_threshold": clock_rollback_threshold,
+                        "max_pending_cone_messages": max_pending_cone_messages,
                     },
                 ],
             ),

@@ -64,7 +64,7 @@
     </xacro:sensor_gps>
 
     <xacro:VLP-16R parent="chassis" name="velodyne" topic="/velodyne_points" hz="10" lasers="16" active="$(arg simulate_perception)">
-        <origin xyz="1.4 0.0 0.38" rpy="0 ${8*M_PI/180.0} 0"/>
+        <origin xyz="1.8 0.0 0.2" rpy="0 0 0"/>
     </xacro:VLP-16R>
     <!-- <xacro:VLP-16R parent="chassis" name="velodyne" topic="/velodyne_points" hz="10" lasers="16" active="$(arg simulate_perception)"> -->
         <!-- <origin xyz="1.1 0.0 0.38" rpy="0 ${8*M_PI/180.0} 0"/> -->

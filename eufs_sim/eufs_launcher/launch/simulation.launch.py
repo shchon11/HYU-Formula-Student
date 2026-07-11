@@ -1,7 +1,3 @@
-import os
-import sys
-from pathlib import Path
-
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -16,12 +12,9 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 
 
 def _default_python_executable():
-    conda_prefix = os.environ.get('CONDA_PREFIX', '').strip()
-    if conda_prefix:
-        conda_python = Path(conda_prefix) / 'bin' / 'python3'
-        if conda_python.exists():
-            return str(conda_python)
-    return sys.executable
+    # Keep the ROS entrypoint's interpreter unless the caller opts in to a
+    # different executable. Ambient Conda state must not alter ROS ABI loading.
+    return ''
 
 
 def generate_launch_description():
@@ -40,12 +33,18 @@ def generate_launch_description():
         DeclareLaunchArgument(
             name='vehicleModelConfig',
             default_value='configDry.yaml',
-            description="Determines the file from which the vehicle model parameters are read"),
+            description=(
+                "Determines the file from which the vehicle model "
+                "parameters are read"
+            )),
 
         DeclareLaunchArgument(
             name='commandMode',
             default_value='acceleration',
-            description="Determines the vehicle control mode (acceleration or velocity)"),
+            description=(
+                "Determines the vehicle control mode (acceleration or "
+                "velocity)"
+            )),
 
         DeclareLaunchArgument(
             name='robot_name',
@@ -113,15 +112,41 @@ def generate_launch_description():
             description="Publish YOLO bbox debug image"),
 
         DeclareLaunchArgument(
+            name='perception_right_image_topic',
+            default_value='/zed/right/image_rect_color',
+            description="Right rectified image consumed by perception"),
+
+        DeclareLaunchArgument(
+            name='perception_right_camera_info_topic',
+            default_value='/zed/right/camera_info',
+            description="Right CameraInfo consumed by perception"),
+
+        DeclareLaunchArgument(
+            name='perception_right_camera_frame',
+            default_value='zed_right_camera_optical_frame',
+            description="Right optical frame used by perception"),
+
+        DeclareLaunchArgument(
+            name='perception_motion_compensation_frame',
+            default_value='map',
+            description=(
+                "Fixed TF frame for cross-time perception transforms; use "
+                "odom when GraphSLAM owns localization TF"
+            )),
+
+        DeclareLaunchArgument(
             name='perception_python_executable',
             default_value=_default_python_executable(),
             description="Python interpreter used to run perception nodes"),
 
-        # Set to 'no_perception' to turn off the perception code and use ground truth cones.
+        # Set to 'no_perception' to turn off perception and use ground truth.
         DeclareLaunchArgument(
             name='launch_group',
             default_value='default',
-            description="Determines which launch files are used in the state_machine node"),
+            description=(
+                "Determines which launch files are used in the state_machine "
+                "node"
+            )),
 
         SetEnvironmentVariable(
             name='ROS_LOCALHOST_ONLY',
@@ -132,17 +157,28 @@ def generate_launch_description():
                 PathJoinSubstitution([
                     get_package_share_directory('eufs_tracks'),
                     'launch',
-                    PythonExpression(["'", LaunchConfiguration('track'), "'", "+ '.launch'"])
+                    PythonExpression([
+                        "'",
+                        LaunchConfiguration('track'),
+                        "'",
+                        "+ '.launch'",
+                    ])
                 ]),
             ),
             launch_arguments=[
                 ('vehicleModel', LaunchConfiguration('vehicleModel')),
-                ('vehicleModelConfig', LaunchConfiguration('vehicleModelConfig')),
+                (
+                    'vehicleModelConfig',
+                    LaunchConfiguration('vehicleModelConfig'),
+                ),
                 ('commandMode', LaunchConfiguration('commandMode')),
                 ('robot_name', LaunchConfiguration('robot_name')),
                 ('gazebo_gui', LaunchConfiguration('gazebo_gui')),
                 ('use_sim_time', LaunchConfiguration('use_sim_time')),
-                ('ros_localhost_only', LaunchConfiguration('ros_localhost_only')),
+                (
+                    'ros_localhost_only',
+                    LaunchConfiguration('ros_localhost_only'),
+                ),
                 ('rviz', LaunchConfiguration('rviz')),
                 ('show_rqt_gui', LaunchConfiguration('show_rqt_gui')),
                 ('publish_gt_tf', LaunchConfiguration('publish_gt_tf')),
@@ -169,6 +205,14 @@ def generate_launch_description():
                  LaunchConfiguration('perception_publish_fusion_debug')),
                 ('publish_yolo_debug_image',
                  LaunchConfiguration('perception_publish_yolo_debug_image')),
+                ('right_image_topic',
+                 LaunchConfiguration('perception_right_image_topic')),
+                ('right_camera_info_topic',
+                 LaunchConfiguration('perception_right_camera_info_topic')),
+                ('right_camera_frame',
+                 LaunchConfiguration('perception_right_camera_frame')),
+                ('motion_compensation_frame',
+                 LaunchConfiguration('perception_motion_compensation_frame')),
                 ('python_executable',
                  LaunchConfiguration('perception_python_executable')),
             ],

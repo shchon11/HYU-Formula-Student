@@ -249,9 +249,10 @@ hairpins_increasing_difficulty
 | `vehicleModel` | `DynamicBicycle` 또는 `PointMass` | 차량 모델 |
 | `vehicleModelConfig` | `configDry.yaml` | 차량 파라미터 preset |
 
-`eufs_graph_slam`을 localization TF로 쓸 때는 `publish_gt_tf:=false`로 두고 graph_slam의
-기본 `map -> base_footprint` TF를 사용합니다. 둘을 동시에 켜면 같은 TF를 두 노드가
-발행할 수 있습니다.
+`eufs_graph_slam`을 localization TF로 쓸 때는 `publish_gt_tf:=false`로 두고
+GraphSLAM의 `map -> odom -> base_footprint` TF를 사용합니다. 이 모드의 perception
+cross-time 보상은 `motion_compensation_frame:=odom`을 사용해야 합니다. GT TF와
+GraphSLAM TF를 동시에 켜면 같은 차량 frame을 두 노드가 발행할 수 있습니다.
 
 ## 5. 기본 상호작용
 

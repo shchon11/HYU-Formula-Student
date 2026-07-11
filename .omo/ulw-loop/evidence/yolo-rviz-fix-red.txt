@@ -1,0 +1,6 @@
+RED_C1_fusion_has_bbox_source_yolov8: False
+RED_C1_fusion_bg_has_bbox_source_yolov8: False
+RED_C2_has_cones_viz: True
+RED_C2_enabled_false: True
+RED_C2_value_false: True
+cleanup: no runtime process spawned; only red evidence file written

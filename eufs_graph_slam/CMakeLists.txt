@@ -75,6 +75,16 @@ foreach(_g2o_target core stuff solver_dense types_slam2d)
   endif()
 endforeach()
 
+add_library(graph_slam_time_alignment
+  src/observation_time_alignment.cpp)
+
+target_include_directories(graph_slam_time_alignment PUBLIC
+  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+  "$<INSTALL_INTERFACE:include>")
+
+target_link_libraries(graph_slam_time_alignment
+  Eigen3::Eigen)
+
 add_executable(graph_slam_node
   src/graph_slam_node.cpp
   src/main.cpp)
@@ -95,10 +105,13 @@ ament_target_dependencies(graph_slam_node
 
 target_link_libraries(graph_slam_node
   Eigen3::Eigen
+  graph_slam_time_alignment
   ${EUFS_GRAPH_SLAM_G2O_TARGETS})
 
-install(TARGETS graph_slam_node
-  DESTINATION lib/${PROJECT_NAME})
+install(TARGETS graph_slam_node graph_slam_time_alignment
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY config launch
   DESTINATION share/${PROJECT_NAME})
@@ -107,7 +120,15 @@ install(DIRECTORY include/
   DESTINATION include)
 
 if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
   find_package(ament_lint_auto REQUIRED)
+
+  ament_add_gtest(test_observation_time_alignment
+    test/test_observation_time_alignment.cpp)
+  target_link_libraries(test_observation_time_alignment
+    graph_slam_time_alignment)
+
+  set(ament_cmake_cppcheck_ADDITIONAL_INCLUDE_DIRS ${GTEST_INCLUDE_DIRS})
   ament_lint_auto_find_test_dependencies()
 endif()
 

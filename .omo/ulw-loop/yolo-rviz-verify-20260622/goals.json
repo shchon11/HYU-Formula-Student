@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "createdAt": "2026-06-22T06:05:41.612Z",
+  "updatedAt": "2026-06-22T06:14:53.359Z",
+  "briefPath": ".omo/ulw-loop/yolo-rviz-verify-20260622/brief.md",
+  "goalsPath": ".omo/ulw-loop/yolo-rviz-verify-20260622/goals.json",
+  "ledgerPath": ".omo/ulw-loop/yolo-rviz-verify-20260622/ledger.jsonl",
+  "codexGoalMode": "aggregate",
+  "goals": [
+    {
+      "id": "G001-read-only-verification-task-check-wh",
+      "title": "Read-only verification task: Check whether the previously diagnosed c...",
+      "objective": "Read-only verification task: Check whether the previously diagnosed causes for YOLO fusion results not appearing in RViz are actual causes. Do not modify production code. Deliverable: evidence-backed finding report with exact fix locations only. Tier: HEAVY because this is ROS/Python/Gazebo/RViz integration debugging and the user explicitly requested confirmation. Success criteria: C1 prove or refute that scripts/hyu-docker fusion-bg does not enable bbox_source:=yolov8 and therefore does not launch yolov8_bbox_node or route /yolo_bounding_boxes into fusion; evidence by parsed launch/script CLI transcript under .omo/ulw-loop/evidence/yolo-rviz-c1.txt. C2 prove or refute that graph_slam RViz config disables Fusion Cones /cones/viz; evidence by parsed RViz config CLI transcript under .omo/ulw-loop/evidence/yolo-rviz-c2.txt. C3 attempt runtime or partial-runtime confirmation of ROS launch graph feasibility without code edits; if full runtime is blocked by missing Docker/ROS surface, capture the blocking output and combine with static parsed evidence under .omo/ulw-loop/evidence/yolo-rviz-c3.txt.",
+      "status": "complete",
+      "successCriteria": [
+        {
+          "id": "C001",
+          "scenario": "happy path for: Read-only verification task: Check whether the previously diagnosed causes fo...",
+          "userModel": "happy",
+          "expectedEvidence": "Replace via revise_criterion with observable happy-path proof for goal 1.",
+          "essential": true,
+          "capturedEvidence": ".omo/ulw-loop/evidence/yolo-rviz-c1.txt: C1_ACTUAL_CAUSE_CONFIRMED=True; fusion/fusion-bg omit bbox_source:=yolov8 while launch default bbox_source is simulated and YOLO node/topic wiring is gated on bbox_source==yolov8. cleanup: no runtime process spawned; only evidence file written",
+          "status": "pass",
+          "capturedAt": "2026-06-22T06:09:03.921Z"
+        },
+        {
+          "id": "C002",
+          "scenario": "Auxiliary CLI parsed-config scenario: run python3 - <<'PY' to parse eufs_sim/eufs_launcher/config/graph_slam.rviz and eufs_sim/eufs_launcher/config/default.rviz, print Fusion Cones topic and Enabled/Value fields. PASS for graph_slam.rviz cause if /cones/viz is configured but Enabled and Value are false; compare default.rviz as adjacent contrast where Fusion Cones is enabled.",
+          "userModel": "edge",
+          "expectedEvidence": ".omo/ulw-loop/evidence/yolo-rviz-c2.txt",
+          "essential": true,
+          "capturedEvidence": ".omo/ulw-loop/evidence/yolo-rviz-c2.txt: C2_GRAPH_SLAM_RVIZ_HIDES_FUSION_CONES_CONFIRMED=True; graph_slam.rviz Fusion Cones /cones/viz block has Enabled:false/Value:false; default.rviz contrast is enabled. cleanup: no runtime process spawned; only evidence file written",
+          "status": "pass",
+          "capturedAt": "2026-06-22T06:09:03.973Z"
+        },
+        {
+          "id": "C003",
+          "scenario": "Runtime/partial-runtime scenario: probe docker and ROS launch availability, then run non-mutating parse/import checks where possible. PASS as partial-runtime evidence if full simulator/RViz cannot be launched from this shell and the evidence file records the blocker plus two independent source/config signals supporting or refuting C1/C2.",
+          "userModel": "regression",
+          "expectedEvidence": ".omo/ulw-loop/evidence/yolo-rviz-c3.txt",
+          "essential": false,
+          "capturedEvidence": ".omo/ulw-loop/evidence/yolo-rviz-c3.txt: Docker daemon access is blocked in this shell, but sourced ROS2 launch --show-args succeeds with workspace ROS_LOG_DIR and confirms bbox_source default simulated plus yolo_bbox_topic only for bbox_source:=yolov8; C1/C2 verdict anchors present. cleanup: no ROS launch, RViz, simulator, or container process started; only evidence/log artifacts written",
+          "status": "pass",
+          "capturedAt": "2026-06-22T06:10:21.677Z"
+        }
+      ],
+      "attempt": 1,
+      "createdAt": "2026-06-22T06:05:41.612Z",
+      "updatedAt": "2026-06-22T06:14:53.359Z",
+      "startedAt": "2026-06-22T06:05:53.983Z",
+      "completedAt": "2026-06-22T06:14:53.359Z",
+      "evidence": "Completed read-only verification: C1/C2/C3 pass evidence recorded in .omo/ulw-loop/yolo-rviz-verify-20260622/ledger.jsonl; final report identifies confirmed causes and fix locations only; no production code modified."
+    }
+  ],
+  "codexObjective": "Complete the durable ulw-loop plan in .omo/ulw-loop/yolo-rviz-verify-20260622/goals.json, including later accepted/appended stories, under the original brief constraints; use .omo/ulw-loop/yolo-rviz-verify-20260622/ledger.jsonl as the audit trail.",
+  "aggregateCompletion": {
+    "status": "complete",
+    "completedAt": "2026-06-22T06:14:53.359Z",
+    "evidence": "Completed read-only verification: C1/C2/C3 pass evidence recorded in .omo/ulw-loop/yolo-rviz-verify-20260622/ledger.jsonl; final report identifies confirmed causes and fix locations only; no production code modified.",
+    "codexGoal": {
+      "goal": {
+        "threadId": "019eedea-26a3-7ff3-a48f-0d03d7ea05f5",
+        "objective": "Complete the durable ulw-loop plan in .omo/ulw-loop/yolo-rviz-verify-20260622/goals.json, including later accepted/appended stories, under the original brief constraints; use .omo/ulw-loop/yolo-rviz-verify-20260622/ledger.jsonl as the audit trail.",
+        "status": "complete",
+        "tokensUsed": 953,
+        "timeUsedSeconds": 3,
+        "createdAt": 1782108825,
+        "updatedAt": 1782108828
+      },
+      "remainingTokens": null
+    }
+  }
+}

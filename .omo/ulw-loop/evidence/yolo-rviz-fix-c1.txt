@@ -1,0 +1,8 @@
+True
+True
+GREEN_C1_fusion_has_bbox_source_yolov8: True
+GREEN_C1_fusion_bg_has_bbox_source_yolov8: True
+fusion_body: exec_in_sim "ros2 launch eufs_perception_baseline perception_baseline.launch.py output_cones_topic:=/cones output_frame:=base_footprint fusion_enabled:=true bbox_source:=yolov8 publish_empty_on_sync:=false"
+fusion_bg_body: docker exec -d "${CONTAINER}" bash -lc "source /workspace/install/setup.bash && ros2 launch eufs_perception_baseline perception_baseline.launch.py output_cones_topic:=/cones output_frame:=base_footprint fusion_enabled:=true bbox_source:=yolov8 publish_empty_on_sync:=false > /tmp/perception_fusion.log 2>&1"
+C1_PASS: True
+cleanup: no runtime process spawned; only evidence file written

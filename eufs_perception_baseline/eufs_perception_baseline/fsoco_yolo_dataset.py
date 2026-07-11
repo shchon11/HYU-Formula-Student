@@ -6,7 +6,6 @@ import argparse
 import csv
 import json
 import math
-import os
 import random
 import shutil
 from collections import Counter, defaultdict
@@ -84,7 +83,6 @@ def yolo_label_from_rectangle(
     image_height: int,
 ) -> Tuple[Optional[Label], bool]:
     """Return a normalized YOLO label and whether clamping was needed."""
-
     if len(exterior) != 2:
         raise ConversionError("rectangle exterior must contain exactly two points")
 

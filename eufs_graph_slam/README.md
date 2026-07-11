@@ -5,7 +5,7 @@
 The node subscribes to:
 
 - `/odometry_integration/car_state` (`eufs_msgs/msg/CarState`) for SE2 keyframe motion
-- `/cones` (`eufs_msgs/msg/ConeArrayWithCovariance`) for local cone observations in `base_footprint`
+- `/cones` (`eufs_msgs/msg/ConeArrayWithCovariance`) for acquisition-stamped local cone observations in `base_footprint`
 
 It publishes:
 
@@ -61,9 +61,50 @@ matches the simulator perception window: 180 degree FOV, 30 m range, and
 
 Existing landmark positions are also updated between graph optimizations. When
 `update_existing_landmarks` is enabled, each associated cone observation is
-transformed through the latest live pose estimate and fused into the landmark
+transformed through its acquisition-time pose and fused into the landmark
 vertex with a covariance-aware update. Keyframe observations still add g2o
 edges; duplicate in-between observations only update the vertex estimate and
 published covariance.
+
+## Observation-time alignment
+
+Graph SLAM retains every `CarState` sample in a bounded history and linearly
+interpolates x/y at each cone array timestamp. Yaw uses the shortest angular
+path, including across the `-pi`/`pi` boundary; timestamps are never
+extrapolated. The node selects the latest graph keyframe at or before the
+observation and computes
+
+```text
+delta = inverse(raw_keyframe_pose) * raw_observation_pose
+```
+
+The cone point and its 2x2 covariance are transformed by `delta` before the g2o
+edge is attached to that keyframe. The corresponding observation-time map pose
+is used consistently for data association, landmark fusion, map covariance,
+and stale-landmark visibility. This removes the position bias that otherwise
+appears when an acquisition-stamped detector result arrives after the vehicle
+has moved (for example, a 100 ms delay is 1 m at 10 m/s).
+
+Cone arrays must carry a non-zero timestamp and use the configured
+`slam_base_frame`; invalid frames are dropped rather than assigned a fabricated
+time or transform. A cone array slightly ahead of the newest `CarState` is held
+in a bounded, timestamp-ordered queue until a successor state arrives. Frames
+older than the retained history are dropped with a throttled diagnostic. When
+the queue is full, the farthest-future frame is discarded so nearer frames can
+still become processable. A backward `CarState` jump larger than
+`clock_rollback_threshold` starts a new clock epoch and resets the graph, pose
+history, pending observations, and per-keyframe edge bookkeeping together.
+
+Time-alignment parameters:
+
+| Parameter | Default | Purpose |
+| --- | ---: | --- |
+| `pose_history_duration` | `3.0` s | Time horizon for interpolation (keep at least 2 s for the detector pipeline) |
+| `pose_history_max_samples` | `1024` | Hard memory bound for retained `CarState` samples |
+| `clock_rollback_threshold` | `0.1` s | Backward jump that resets the graph clock epoch |
+| `max_pending_cone_messages` | `32` | Hard bound for future cone arrays waiting for a state bracket |
+
+All four are launch arguments as well as entries in
+`config/graph_slam.yaml`.
 
 Parameters live in `config/graph_slam.yaml`.

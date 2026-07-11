@@ -19,6 +19,10 @@ graph_slam:
     keyframe_distance: 1.0
     keyframe_yaw: 0.25
     keyframe_max_dt: 1.0
+    pose_history_duration: 3.0
+    pose_history_max_samples: 1024
+    clock_rollback_threshold: 0.1
+    max_pending_cone_messages: 32
 
     association_max_distance: 1.2
     min_observation_range: 0.2

@@ -1,0 +1,6 @@
+1782111427.6051292 [INFO] [launch]: All log files can be found below /home/dohyun/FS/HYU-Formula-Student/.omo/ulw-loop/perception-sync-param-fix/ros-log-red/2026-06-22-15-57-07-602502-dohyun-63
+1782111427.6053166 [INFO] [launch]: Default logging verbosity is set to INFO
+1782111427.7311001 [INFO] [yolov8_bbox_node-1]: process started with pid [65]
+1782111427.7312357 [INFO] [perception_baseline_node-2]: process started with pid [67]
+1782111427.9933076 [ERROR] [yolov8_bbox_node-1]: process has died [pid 65, exit code 1, cmd '/home/dohyun/anaconda3/envs/eufs/bin/python3 /home/dohyun/FS/HYU-Formula-Student/install/eufs_perception_baseline/lib/eufs_perception_baseline/yolov8_bbox_node --ros-args -r __node:=yolov8_bbox_node --params-file /tmp/launch_params_hfd7gmab'].
+1782111428.0836413 [ERROR] [perception_baseline_node-2]: process has died [pid 67, exit code 1, cmd '/home/dohyun/anaconda3/envs/eufs/bin/python3 /home/dohyun/FS/HYU-Formula-Student/install/eufs_perception_baseline/lib/eufs_perception_baseline/perception_baseline_node --ros-args -r __node:=perception_baseline_node --params-file /tmp/launch_params_yhcvjipw'].

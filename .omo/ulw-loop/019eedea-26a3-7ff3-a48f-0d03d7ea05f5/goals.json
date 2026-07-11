@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "createdAt": "2026-07-10T01:03:02.645Z",
+  "updatedAt": "2026-07-10T02:15:56.369Z",
+  "briefPath": ".omo/ulw-loop/019eedea-26a3-7ff3-a48f-0d03d7ea05f5/brief.md",
+  "goalsPath": ".omo/ulw-loop/019eedea-26a3-7ff3-a48f-0d03d7ea05f5/goals.json",
+  "ledgerPath": ".omo/ulw-loop/019eedea-26a3-7ff3-a48f-0d03d7ea05f5/ledger.jsonl",
+  "codexGoalMode": "aggregate",
+  "goals": [
+    {
+      "id": "G001-lidar-yolov8-bounding-box-projection",
+      "title": "LiDAR 포인트 클라우드가 YOLOv8 bounding box에 제대로 projection되지 않거나 sparse하여 fu...",
+      "objective": "LiDAR 포인트 클라우드가 YOLOv8 bounding box에 제대로 projection되지 않거나 sparse하여 fusion되지 않는 문제를 기존 진단 증거와 현재 ROS 코드에서 재검증한다. 원인을 최소 세 가설로 분리하고, 실패 우선 증거를 확보한 뒤 최소 설정 또는 코드 변경으로 해결한다. 관련 테스트와 실제 ROS fusion 실행에서 검출 수와 debug reason을 관찰해 회귀 없이 개선됐음을 증명한다. 사용자의 기존 변경과 무관한 파일은 수정하지 않는다.",
+      "status": "complete",
+      "successCriteria": [
+        {
+          "id": "C001",
+          "scenario": "Start the host ROS stack headless with: source /opt/ros/galactic/setup.bash; source install/setup.bash; LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7 ros2 launch eufs_launcher simulation.launch.py track:=small_track gazebo_gui:=false rviz:=false show_rqt_gui:=false ros_localhost_only:=0 publish_gt_tf:=true launch_group:=default perception:=true perception_bbox_source:=yolov8 perception_python_executable:=/home/dohyun/anaconda3/envs/eufs/bin/python3 perception_publish_fusion_debug:=true. Then run ros2 param get /perception_baseline_node projection_model, camera_info_topic, camera_frame, sparse_mid_min_points; ros2 topic echo /fusion/debug/bbox_support --once; ros2 topic echo /cones --once. PASS iff projection_model=pinhole, camera_info_topic=/zed/left/camera_info, camera frame is zed_left_camera_optical_frame, mid threshold=2, bbox support contains assigned_sparse for a 2-point mid-range support case when present, and /cones is non-empty.",
+          "userModel": "happy",
+          "expectedEvidence": "/tmp/ulw-fusion-c001-runtime.txt plus launch log /tmp/ulw-fusion-launch.log and cleanup receipt for launch PID.",
+          "essential": true,
+          "capturedEvidence": "Host ROS/Gazebo with DISPLAY=:0: /tmp/ulw-fusion-c001-runtime.txt records pinhole, /zed/left/camera_info, zed_left_camera_optical_frame, thresholds 4/2/2, one publisher for image/camera_info/cloud/bboxes, and non-empty yellow/big-orange /cones. Corrected first-run terminal observed yellow raw=6 roi=2 cl=0 assigned_sparse; retained retries stabilized to clustered support, with deterministic boundary retained under C002. Launch: /tmp/ulw-fusion-launch.log. Cleanup: /tmp/ulw-fusion-cleanup.txt, no matching process. QA PASS: /tmp/ulw-fusion-qa-review.md.",
+          "status": "pass",
+          "capturedAt": "2026-07-10T02:08:29.749Z"
+        },
+        {
+          "id": "C002",
+          "scenario": "Run the deterministic mid-range sparse driver under ROS Python: source /opt/ros/galactic/setup.bash; source install/setup.bash; /home/dohyun/anaconda3/envs/eufs/bin/python3 inline driver using two support points at centroid range 6.052m. PASS iff current configured node behavior returns exactly one sparse assignment with support_count=2 while near=4 and far=2 remain unchanged; run python3 -m unittest eufs_perception_baseline/test/test_perception_fusion_sparse.py eufs_perception_baseline/test/test_yolov8_launch_wiring.py and require OK.",
+          "userModel": "edge",
+          "expectedEvidence": "/tmp/ulw-fusion-red.txt before edit and /tmp/ulw-fusion-green.txt plus /tmp/ulw-fusion-focused-tests.txt after edit.",
+          "essential": true,
+          "capturedEvidence": "Deterministic RED /tmp/ulw-fusion-red.txt: mid=3 assignments=0. Toggle /tmp/ulw-fusion-toggle.txt and GREEN /tmp/ulw-fusion-green.txt: configured 4/2/2 returns exactly one sparse assignment, support=2, range=6.052. Focused suite /tmp/ulw-fusion-focused-tests.txt: 9 tests OK. No processes or agents retained.",
+          "status": "pass",
+          "capturedAt": "2026-07-10T02:08:29.990Z"
+        },
+        {
+          "id": "C003",
+          "scenario": "Run source /opt/ros/galactic/setup.bash; source install/setup.bash; colcon test --packages-select eufs_perception_baseline --event-handlers console_direct+; colcon test-result --verbose; and colcon build --packages-select eufs_perception_baseline --symlink-install. PASS iff test-result reports 0 errors/0 failures and build exits 0; git diff is limited to confirmed config/test behavior.",
+          "userModel": "regression",
+          "expectedEvidence": "/tmp/ulw-fusion-colcon-test.txt, /tmp/ulw-fusion-test-result.txt, /tmp/ulw-fusion-build.txt, and scoped git diff.",
+          "essential": false,
+          "capturedEvidence": "Package verification: /tmp/ulw-fusion-test-result.txt reports 30 tests, 0 errors, 0 failures, 0 skipped; /tmp/ulw-fusion-build.txt succeeds. After detecting and removing unauthorized subagent commit 2a7a848 with git reset --mixed HEAD^, HEAD is dcfd610/origin-main, intended changes remain unstaged, git diff --check passes, and /tmp/ulw-fusion-post-reset-tests.txt reports 9 tests OK. No commit remains. Independent QA PASS and remediation verifier APPROVE/CLEAR.",
+          "status": "pass",
+          "capturedAt": "2026-07-10T02:11:22.576Z"
+        }
+      ],
+      "attempt": 0,
+      "createdAt": "2026-07-10T01:03:02.645Z",
+      "updatedAt": "2026-07-10T02:15:56.369Z",
+      "completedAt": "2026-07-10T02:15:56.369Z",
+      "evidence": "All C001-C003 pass. Minimal 4/2/2 config change retained unstaged; deterministic RED/GREEN, 30-test package result, successful build, live ROS non-empty cones, cleanup, QA PASS, and final gate CLEAR. Unauthorized subagent commit was removed without losing changes; post-reset focused 9 tests pass."
+    }
+  ],
+  "codexObjective": "Complete the durable ulw-loop plan in .omo/ulw-loop/019eedea-26a3-7ff3-a48f-0d03d7ea05f5/goals.json, including later accepted/appended stories, under the original brief constraints; use .omo/ulw-loop/019eedea-26a3-7ff3-a48f-0d03d7ea05f5/ledger.jsonl as the audit trail.",
+  "aggregateCompletion": {
+    "status": "complete",
+    "completedAt": "2026-07-10T02:15:56.369Z",
+    "evidence": "All C001-C003 pass. Minimal 4/2/2 config change retained unstaged; deterministic RED/GREEN, 30-test package result, successful build, live ROS non-empty cones, cleanup, QA PASS, and final gate CLEAR. Unauthorized subagent commit was removed without losing changes; post-reset focused 9 tests pass.",
+    "codexGoal": {
+      "goal": {
+        "threadId": "019eedea-26a3-7ff3-a48f-0d03d7ea05f5",
+        "objective": "Complete the durable ulw-loop plan in .omo/ulw-loop/019eedea-26a3-7ff3-a48f-0d03d7ea05f5/goals.json, including later accepted/appended stories, under the original brief constraints; use .omo/ulw-loop/019eedea-26a3-7ff3-a48f-0d03d7ea05f5/ledger.jsonl as the audit trail.",
+        "status": "complete",
+        "tokensUsed": 778,
+        "timeUsedSeconds": 6,
+        "createdAt": 1783649537,
+        "updatedAt": 1783649543
+      },
+      "remainingTokens": null,
+      "completionBudgetReport": "Goal achieved."
+    }
+  }
+}

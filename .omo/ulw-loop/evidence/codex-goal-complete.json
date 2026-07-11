@@ -1,0 +1,12 @@
+{
+  "goal": {
+    "threadId": "019eedea-26a3-7ff3-a48f-0d03d7ea05f5",
+    "objective": "Complete the durable ulw-loop plan in .omo/ulw-loop/yolo-rviz-verify-20260622/goals.json, including later accepted/appended stories, under the original brief constraints; use .omo/ulw-loop/yolo-rviz-verify-20260622/ledger.jsonl as the audit trail.",
+    "status": "complete",
+    "tokensUsed": 953,
+    "timeUsedSeconds": 3,
+    "createdAt": 1782108825,
+    "updatedAt": 1782108828
+  },
+  "remainingTokens": null
+}

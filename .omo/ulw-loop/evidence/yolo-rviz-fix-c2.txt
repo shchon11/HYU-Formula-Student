@@ -1,0 +1,28 @@
+True
+True
+True
+GREEN_C2_has_cones_viz: True
+GREEN_C2_enabled_true: True
+GREEN_C2_enabled_false_absent: True
+GREEN_C2_value_true: True
+GREEN_C2_value_false_absent: True
+fusion_cones_block:
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Marker Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /cones/viz
+      Name: Fusion Cones
+      Namespaces:
+        big_orange: true
+        blue: true
+        orange: true
+        unknown: true
+        yellow: true
+      Queue Size: 100
+      Value: true
+C2_PASS: True
+cleanup: no runtime process spawned; only evidence file written

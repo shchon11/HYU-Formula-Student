@@ -1,0 +1,130 @@
+{
+  "qualityGate": {
+    "codeReview": {
+      "by": "lazycodex-code-reviewer",
+      "recommendation": "APPROVE",
+      "codeQualityStatus": "CLEAR",
+      "reportPath": ".omo/ulw-loop/evidence/yolo-rviz-fix-code-review.md",
+      "evidence": "Final reviewer approved the scoped fix after provenance evidence separated this task's changes from the broader pre-existing dirty worktree.",
+      "blockers": []
+    },
+    "manualQa": {
+      "by": "lazycodex-qa-executor",
+      "status": "passed",
+      "evidence": "CLI/config surfaces passed: RED-to-GREEN parsed script evidence, RED-to-GREEN parsed RViz evidence, ROS2 launch-argument evidence, bash syntax check, and focused pytest.",
+      "surfaceEvidence": [
+        {
+          "id": "surface-c1",
+          "criterionRef": "C001",
+          "surface": "cli",
+          "invocation": "python3 parser over scripts/hyu-docker into .omo/ulw-loop/evidence/yolo-rviz-fix-c1.txt",
+          "verdict": "passed",
+          "artifactRefs": ["c1"]
+        },
+        {
+          "id": "surface-c2",
+          "criterionRef": "C002",
+          "surface": "cli",
+          "invocation": "python3 parser over graph_slam.rviz Fusion Cones block into .omo/ulw-loop/evidence/yolo-rviz-fix-c2.txt",
+          "verdict": "passed",
+          "artifactRefs": ["c2"]
+        },
+        {
+          "id": "surface-c3",
+          "criterionRef": "C003",
+          "surface": "cli",
+          "invocation": "source install/setup.bash with workspace ROS_LOG_DIR and run ros2 launch eufs_perception_baseline perception_baseline.launch.py --show-args",
+          "verdict": "passed",
+          "artifactRefs": ["c3", "qa"]
+        }
+      ],
+      "adversarialCases": [
+        {
+          "id": "adv-adjacent-rviz-block",
+          "criterionRef": "C002",
+          "scenario": "Ensure parser validates the exact Fusion Cones block rather than adjacent displays.",
+          "expectedBehavior": "Fusion Cones block contains /cones/viz, Enabled true, Value true, and no false fields.",
+          "verdict": "passed",
+          "artifactRefs": ["c2"]
+        },
+        {
+          "id": "adv-dirty-worktree",
+          "criterionRef": "C003",
+          "scenario": "Separate scoped task changes from pre-existing unrelated dirty worktree entries.",
+          "expectedBehavior": "Reviewer treats pre-existing unrelated dirty entries as residual risk, not a scoped fix blocker.",
+          "verdict": "passed",
+          "artifactRefs": ["provenance"]
+        }
+      ],
+      "artifactRefs": [
+        {
+          "id": "red",
+          "kind": "cli-transcript",
+          "description": "Pre-change RED evidence.",
+          "path": ".omo/ulw-loop/evidence/yolo-rviz-fix-red.txt"
+        },
+        {
+          "id": "c1",
+          "kind": "cli-transcript",
+          "description": "GREEN evidence for hyu-docker fusion commands.",
+          "path": ".omo/ulw-loop/evidence/yolo-rviz-fix-c1.txt"
+        },
+        {
+          "id": "c2",
+          "kind": "cli-transcript",
+          "description": "GREEN evidence for graph_slam.rviz Fusion Cones block.",
+          "path": ".omo/ulw-loop/evidence/yolo-rviz-fix-c2.txt"
+        },
+        {
+          "id": "c3",
+          "kind": "cli-transcript",
+          "description": "ROS2 launch-argument evidence.",
+          "path": ".omo/ulw-loop/evidence/yolo-rviz-fix-c3.txt"
+        },
+        {
+          "id": "qa",
+          "kind": "cli-transcript",
+          "description": "bash syntax, pytest, and Docker smoke limitation transcript.",
+          "path": ".omo/ulw-loop/evidence/yolo-rviz-fix-qa.txt"
+        },
+        {
+          "id": "provenance",
+          "kind": "cli-transcript",
+          "description": "Scoped change provenance and broader dirty worktree context.",
+          "path": ".omo/ulw-loop/evidence/yolo-rviz-fix-provenance.txt"
+        }
+      ]
+    },
+    "gateReview": {
+      "by": "lazycodex-gate-reviewer",
+      "recommendation": "APPROVE",
+      "reportPath": ".omo/ulw-loop/evidence/yolo-rviz-fix-gate-review.md",
+      "evidence": "All three criteria pass, final reviewer approved, and no subagents remain open.",
+      "blockers": []
+    },
+    "iteration": {
+      "fullRerun": true,
+      "status": "passed",
+      "rerunCommands": [
+        "cat .omo/ulw-loop/evidence/yolo-rviz-fix-c1.txt",
+        "cat .omo/ulw-loop/evidence/yolo-rviz-fix-c2.txt",
+        "rg -n 'bbox_source|yolo_bbox_topic|show_args_exit' .omo/ulw-loop/evidence/yolo-rviz-fix-c3.txt",
+        "cat .omo/ulw-loop/evidence/yolo-rviz-fix-qa.txt",
+        "omo ulw-loop status --session-id yolo-rviz-fix-20260622 --json"
+      ],
+      "evidence": "Evidence files were generated and re-read; ULW status shows 3/3 criteria pass."
+    },
+    "criteriaCoverage": {
+      "totalCriteria": 3,
+      "passCount": 3,
+      "originalIntent": "Fix the confirmed YOLO fusion/RViz causes.",
+      "desiredOutcome": "Docker fusion helpers launch YOLO bbox fusion mode and graph_slam RViz shows /cones/viz Fusion Cones.",
+      "userOutcomeReview": "Scoped files now contain bbox_source:=yolov8 for fusion commands and enabled /cones/viz Fusion Cones; runtime Docker smoke could not run because daemon socket access is denied in this shell.",
+      "adversarialClassesCovered": [
+        "adjacent-rviz-block",
+        "dirty-worktree",
+        "runtime-permission-blocker"
+      ]
+    }
+  }
+}

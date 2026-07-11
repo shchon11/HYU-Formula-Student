@@ -1,0 +1,92 @@
+--- scoped changed files for this task ---
+scripts/hyu-docker
+eufs_sim/eufs_launcher/config/graph_slam.rviz
+--- scoped diff: scripts/hyu-docker ---
+diff --git a/scripts/hyu-docker b/scripts/hyu-docker
+index 356c796..d908ad8 100755
+--- a/scripts/hyu-docker
++++ b/scripts/hyu-docker
+@@ -78,10 +78,10 @@ case "${1:-help}" in
+     docker exec -d "${CONTAINER}" bash -lc "source /workspace/install/setup.bash && ros2 launch eufs_perception_baseline perception_baseline.launch.py oracle_cones_topic:=/camera_0/cones output_cones_topic:=/cones output_frame:=base_footprint publish_empty_on_sync:=false fusion_enabled:=false > /tmp/perception_adapter.log 2>&1"
+     ;;
+   fusion)
+-    exec_in_sim "ros2 launch eufs_perception_baseline perception_baseline.launch.py output_cones_topic:=/cones output_frame:=base_footprint fusion_enabled:=true publish_empty_on_sync:=false"
++    exec_in_sim "ros2 launch eufs_perception_baseline perception_baseline.launch.py output_cones_topic:=/cones output_frame:=base_footprint fusion_enabled:=true bbox_source:=yolov8 publish_empty_on_sync:=false"
+     ;;
+   fusion-bg)
+-    docker exec -d "${CONTAINER}" bash -lc "source /workspace/install/setup.bash && ros2 launch eufs_perception_baseline perception_baseline.launch.py output_cones_topic:=/cones output_frame:=base_footprint fusion_enabled:=true publish_empty_on_sync:=false > /tmp/perception_fusion.log 2>&1"
++    docker exec -d "${CONTAINER}" bash -lc "source /workspace/install/setup.bash && ros2 launch eufs_perception_baseline perception_baseline.launch.py output_cones_topic:=/cones output_frame:=base_footprint fusion_enabled:=true bbox_source:=yolov8 publish_empty_on_sync:=false > /tmp/perception_fusion.log 2>&1"
+     ;;
+   slam)
+     exec_in_sim "ros2 launch eufs_graph_slam graph_slam.launch.py publish_tf:=true use_sim_time:=true"
+--- scoped graph_slam.rviz Fusion Cones block ---
+   192	    - Class: rviz_default_plugins/MarkerArray
+   193	      Enabled: true
+   194	      Marker Topic:
+   195	        Depth: 5
+   196	        Durability Policy: Volatile
+   197	        History Policy: Keep Last
+   198	        Reliability Policy: Reliable
+   199	        Value: /cones/viz
+   200	      Name: Fusion Cones
+   201	      Namespaces:
+   202	        big_orange: true
+   203	        blue: true
+   204	        orange: true
+   205	        unknown: true
+   206	        yellow: true
+   207	      Queue Size: 100
+   208	      Value: true
+--- broader worktree is dirty outside this task and was not reverted by policy ---
+ M README.md
+ M eufs_graph_slam/launch/graph_slam.launch.py
+ M eufs_graph_slam/src/graph_slam_node.cpp
+ M eufs_graph_slam/src/main.cpp
+ M eufs_perception_baseline/README.md
+ M eufs_perception_baseline/config/perception_baseline.yaml
+ M eufs_perception_baseline/docs/perception_baseline_usage.md
+ M eufs_perception_baseline/eufs_perception_baseline/perception_baseline_node.py
+ M eufs_perception_baseline/launch/perception_baseline.launch.py
+ M eufs_perception_baseline/package.xml
+ M eufs_perception_baseline/setup.py
+ M eufs_sim/eufs_launcher/config/default.rviz
+ M eufs_sim/eufs_launcher/launch/simulation.launch.py
+ M eufs_sim/eufs_plugins/CMakeLists.txt
+ M eufs_sim/eufs_plugins/gazebo_cone_plugins/CMakeLists.txt
+ M eufs_sim/eufs_plugins/gazebo_cone_plugins/include/gazebo_cone_plugins/gazebo_camera_cones.hpp
+ M eufs_sim/eufs_plugins/gazebo_cone_plugins/include/gazebo_cone_plugins/gazebo_ground_truth_cones.hpp
+ M eufs_sim/eufs_plugins/gazebo_cone_plugins/src/gazebo_camera_cones.cpp
+ M eufs_sim/eufs_plugins/gazebo_cone_plugins/src/gazebo_ground_truth_cones.cpp
+ M eufs_sim/eufs_plugins/gazebo_race_car_model/include/gazebo_race_car_model/gazebo_ros_race_car.hpp
+ M eufs_sim/eufs_plugins/gazebo_simulate_bounding_boxes/include/gazebo_simulate_bounding_boxes/gazebo_simulate_bounding_boxes.hpp
+ M eufs_sim/eufs_plugins/urdf/eufs_plugins.gazebo.xacro
+ M eufs_sim/eufs_racecar/launch/load_car.launch.py
+ M eufs_sim/eufs_racecar/robots/eufs/robot.urdf.xacro
+ M eufs_sim/eufs_sensors/urdf/zed.urdf.xacro
+ M eufs_sim/eufs_tracks/launch/acceleration.launch
+ M eufs_sim/eufs_tracks/launch/boa_constrictor.launch
+ M eufs_sim/eufs_tracks/launch/comp_2021.launch
+ M eufs_sim/eufs_tracks/launch/empty.launch
+ M eufs_sim/eufs_tracks/launch/garden_light.launch
+ M eufs_sim/eufs_tracks/launch/hairpins_increasing_difficulty.launch
+ M eufs_sim/eufs_tracks/launch/its_a_mess.launch
+ M eufs_sim/eufs_tracks/launch/peanut.launch
+ M eufs_sim/eufs_tracks/launch/rectangle.launch
+ M eufs_sim/eufs_tracks/launch/skidpad.launch
+ M eufs_sim/eufs_tracks/launch/small_track.launch
+ M eufs_sim/eufs_tracks/resource/randgen_launch_template
+ M scripts/hyu-docker
+?? .omo/
+?? eufs_perception_baseline/docs/fsoco_yolov8_finetuning.md
+?? eufs_perception_baseline/eufs_perception_baseline/fsoco_yolo_dataset.py
+?? eufs_perception_baseline/eufs_perception_baseline/point_cloud2_compat.py
+?? eufs_perception_baseline/eufs_perception_baseline/yolov8_bbox_node.py
+?? eufs_perception_baseline/eufs_perception_baseline/yolov8_bbox_utils.py
+?? eufs_perception_baseline/pipeline_verification_report.md
+?? eufs_perception_baseline/reference/
+?? eufs_perception_baseline/test/
+?? eufs_sim/eufs_launcher/config/graph_slam.rviz
+?? eufs_sim/eufs_plugins/gazebo_cone_plugins/include/gazebo_cone_plugins/cone_markers.hpp
+?? yolo26n.pt
+?? yolov8n.pt
+cleanup: no runtime process spawned; provenance evidence file only

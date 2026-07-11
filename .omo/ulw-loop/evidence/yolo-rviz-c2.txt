@@ -1,0 +1,62 @@
+--- eufs_sim/eufs_launcher/config/graph_slam.rviz ---
+line: 200
+topic_cones_viz: True
+enabled_false: True
+enabled_true: True
+value_false: True
+value_true: False
+      Queue Size: 100
+      Value: false
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: false
+      Marker Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /cones/viz
+      Name: Fusion Cones
+      Namespaces:
+        big_orange: true
+        blue: true
+        orange: true
+        unknown: true
+        yellow: true
+      Queue Size: 100
+      Value: false
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Marker Topic:
+--- eufs_sim/eufs_launcher/config/default.rviz ---
+line: 196
+topic_cones_viz: True
+enabled_false: False
+enabled_true: True
+value_false: True
+value_true: True
+        big_orange: true
+        blue: true
+        orange: true
+        unknown: true
+        yellow: true
+      Queue Size: 100
+      Value: false
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Topic: /cones/viz
+      Name: Fusion Cones
+      Namespaces:
+        big_orange: true
+        blue: true
+        orange: true
+        unknown: true
+        yellow: true
+      Queue Size: 100
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Topic: /camera_0/cones/viz
+--- verdict ---
+C2_GRAPH_SLAM_RVIZ_HIDES_FUSION_CONES_CONFIRMED: True
+C2_DEFAULT_RVIZ_CONTRAST_ENABLED: True
+cleanup: no runtime process spawned; only this evidence file was written
