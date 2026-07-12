@@ -183,4 +183,58 @@ void computeWaypointGeometry(std::vector<PlannerWaypoint> & waypoints)
   }
 }
 
+std::vector<VelocityProfilePoint> computeVelocityProfile(
+  const std::vector<PlannerWaypoint> & waypoints, const VelocityProfileConfig & config)
+{
+  const std::size_t n = waypoints.size();
+  std::vector<VelocityProfilePoint> profile(n);
+  if (n == 0U) {
+    return profile;
+  }
+
+  const double v_max = std::max(config.min_speed_mps, config.max_speed_mps);
+  const double a_lat = std::max(0.0, config.max_lateral_accel_mps2);
+  const double a_acc = std::max(0.0, config.max_accel_mps2);
+  const double a_dec = std::max(0.0, config.max_decel_mps2);
+
+  // 1. Curvature (friction-circle) speed limit per point.
+  std::vector<double> v(n, v_max);
+  for (std::size_t i = 0; i < n; ++i) {
+    const double kappa = std::abs(waypoints[i].kappa);
+    double v_curve = v_max;
+    if (a_lat > 0.0 && kappa > kGeometryEpsilon) {
+      v_curve = std::sqrt(a_lat / kappa);
+    }
+    v[i] = std::clamp(v_curve, config.min_speed_mps, v_max);
+  }
+
+  // 2. Forward pass: cap acceleration between points.
+  for (std::size_t i = 1; i < n; ++i) {
+    const double ds = std::max(0.0, waypoints[i].s - waypoints[i - 1].s);
+    const double reachable = std::sqrt(v[i - 1] * v[i - 1] + 2.0 * a_acc * ds);
+    v[i] = std::min(v[i], reachable);
+  }
+
+  // 3. Backward pass: cap braking so every corner speed is reachable.
+  for (std::size_t i = n - 1; i-- > 0; ) {
+    const double ds = std::max(0.0, waypoints[i + 1].s - waypoints[i].s);
+    const double reachable = std::sqrt(v[i + 1] * v[i + 1] + 2.0 * a_dec * ds);
+    v[i] = std::min(v[i], reachable);
+  }
+
+  // 4. Longitudinal accel toward the next point.
+  for (std::size_t i = 0; i < n; ++i) {
+    profile[i].vx = std::clamp(v[i], config.min_speed_mps, v_max);
+  }
+  for (std::size_t i = 0; i + 1 < n; ++i) {
+    const double ds = std::max(kGeometryEpsilon, waypoints[i + 1].s - waypoints[i].s);
+    profile[i].ax = (profile[i + 1].vx * profile[i + 1].vx - profile[i].vx * profile[i].vx) /
+      (2.0 * ds);
+  }
+  if (n > 0U) {
+    profile[n - 1].ax = 0.0;
+  }
+  return profile;
+}
+
 }  // namespace global_planner

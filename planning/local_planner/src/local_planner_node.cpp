@@ -49,6 +49,9 @@ LocalPlannerNode::LocalPlannerNode(const rclcpp::NodeOptions & options)
   planner_config_.fallback_offset_m = declare_parameter<double>("fallback_offset_m", 1.5);
   planner_config_.two_sided_speed_mps = declare_parameter<double>("two_sided_speed_mps", 3.0);
   planner_config_.fallback_speed_mps = declare_parameter<double>("fallback_speed_mps", 1.5);
+  planner_config_.max_lateral_accel_mps2 =
+    declare_parameter<double>("max_lateral_accel_mps2", 5.0);
+  planner_config_.min_speed_mps = declare_parameter<double>("min_speed_mps", 1.0);
   planner_config_.allow_partial_boundary = declare_parameter<bool>(
     "allow_partial_boundary", source_mode_ == SourceMode::kSlamMap);
 

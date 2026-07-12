@@ -43,4 +43,27 @@ std::vector<PlannerPoint> sampleNormalized(
   const std::vector<PlannerPoint> & points, std::size_t count);
 void computeWaypointGeometry(std::vector<PlannerWaypoint> & waypoints);
 
+// Curvature + friction speed profile (the raceline is otherwise driven at a
+// flat speed). Corner speed is bounded by the friction circle
+// v = sqrt(a_lat_max / |kappa|); a forward/backward pass then bounds
+// longitudinal accel/decel so the profile is physically drivable.
+struct VelocityProfileConfig
+{
+  double max_speed_mps{4.5};
+  double min_speed_mps{1.5};
+  double max_lateral_accel_mps2{6.0};
+  double max_accel_mps2{3.0};
+  double max_decel_mps2{5.0};
+};
+
+struct VelocityProfilePoint
+{
+  double vx{0.0};   // target speed [m/s]
+  double ax{0.0};   // longitudinal accel toward the next point [m/s^2]
+};
+
+// One entry per input waypoint (uses each waypoint's s and kappa).
+std::vector<VelocityProfilePoint> computeVelocityProfile(
+  const std::vector<PlannerWaypoint> & waypoints, const VelocityProfileConfig & config);
+
 }  // namespace global_planner

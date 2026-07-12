@@ -74,6 +74,11 @@ void PlannerNode::declareParameters()
   declare_parameter<double>("close_loop_distance_m", 5.0);
   declare_parameter<double>("waypoint_spacing_m", 0.5);
   declare_parameter<double>("default_speed_mps", 4.0);
+  declare_parameter<double>("max_speed_mps", 4.5);
+  declare_parameter<double>("min_speed_mps", 1.5);
+  declare_parameter<double>("max_lateral_accel_mps2", 6.0);
+  declare_parameter<double>("max_accel_mps2", 3.0);
+  declare_parameter<double>("max_decel_mps2", 5.0);
   declare_parameter<double>("duplicate_point_tolerance", 0.001);
   declare_parameter<double>("odom_timeout_sec", 0.5);
 }
@@ -94,6 +99,11 @@ void PlannerNode::loadParameters()
   close_loop_distance_m_ = get_parameter("close_loop_distance_m").as_double();
   waypoint_spacing_m_ = get_parameter("waypoint_spacing_m").as_double();
   default_speed_mps_ = get_parameter("default_speed_mps").as_double();
+  max_speed_mps_ = get_parameter("max_speed_mps").as_double();
+  min_speed_mps_ = get_parameter("min_speed_mps").as_double();
+  max_lateral_accel_mps2_ = get_parameter("max_lateral_accel_mps2").as_double();
+  max_accel_mps2_ = get_parameter("max_accel_mps2").as_double();
+  max_decel_mps2_ = get_parameter("max_decel_mps2").as_double();
   duplicate_point_tolerance_ = get_parameter("duplicate_point_tolerance").as_double();
   odom_timeout_sec_ = get_parameter("odom_timeout_sec").as_double();
 
@@ -253,20 +263,32 @@ eufs_msgs::msg::WaypointArrayStamped PlannerNode::buildWaypointMessage(
     std::string("map") : latest_cone_map_->header.frame_id;
   msg.waypoints.reserve(waypoints.size());
 
-  for (const auto & point : waypoints) {
+  VelocityProfileConfig vp;
+  vp.max_speed_mps = max_speed_mps_;
+  vp.min_speed_mps = min_speed_mps_;
+  vp.max_lateral_accel_mps2 = max_lateral_accel_mps2_;
+  vp.max_accel_mps2 = max_accel_mps2_;
+  vp.max_decel_mps2 = max_decel_mps2_;
+  const auto profile = computeVelocityProfile(waypoints, vp);
+
+  for (std::size_t i = 0; i < waypoints.size(); ++i) {
+    const auto & point = waypoints[i];
+    // Curvature/friction profile when available; flat default otherwise.
+    const double vx = i < profile.size() ? profile[i].vx : default_speed_mps_;
+    const double ax = i < profile.size() ? profile[i].ax : 0.0;
     eufs_msgs::msg::Waypoint waypoint;
     waypoint.position.x = point.x;
     waypoint.position.y = point.y;
     waypoint.position.z = 0.0;
-    waypoint.speed = default_speed_mps_;
+    waypoint.speed = vx;
     waypoint.suggested_steering = 0.0;
     waypoint.x_m = point.x;
     waypoint.y_m = point.y;
     waypoint.s_m = point.s;
     waypoint.psi_rad = point.psi;
     waypoint.kappa_radpm = point.kappa;
-    waypoint.vx_mps = default_speed_mps_;
-    waypoint.ax_mps2 = 0.0;
+    waypoint.vx_mps = vx;
+    waypoint.ax_mps2 = ax;
     msg.waypoints.push_back(waypoint);
   }
 

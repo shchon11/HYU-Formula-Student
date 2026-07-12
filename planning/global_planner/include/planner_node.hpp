@@ -52,6 +52,13 @@ private:
   double close_loop_distance_m_{5.0};
   double waypoint_spacing_m_{0.5};
   double default_speed_mps_{4.0};
+  // Curvature+friction speed profile (falls back to default_speed when the
+  // path is too short to profile). See computeVelocityProfile.
+  double max_speed_mps_{4.5};
+  double min_speed_mps_{1.5};
+  double max_lateral_accel_mps2_{6.0};
+  double max_accel_mps2_{3.0};
+  double max_decel_mps2_{5.0};
   double duplicate_point_tolerance_{0.001};
   double odom_timeout_sec_{0.5};
   double valid_heartbeat_hz_{5.0};

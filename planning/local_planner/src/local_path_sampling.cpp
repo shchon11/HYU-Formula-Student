@@ -157,6 +157,16 @@ BuildResult finishPath(
     result.waypoints[index].kappa = normalizeAngle(
       result.waypoints[index].psi - result.waypoints[index - 1U].psi) / delta_s;
   }
+  // Curvature speed profile: cap corner speed at sqrt(a_lat / |kappa|),
+  // floored at min_speed, using the per-path speed as the straight-line cap.
+  for (auto & waypoint : result.waypoints) {
+    double v = speed;
+    const double kappa = std::abs(waypoint.kappa);
+    if (config.max_lateral_accel_mps2 > 0.0 && kappa > 1e-6) {
+      v = std::min(v, std::sqrt(config.max_lateral_accel_mps2 / kappa));
+    }
+    waypoint.speed = std::max(config.min_speed_mps, v);
+  }
   for (std::size_t index = 0; index < result.waypoints.size(); ++index) {
     const auto & waypoint = result.waypoints[index];
     if (!std::isfinite(waypoint.x) || !std::isfinite(waypoint.y) ||

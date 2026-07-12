@@ -44,6 +44,11 @@ struct PlannerConfig
   double fallback_offset_m{1.5};
   double two_sided_speed_mps{3.0};
   double fallback_speed_mps{1.5};
+  // Curvature speed profile: corner speed is capped at
+  // sqrt(max_lateral_accel / |kappa|), floored at min_speed_mps. The per-path
+  // speed above acts as the straight-line cap.
+  double max_lateral_accel_mps2{5.0};
+  double min_speed_mps{1.0};
   bool allow_partial_boundary{false};
 };
 
