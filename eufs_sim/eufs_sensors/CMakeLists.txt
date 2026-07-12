@@ -29,4 +29,10 @@ install(DIRECTORY meshes urdf
   DESTINATION share/${PROJECT_NAME}
 )
 
+# Simulated SBG Ellipse-D GNSS/INS (ground truth -> /sbg/ekf_nav + ekf_euler).
+install(PROGRAMS scripts/sim_ellipse_d.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME sim_ellipse_d
+)
+
 ament_package()

@@ -53,7 +53,6 @@
 #include <vector>
 #include <map>
 #include <filesystem>
-#include <visualization_msgs/msg/marker_array.hpp>
 
 #include "rclcpp/rclcpp.hpp"
 #include "yaml-cpp/yaml.h"
@@ -67,8 +66,7 @@ class GazeboCameraCones : public gazebo::ModelPlugin {
   GazeboCameraCones();
 
   // Gazebo plugin functions
-  void Load(gazebo::physics::ModelPtr _parent, sdf::ElementPtr _sdf) override;
-  void Reset() override;
+  void Load(gazebo::physics::ModelPtr _parent, sdf::ElementPtr _sdf);
 
   void UpdateChild();
 
@@ -83,6 +81,7 @@ class GazeboCameraCones : public gazebo::ModelPlugin {
       eufs_msgs::msg::ConeArrayWithCovariance &cones_message);
   void addNoiseToConeArray(std::vector<eufs_msgs::msg::ConeWithCovariance> &cone_array);
   double GaussianKernel(double mu, double sigma);
+  bool shouldDetectCone();
 
   // Returns random cone colour with probability `weights`
   std::string pickColorWithProbability(const YAML::Node weights);
@@ -107,8 +106,6 @@ class GazeboCameraCones : public gazebo::ModelPlugin {
 
   // Publishers
   rclcpp::Publisher<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr camera_cones_pub_;
-  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
-      camera_cone_markers_pub_;
 
   // Gazebo variables
   gazebo::physics::ModelPtr track_model;
@@ -125,6 +122,7 @@ class GazeboCameraCones : public gazebo::ModelPlugin {
   double camera_fov;
   double camera_a;
   double camera_b;
+  double detection_probability;
   YAML::Node recolor_config;
 
   double update_rate_;

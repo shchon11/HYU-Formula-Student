@@ -3,12 +3,12 @@ graph_slam:
     use_sim_time: true
 
     car_state_topic: /odometry_integration/car_state
-    car_state_frame: map
-    car_state_child_frame: base_footprint
     cones_topic: /cones
 
-    map_topic: /graph_slam/map
-    slam_odom_topic: /graph_slam/odom
+    map_topic: /localization/cone_map
+    slam_odom_topic: /localization/ego_odom
+    status_topic: ~/status
+    map_converged_topic: ~/map_converged
     path_topic: /graph_slam/path
     marker_topic: /graph_slam/markers
 
@@ -18,17 +18,18 @@ graph_slam:
     publish_tf: true
     tf_stamp_offset: 0.0
 
-    keyframe_distance: 1.0
-    keyframe_yaw: 0.25
-    keyframe_max_dt: 1.0
-    pose_history_duration: 3.0
-    pose_history_max_samples: 1024
-    clock_rollback_threshold: 0.1
-    # Also bounds valid input lead while replaying after a clock rollback.
-    max_future_stamp_lead: 0.09
-    max_pending_cone_messages: 32
+    keyframe_distance: 0.5
+    keyframe_yaw: 0.2
+    keyframe_max_dt: 0.5
 
     association_max_distance: 1.2
+    association_gate_chi2: 5.991
+    association_ambiguity_ratio: 0.85
+    # Gate inflation grows with distance driven since a landmark was last
+    # seen (drift is distance-proportional; keyframe density must not change
+    # the gate). 0.01 m^2/m -> ~3.2 m gate radius after a 165 m lap.
+    association_inflation_per_meter: 0.01
+    association_max_inflation: 4.0
     min_observation_range: 0.2
     max_observation_range: 30.0
     use_cone_covariance: true
@@ -38,19 +39,55 @@ graph_slam:
 
     odom_translation_sigma: 0.05
     odom_yaw_sigma: 0.03
+    # Consume the motion source's reported noise (CarState.pose.covariance)
+    # per odometry edge, clamped below by the sigmas above — a degraded
+    # bridge/wheel-odometry mode then weakens its own constraints.
+    use_odom_covariance: true
 
-    optimize_every_n_keyframes: 100
-    optimize_min_interval: 10.0
-    max_optimization_poses: 300
-    optimization_iterations: 3
+    # GNSS global anchor (Level 2): consume the SBG bridge's /gnss/odom absolute
+    # ENU fix as a unary EdgeSE2XYPrior on each keyframe. gnss_prior_max_position_sigma
+    # gates it so only mode-4/RTK fixes (small covariance) anchor the graph;
+    # degraded modes publish a huge covariance and are dropped automatically, so
+    # the anchor fades out gracefully on RTK dropout while odometry keeps flowing.
+    gnss_prior_enable: true
+    gnss_prior_topic: /gnss/odom
+    gnss_prior_max_position_sigma: 0.5
+    gnss_prior_max_age: 0.3
+    gnss_prior_robust_delta: 1.0
+    # A manual /initialpose (RViz 2D Pose Estimate) suppresses the priors so an
+    # RTK fix cannot yank the pose straight back to GNSS; they re-arm after
+    # suppress_duration once GNSS agrees with the cone-anchored pose within
+    # rearm_max_residual. If the map is NOT georeferenced (old local-frame
+    # map / different datum), set gnss_prior_enable to false instead.
+    gnss_prior_suppress_duration: 20.0
+    gnss_prior_rearm_max_residual: 2.0
+
+    # Optimize on every perception frame that adds edges (conesCallback calls
+    # maybeOptimize); these gates just rate-limit it. optimize_every_n_keyframes
+    # = 1 means "as soon as there is a new keyframe of observations", and
+    # optimize_min_interval caps the solver rate so drift is corrected
+    # continuously instead of every N keyframes.
+    optimize_every_n_keyframes: 1
+    optimize_min_interval: 0.1
+    max_optimization_poses: 4000
+    optimization_iterations: 10
     process_every_cone_message: false
 
-    landmark_min_observations_to_publish: 1
+    landmark_min_observations_to_publish: 2
+    landmark_confirm_observations: 3
+    loop_gap_distance: 20.0
+    landmark_merge_distance: 0.6
+    # After the map converges (loop closures reconciled by this many
+    # optimization cycles), confirmed-landmark observation edges get their
+    # information scaled up so the pose conforms to the settled map.
+    map_trust_after_loop_closure: true
+    map_trust_loop_closures_required: 1
+    map_trust_info_scale: 3.0
     max_landmarks: 400
     update_existing_landmarks: true
     landmark_update_gain: 1.0
     landmark_update_process_variance: 0.04
-    delete_stale_landmarks: true
+    delete_stale_landmarks: false
     landmark_missed_observations_to_delete: 6
     landmark_delete_min_interval: 0.2
     landmark_delete_fov: 3.141593
@@ -62,3 +99,24 @@ graph_slam:
     marker_scale: 0.3
 
     g2o_output_path: /tmp/eufs_graph_slam.g2o
+
+    # Localization-only mode: load a saved cone map (CSV) as a fixed reference
+    # and optimise only the pose against it (no mapping/deletion/merge).
+    # load_map_path is usually set by the launch/GUI. map_save_dir defaults to
+    # the package map/ directory when launched via graph_slam.launch.py.
+    localization_mode: false
+    load_map_path: ""
+
+    # Trackdrive lifecycle: once the map is converged and the car returns
+    # within lap_return_radius / lap_return_yaw of the captured lap origin,
+    # freeze the map (auto-saved to map_save_dir), switch to localization, and
+    # keep only the most recent localization_window_poses pose vertices so the
+    # graph stays bounded for arbitrarily many laps. Status is published on
+    # ~/status and ~/map_converged (latched) for planning / RViz.
+    auto_localization_after_lap: true
+    # The lap origin is captured this far into the drive so it sits on the
+    # racing line (the spawn pose can be offset from the driven line).
+    lap_origin_capture_distance: 15.0
+    lap_return_radius: 6.0
+    lap_return_yaw: 1.0
+    localization_window_poses: 100

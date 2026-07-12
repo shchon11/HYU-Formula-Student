@@ -1,0 +1,31 @@
+planning_state_machine_node:
+  ros__parameters:
+    frenet_odom_topic: "/car_state/frenet/odom"
+    global_waypoints_topic: "/global_waypoints"
+    graph_slam_status_topic: "/graph_slam/status"
+    global_path_valid_topic: "/planning/global_path_valid"
+    local_path_valid_topic: "/planning/local_path_valid"
+    global_handoff_ready_topic: "/planning/global_handoff_ready"
+    cone_map_topic: "/cones"
+    stop_zone_s_start_topic: "/stop_zone_s_start"
+    stop_zone_s_end_topic: "/stop_zone_s_end"
+    stop_zone_valid_topic: "/stop_zone_valid"
+
+    target_lap_count: 4
+    initial_lap_count: 0
+    final_lap_start_count: 3
+
+    frenet_odom_timeout_sec: 0.5
+    global_path_valid_timeout_sec: 0.5
+    global_handoff_timeout_sec: 0.5
+    global_entry_dwell_sec: 0.5
+    cone_map_timeout_sec: 1.0
+    stop_zone_timeout_sec: 1.0
+    lap_path_closure_tolerance_m: 1.0
+    lap_closing_duplicate_tolerance_m: 0.05
+
+    final_path_end_threshold: 2.0
+    stop_zone_s_margin: 0.0
+    max_abs_d_for_global: 2.0
+    state_timer_period_ms: 50
+    enable_manual_lap_override: false

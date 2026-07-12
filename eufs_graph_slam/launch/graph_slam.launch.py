@@ -4,6 +4,8 @@
 # license that can be found in the LICENSE file or at
 # https://opensource.org/licenses/MIT.
 
+import os
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
 from launch.conditions import IfCondition
@@ -12,24 +14,31 @@ from launch.substitutions import PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
+# Saved maps live in the package's map/ directory (this launch file is at
+# eufs_graph_slam/launch/, so ../map resolves to eufs_graph_slam/map even with
+# a symlink install).
+DEFAULT_MAP_DIR = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "map")
+)
+
 
 def generate_launch_description():
     params_file = LaunchConfiguration("params_file")
     use_sim_time = LaunchConfiguration("use_sim_time")
     car_state_topic = LaunchConfiguration("car_state_topic")
-    car_state_frame = LaunchConfiguration("car_state_frame")
-    car_state_child_frame = LaunchConfiguration("car_state_child_frame")
+    map_topic = LaunchConfiguration("map_topic")
+    slam_odom_topic = LaunchConfiguration("slam_odom_topic")
+    status_topic = LaunchConfiguration("status_topic")
+    map_converged_topic = LaunchConfiguration("map_converged_topic")
     map_frame = LaunchConfiguration("map_frame")
     odom_frame = LaunchConfiguration("odom_frame")
     slam_base_frame = LaunchConfiguration("slam_base_frame")
     publish_tf = LaunchConfiguration("publish_tf")
-    pose_history_duration = LaunchConfiguration("pose_history_duration")
-    pose_history_max_samples = LaunchConfiguration("pose_history_max_samples")
-    clock_rollback_threshold = LaunchConfiguration("clock_rollback_threshold")
-    max_future_stamp_lead = LaunchConfiguration("max_future_stamp_lead")
-    max_pending_cone_messages = LaunchConfiguration("max_pending_cone_messages")
-    rviz = LaunchConfiguration("rviz")
-    rviz_config = LaunchConfiguration("rviz_config")
+    localization_mode = LaunchConfiguration("localization_mode")
+    load_map_path = LaunchConfiguration("load_map_path")
+    gui = LaunchConfiguration("gui")
+    ate_monitor = LaunchConfiguration("ate_monitor")
+    ate_status_topic = LaunchConfiguration("ate_status_topic")
 
     return LaunchDescription(
         [
@@ -55,14 +64,24 @@ def generate_launch_description():
                 description="CarState topic used as the graph SLAM motion input.",
             ),
             DeclareLaunchArgument(
-                "car_state_frame",
-                default_value="map",
-                description="Required CarState header frame for the raw pose input.",
+                "map_topic",
+                default_value="/localization/cone_map",
+                description="Planner-facing cone map topic published by graph SLAM.",
             ),
             DeclareLaunchArgument(
-                "car_state_child_frame",
-                default_value="base_footprint",
-                description="Required CarState child frame.",
+                "slam_odom_topic",
+                default_value="/localization/ego_odom",
+                description="Planner-facing ego odometry topic published by graph SLAM.",
+            ),
+            DeclareLaunchArgument(
+                "status_topic",
+                default_value="~/status",
+                description="Latched graph SLAM lifecycle String topic.",
+            ),
+            DeclareLaunchArgument(
+                "map_converged_topic",
+                default_value="~/map_converged",
+                description="Latched graph SLAM map-ready/converged Bool topic.",
             ),
             DeclareLaunchArgument(
                 "map_frame",
@@ -83,58 +102,52 @@ def generate_launch_description():
                 "publish_tf",
                 default_value="true",
                 description=(
-                    "Publish map->odom->slam_base_frame TF. Disable simulator "
-                    "publish_gt_tf when this is true."
+                    "Publish map->slam_base_frame TF. Disable simulator publish_gt_tf "
+                    "when this is true."
                 ),
             ),
             DeclareLaunchArgument(
-                "pose_history_duration",
-                default_value="3.0",
-                description="Seconds of CarState history retained for cone-time interpolation.",
+                "localization_mode",
+                default_value="false",
+                description="Localize against a saved map instead of mapping.",
             ),
             DeclareLaunchArgument(
-                "pose_history_max_samples",
-                default_value="1024",
-                description="Hard sample bound for the CarState interpolation history.",
+                "load_map_path",
+                default_value="",
+                description="CSV map to load when localization_mode is true.",
             ),
             DeclareLaunchArgument(
-                "clock_rollback_threshold",
-                default_value="0.1",
-                description="Backward ROS clock jump in seconds that starts a graph epoch.",
+                "gui",
+                default_value="true",
+                description="Launch the graph SLAM control GUI.",
             ),
             DeclareLaunchArgument(
-                "max_future_stamp_lead",
-                default_value="0.09",
+                "ate_monitor",
+                default_value="true",
                 description=(
-                    "Maximum input lead over ROS time (including rollback replay) "
-                    "and CarState; must be smaller than clock_rollback_threshold."
+                    "Publish the path-tracking CTE HUD (Frenet d vs the "
+                    "d=0 raceline) and the SLAM status overlay."
                 ),
             ),
             DeclareLaunchArgument(
-                "max_pending_cone_messages",
-                default_value="32",
-                description="Bound for cone frames waiting on a future CarState bracket.",
+                "ate_status_topic",
+                default_value="/graph_slam/status",
+                description="Graph SLAM lifecycle status topic consumed by ate_monitor.",
+            ),
+            DeclareLaunchArgument(
+                "frenet_odom_topic",
+                default_value="/car_state/frenet/odom",
+                description="Frenet ego odometry (s,d) consumed by the CTE monitor.",
+            ),
+            DeclareLaunchArgument(
+                "global_path_valid_topic",
+                default_value="/planning/global_path_valid",
+                description="Planner validity heartbeat consumed by the CTE monitor.",
             ),
             DeclareLaunchArgument(
                 "ros_localhost_only",
                 default_value="1",
                 description="Limit ROS discovery to localhost.",
-            ),
-            DeclareLaunchArgument(
-                "rviz",
-                default_value="false",
-                description="Launch RViz with the graph SLAM map frame config.",
-            ),
-            DeclareLaunchArgument(
-                "rviz_config",
-                default_value=PathJoinSubstitution(
-                    [
-                        FindPackageShare("eufs_launcher"),
-                        "config",
-                        "graph_slam.rviz",
-                    ]
-                ),
-                description="RViz config used when graph SLAM owns the map frame.",
             ),
             SetEnvironmentVariable(
                 name="ROS_LOCALHOST_ONLY",
@@ -150,27 +163,43 @@ def generate_launch_description():
                     {
                         "use_sim_time": use_sim_time,
                         "car_state_topic": car_state_topic,
-                        "car_state_frame": car_state_frame,
-                        "car_state_child_frame": car_state_child_frame,
+                        "map_topic": map_topic,
+                        "slam_odom_topic": slam_odom_topic,
+                        "status_topic": status_topic,
+                        "map_converged_topic": map_converged_topic,
                         "map_frame": map_frame,
                         "odom_frame": odom_frame,
                         "slam_base_frame": slam_base_frame,
                         "publish_tf": publish_tf,
-                        "pose_history_duration": pose_history_duration,
-                        "pose_history_max_samples": pose_history_max_samples,
-                        "clock_rollback_threshold": clock_rollback_threshold,
-                        "max_future_stamp_lead": max_future_stamp_lead,
-                        "max_pending_cone_messages": max_pending_cone_messages,
+                        "map_save_dir": DEFAULT_MAP_DIR,
+                        "localization_mode": localization_mode,
+                        "load_map_path": load_map_path,
                     },
                 ],
             ),
             Node(
-                package="rviz2",
-                executable="rviz2",
-                name="graph_slam_rviz",
+                package="eufs_graph_slam",
+                executable="slam_gui",
+                name="slam_gui",
+                output="screen",
+                arguments=["--map-dir", DEFAULT_MAP_DIR, "--map-topic", map_topic],
+                condition=IfCondition(gui),
+            ),
+            Node(
+                package="eufs_graph_slam",
+                executable="ate_monitor",
+                name="ate_monitor",
+                output="screen",
+                arguments=[
+                    "--frenet-odom",
+                    LaunchConfiguration("frenet_odom_topic"),
+                    "--path-valid-topic",
+                    LaunchConfiguration("global_path_valid_topic"),
+                    "--status-topic",
+                    ate_status_topic,
+                ],
                 parameters=[{"use_sim_time": use_sim_time}],
-                arguments=["-d", rviz_config],
-                condition=IfCondition(rviz),
+                condition=IfCondition(ate_monitor),
             ),
         ]
     )

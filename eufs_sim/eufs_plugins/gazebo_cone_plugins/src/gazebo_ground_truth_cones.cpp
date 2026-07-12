@@ -32,7 +32,6 @@
  *cones with noise.
  **/
 
-#include "gazebo_cone_plugins/cone_markers.hpp"
 #include "gazebo_cone_plugins/gazebo_ground_truth_cones.hpp"
 #include "eigen3/Eigen/Core"
 #include "eigen3/Eigen/Dense"
@@ -85,6 +84,17 @@ void GazeboGroundTruthCones::Load(gazebo::physics::ModelPtr _parent, sdf::Elemen
   this->camera_noise_percentage =
       getDoubleParameter(_sdf, "perceptionCameraNoisePercentage", 0.4,
                          "0.4");
+  this->perception_detection_probability =
+      getDoubleParameter(_sdf, "detectionProbability", 1.0, "1.0");
+  if (this->perception_detection_probability < 0.0) {
+    RCLCPP_WARN(this->rosnode_->get_logger(),
+                "detectionProbability below 0.0, clamping to 0.0");
+    this->perception_detection_probability = 0.0;
+  } else if (this->perception_detection_probability > 1.0) {
+    RCLCPP_WARN(this->rosnode_->get_logger(),
+                "detectionProbability above 1.0, clamping to 1.0");
+    this->perception_detection_probability = 1.0;
+  }
   this->lidar_on = getBoolParameter(_sdf, "lidarOn", true,
                                     "true");
 
@@ -95,8 +105,10 @@ void GazeboGroundTruthCones::Load(gazebo::physics::ModelPtr _parent, sdf::Elemen
   this->simulate_perception_ = getBoolParameter(_sdf, "simulatePerception",
                                                 false, "false");
 
+  const char *lidar_noise_parameter =
+      _sdf->HasElement("perceptionLidarNoise") ? "perceptionLidarNoise" : "perceptionNoise";
   this->perception_lidar_noise_ =
-      getVector3dParameter(_sdf, "perceptionNoise",
+      getVector3dParameter(_sdf, lidar_noise_parameter,
                            {0.03, 0.03, 0.0}, "0.03, 0.03, 0.0");
 
   std::string random_cone_color_yaml = "";
@@ -119,48 +131,28 @@ void GazeboGroundTruthCones::Load(gazebo::physics::ModelPtr _parent, sdf::Elemen
 
   // Setup the publishers
   // Ground truth cone publisher
-  std::string ground_truth_cones_topic_name_;
   if (!_sdf->HasElement("groundTruthConesTopicName")) {
     RCLCPP_FATAL(this->rosnode_->get_logger(),
                  "state_ground_truth plugin missing <groundTruthConesTopicName>, cannot proceed");
     return;
   } else {
-    ground_truth_cones_topic_name_ =
-        _sdf->GetElement("groundTruthConesTopicName")->Get<std::string>();
+    std::string topic_name_ = _sdf->GetElement("groundTruthConesTopicName")->Get<std::string>();
     this->ground_truth_cone_pub_ =
         this->rosnode_->create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(
-            ground_truth_cones_topic_name_, 1);
+            topic_name_, 1);
   }
 
-  std::string ground_truth_markers_topic_name_ =
-      getStringParameter(_sdf, "groundTruthConeMarkersTopicName",
-                         ground_truth_cones_topic_name_ + "/viz",
-                         "<groundTruthConesTopicName>/viz");
-  this->ground_truth_cone_markers_pub_ =
-      this->rosnode_->create_publisher<visualization_msgs::msg::MarkerArray>(
-          ground_truth_markers_topic_name_, 1);
-
   // Ground truth track publisher
-  std::string ground_truth_track_topic_name_;
   if (!_sdf->HasElement("groundTruthTrackTopicName")) {
     RCLCPP_FATAL(this->rosnode_->get_logger(),
                  "state_ground_truth plugin missing <groundTruthTrackTopicName>, cannot proceed");
     return;
   } else {
-    ground_truth_track_topic_name_ =
-        _sdf->GetElement("groundTruthTrackTopicName")->Get<std::string>();
+    std::string topic_name_ = _sdf->GetElement("groundTruthTrackTopicName")->Get<std::string>();
     this->ground_truth_track_pub_ =
         this->rosnode_->create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(
-            ground_truth_track_topic_name_, 1);
+            topic_name_, 1);
   }
-
-  std::string ground_truth_track_markers_topic_name_ =
-      getStringParameter(_sdf, "groundTruthTrackMarkersTopicName",
-                         ground_truth_track_topic_name_ + "/viz",
-                         "<groundTruthTrackTopicName>/viz");
-  this->ground_truth_track_markers_pub_ =
-      this->rosnode_->create_publisher<visualization_msgs::msg::MarkerArray>(
-          ground_truth_track_markers_topic_name_, 1);
 
   if (!_sdf->HasElement("pubGroundTruth")) {
     RCLCPP_FATAL(this->rosnode_->get_logger(),
@@ -172,26 +164,16 @@ void GazeboGroundTruthCones::Load(gazebo::physics::ModelPtr _parent, sdf::Elemen
 
   if (this->simulate_perception_) {
     // Camera cone publisher
-    std::string perception_cones_topic_name_;
     if (!_sdf->HasElement("perceptionConesTopicName")) {
       RCLCPP_FATAL(this->rosnode_->get_logger(),
                    "state_ground_truth plugin missing <perceptionConesTopicName>, cannot proceed");
       return;
     } else {
-      perception_cones_topic_name_ =
-          _sdf->GetElement("perceptionConesTopicName")->Get<std::string>();
+      std::string topic_name_ = _sdf->GetElement("perceptionConesTopicName")->Get<std::string>();
       this->perception_cone_pub_ =
           this->rosnode_->create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(
-              perception_cones_topic_name_, 1);
+              topic_name_, 1);
     }
-
-    std::string perception_markers_topic_name_ =
-        getStringParameter(_sdf, "perceptionConeMarkersTopicName",
-                           perception_cones_topic_name_ + "/viz",
-                           "<perceptionConesTopicName>/viz");
-    this->perception_cone_markers_pub_ =
-        this->rosnode_->create_publisher<visualization_msgs::msg::MarkerArray>(
-            perception_markers_topic_name_, 1);
   }
 
   // Setup Services
@@ -215,19 +197,11 @@ void GazeboGroundTruthCones::Load(gazebo::physics::ModelPtr _parent, sdf::Elemen
   RCLCPP_INFO(this->rosnode_->get_logger(), "ConeGroundTruthPlugin Loaded");
 }  // GazeboGroundTruthCones
 
-void GazeboGroundTruthCones::Reset() {
-  this->time_last_published = gazebo::common::Time(0, 0);
-}
-
 void GazeboGroundTruthCones::UpdateChild() {
   // Check if it is time to publish new data
   gazebo::common::Time cur_time = _world->SimTime();
   double dt = (cur_time - time_last_published).Double();
-  if (dt < 0.0) {
-    this->time_last_published = cur_time;
-    dt = 0.0;
-  }
-  if (this->update_rate_ > 0.0 && dt < (1.0 / this->update_rate_)) {
+  if (dt < (1.0 / this->update_rate_)) {
     return;
   }
 
@@ -235,20 +209,11 @@ void GazeboGroundTruthCones::UpdateChild() {
   // update rate)
   this->time_last_published = cur_time;
 
-  bool ground_truth_cones_requested =
-      this->ground_truth_cone_pub_->get_subscription_count() > 0 ||
-      this->ground_truth_cone_markers_pub_->get_subscription_count() > 0;
-  bool ground_truth_track_requested =
-      this->ground_truth_track_pub_->get_subscription_count() > 0 ||
-      this->ground_truth_track_markers_pub_->get_subscription_count() > 0;
-  bool perception_requested =
-      this->simulate_perception_ &&
-      (this->perception_cone_pub_->get_subscription_count() > 0 ||
-       this->perception_cone_markers_pub_->get_subscription_count() > 0);
-
   // Check if there is a reason to publish the data
-  if ((!pub_ground_truth || (!ground_truth_cones_requested && !ground_truth_track_requested)) &&
-      !perception_requested) {
+  if (this->ground_truth_cone_pub_->get_subscription_count() == 0 &&
+      this->ground_truth_track_pub_->get_subscription_count() == 0 &&
+      (!this->simulate_perception_ ||
+       this->perception_cone_pub_->get_subscription_count() == 0)) {
     RCLCPP_DEBUG(this->rosnode_->get_logger(),
                  "Nobody is listening to cone_ground_truth. Doing nothing");
     return;
@@ -276,11 +241,6 @@ void GazeboGroundTruthCones::UpdateChild() {
   if (this->ground_truth_track_pub_->get_subscription_count() > 0 && pub_ground_truth) {
     this->ground_truth_track_pub_->publish(ground_truth_track_message);
   }
-  if (this->ground_truth_track_markers_pub_->get_subscription_count() > 0 &&
-      pub_ground_truth) {
-    this->ground_truth_track_markers_pub_->publish(
-        cone_markers::fromConeArray(ground_truth_track_message));
-  }
 
   eufs_msgs::msg::ConeArrayWithCovariance ground_truth_cones_message =
       processCones(cone_arrays_message);
@@ -289,23 +249,13 @@ void GazeboGroundTruthCones::UpdateChild() {
   if (this->ground_truth_cone_pub_->get_subscription_count() > 0 && pub_ground_truth) {
     this->ground_truth_cone_pub_->publish(ground_truth_cones_message);
   }
-  if (this->ground_truth_cone_markers_pub_->get_subscription_count() > 0 &&
-      pub_ground_truth) {
-    this->ground_truth_cone_markers_pub_->publish(
-        cone_markers::fromConeArray(ground_truth_cones_message));
-  }
 
   // Publish the simulated perception cones if it has subscribers
-  if (perception_requested) {
+  if (this->simulate_perception_ &&
+      this->perception_cone_pub_->get_subscription_count() > 0) {
     eufs_msgs::msg::ConeArrayWithCovariance perception_cones_message =
         addNoisePerception(ground_truth_cones_message, perception_lidar_noise_);
-    if (this->perception_cone_pub_->get_subscription_count() > 0) {
-      this->perception_cone_pub_->publish(perception_cones_message);
-    }
-    if (this->perception_cone_markers_pub_->get_subscription_count() > 0) {
-      this->perception_cone_markers_pub_->publish(
-          cone_markers::fromConeArray(perception_cones_message));
-    }
+    this->perception_cone_pub_->publish(perception_cones_message);
   }
 }
 
@@ -715,6 +665,11 @@ double GazeboGroundTruthCones::GaussianKernel(double mu, double sigma) {
   return X;
 }
 
+bool GazeboGroundTruthCones::shouldDetectCone() {
+  double rand = static_cast<double>(rand_r(&this->seed)) / static_cast<double>(RAND_MAX);
+  return rand <= this->perception_detection_probability;
+}
+
 // Returns pointer to cone array at random given weights
 std::string GazeboGroundTruthCones::pickColorWithProbability(
   const YAML::Node weights) {
@@ -742,6 +697,9 @@ GazeboGroundTruthCones::swapConeColors(
   std::map<std::string, std::vector<eufs_msgs::msg::ConeWithCovariance>> new_map;
   for (auto const& [color, source] : color_map) {
     for (auto cone : source) {
+      if (!shouldDetectCone()) {
+        continue;
+      }
       std::string rand_color = pickColorWithProbability(recolor_config[color]);
       if (rand_color != "undetected") {
         if (!new_map.count(rand_color)) {

@@ -55,7 +55,6 @@
 #include <utility>
 #include <vector>
 #include <map>
-#include <visualization_msgs/msg/marker_array.hpp>
 
 #include "rclcpp/rclcpp.hpp"
 #include "yaml-cpp/yaml.h"
@@ -72,8 +71,7 @@ class GazeboGroundTruthCones : public gazebo::ModelPlugin {
   GazeboGroundTruthCones();
 
   // Gazebo plugin functions
-  void Load(gazebo::physics::ModelPtr _parent, sdf::ElementPtr _sdf) override;
-  void Reset() override;
+  void Load(gazebo::physics::ModelPtr _parent, sdf::ElementPtr _sdf);
 
   void UpdateChild();
 
@@ -101,6 +99,7 @@ class GazeboGroundTruthCones : public gazebo::ModelPlugin {
   void addNoiseToConeArray(std::vector<eufs_msgs::msg::ConeWithCovariance> &cone_array,
                            ignition::math::Vector3d noise);
   double GaussianKernel(double mu, double sigma);
+  bool shouldDetectCone();
 
   // Returns pointer to cone array at random given weights
   std::string pickColorWithProbability(const YAML::Node weights);
@@ -138,12 +137,6 @@ class GazeboGroundTruthCones : public gazebo::ModelPlugin {
   rclcpp::Publisher<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr ground_truth_cone_pub_;
   rclcpp::Publisher<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr ground_truth_track_pub_;
   rclcpp::Publisher<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr perception_cone_pub_;
-  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
-      ground_truth_cone_markers_pub_;
-  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
-      ground_truth_track_markers_pub_;
-  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
-      perception_cone_markers_pub_;
 
   // Services
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr
@@ -172,6 +165,7 @@ class GazeboGroundTruthCones : public gazebo::ModelPlugin {
   double camera_a;
   double camera_b;
   double camera_noise_percentage;
+  double perception_detection_probability;
   bool lidar_on;
   bool pub_ground_truth;
   YAML::Node recolor_config;

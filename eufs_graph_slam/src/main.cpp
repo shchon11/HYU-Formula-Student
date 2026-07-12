@@ -4,25 +4,19 @@
 // license that can be found in the LICENSE file or at
 // https://opensource.org/licenses/MIT.
 
-#include <exception>
-#include <memory>
-
 #include "eufs_graph_slam/graph_slam_node.hpp"
+
 #include "rclcpp/rclcpp.hpp"
 
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  int exit_code = 0;
-  try {
-    rclcpp::spin(std::make_shared<eufs_graph_slam::GraphSlamNode>());
-  } catch (const std::exception & error) {
-    RCLCPP_FATAL(
-      rclcpp::get_logger("graph_slam_node"),
-      "GraphSLAM stopped: %s",
-      error.what());
-    exit_code = 1;
-  }
+  // Two threads: live odometry publishing must not wait behind cone
+  // processing or graph optimization (separate callback groups in the node).
+  rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 2);
+  auto node = std::make_shared<eufs_graph_slam::GraphSlamNode>();
+  executor.add_node(node);
+  executor.spin();
   rclcpp::shutdown();
-  return exit_code;
+  return 0;
 }

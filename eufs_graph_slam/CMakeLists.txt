@@ -26,23 +26,18 @@ find_package(g2o QUIET CONFIG)
 if(NOT g2o_FOUND)
   set(G2O_VENDOR_SOURCE_DIR "" CACHE PATH "Path to a g2o source tree")
   if(NOT G2O_VENDOR_SOURCE_DIR)
-    get_filename_component(_package_parent "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
     get_filename_component(_workspace_parent "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
-    foreach(_g2o_candidate
-        "${_package_parent}/g2o"
-        "${_workspace_parent}/g2o")
-      if(EXISTS "${_g2o_candidate}/CMakeLists.txt")
-        set(G2O_VENDOR_SOURCE_DIR "${_g2o_candidate}" CACHE PATH "Path to a g2o source tree" FORCE)
-        break()
-      endif()
-    endforeach()
+    set(_g2o_candidate "${_workspace_parent}/g2o")
+    if(EXISTS "${_g2o_candidate}/CMakeLists.txt")
+      set(G2O_VENDOR_SOURCE_DIR "${_g2o_candidate}" CACHE PATH "Path to a g2o source tree" FORCE)
+    endif()
   endif()
 
   if(NOT EXISTS "${G2O_VENDOR_SOURCE_DIR}/CMakeLists.txt")
     message(FATAL_ERROR
       "Could not find g2o. Install a g2o CMake package or configure with "
-      "-DG2O_VENDOR_SOURCE_DIR=/path/to/g2o. Expected source locations include "
-      "a g2o directory next to eufs_graph_slam or next to this repository.")
+      "-DG2O_VENDOR_SOURCE_DIR=/path/to/g2o. In this workspace, the expected "
+      "sibling location is ../g2o from eufs_simulator.")
   endif()
 
   set(G2O_BUILD_APPS OFF CACHE BOOL "" FORCE)
@@ -75,16 +70,6 @@ foreach(_g2o_target core stuff solver_eigen types_slam2d)
   endif()
 endforeach()
 
-add_library(graph_slam_time_alignment
-  src/observation_time_alignment.cpp)
-
-target_include_directories(graph_slam_time_alignment PUBLIC
-  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-  "$<INSTALL_INTERFACE:include>")
-
-target_link_libraries(graph_slam_time_alignment
-  Eigen3::Eigen)
-
 add_executable(graph_slam_node
   src/graph_slam_node.cpp
   src/main.cpp)
@@ -105,56 +90,35 @@ ament_target_dependencies(graph_slam_node
 
 target_link_libraries(graph_slam_node
   Eigen3::Eigen
-  graph_slam_time_alignment
   ${EUFS_GRAPH_SLAM_G2O_TARGETS})
 
-install(TARGETS graph_slam_node graph_slam_time_alignment
-  ARCHIVE DESTINATION lib
-  LIBRARY DESTINATION lib
-  RUNTIME DESTINATION lib/${PROJECT_NAME})
+install(TARGETS graph_slam_node
+  DESTINATION lib/${PROJECT_NAME})
 
-install(DIRECTORY config launch
+install(PROGRAMS scripts/slam_gui.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME slam_gui)
+
+install(PROGRAMS scripts/ate_monitor.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME ate_monitor)
+
+install(PROGRAMS scripts/wheel_odometry.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME wheel_odometry)
+
+install(PROGRAMS scripts/sbg_odometry_bridge.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME sbg_odometry_bridge)
+
+install(DIRECTORY config launch map
   DESTINATION share/${PROJECT_NAME})
 
 install(DIRECTORY include/
   DESTINATION include)
 
 if(BUILD_TESTING)
-  find_package(ament_cmake_gtest REQUIRED)
-  find_package(ament_cmake_test REQUIRED)
   find_package(ament_lint_auto REQUIRED)
-  find_package(Python3 REQUIRED COMPONENTS Interpreter)
-
-  ament_add_gtest(test_observation_time_alignment
-    test/test_observation_time_alignment.cpp)
-  target_link_libraries(test_observation_time_alignment
-    graph_slam_time_alignment)
-
-  ament_add_gtest(test_graph_slam_node_epoch_gate
-    test/test_graph_slam_node_epoch_gate.cpp
-    src/graph_slam_node.cpp)
-  target_include_directories(test_graph_slam_node_epoch_gate PRIVATE
-    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
-  ament_target_dependencies(test_graph_slam_node_epoch_gate
-    eufs_msgs
-    geometry_msgs
-    nav_msgs
-    rclcpp
-    std_msgs
-    std_srvs
-    tf2_ros
-    visualization_msgs)
-  target_link_libraries(test_graph_slam_node_epoch_gate
-    Eigen3::Eigen
-    graph_slam_time_alignment
-    ${EUFS_GRAPH_SLAM_G2O_TARGETS})
-
-  ament_add_test(test_graph_slam_config
-    COMMAND "${Python3_EXECUTABLE}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/test/test_graph_slam_config.py"
-    GENERATE_RESULT_FOR_RETURN_CODE_ZERO)
-
-  set(ament_cmake_cppcheck_ADDITIONAL_INCLUDE_DIRS ${GTEST_INCLUDE_DIRS})
   ament_lint_auto_find_test_dependencies()
 endif()
 

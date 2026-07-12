@@ -72,7 +72,6 @@ StateMachine::~StateMachine() {}
 
 bool StateMachine::setMission(std::shared_ptr<eufs_msgs::srv::SetCanState::Request> request,
                               std::shared_ptr<eufs_msgs::srv::SetCanState::Response> response) {
-  std::lock_guard<std::mutex> lock(state_mutex_);
   if (ami_state_ != eufs_msgs::msg::CanState::AMI_NOT_SELECTED) {
     RCLCPP_WARN(rosnode->get_logger(),
                 "state_machine :: failed to set mission as a mission was set previously.");
@@ -125,7 +124,6 @@ bool StateMachine::resetState(std::shared_ptr<std_srvs::srv::Trigger::Request> r
                               std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
   (void)request;   // suppress unused parameter warning
   (void)response;  // suppress unused parameter warning
-  std::lock_guard<std::mutex> lock(state_mutex_);
   as_state_ = eufs_msgs::msg::CanState::AS_OFF;
   ami_state_ = eufs_msgs::msg::CanState::AMI_NOT_SELECTED;
   mission_completed_ = false;
@@ -138,7 +136,6 @@ bool StateMachine::requestEBS(std::shared_ptr<std_srvs::srv::Trigger::Request> r
                               std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
   (void)request;   // suppress unused parameter warning
   (void)response;  // suppress unused parameter warning
-  std::lock_guard<std::mutex> lock(state_mutex_);
   if (ami_state_ == eufs_msgs::msg::CanState::AMI_MANUAL ||
       ami_state_ == eufs_msgs::msg::CanState::AMI_NOT_SELECTED) {
     RCLCPP_WARN(rosnode->get_logger(), "state_machine :: EBS is unavailable in current state");
@@ -157,7 +154,6 @@ bool StateMachine::requestEBS(std::shared_ptr<std_srvs::srv::Trigger::Request> r
 }
 
 void StateMachine::updateState(gazebo::common::Time current_time) {
-  std::lock_guard<std::mutex> lock(state_mutex_);
   switch (as_state_) {
     case eufs_msgs::msg::CanState::AS_OFF:
       if (ami_state_ != eufs_msgs::msg::CanState::AMI_NOT_SELECTED &&
@@ -202,8 +198,6 @@ void StateMachine::updateState(gazebo::common::Time current_time) {
 void StateMachine::publishState() {
   if (state_pub_->get_subscription_count() == 0 && state_pub_str_->get_subscription_count() == 0)
     return;  // do nothing
-
-  std::lock_guard<std::mutex> lock(state_mutex_);
 
   // create message
   eufs_msgs::msg::CanState state_msg;
@@ -292,7 +286,6 @@ std_msgs::msg::String StateMachine::makeStateString(const eufs_msgs::msg::CanSta
 }
 
 void StateMachine::completedCallback(const std_msgs::msg::Bool::SharedPtr msg) {
-  std::lock_guard<std::mutex> lock(state_mutex_);
   if (mission_completed_ != msg->data) {
     if (ami_state_ == eufs_msgs::msg::CanState::AMI_MANUAL) {
       RCLCPP_WARN(rosnode->get_logger(),
@@ -312,14 +305,7 @@ void StateMachine::spinOnce(gazebo::common::Time current_time) {
   //    rclcpp::spin_some(this->rosnode);
 }
 
-void StateMachine::resetTime() {
-  std::lock_guard<std::mutex> lock(state_mutex_);
-  in_transition_ = false;
-  transition_begin_ = 0.0;
-}
-
 bool StateMachine::canDrive() {
-  std::lock_guard<std::mutex> lock(state_mutex_);
   return as_state_ == eufs_msgs::msg::CanState::AS_DRIVING ||
          ami_state_ == eufs_msgs::msg::CanState::AMI_MANUAL;
 }

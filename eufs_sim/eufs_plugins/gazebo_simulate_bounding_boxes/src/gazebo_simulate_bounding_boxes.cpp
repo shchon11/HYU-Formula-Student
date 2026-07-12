@@ -154,23 +154,8 @@ void BoundingBoxesPlugin::cones_callback(
   gazebo::common::Time curTime = _world->SimTime();
   double dt = (curTime - _last_sim_time).Double();
 
-  // This callback runs on the gazebo_ros executor, so detect a world-time
-  // rollback here instead of racing a Gazebo Reset callback over the watermark.
-  if (dt < 0.0) {
-    _last_sim_time = curTime;
-    dt = 0.0;
-  }
-
-  const double source_time = static_cast<double>(msg->header.stamp.sec) +
-                             static_cast<double>(msg->header.stamp.nanosec) * 1.0e-9;
-  if (source_time > curTime.Double()) {
-    // The ROS executor may still hold a pre-reset ground-truth sample after
-    // Gazebo has entered the new epoch. Never republish that old acquisition.
-    return;
-  }
-
   // Checks if we should publish
-  if (_publish_rate > 0.0 && dt < (1 / _publish_rate)) {
+  if (dt < (1 / _publish_rate)) {
     return;
   }
 
@@ -192,27 +177,20 @@ void BoundingBoxesPlugin::cones_callback(
   auto [ground_truth_big_orange_bounding_boxes, noisy_big_orange_bounding_boxes] =
       projectToImagePlane(big_orange_cones, big_cones);
 
-  // The cone header describes the source snapshot in the producer's coordinate
-  // frame.  The projected pixels and calibration describe that acquisition in
-  // target_frame_.
-  std_msgs::msg::Header image_header = msg->header;
-  image_header.frame_id = target_frame_;
-
   eufs_msgs::msg::BoundingBoxes ground_truth_bounding_boxes_msg;
-  update_msg(ground_truth_bounding_boxes_msg, msg->header, image_header,
+  update_msg(ground_truth_bounding_boxes_msg, msg->header,
           ground_truth_blue_bounding_boxes, ground_truth_yellow_bounding_boxes,
           ground_truth_orange_bounding_boxes, ground_truth_big_orange_bounding_boxes);
 
   eufs_msgs::msg::BoundingBoxes noisy_bounding_boxes_msg;
 
-  update_msg(noisy_bounding_boxes_msg, msg->header, image_header,
+  update_msg(noisy_bounding_boxes_msg, msg->header,
             noisy_blue_bounding_boxes,
             noisy_yellow_bounding_boxes,
             noisy_orange_bounding_boxes,
             noisy_big_orange_bounding_boxes);
 
   // Publish camera info
-  cam_info_.header = image_header;
   custom_cam_info_pub->publish(cam_info_);
 
   // Publish msg
@@ -221,15 +199,13 @@ void BoundingBoxesPlugin::cones_callback(
   }
 
 void BoundingBoxesPlugin::update_msg(
-  eufs_msgs::msg::BoundingBoxes &bounding_boxes_msg,
-  const std_msgs::msg::Header &source_header,
-  const std_msgs::msg::Header &image_header,
+  eufs_msgs::msg::BoundingBoxes &bounding_boxes_msg, std_msgs::msg::Header header,
   std::vector<std::vector<double>> blue_cones,
   std::vector<std::vector<double>> yellow_cones,
   std::vector<std::vector<double>> orange_cones,
   std::vector<std::vector<double>> big_orange_cones) {
-  bounding_boxes_msg.header = source_header;
-  bounding_boxes_msg.image_header = image_header;
+  bounding_boxes_msg.header = header;
+  bounding_boxes_msg.image_header = header;
   push_back_bounding_boxes_msg(bounding_boxes_msg, blue_cones, "blue");
   push_back_bounding_boxes_msg(bounding_boxes_msg, yellow_cones, "yellow");
   push_back_bounding_boxes_msg(bounding_boxes_msg, orange_cones, "orange");

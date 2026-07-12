@@ -1,0 +1,15 @@
+# Runs on the stock Ubuntu 22.04 / ROS 2 Humble python3 (3.10) — no venv.
+#
+# Already satisfied system-wide on that setup (do not pip install them):
+#   numpy, scipy, matplotlib, pyyaml
+#   opencv: Ubuntu's python3-opencv ships the contrib modules, so
+#           cv2.ximgproc (needed by lane_generator.py) is included.
+#           Do NOT pip-install opencv-*-python — it would shadow the
+#           system cv2 that the ROS stack uses.
+#
+# trajectory_planning_helpers is vendored in this directory (patched for
+# modern scipy — see trajectory_planning_helpers/VENDORED.md). Do NOT
+# pip install it: its metadata pins quadprog==0.1.7.
+#
+# The only package that usually needs installing:
+quadprog

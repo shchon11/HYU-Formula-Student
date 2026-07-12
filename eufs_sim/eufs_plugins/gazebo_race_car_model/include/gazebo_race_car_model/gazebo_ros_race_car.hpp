@@ -25,11 +25,10 @@
 #ifndef EUFS_SIM__EUFS_PLUGINS__GAZEBO_RACE_CAR_MODEL__INCLUDE__GAZEBO_RACE_CAR_MODEL__GAZEBO_ROS_RACE_CAR_HPP_
 #define EUFS_SIM__EUFS_PLUGINS__GAZEBO_RACE_CAR_MODEL__INCLUDE__GAZEBO_RACE_CAR_MODEL__GAZEBO_ROS_RACE_CAR_HPP_
 
-#include <atomic>
 #include <array>
 #include <memory>
-#include <mutex>
 #include <queue>
+#include <random>
 #include <string>
 #include <vector>
 // ROS Includes
@@ -49,11 +48,7 @@
 // ROS TF2
 #include <tf2/transform_datatypes.h>
 #include <tf2/utils.h>
-#if __has_include(<tf2_geometry_msgs/tf2_geometry_msgs.hpp>)
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
-#else
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
-#endif
 #include <tf2_ros/transform_broadcaster.h>
 
 // ROS  srvs
@@ -90,7 +85,6 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
   void updateState(double dt);
 
   void setPositionFromWorld();
-  void resetVehicleState();
   bool resetVehiclePosition(std::shared_ptr<std_srvs::srv::Trigger::Request> request,
                             std::shared_ptr<std_srvs::srv::Trigger::Response> response);
   void returnCommandMode(std::shared_ptr<std_srvs::srv::Trigger::Request>,
@@ -103,6 +97,11 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
   void initNoise(const sdf::ElementPtr &sdf);
 
   eufs_msgs::msg::CarState stateToCarStateMsg(const eufs::models::State &state);
+
+  /// @brief Integrates the ground-truth body twist with bias + noise so the
+  /// localisation car state drifts like real wheel odometry. Returns the
+  /// ground-truth state with its x/y/yaw replaced by the drifted pose.
+  eufs::models::State integrateDriftedState();
 
   void publishCarState();
   void publishWheelSpeeds();
@@ -126,12 +125,23 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
   std::unique_ptr<eufs::models::Noise> _noise;
   ignition::math::Pose3d _offset;
 
+  // Drift odometry: when enabled, the localisation car state
+  // (_pub_localisation_car_state) integrates the body-frame twist with a
+  // velocity/yaw-rate bias plus white noise so its pose accumulates error
+  // like real wheel odometry. The ground-truth state is left untouched.
+  bool _drift_odometry;
+  double _drift_v_bias, _drift_w_bias, _drift_sigma_v, _drift_sigma_w;
+  bool _drift_initialized;
+  double _drift_x, _drift_y, _drift_yaw;
+  gazebo::common::Time _drift_last_time;
+  std::mt19937 _drift_rng;
+  std::normal_distribution<double> _drift_normal{0.0, 1.0};
+
   // Gazebo
   gazebo::physics::WorldPtr _world;
   gazebo::physics::ModelPtr _model;
   gazebo::event::ConnectionPtr _update_connection;
   gazebo::common::Time _last_sim_time, _last_cmd_time;
-  std::atomic<bool> _vehicle_reset_requested;
 
   // Rate to publish ros messages
   double _update_rate;
@@ -188,7 +198,6 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
   // Command queue for control delays
   std::queue<std::shared_ptr<ackermann_msgs::msg::AckermannDriveStamped>> _command_Q;
   std::queue<gazebo::common::Time> _cmd_time_Q;
-  std::mutex _command_mutex;
   double _control_delay;
   // Steering rate limit variables
   double _max_steering_rate, _steering_lock_time;

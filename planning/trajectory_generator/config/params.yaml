@@ -1,0 +1,9 @@
+# The following params are for maps
+map_name: 'peanut'
+map_img_ext: '.png'
+
+# The following params are for path generator
+num_lanes: 2
+clockwise: False
+inner_safe_dist: 0.8
+outer_safe_dist: 0.8

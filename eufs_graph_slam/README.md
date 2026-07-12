@@ -5,18 +5,45 @@
 The node subscribes to:
 
 - `/odometry_integration/car_state` (`eufs_msgs/msg/CarState`) for SE2 keyframe motion
-- `/cones` (`eufs_msgs/msg/ConeArrayWithCovariance`) for acquisition-stamped local cone observations in `base_footprint`
+- `/cones` (`eufs_msgs/msg/ConeArrayWithCovariance`) for local cone observations in `base_footprint`
 
 It publishes:
 
-- `/graph_slam/map` (`eufs_msgs/msg/ConeArrayWithCovariance`)
-- `/graph_slam/odom` (`nav_msgs/msg/Odometry`)
+- `/localization/cone_map` (`eufs_msgs/msg/ConeArrayWithCovariance`)
+- `/localization/ego_odom` (`nav_msgs/msg/Odometry`)
 - `/graph_slam/path` (`nav_msgs/msg/Path`)
 - `/graph_slam/markers` (`visualization_msgs/msg/MarkerArray`)
+- `status_topic`, default `~/status` (`std_msgs/msg/String`)
+- `map_converged_topic`, default `~/map_converged` (`std_msgs/msg/Bool`)
 
 When TF publishing is enabled, the node owns `map -> odom` and
 `odom -> base_footprint`. The simulator ground-truth TF publisher must stay
 disabled so `base_footprint` has one parent.
+
+## Planner-facing contract
+
+Graph SLAM owns the localization outputs consumed by the planning integration:
+
+- `/localization/cone_map` is a reliable transient-local
+  `eufs_msgs/msg/ConeArrayWithCovariance` map snapshot.
+- `/localization/ego_odom` is the live `nav_msgs/msg/Odometry` ego pose stream.
+- `/graph_slam/status` remains Graph-SLAM-owned lifecycle state with values
+  `mapping`, `mapping_converged`, and `localization`.
+- `/graph_slam/map_converged` remains a latched map convergence signal.
+
+The planning stack only allows global waypoint use when `/graph_slam/status` is
+`localization`. Planner liveness is not inferred from the status topic; it comes
+from the selected global waypoint writer's reliable volatile
+`/planning/global_path_valid` heartbeat.
+
+Graph SLAM does not publish `/global_waypoints` or
+`/planning/global_path_valid`. Those topics must have one writer in any launch:
+the SLAM `planner_node` or the CSV global planner, never both on the default
+topics.
+
+The phase-1 planner consumes the existing `ConeArrayWithCovariance` map. A
+planner-friendly `SlamConeMap.msg` with landmark IDs/versioning is deferred to a
+later compatible schema phase.
 
 ## Build
 
@@ -49,116 +76,183 @@ Useful services:
 
 ```bash
 ros2 service call /graph_slam/reset std_srvs/srv/Trigger "{}"
-ros2 service call /graph_slam/save_graph std_srvs/srv/Trigger "{}"
+ros2 service call /graph_slam/save_graph std_srvs/srv/Trigger "{}"   # raw g2o graph
+ros2 service call /graph_slam/save_map std_srvs/srv/Trigger "{}"     # cone map CSV
 ```
+
+## Saving and loading cone maps
+
+`~/save_map` writes the current landmark map to
+`map_save_dir/map_<timestamp>.csv` using the same columns as `eufs_tracks`
+track CSVs (`tag,x,y,direction,x_variance,y_variance,xy_covariance`, plus a
+`car_start` origin row), so saved maps are interchangeable with track files.
+Launched via `graph_slam.launch.py`, `map_save_dir` defaults to the package's
+`map/` directory.
+
+Set `localization_mode:=true load_map_path:=<csv>` to localize against a saved
+map instead of building one. The loaded cones become **fixed** landmarks
+(`setFixed(true)`); mapping, deletion, and merging are disabled, and the
+optimizer moves only the pose to fit the fixed map — so drift is corrected
+against a known map. The loaded map is published once on the configured
+`map_topic` (latched) for preview; the default is the planner-facing
+`/localization/cone_map` topic.
+
+```bash
+ros2 launch eufs_graph_slam graph_slam.launch.py \
+  localization_mode:=true \
+  load_map_path:=<workspace>/eufs_graph_slam/map/small_track_slam.csv
+```
+
+If localization is lost, use RViz's **2D Pose Estimate** tool (fixed frame
+`map`): it publishes `/initialpose`, and the node drops its pose trajectory,
+re-anchors at the clicked pose (keeping the fixed map), and re-localizes from
+there.
+
+## Trackdrive lifecycle (automatic mapping -> localization)
+
+With `auto_localization_after_lap` (default on) the node runs the full
+trackdrive lifecycle without operator input:
+
+1. **Mapping**: lap 1 builds the map as usual. The lap origin is captured
+   `lap_origin_capture_distance` (15 m) into the drive so it sits on the
+   racing line rather than the spawn pose.
+2. **Lap completion**: once the map has converged (loop closures reconciled)
+   and the car returns within `lap_return_radius` / `lap_return_yaw` of the lap
+   origin, the node freezes every landmark, auto-saves the map CSV to
+   `map_save_dir`, and switches to localization.
+3. **Localization**: only the most recent `localization_window_poses` pose
+   vertices are kept (the oldest is fixed as the anchor), so the graph stays
+   bounded for arbitrarily many laps — full-batch optimization never outgrows
+   real time.
+
+The lifecycle is published (latched) on:
+
+- `status_topic`, default `~/status` (`std_msgs/String`): `mapping`,
+  `mapping_converged`, or `localization` — RViz HUD via
+  `/graph_slam/status_overlay`.
+- `map_converged_topic`, default `~/map_converged` (`std_msgs/Bool`):
+  planning can switch from local to global planning on this flag. It also
+  publishes true in localization mode after a fixed map has been loaded.
+
+The map and odometry output topics are launch parameters. For an older tool
+that still expects the legacy Graph SLAM names, start with:
+
+```bash
+ros2 launch eufs_graph_slam graph_slam.launch.py \
+  map_topic:=/graph_slam/map \
+  slam_odom_topic:=/graph_slam/odom
+```
+
+## Wheel-encoder odometry
+
+`ros2 run eufs_graph_slam wheel_odometry` integrates rear wheel speeds (RPM,
+`/ros_can/wheel_speeds`) with an IMU yaw rate (`/imu/data`; bicycle-model
+steering fallback) into `/wheel_odometry/car_state` — a GNSS-independent
+odometry source for `car_state_topic`, keeping the GNSS prior as the only
+absolute channel. On the real car only the two input topics change.
+
+## GUI
+
+`graph_slam.launch.py` starts a control GUI (`gui:=true`, default) alongside
+the node: switch between mapping and localization, pick a saved map from the
+map directory with a live cone preview, and save the current map. It drives the
+node's `~/save_map`, `~/load_map`, and `~/start_mapping` services.
 
 Landmark deletion is handled separately from reset. When `delete_stale_landmarks`
 is enabled, landmarks that should be visible but are missed for
 `landmark_missed_observations_to_delete` deletion updates are removed from the
 g2o graph with their connected observation edges. The default visibility gate
 matches the simulator perception window: 180 degree FOV, 30 m range, and
-20 m absolute x/y bounds in `base_footprint`.
+20 m absolute x/y bounds in `base_footprint`. Landmarks that accumulated at
+least `landmark_confirm_observations` keyframe observations are confirmed and
+get a 10x miss budget: occlusions or perception dropouts cannot erase their
+loop-closure constraints, while drift-era ghost duplicates that are never
+observed again still age out.
 
 Existing landmark positions are also updated between graph optimizations. When
 `update_existing_landmarks` is enabled, each associated cone observation is
-transformed through its acquisition-time pose and fused into the landmark
+transformed through the latest live pose estimate and fused into the landmark
 vertex with a covariance-aware update. Keyframe observations still add g2o
 edges; duplicate in-between observations only update the vertex estimate and
 published covariance.
 
-## Observation-time alignment
+## Estimation pipeline notes
 
-Graph SLAM retains every `CarState` sample in a bounded history and linearly
-interpolates x/y at each cone array timestamp. Yaw uses the shortest angular
-path, including across the `-pi`/`pi` boundary; timestamps are never
-extrapolated. The node selects the latest graph keyframe at or before the
-observation and computes
+- The node runs on a two-thread `MultiThreadedExecutor` with two mutually
+  exclusive callback groups: car state in one, cones + a 250 ms optimization
+  timer in the other. The state callback only *tries* to take the graph lock;
+  when optimization holds it, live odometry is dead-reckoned from the last
+  keyframe snapshot instead of blocking, so `/localization/ego_odom` and TF keep
+  the input rate.
+- The optimizer uses g2o's sparse `LinearSolverEigen`, so the whole session
+  (`max_optimization_poses`) stays inside periodic Levenberg-Marquardt runs
+  every `optimize_every_n_keyframes` keyframes.
+- Cone messages are re-anchored in time: raw odometry is interpolated at the
+  cone stamp and each measurement is re-expressed in the keyframe base frame
+  before an `EdgeSE2PointXY` is added. Without this the measurement can be off
+  by up to `keyframe_distance` at speed.
+- Data association is a Mahalanobis nearest-neighbour gate
+  (`association_gate_chi2`) over landmark + observation covariance. The gate
+  is inflated by `association_inflation_per_keyframe` for every keyframe a
+  landmark went unseen (capped at `association_max_inflation`), which is what
+  lets lap-closure re-associations succeed despite accumulated drift. Nearly
+  tied candidates (`association_ambiguity_ratio`) are skipped instead of
+  guessed.
+- Re-associating a landmark unseen for `loop_gap_keyframes` keyframes is
+  treated as a loop closure and forces an immediate graph optimization.
+- After each optimization, landmarks of compatible colours closer than
+  `landmark_merge_distance` are merged; the surviving vertex inherits the
+  other's observation edges. Big orange cones are exempt: start-line pairs
+  legitimately stand ~0.4 m apart.
+- Landmark colours are decided by majority vote over associated observations,
+  so a single mislabelled detection cannot lock in a wrong colour.
 
-```text
-delta = inverse(raw_keyframe_pose) * raw_observation_pose
-```
+Known limitations:
 
-The cone point and its 2x2 covariance are transformed by `delta` before the g2o
-edge is attached to that keyframe. The corresponding observation-time map pose
-is used consistently for data association, landmark fusion, map covariance,
-and stale-landmark visibility. This removes the position bias that otherwise
-appears when an acquisition-stamped detector result arrives after the vehicle
-has moved (for example, a 100 ms delay is 1 m at 10 m/s).
-
-Cone arrays must carry a non-zero timestamp and use the configured
-`slam_base_frame`; invalid frames are dropped rather than assigned a fabricated
-time or transform. A cone array slightly ahead of the newest `CarState` is held
-in a bounded, timestamp-ordered queue until a successor state arrives. Frames
-older than the retained history are dropped with a throttled diagnostic. When
-the queue is full, the farthest-future frame is discarded so nearer frames can
-still become processable. Out-of-order `CarState` samples are inserted into the
-retained history and never reset the map. A ROS clock source transition or an
-authoritative backward jump at least `clock_rollback_threshold` wide starts a
-new epoch and resets the graph, history, pending observations, and observation
-watermarks together.
-Normal forward `/clock` ticks do not reset the graph. A reset also publishes
-empty transient-local map and path messages plus a `DELETEALL` marker so late
-subscribers cannot retain visuals from the previous epoch.
-Duplicate or out-of-order cone arrays are dropped after their timestamp has
-already been processed. `CarState` and cone samples too far ahead of ROS time
-are rejected so delayed messages from a previous epoch cannot poison the new
-history; cone samples are also bounded relative to the newest `CarState`.
-`max_future_stamp_lead` must be smaller than `clock_rollback_threshold`, which
-keeps every reset-triggering rollback wider than the accepted future window.
-During replay of a rolled-back interval, the same bounded future tolerance is
-kept so a valid input published a few milliseconds ahead of the `/clock`
-callback is not lost. Inputs beyond that tolerance or older than the epoch
-start are rejected. Until replay reaches the pre-reset high watermark, stamps
-at or beyond that watermark are also rejected as an exclusive upper fence. An
-input callback clears each reached fence as soon as the clock catches up. If a
-second rollback occurs during replay, both inner and outer fences are retained
-until their respective watermarks are reached, so the outer epoch cannot be
-released early. Consequently,
-later sub-threshold clock jitter cannot reactivate a stale replay guard. The
-same callback path detects system-clock rollbacks that do not produce an rcl
-ROS-time jump callback. Diagnostics use a steady clock so throttling continues
-to work immediately after a rewind. The node disables Galactic's dedicated
-`/clock` thread and handles clock updates on its single-thread executor, so a
-clock reset cannot mutate the optimizer concurrently with state or cone
-callbacks.
-Because no input TF conversion is performed, `car_state_frame` must equal
-`map_frame` and `car_state_child_frame` must equal `slam_base_frame`; the node
-fails at startup when either invariant is violated. `map_frame`, `odom_frame`,
-and `slam_base_frame` must also be non-empty and pairwise distinct.
-
-Message headers do not carry an epoch identifier, so a stale DDS sample whose
-timestamp is indistinguishable from the replayed current epoch cannot be proven
-stale. The epoch floor, bounded replay-window future gate, monotonic cone gate,
-and shallow sensor QoS make that residual narrow, but upstream publishers
-should still discard their own queued work on clock rewind.
-
-Time-alignment parameters:
-
-| Parameter | Default | Purpose |
-| --- | ---: | --- |
-| `pose_history_duration` | `3.0` s | Time horizon for interpolation (keep at least 2 s for the detector pipeline) |
-| `pose_history_max_samples` | `1024` | Hard memory bound for retained `CarState` samples |
-| `clock_rollback_threshold` | `0.1` s | Backward ROS clock jump that resets the graph epoch |
-| `max_future_stamp_lead` | `0.09` s | Maximum input lead over ROS time, including rollback replay, and cone lead over newest `CarState`; covers measured callback skew while remaining below the rollback threshold |
-| `max_pending_cone_messages` | `32` | Hard bound for future cone arrays waiting for a state bracket |
-
-All five are launch arguments as well as entries in
-`config/graph_slam.yaml`.
+- Landmarks whose observations mostly fall outside the simulated camera FOV
+  (120 deg, 15 m) keep colour `unknown` — the vote never receives a coloured
+  sample. This is a perception characteristic, not a SLAM association error.
+- When the state callback falls back to snapshot dead-reckoning (optimization
+  in progress), the published pose lags any correction from that very
+  optimization by one cycle; the error is bounded by one keyframe of drift.
+- Loop closure relies on gated nearest-neighbour re-association. It recovers
+  multi-metre drift (validated to ~5 m RMSE input error on small_track), but
+  has no place-recognition fallback for drift far beyond the inflated gate.
+- The estimator is 2D (x, y, yaw); slopes and banking are not modelled.
+- Big orange start-line pairs (~0.4 m apart) are closer than the association
+  gate, so each pair typically collapses into a single landmark at creation.
+  Separating them needs joint per-frame assignment (e.g. Hungarian), which is
+  not implemented.
 
 Parameters live in `config/graph_slam.yaml`.
 
-## Optimizer workload bound
+## Experiment harness
 
-The default `max_optimization_poses: 300` keeps the newest 300 pose vertices
-variable during each optimization and fixes every older pose at its latest
-estimate. Pose zero always remains fixed as the graph gauge. Set the parameter
-to `0` only when explicit full-batch optimization is required. The Eigen sparse
-linear solver is used so solve cost follows the active sparse graph rather than
-forming a dense pose system. Keep the active window at least twice the
-`optimize_every_n_keyframes` interval unless a measured workload justifies a
-smaller horizon.
+`scripts/` contains a self-contained evaluation loop used to tune the node:
 
-This active-pose window bounds the Hessian dimension, but it does not prune
-historical vertices or edges. Edge storage and linearization work therefore
-still grow with route duration; the current design is appropriate for bounded
-Formula Student runs, not an indefinitely running mapping daemon.
+- `run_experiment.sh OUT.json [DURATION] [DRIFT] [-p param:=value ...]` —
+  headless Gazebo (small_track) + graph SLAM + pure-pursuit driver +
+  evaluator; tears everything down afterwards and writes a JSON report.
+- `drive_track.py` — sets the TRACK_DRIVE mission and follows the track
+  centreline (from the track CSV) with ground truth, so driving quality does
+  not depend on SLAM output.
+- `evaluate_slam.py` — reports trajectory ATE for SLAM vs the raw odometry
+  input, and map quality (matches, RMSE, duplicates, false positives, colour
+  accuracy) against the track CSV. It listens to `/localization/ego_odom` and
+  `/localization/cone_map` by default; use `--slam-odom /graph_slam/odom` and
+  `--map-topic /graph_slam/map` for legacy runs.
+
+The drifting odometry the node consumes is produced by the simulator itself:
+the race-car plugin publishes ground truth on `/ground_truth/state` and a
+drift-integrated pose on `/odometry_integration/car_state` (the node's default
+`car_state_topic`). Drift is enabled by `driftOdometry` in
+`eufs_plugins.gazebo.xacro` and tuned by `driftVelocityBias`,
+`driftYawRateBias`, `driftVelocityNoise`, and `driftYawRateNoise`. The legacy
+standalone `drift_odom.py` node is superseded by this and no longer used by the
+harness.
+
+Example:
+
+```bash
+./eufs_graph_slam/scripts/run_experiment.sh /tmp/slam_report.json 120 1
+```

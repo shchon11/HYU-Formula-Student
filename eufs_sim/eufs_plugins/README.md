@@ -154,6 +154,7 @@ NB: if a parameter has no default value, a value must be provided.
 | `perceptionCameraDepthNoiseParameterA` | double    | 0.0184             | Noise weighting parameter for camera depth noise contribution. |
 | `perceptionCameraDepthNoiseParameterB` | double    | 0.2106             | Noise weighting parameter for camera depth noise contribution. |
 | `perceptionLidarNoise`                 | double[3] | `[0.03,0.03, 0.0]` | Noise weighting parameters for lidar noise contribution. |
+| `detectionProbability`                 | double    | 1.0                | Probability that an in-range noisy perception cone is published. Lower this to simulate sparse detections. |
 | `pubGroundTruth`                       | bool      | -                  | Whether to publish ground truth topics. |
 
 #### Lidar View Distance Parameters (more detail):
@@ -190,6 +191,7 @@ This has to be inserted inside a robot URDF.
       <perceptionCameraDepthNoiseParameterA>0.0184</perceptionCameraDepthNoiseParameterA>
       <perceptionCameraDepthNoiseParameterB>0.2106</perceptionCameraDepthNoiseParameterB>
       <perceptionLidarNoise>0.03 0.03 0.0</perceptionLidarNoise>
+      <detectionProbability>1.0</detectionProbability>
     </plugin>
   </gazebo>
 ```

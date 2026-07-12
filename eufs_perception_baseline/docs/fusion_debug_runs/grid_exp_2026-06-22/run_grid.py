@@ -9,10 +9,7 @@ from pathlib import Path
 
 ROOT = Path("/home/dohyun/FS/HYU-Formula-Student")
 OUT = ROOT / "eufs_perception_baseline/docs/fusion_debug_runs/grid_exp_2026-06-22"
-EXE = (
-    ROOT
-    / "install/eufs_perception_baseline/lib/eufs_perception_baseline/perception_baseline_node"
-)
+EXE = ROOT / "install/eufs_perception_baseline/lib/eufs_perception_baseline/perception_baseline_node"
 PYTHON = Path("/home/dohyun/anaconda3/envs/eufs/bin/python3")
 
 COMBOS = [
@@ -48,15 +45,7 @@ def run_shell(command: str, output: Path, timeout: int) -> int:
         ).returncode
 
 
-def launch_combo(
-    index: int,
-    name: str,
-    near: int,
-    mid: int,
-    far: int,
-    margin_px: float,
-    margin_ratio: float,
-):
+def launch_combo(index: int, name: str, near: int, mid: int, far: int, margin_px: float, margin_ratio: float):
     node = f"fusion_grid_{index:02d}"
     cones_topic = f"/cones_grid_{index:02d}"
     debug_prefix = f"/fusion/grid_{index:02d}"
@@ -137,8 +126,7 @@ def stop_proc(proc: subprocess.Popen, log_handle) -> None:
 
 def parse_counts(text: str):
     published = re.findall(
-        r"Fusion published cones: blue=(\d+), yellow=(\d+), "
-        r"orange=(\d+), big_orange=(\d+), unknown=(\d+)",
+        r"Fusion published cones: blue=(\d+), yellow=(\d+), orange=(\d+), big_orange=(\d+), unknown=(\d+)",
         text,
     )
     debug = re.findall(

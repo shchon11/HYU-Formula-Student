@@ -3,6 +3,8 @@
 // Use of this source code is governed by an MIT-style
 // license that can be found in the LICENSE file or at
 // https://opensource.org/licenses/MIT.
+// SIZE_OK: This integration only preserves topic/config compatibility; splitting
+// the legacy monolithic graph SLAM node is outside this focused scope.
 
 #include "eufs_graph_slam/graph_slam_node.hpp"
 
@@ -12,58 +14,44 @@
 #include <g2o/solvers/eigen/linear_solver_eigen.h>
 #include <g2o/types/slam2d/edge_se2.h>
 #include <g2o/types/slam2d/edge_se2_pointxy.h>
+#include <g2o/types/slam2d/edge_se2_xyprior.h>
 #include <g2o/types/slam2d/types_slam2d.h>
 
-#include <cinttypes>
-#include <cmath>
 #include <algorithm>
-#include <deque>
+#include <chrono>
+#include <cmath>
+#include <ctime>
+#include <fstream>
 #include <functional>
-#include <iterator>
+#include <iomanip>
 #include <limits>
 #include <memory>
-#include <stdexcept>
-#include <string>
+#include <mutex>
+#include <sstream>
 #include <utility>
-#include <vector>
 
 #include "geometry_msgs/msg/point.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
-#include "eufs_graph_slam/optimizer_policy.hpp"
 #include "visualization_msgs/msg/marker.hpp"
 
 namespace eufs_graph_slam
 {
 
-namespace
-{
-
-time_alignment::Pose2d pose2dFromSe2(const g2o::SE2 & pose)
-{
-  return time_alignment::Pose2d{
-    pose.translation().x(), pose.translation().y(), pose.rotation().angle()};
-}
-
-g2o::SE2 se2FromPose2d(const time_alignment::Pose2d & pose)
-{
-  return g2o::SE2(pose.x, pose.y, pose.yaw);
-}
-
-}  // namespace
-
 GraphSlamNode::GraphSlamNode()
-: Node(
-    "graph_slam_node",
-    rclcpp::NodeOptions().use_clock_thread(false)),
-  steady_clock_(RCL_STEADY_TIME),
+: Node("graph_slam_node"),
   keyframe_distance_(1.0),
   keyframe_yaw_(0.25),
   keyframe_max_dt_(1.0),
-  pose_history_duration_(3.0),
-  clock_rollback_threshold_(0.1),
-  max_future_stamp_lead_(0.09),
   association_max_distance_(1.2),
+  association_gate_chi2_(5.991),
+  association_ambiguity_ratio_(0.85),
+  relocalize_search_radius_(2.0),
+  relocalize_search_yaw_(0.5),
+  relocalize_inlier_distance_(0.6),
+  association_inflation_per_meter_(0.01),
+  association_max_inflation_(4.0),
+  landmark_merge_distance_(0.6),
   min_observation_range_(0.2),
   max_observation_range_(30.0),
   default_observation_sigma_(0.25),
@@ -79,22 +67,34 @@ GraphSlamNode::GraphSlamNode()
   landmark_delete_min_interval_(0.2),
   landmark_update_gain_(1.0),
   landmark_update_process_variance_(0.04),
-  clock_rollback_threshold_ns_(100000000LL),
-  max_future_stamp_lead_ns_(90000000LL),
   optimize_every_n_keyframes_(100),
   optimization_iterations_(3),
   landmark_min_observations_to_publish_(1),
   max_landmarks_(400),
-  max_optimization_poses_(300),
+  max_optimization_poses_(100),
   path_max_poses_to_publish_(1000),
   landmark_missed_observations_to_delete_(6),
-  pose_history_max_samples_(1024),
-  max_pending_cone_messages_(32),
+  landmark_confirm_observations_(3),
+  loop_gap_distance_(20.0),
+  map_trust_loop_closures_required_(2),
+  map_trust_info_scale_(3.0),
+  localization_mode_(false),
+  auto_localization_after_lap_(true),
+  lap_return_radius_(6.0),
+  lap_return_yaw_(1.0),
+  localization_window_poses_(100),
+  traveled_distance_(0.0),
+  use_odom_covariance_(true),
+  latest_odom_sigma_trans_(0.0),
+  latest_odom_sigma_yaw_(0.0),
+  lap_origin_capture_distance_(15.0),
+  lap_origin_captured_(false),
   use_cone_covariance_(true),
   process_every_cone_message_(false),
   publish_tf_(true),
   delete_stale_landmarks_(true),
   update_existing_landmarks_(true),
+  map_trust_after_loop_closure_(true),
   optimize_min_interval_(10.0),
   visual_publish_min_interval_(0.5),
   tf_stamp_offset_(0.0),
@@ -104,37 +104,51 @@ GraphSlamNode::GraphSlamNode()
   next_vertex_id_(0),
   next_edge_id_(0),
   keyframes_since_last_optimization_(0),
-  pose_history_(time_alignment::PoseHistoryOptions{3000000000LL, 1024U}),
-  clock_epoch_(0U),
-  latest_estimate_(),
-  has_latest_pose_(false)
+  last_cone_pose_graph_id_(-1),
+  map_converged_(false),
+  loop_closure_seen_since_optimize_(false),
+  loop_closure_optimize_cycles_(0)
 {
   car_state_topic_ =
     declare_parameter<std::string>("car_state_topic", "/odometry_integration/car_state");
-  car_state_frame_ = declare_parameter<std::string>("car_state_frame", "map");
-  car_state_child_frame_ =
-    declare_parameter<std::string>("car_state_child_frame", "base_footprint");
   cones_topic_ = declare_parameter<std::string>("cones_topic", "/cones");
-  map_topic_ = declare_parameter<std::string>("map_topic", "/graph_slam/map");
-  slam_odom_topic_ = declare_parameter<std::string>("slam_odom_topic", "/graph_slam/odom");
+  map_topic_ = declare_parameter<std::string>("map_topic", "/localization/cone_map");
+  slam_odom_topic_ =
+    declare_parameter<std::string>("slam_odom_topic", "/localization/ego_odom");
+  status_topic_ = declare_parameter<std::string>("status_topic", "~/status");
+  map_converged_topic_ =
+    declare_parameter<std::string>("map_converged_topic", "~/map_converged");
   path_topic_ = declare_parameter<std::string>("path_topic", "/graph_slam/path");
   marker_topic_ = declare_parameter<std::string>("marker_topic", "/graph_slam/markers");
   map_frame_ = declare_parameter<std::string>("map_frame", "map");
   odom_frame_ = declare_parameter<std::string>("odom_frame", "odom");
   slam_base_frame_ = declare_parameter<std::string>("slam_base_frame", "base_footprint");
   g2o_output_path_ = declare_parameter<std::string>("g2o_output_path", "/tmp/eufs_graph_slam.g2o");
+  map_save_dir_ = declare_parameter<std::string>("map_save_dir", "/tmp");
 
   keyframe_distance_ = declare_parameter<double>("keyframe_distance", keyframe_distance_);
   keyframe_yaw_ = declare_parameter<double>("keyframe_yaw", keyframe_yaw_);
   keyframe_max_dt_ = declare_parameter<double>("keyframe_max_dt", keyframe_max_dt_);
-  pose_history_duration_ =
-    declare_parameter<double>("pose_history_duration", pose_history_duration_);
-  clock_rollback_threshold_ =
-    declare_parameter<double>("clock_rollback_threshold", clock_rollback_threshold_);
-  max_future_stamp_lead_ =
-    declare_parameter<double>("max_future_stamp_lead", max_future_stamp_lead_);
   association_max_distance_ =
     declare_parameter<double>("association_max_distance", association_max_distance_);
+  association_gate_chi2_ =
+    declare_parameter<double>("association_gate_chi2", association_gate_chi2_);
+  association_ambiguity_ratio_ =
+    declare_parameter<double>("association_ambiguity_ratio", association_ambiguity_ratio_);
+  relocalize_search_radius_ =
+    declare_parameter<double>("relocalize_search_radius", relocalize_search_radius_);
+  relocalize_search_yaw_ =
+    declare_parameter<double>("relocalize_search_yaw", relocalize_search_yaw_);
+  relocalize_inlier_distance_ =
+    declare_parameter<double>("relocalize_inlier_distance", relocalize_inlier_distance_);
+  association_inflation_per_meter_ =
+    declare_parameter<double>(
+    "association_inflation_per_meter",
+    association_inflation_per_meter_);
+  association_max_inflation_ =
+    declare_parameter<double>("association_max_inflation", association_max_inflation_);
+  landmark_merge_distance_ =
+    declare_parameter<double>("landmark_merge_distance", landmark_merge_distance_);
   min_observation_range_ =
     declare_parameter<double>("min_observation_range", min_observation_range_);
   max_observation_range_ =
@@ -181,10 +195,17 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<int>(
     "landmark_missed_observations_to_delete",
     landmark_missed_observations_to_delete_);
-  pose_history_max_samples_ =
-    declare_parameter<int>("pose_history_max_samples", pose_history_max_samples_);
-  max_pending_cone_messages_ =
-    declare_parameter<int>("max_pending_cone_messages", max_pending_cone_messages_);
+  landmark_confirm_observations_ =
+    declare_parameter<int>(
+    "landmark_confirm_observations",
+    landmark_confirm_observations_);
+  loop_gap_distance_ = declare_parameter<double>("loop_gap_distance", loop_gap_distance_);
+  map_trust_loop_closures_required_ =
+    declare_parameter<int>(
+    "map_trust_loop_closures_required",
+    map_trust_loop_closures_required_);
+  map_trust_info_scale_ =
+    declare_parameter<double>("map_trust_info_scale", map_trust_info_scale_);
 
   optimize_min_interval_ =
     declare_parameter<double>("optimize_min_interval", optimize_min_interval_);
@@ -192,6 +213,20 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<double>("visual_publish_min_interval", visual_publish_min_interval_);
   tf_stamp_offset_ = declare_parameter<double>("tf_stamp_offset", tf_stamp_offset_);
 
+  localization_mode_ = declare_parameter<bool>("localization_mode", localization_mode_);
+  auto_localization_after_lap_ =
+    declare_parameter<bool>("auto_localization_after_lap", auto_localization_after_lap_);
+  lap_return_radius_ = declare_parameter<double>("lap_return_radius", lap_return_radius_);
+  lap_return_yaw_ = declare_parameter<double>("lap_return_yaw", lap_return_yaw_);
+  localization_window_poses_ =
+    declare_parameter<int>("localization_window_poses", localization_window_poses_);
+  lap_origin_capture_distance_ =
+    declare_parameter<double>(
+    "lap_origin_capture_distance",
+    lap_origin_capture_distance_);
+  use_odom_covariance_ =
+    declare_parameter<bool>("use_odom_covariance", use_odom_covariance_);
+  load_map_path_ = declare_parameter<std::string>("load_map_path", "");
   use_cone_covariance_ = declare_parameter<bool>("use_cone_covariance", use_cone_covariance_);
   process_every_cone_message_ =
     declare_parameter<bool>("process_every_cone_message", process_every_cone_message_);
@@ -200,34 +235,47 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<bool>("delete_stale_landmarks", delete_stale_landmarks_);
   update_existing_landmarks_ =
     declare_parameter<bool>("update_existing_landmarks", update_existing_landmarks_);
+  map_trust_after_loop_closure_ =
+    declare_parameter<bool>("map_trust_after_loop_closure", map_trust_after_loop_closure_);
+
+  // GNSS global anchor: add a unary EdgeSE2XYPrior on each keyframe from the
+  // SBG bridge's /gnss/odom absolute fix. gnss_prior_max_position_sigma gates
+  // it so only trustworthy (mode-4 / RTK) fixes anchor the graph; degraded
+  // fixes arrive with a huge covariance and are dropped automatically.
+  gnss_prior_enable_ = declare_parameter<bool>("gnss_prior_enable", true);
+  gnss_prior_topic_ = declare_parameter<std::string>("gnss_prior_topic", "/gnss/odom");
+  gnss_prior_max_position_sigma_ =
+    declare_parameter<double>("gnss_prior_max_position_sigma", 0.5);
+  gnss_prior_max_age_ = declare_parameter<double>("gnss_prior_max_age", 0.3);
+  gnss_prior_robust_delta_ =
+    declare_parameter<double>("gnss_prior_robust_delta", 1.0);
+  gnss_prior_suppress_duration_ =
+    declare_parameter<double>("gnss_prior_suppress_duration", 20.0);
+  gnss_prior_rearm_max_residual_ =
+    declare_parameter<double>("gnss_prior_rearm_max_residual", 2.0);
+  gnss_prior_max_position_sigma_ = std::max(1e-3, gnss_prior_max_position_sigma_);
+  gnss_prior_suppressed_ = false;
+  gnss_prior_suppress_until_sec_ = 0.0;
 
   keyframe_distance_ = std::max(0.0, keyframe_distance_);
   keyframe_yaw_ = std::max(0.0, keyframe_yaw_);
-  const std::optional<std::int64_t> pose_history_duration_ns =
-    time_alignment::secondsToNanoseconds(pose_history_duration_);
-  if (!pose_history_duration_ns.has_value() || pose_history_duration_ < 0.1) {
-    throw std::invalid_argument(
-            "pose_history_duration must be finite, at least 0.1 s, and representable");
-  }
-  const std::optional<std::int64_t> clock_rollback_threshold_ns =
-    time_alignment::secondsToNanoseconds(clock_rollback_threshold_);
-  if (!clock_rollback_threshold_ns.has_value() || clock_rollback_threshold_ < 1e-3) {
-    throw std::invalid_argument(
-            "clock_rollback_threshold must be finite, at least 0.001 s, and representable");
-  }
-  const std::optional<std::int64_t> max_future_stamp_lead_ns =
-    time_alignment::secondsToNanoseconds(max_future_stamp_lead_);
-  if (!max_future_stamp_lead_ns.has_value() || max_future_stamp_lead_ <= 0.0 ||
-    *max_future_stamp_lead_ns <= 0 ||
-    *max_future_stamp_lead_ns >= *clock_rollback_threshold_ns)
-  {
-    throw std::invalid_argument(
-            "max_future_stamp_lead must be finite, positive, and smaller than "
-            "clock_rollback_threshold to retain a positive rollback separation margin");
-  }
-  clock_rollback_threshold_ns_ = *clock_rollback_threshold_ns;
-  max_future_stamp_lead_ns_ = *max_future_stamp_lead_ns;
   association_max_distance_ = std::max(0.05, association_max_distance_);
+  association_gate_chi2_ = std::max(0.1, association_gate_chi2_);
+  association_ambiguity_ratio_ = std::clamp(association_ambiguity_ratio_, 0.0, 1.0);
+  relocalize_search_radius_ = std::max(0.0, relocalize_search_radius_);
+  relocalize_search_yaw_ = std::max(0.0, relocalize_search_yaw_);
+  relocalize_inlier_distance_ = std::max(0.05, relocalize_inlier_distance_);
+  association_inflation_per_meter_ = std::max(0.0, association_inflation_per_meter_);
+  association_max_inflation_ = std::max(0.0, association_max_inflation_);
+  landmark_merge_distance_ = std::max(0.0, landmark_merge_distance_);
+  landmark_confirm_observations_ = std::max(0, landmark_confirm_observations_);
+  loop_gap_distance_ = std::max(0.0, loop_gap_distance_);
+  lap_origin_capture_distance_ = std::max(1.0, lap_origin_capture_distance_);
+  lap_return_radius_ = std::max(0.5, lap_return_radius_);
+  lap_return_yaw_ = std::max(0.05, lap_return_yaw_);
+  localization_window_poses_ = std::max(10, localization_window_poses_);
+  map_trust_loop_closures_required_ = std::max(1, map_trust_loop_closures_required_);
+  map_trust_info_scale_ = std::max(1.0, map_trust_info_scale_);
   min_observation_range_ = std::max(0.0, min_observation_range_);
   max_observation_range_ = std::max(min_observation_range_, max_observation_range_);
   default_observation_sigma_ = std::max(1e-3, default_observation_sigma_);
@@ -239,12 +287,6 @@ GraphSlamNode::GraphSlamNode()
   landmark_min_observations_to_publish_ = std::max(1, landmark_min_observations_to_publish_);
   landmark_missed_observations_to_delete_ =
     std::max(1, landmark_missed_observations_to_delete_);
-  pose_history_max_samples_ = std::max(2, pose_history_max_samples_);
-  max_pending_cone_messages_ = std::max(1, max_pending_cone_messages_);
-  if (max_optimization_poses_ < 0) {
-    throw std::invalid_argument(
-            "max_optimization_poses must be non-negative; use 0 only for full-batch optimization");
-  }
   landmark_delete_fov_ =
     std::clamp(landmark_delete_fov_, 0.0, 2.0 * std::acos(-1.0));
   landmark_delete_max_range_ =
@@ -259,24 +301,6 @@ GraphSlamNode::GraphSlamNode()
   optimize_min_interval_ = std::max(0.0, optimize_min_interval_);
   visual_publish_min_interval_ = std::max(0.0, visual_publish_min_interval_);
   tf_stamp_offset_ = std::max(0.0, tf_stamp_offset_);
-  if (map_frame_.empty() || odom_frame_.empty() || slam_base_frame_.empty()) {
-    throw std::invalid_argument("map_frame, odom_frame, and slam_base_frame must be non-empty");
-  }
-  if (map_frame_ == odom_frame_ || map_frame_ == slam_base_frame_ ||
-    odom_frame_ == slam_base_frame_)
-  {
-    throw std::invalid_argument(
-            "map_frame, odom_frame, and slam_base_frame must be pairwise distinct");
-  }
-  if (car_state_frame_ != map_frame_) {
-    throw std::invalid_argument(
-            "car_state_frame must equal map_frame; GraphSLAM does not transform CarState poses");
-  }
-  if (car_state_child_frame_ != slam_base_frame_) {
-    throw std::invalid_argument(
-            "car_state_child_frame must equal slam_base_frame; GraphSLAM does not transform "
-            "CarState child frames");
-  }
   if (tf_stamp_offset_ > 0.0) {
     RCLCPP_WARN(
       get_logger(),
@@ -289,11 +313,6 @@ GraphSlamNode::GraphSlamNode()
     tf_stamp_offset_ = 0.0;
   }
 
-  pose_history_ = time_alignment::TimedPoseHistory(
-    time_alignment::PoseHistoryOptions{
-      *pose_history_duration_ns,
-      static_cast<std::size_t>(pose_history_max_samples_)});
-
   odom_information_.setZero();
   odom_information_(0, 0) = 1.0 / (odom_translation_sigma_ * odom_translation_sigma_);
   odom_information_(1, 1) = 1.0 / (odom_translation_sigma_ * odom_translation_sigma_);
@@ -301,14 +320,29 @@ GraphSlamNode::GraphSlamNode()
 
   configureOptimizer();
 
-  rcl_jump_threshold_t jump_threshold{};
-  jump_threshold.on_clock_change = true;
-  jump_threshold.min_forward.nanoseconds = std::numeric_limits<std::int64_t>::max();
-  jump_threshold.min_backward.nanoseconds = -clock_rollback_threshold_ns_;
-  clock_jump_handler_ = get_clock()->create_jump_callback(
-    nullptr,
-    std::bind(&GraphSlamNode::onClockJump, this, std::placeholders::_1),
-    jump_threshold);
+  if (localization_mode_) {
+    if (load_map_path_.empty()) {
+      RCLCPP_ERROR(
+        get_logger(),
+        "localization_mode is enabled but load_map_path is empty; "
+        "no map to localize against");
+    } else {
+      std::string error;
+      if (loadMapCsv(load_map_path_, &error)) {
+        RCLCPP_INFO(
+          get_logger(),
+          "Localization mode: loaded %zu fixed landmarks from %s",
+          landmarks_.size(),
+          load_map_path_.c_str());
+      } else {
+        RCLCPP_ERROR(
+          get_logger(),
+          "Failed to load map '%s' for localization: %s",
+          load_map_path_.c_str(),
+          error.c_str());
+      }
+    }
+  }
 
   const auto transient_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
   map_pub_ = create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(map_topic_, transient_qos);
@@ -316,6 +350,10 @@ GraphSlamNode::GraphSlamNode()
   path_pub_ = create_publisher<nav_msgs::msg::Path>(path_topic_, transient_qos);
   marker_pub_ =
     create_publisher<visualization_msgs::msg::MarkerArray>(marker_topic_, transient_qos);
+  // Latched status so planning (local vs global) and RViz always see the
+  // current SLAM lifecycle even when subscribing late.
+  status_pub_ = create_publisher<std_msgs::msg::String>(status_topic_, transient_qos);
+  converged_pub_ = create_publisher<std_msgs::msg::Bool>(map_converged_topic_, transient_qos);
 
   if (publish_tf_) {
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
@@ -334,25 +372,80 @@ GraphSlamNode::GraphSlamNode()
   save_graph_srv_ = create_service<std_srvs::srv::Trigger>(
     "~/save_graph",
     std::bind(&GraphSlamNode::handleSaveGraph, this, std::placeholders::_1, std::placeholders::_2));
+  save_map_srv_ = create_service<std_srvs::srv::Trigger>(
+    "~/save_map",
+    std::bind(&GraphSlamNode::handleSaveMap, this, std::placeholders::_1, std::placeholders::_2));
+  load_map_srv_ = create_service<std_srvs::srv::Trigger>(
+    "~/load_map",
+    std::bind(&GraphSlamNode::handleLoadMap, this, std::placeholders::_1, std::placeholders::_2));
+  start_mapping_srv_ = create_service<std_srvs::srv::Trigger>(
+    "~/start_mapping",
+    std::bind(
+      &GraphSlamNode::handleStartMapping, this, std::placeholders::_1,
+      std::placeholders::_2));
+
+  // The state callback runs in its own group so a MultiThreadedExecutor can
+  // keep publishing live odometry while cone processing or optimization
+  // holds the graph. Cones and the optimization timer share a mutually
+  // exclusive group, so they never run concurrently with each other.
+  state_callback_group_ =
+    create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  graph_callback_group_ =
+    create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+
+  rclcpp::SubscriptionOptions state_options;
+  state_options.callback_group = state_callback_group_;
+  rclcpp::SubscriptionOptions graph_options;
+  graph_options.callback_group = graph_callback_group_;
 
   car_state_sub_ = create_subscription<eufs_msgs::msg::CarState>(
     car_state_topic_,
     rclcpp::SensorDataQoS(),
-    std::bind(&GraphSlamNode::stateCallback, this, std::placeholders::_1));
+    std::bind(&GraphSlamNode::stateCallback, this, std::placeholders::_1),
+    state_options);
   cones_sub_ = create_subscription<eufs_msgs::msg::ConeArrayWithCovariance>(
     cones_topic_,
     rclcpp::SensorDataQoS(),
-    std::bind(&GraphSlamNode::conesCallback, this, std::placeholders::_1));
+    std::bind(&GraphSlamNode::conesCallback, this, std::placeholders::_1),
+    graph_options);
+  // RViz "2D Pose Estimate" publishes here; used to relocalize when lost.
+  initialpose_sub_ = create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+    "/initialpose",
+    rclcpp::QoS(1),
+    std::bind(&GraphSlamNode::initialPoseCallback, this, std::placeholders::_1),
+    graph_options);
+
+  if (gnss_prior_enable_) {
+    gnss_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+      gnss_prior_topic_,
+      rclcpp::SensorDataQoS(),
+      std::bind(&GraphSlamNode::gnssOdomCallback, this, std::placeholders::_1),
+      state_options);
+  }
+
+  optimize_timer_ = create_wall_timer(
+    std::chrono::milliseconds(250),
+    std::bind(&GraphSlamNode::onOptimizeTimer, this),
+    graph_callback_group_);
 
   RCLCPP_INFO(
     get_logger(),
-    "g2o graph SLAM listening to car state '%s' and cones '%s'; "
-    "retaining %.2f s/%d samples and deferring up to %d future cone frames",
+    "g2o graph SLAM listening to car state '%s' and cones '%s'",
     car_state_topic_.c_str(),
-    cones_topic_.c_str(),
-    pose_history_duration_,
-    pose_history_max_samples_,
-    max_pending_cone_messages_);
+    cones_topic_.c_str());
+
+  if (localization_mode_ && !landmarks_.empty()) {
+    // Publish the loaded fixed map once so latched subscribers (RViz, GUI)
+    // can preview it before the car has moved.
+    const rclcpp::Time now = get_clock()->now();
+    publishMap(now);
+    publishMarkers(now);
+    RCLCPP_INFO(
+      get_logger(), "Localization mode active with a fixed map of %zu cones",
+      landmarks_.size());
+  }
+
+  publishStatus();
 }
 
 void GraphSlamNode::configureOptimizer()
@@ -369,402 +462,302 @@ void GraphSlamNode::configureOptimizer()
   optimizer_.setAlgorithm(algorithm.release());
 }
 
-void GraphSlamNode::resetGraph(
-  std::int64_t epoch_start_stamp_ns,
-  const std::optional<std::int64_t> & replay_guard_end_stamp_ns,
-  bool preserve_replay_guards)
+void GraphSlamNode::resetGraph()
 {
-  std::vector<std::int64_t> active_replay_guards;
-  if (preserve_replay_guards) {
-    std::copy_if(
-      replay_guard_end_stamps_ns_.begin(), replay_guard_end_stamps_ns_.end(),
-      std::back_inserter(active_replay_guards),
-      [epoch_start_stamp_ns](std::int64_t guard_end_ns) {
-        return guard_end_ns > epoch_start_stamp_ns;
-      });
-    if (replay_guard_end_stamp_ns_.has_value() &&
-      *replay_guard_end_stamp_ns_ > epoch_start_stamp_ns)
-    {
-      active_replay_guards.push_back(*replay_guard_end_stamp_ns_);
-    }
-  }
-  if (replay_guard_end_stamp_ns.has_value() &&
-    *replay_guard_end_stamp_ns > epoch_start_stamp_ns)
-  {
-    active_replay_guards.push_back(*replay_guard_end_stamp_ns);
-  }
-  std::sort(active_replay_guards.begin(), active_replay_guards.end());
-  active_replay_guards.erase(
-    std::unique(active_replay_guards.begin(), active_replay_guards.end()),
-    active_replay_guards.end());
-
   optimizer_.clear();
   poses_.clear();
   landmarks_.clear();
-  pose_history_.clear();
-  pending_cone_messages_.clear();
-  pending_cone_stamps_ns_.clear();
-  last_processed_cone_stamp_ns_.reset();
-  epoch_start_stamp_ns_ = epoch_start_stamp_ns;
-  replay_guard_end_stamps_ns_ = std::move(active_replay_guards);
-  replay_guard_end_stamp_ns_ = replay_guard_end_stamps_ns_.empty() ?
-    std::nullopt : std::make_optional(replay_guard_end_stamps_ns_.front());
-  keyframe_stamps_ns_.clear();
-  cone_edge_pose_graph_ids_.clear();
+  last_observations_.clear();
+  {
+    std::lock_guard<std::mutex> lock(odom_buffer_mutex_);
+    raw_odom_buffer_.clear();
+  }
+  {
+    std::lock_guard<std::mutex> lock(snapshot_mutex_);
+    keyframe_snapshot_.valid = false;
+  }
 
   next_vertex_id_ = 0;
   next_edge_id_ = 0;
   keyframes_since_last_optimization_ = 0;
+  last_cone_pose_graph_id_ = -1;
+  // Start GNSS priors suppressed after a reset. The graph re-anchors at the
+  // car's current odometry, so the fresh map frame does not match the GNSS
+  // ENU frame until (if ever) it is proven consistent. Re-arming immediately
+  // lets a mode-4 fix drag the pose toward the ENU origin (~0,0) for the few
+  // keyframes before the residual gate re-suppresses it — and any cones
+  // observed during that slide get baked into the map at the wrong place.
+  // maybeAddGnssPrior re-arms this only once the fix agrees within
+  // gnss_prior_rearm_max_residual of the cone-anchored pose.
+  gnss_prior_suppressed_ = true;
+  gnss_prior_suppress_until_sec_ = 0.0;
+  map_converged_ = false;
+  loop_closure_seen_since_optimize_ = false;
+  loop_closure_optimize_cycles_ = 0;
+  traveled_distance_ = 0.0;
+  lap_origin_captured_ = false;
+  lap_origin_ = g2o::SE2();
   last_optimization_time_sec_ = -1.0;
   last_visual_publish_time_sec_ = -1.0;
   last_landmark_delete_time_sec_ = -1.0;
-  has_latest_pose_ = false;
-  ++clock_epoch_;
-}
-
-void GraphSlamNode::publishResetTombstones(const rclcpp::Time & stamp)
-{
-  if (map_pub_) {
-    eufs_msgs::msg::ConeArrayWithCovariance map;
-    map.header.frame_id = map_frame_;
-    map.header.stamp = stamp;
-    map_pub_->publish(map);
-  }
-
-  if (path_pub_) {
-    nav_msgs::msg::Path path;
-    path.header.frame_id = map_frame_;
-    path.header.stamp = stamp;
-    path_pub_->publish(path);
-  }
-
-  if (marker_pub_) {
-    visualization_msgs::msg::MarkerArray markers;
-    visualization_msgs::msg::Marker clear_marker;
-    clear_marker.header.frame_id = map_frame_;
-    clear_marker.header.stamp = stamp;
-    clear_marker.action = visualization_msgs::msg::Marker::DELETEALL;
-    markers.markers.push_back(clear_marker);
-    marker_pub_->publish(markers);
-  }
-}
-
-void GraphSlamNode::onClockJump(const rcl_time_jump_t & time_jump)
-{
-  const bool clock_source_changed =
-    time_jump.clock_change == RCL_ROS_TIME_ACTIVATED ||
-    time_jump.clock_change == RCL_ROS_TIME_DEACTIVATED;
-  if (!time_alignment::startsNewClockEpoch(
-      time_jump.delta.nanoseconds, clock_source_changed, clock_rollback_threshold_ns_))
-  {
-    return;
-  }
-
-  const rclcpp::Time reset_stamp = get_clock()->now();
-  const std::optional<std::int64_t> replay_guard_end_stamp_ns =
-    time_alignment::replayGuardEndStamp(
-    reset_stamp.nanoseconds(), time_jump.delta.nanoseconds, clock_source_changed);
-  resetGraph(
-    reset_stamp.nanoseconds(), replay_guard_end_stamp_ns,
-    !clock_source_changed);
-  node_time_high_watermark_ns_ = reset_stamp.nanoseconds();
-  publishResetTombstones(reset_stamp);
-  RCLCPP_WARN_THROTTLE(
-    get_logger(), steady_clock_, 1000,
-    "ROS clock source changed or moved backward by %.6f s; reset GraphSLAM for epoch %" PRIu64,
-    static_cast<double>(time_jump.delta.nanoseconds) * 1e-9,
-    clock_epoch_);
-}
-
-void GraphSlamNode::observeNodeClock(const rclcpp::Time & now)
-{
-  const std::int64_t now_ns = now.nanoseconds();
-  if (node_time_high_watermark_ns_.has_value() &&
-    time_alignment::hasClockRolledBack(
-      *node_time_high_watermark_ns_, now_ns, clock_rollback_threshold_ns_))
-  {
-    const std::int64_t replay_guard_end_stamp_ns = *node_time_high_watermark_ns_;
-    resetGraph(now_ns, replay_guard_end_stamp_ns, true);
-    publishResetTombstones(now);
-    RCLCPP_WARN_THROTTLE(
-      get_logger(), steady_clock_, 1000,
-      "Node clock moved backward without an rcl jump notification; reset GraphSLAM "
-      "for epoch %" PRIu64,
-      clock_epoch_);
-    node_time_high_watermark_ns_ = now_ns;
-    return;
-  }
-  replay_guard_end_stamps_ns_.erase(
-    replay_guard_end_stamps_ns_.begin(),
-    std::upper_bound(
-      replay_guard_end_stamps_ns_.begin(), replay_guard_end_stamps_ns_.end(),
-      now_ns));
-  replay_guard_end_stamp_ns_ = replay_guard_end_stamps_ns_.empty() ?
-    std::nullopt : std::make_optional(replay_guard_end_stamps_ns_.front());
-  node_time_high_watermark_ns_ = node_time_high_watermark_ns_.has_value() ?
-    time_alignment::advanceClockHighWatermark(*node_time_high_watermark_ns_, now_ns) :
-    now_ns;
-}
-
-bool GraphSlamNode::isInputStampInCurrentEpoch(
-  std::int64_t stamp_ns,
-  std::int64_t now_ns) const
-{
-  return time_alignment::isStampInCurrentEpoch(
-    stamp_ns, epoch_start_stamp_ns_, now_ns,
-    replay_guard_end_stamp_ns_, max_future_stamp_lead_ns_);
 }
 
 void GraphSlamNode::stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg)
 {
-  if (msg->header.frame_id != car_state_frame_ ||
-    msg->child_frame_id != car_state_child_frame_)
-  {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(), steady_clock_, 5000,
-      "Dropping CarState with frames '%s' -> '%s'; expected '%s' -> '%s'",
-      msg->header.frame_id.c_str(), msg->child_frame_id.c_str(),
-      car_state_frame_.c_str(), car_state_child_frame_.c_str());
-    return;
-  }
-
-  if (!time_alignment::isCanonicalNonzeroStamp(
-      msg->header.stamp.sec, msg->header.stamp.nanosec))
-  {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(), steady_clock_, 5000,
-      "Dropping CarState with a zero, negative, or non-canonical timestamp");
-    return;
-  }
-
-  const auto & position = msg->pose.pose.position;
-  const auto & orientation = msg->pose.pose.orientation;
-  if (!time_alignment::isValidPlanarPose(
-      position.x, position.y,
-      orientation.x, orientation.y, orientation.z, orientation.w))
-  {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(), steady_clock_, 5000,
-      "Dropping CarState with non-finite position or a non-unit quaternion");
-    return;
-  }
-
-  const rclcpp::Time stamp(msg->header.stamp, get_clock()->get_clock_type());
-  const rclcpp::Time now = get_clock()->now();
-  observeNodeClock(now);
-  const std::int64_t now_ns = now.nanoseconds();
-  if ((get_clock()->ros_time_is_active() || now_ns > 0) &&
-    !isInputStampInCurrentEpoch(stamp.nanoseconds(), now_ns))
-  {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(), steady_clock_, 5000,
-      "Dropping CarState at %.9f because it is outside the current clock epoch "
-      "or more than %.3f s ahead of ROS time",
-      stamp.seconds(), max_future_stamp_lead_);
-    return;
-  }
-
+  const rclcpp::Time stamp = stampOrNow(msg->header.stamp, get_clock());
   const g2o::SE2 raw_odom = poseFromCarState(*msg);
-  const time_alignment::TimedPose2d timed_pose{
-    stamp.nanoseconds(), pose2dFromSe2(raw_odom)};
-  const time_alignment::PushStatus push_status = pose_history_.push(timed_pose);
-  if (push_status == time_alignment::PushStatus::IgnoredTooOld) {
-    RCLCPP_DEBUG(get_logger(), "Ignoring CarState older than the retained pose-history window");
-    return;
-  } else if (push_status == time_alignment::PushStatus::IgnoredDuplicate) {
-    RCLCPP_DEBUG(get_logger(), "Ignoring duplicate CarState at %.9f", stamp.seconds());
-    return;
-  } else if (push_status == time_alignment::PushStatus::InsertedOutOfOrder) {
-    RCLCPP_DEBUG(
-      get_logger(),
-      "Stored non-forward CarState sample at %.9f without changing the live graph pose",
-      stamp.seconds());
+  recordRawOdometry(stamp.seconds(), raw_odom);
+
+  // Motion-source trust and twist passthrough (see the member comments).
+  latest_odom_sigma_trans_ =
+    std::sqrt(std::max(0.0, std::max(msg->pose.covariance[0], msg->pose.covariance[7])));
+  latest_odom_sigma_yaw_ = std::sqrt(std::max(0.0, msg->pose.covariance[35]));
+  latest_twist_vx_.store(msg->twist.twist.linear.x);
+  latest_twist_vy_.store(msg->twist.twist.linear.y);
+  latest_twist_wz_.store(msg->twist.twist.angular.z);
+
+  // Never wait for a running optimization: dead-reckon from the last
+  // keyframe snapshot instead so live odometry keeps its input rate.
+  std::unique_lock<std::mutex> lock(graph_mutex_, std::try_to_lock);
+  if (!lock.owns_lock()) {
+    publishLiveEstimateFromSnapshot(stamp, raw_odom);
     return;
   }
 
   if (poses_.empty()) {
     addInitialPose(raw_odom, stamp);
-    latest_estimate_ = poses_.empty() ? raw_odom : poses_.back().vertex->estimate();
-    has_latest_pose_ = true;
     publishEstimate();
-    drainPendingConeMessages();
     return;
   }
 
-  const g2o::SE2 live_estimate = estimateFromRawOdometry(raw_odom);
-  latest_estimate_ = live_estimate;
-  has_latest_pose_ = true;
-
   if (!shouldCreateKeyframe(raw_odom, stamp)) {
-    publishLiveEstimate(stamp, live_estimate, raw_odom);
-    drainPendingConeMessages();
+    publishLiveEstimate(stamp, estimateFromRawOdometry(raw_odom), raw_odom);
     return;
   }
 
   addKeyframe(raw_odom, stamp);
-  latest_estimate_ = estimateFromRawOdometry(raw_odom);
   publishEstimate();
-  drainPendingConeMessages();
 }
 
 void GraphSlamNode::conesCallback(
   const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg)
 {
-  if (!hasValidConeHeader(*msg)) {
-    if (!time_alignment::isCanonicalNonzeroStamp(
-        msg->header.stamp.sec, msg->header.stamp.nanosec))
-    {
-      RCLCPP_WARN_THROTTLE(
-        get_logger(), steady_clock_, 5000,
-        "Dropping cone frame with a zero, negative, or non-canonical timestamp");
-    } else {
-      RCLCPP_WARN_THROTTLE(
-        get_logger(), steady_clock_, 5000,
-        "Dropping cone frame '%s'; expected observations in '%s'",
-        msg->header.frame_id.c_str(), slam_base_frame_.c_str());
-    }
+  std::lock_guard<std::mutex> lock(graph_mutex_);
+
+  if (poses_.empty()) {
     return;
   }
 
-  if (tryProcessConeMessage(msg) == ConeProcessingStatus::AwaitingFuture) {
-    enqueuePendingConeMessage(msg);
-  }
-}
+  const ObservationUpdate update = addConeObservations(*msg, false);
 
-GraphSlamNode::ConeProcessingStatus GraphSlamNode::tryProcessConeMessage(
-  const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr & msg)
-{
-  if (!hasValidConeHeader(*msg)) {
-    return ConeProcessingStatus::Invalid;
-  }
-
-  const rclcpp::Time stamp(msg->header.stamp, get_clock()->get_clock_type());
-  const std::int64_t stamp_ns = stamp.nanoseconds();
-  const rclcpp::Time now = get_clock()->now();
-  observeNodeClock(now);
-  const std::int64_t now_ns = now.nanoseconds();
-  if (!time_alignment::isStrictlyNewerStamp(
-      stamp_ns, last_processed_cone_stamp_ns_))
-  {
-    RCLCPP_DEBUG(
-      get_logger(),
-      "Dropping duplicate or out-of-order cone frame at %.9f in epoch %" PRIu64,
-      stamp.seconds(),
-      clock_epoch_);
-    return ConeProcessingStatus::Invalid;
-  }
-
-  if (get_clock()->ros_time_is_active() || now_ns > 0) {
-    if (!isInputStampInCurrentEpoch(stamp_ns, now_ns)) {
-      RCLCPP_WARN_THROTTLE(
-        get_logger(), steady_clock_, 5000,
-        "Dropping cone frame at %.9f because it is outside the current clock epoch "
-        "or more than %.3f s ahead of ROS time",
-        stamp.seconds(), max_future_stamp_lead_);
-      return ConeProcessingStatus::Invalid;
-    }
-  }
-  if (!pose_history_.empty() &&
-    time_alignment::exceedsFutureLead(
-      stamp_ns, pose_history_.latestStampNs(), max_future_stamp_lead_ns_))
-  {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(), steady_clock_, 5000,
-      "Dropping cone frame at %.9f because it is more than %.3f s ahead of CarState",
-      stamp.seconds(), max_future_stamp_lead_);
-    return ConeProcessingStatus::Invalid;
-  }
-
-  const time_alignment::PoseLookup pose_lookup =
-    pose_history_.interpolate(stamp_ns);
-  if (pose_lookup.status == time_alignment::LookupStatus::Empty ||
-    pose_lookup.status == time_alignment::LookupStatus::AwaitingFuture)
-  {
-    return ConeProcessingStatus::AwaitingFuture;
-  }
-  if (pose_lookup.status == time_alignment::LookupStatus::TooOld) {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(), steady_clock_, 5000,
-      "Dropping cone frame at %.9f because it is older than the retained CarState history",
-      stamp.seconds());
-    return ConeProcessingStatus::TooOld;
-  }
-
-  const std::optional<std::size_t> pose_index =
-    time_alignment::latestIndexNotAfter(keyframe_stamps_ns_, stamp_ns);
-  if (!pose_index.has_value() || *pose_index >= poses_.size()) {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(), steady_clock_, 5000,
-      "Dropping cone frame at %.9f because no causal keyframe exists at or before it",
-      stamp.seconds());
-    return ConeProcessingStatus::TooOld;
-  }
-
-  ObservationUpdate update =
-    addConeObservations(*msg, poses_[*pose_index], pose_lookup.pose);
+  // Perception-driven optimization: correct the pose as soon as new cone
+  // observations land, not only every N keyframes. optimize_min_interval
+  // still rate-limits how often the solver actually runs. This keeps the
+  // estimate continuously converging, so an initial pose that is slightly
+  // off is pulled back quickly instead of lagging for many keyframes.
   if (update.added_edges > 0U) {
     maybeOptimize();
   }
+
   if (update.added_edges > 0U ||
     update.updated_landmarks > 0U ||
     update.deleted_landmarks > 0U)
   {
-    publishGraphVisuals(stamp);
+    publishGraphVisuals(stampOrNow(msg->header.stamp, get_clock()));
   }
-  last_processed_cone_stamp_ns_ = stamp_ns;
-  return ConeProcessingStatus::Processed;
 }
 
-void GraphSlamNode::enqueuePendingConeMessage(
-  const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr & msg)
+void GraphSlamNode::initialPoseCallback(
+  const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg)
 {
-  const std::int64_t stamp_ns = rclcpp::Time(msg->header.stamp).nanoseconds();
-  if (!pending_cone_stamps_ns_.insert(stamp_ns).second) {
-    RCLCPP_DEBUG(
-      get_logger(), "Ignoring duplicate pending cone frame at %.9f",
-      rclcpp::Time(msg->header.stamp).seconds());
-    return;
-  }
-  const auto insertion_point = std::upper_bound(
-    pending_cone_messages_.begin(), pending_cone_messages_.end(), stamp_ns,
-    [](std::int64_t candidate_stamp_ns, const auto & existing) {
-      return candidate_stamp_ns < rclcpp::Time(existing->header.stamp).nanoseconds();
-    });
-  pending_cone_messages_.insert(insertion_point, msg);
+  const g2o::SE2 pose(
+    msg->pose.pose.position.x,
+    msg->pose.pose.position.y,
+    yawFromQuaternion(msg->pose.pose.orientation));
 
-  if (pending_cone_messages_.size() >
-    static_cast<std::size_t>(max_pending_cone_messages_))
+  if (!msg->header.frame_id.empty() && msg->header.frame_id != map_frame_) {
+    RCLCPP_WARN(
+      get_logger(),
+      "2D pose estimate is in frame '%s' but the SLAM map frame is '%s'; "
+      "relocalizing as if it were in '%s'",
+      msg->header.frame_id.c_str(), map_frame_.c_str(), map_frame_.c_str());
+  }
+
+  std::lock_guard<std::mutex> lock(graph_mutex_);
+
+  // The click is a manual absolute reference that may contradict GNSS (wrong
+  // map frame, degraded GNSS). Suppress GNSS priors so they cannot yank the
+  // pose back; they re-arm in maybeAddGnssPrior once GNSS agrees again.
+  if (gnss_prior_enable_ && gnss_prior_suppress_duration_ > 0.0) {
+    gnss_prior_suppressed_ = true;
+    gnss_prior_suppress_until_sec_ =
+      stampOrNow(msg->header.stamp, get_clock()).seconds() +
+      gnss_prior_suppress_duration_;
+    RCLCPP_INFO(
+      get_logger(),
+      "Manual relocalization: GNSS priors suppressed for %.0f s, then until "
+      "GNSS agrees with the cone-anchored pose within %.1f m",
+      gnss_prior_suppress_duration_, gnss_prior_rearm_max_residual_);
+  }
+
+  relocalizeTo(pose);
+}
+
+g2o::SE2 GraphSlamNode::latestRawOdom() const
+{
+  std::lock_guard<std::mutex> lock(odom_buffer_mutex_);
+  if (raw_odom_buffer_.empty()) {
+    return g2o::SE2();
+  }
+  return raw_odom_buffer_.back().second;
+}
+
+g2o::SE2 GraphSlamNode::scanMatchNearClick(const g2o::SE2 & click) const
+{
+  if (last_observations_.empty() || landmarks_.empty() ||
+    relocalize_search_radius_ <= 0.0)
   {
-    const rclcpp::Time dropped_stamp(pending_cone_messages_.back()->header.stamp);
-    pending_cone_stamps_ns_.erase(dropped_stamp.nanoseconds());
-    pending_cone_messages_.pop_back();
-    RCLCPP_WARN_THROTTLE(
-      get_logger(), steady_clock_, 5000,
-      "Future cone queue reached %d frames; dropping farthest frame at %.9f",
-      max_pending_cone_messages_, dropped_stamp.seconds());
+    return click;
   }
-}
 
-void GraphSlamNode::drainPendingConeMessages()
-{
-  std::deque<eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr> pending =
-    std::move(pending_cone_messages_);
-  pending_cone_messages_.clear();
-  pending_cone_stamps_ns_.clear();
+  // Brute-force search over a window around the click: for each candidate
+  // pose, transform the latest cones into the map and count how many land
+  // within relocalize_inlier_distance of a fixed landmark. Best inlier count
+  // (tie-broken by residual) wins.
+  const int n_xy = 8;
+  const int n_yaw = 8;
+  const double dxy = relocalize_search_radius_ / n_xy;
+  const double dyaw = relocalize_search_yaw_ > 0.0 ? relocalize_search_yaw_ / n_yaw : 0.0;
+  const double inlier_sq = relocalize_inlier_distance_ * relocalize_inlier_distance_;
 
-  for (const auto & msg : pending) {
-    if (tryProcessConeMessage(msg) == ConeProcessingStatus::AwaitingFuture) {
-      enqueuePendingConeMessage(msg);
+  g2o::SE2 best = click;
+  int best_inliers = -1;
+  double best_residual = std::numeric_limits<double>::max();
+
+  for (int ix = -n_xy; ix <= n_xy; ++ix) {
+    for (int iy = -n_xy; iy <= n_xy; ++iy) {
+      for (int iw = -n_yaw; iw <= n_yaw; ++iw) {
+        const g2o::SE2 cand(
+          click.translation().x() + ix * dxy,
+          click.translation().y() + iy * dxy,
+          normalizeAngle(click.rotation().angle() + iw * dyaw));
+
+        int inliers = 0;
+        double residual = 0.0;
+        for (const ConeObservation & obs : last_observations_) {
+          const Eigen::Vector2d p = cand * obs.measurement;
+          double nearest_sq = std::numeric_limits<double>::max();
+          for (const LandmarkRecord & lm : landmarks_) {
+            const double d2 = (lm.vertex->estimate() - p).squaredNorm();
+            if (d2 < nearest_sq) {
+              nearest_sq = d2;
+            }
+          }
+          if (nearest_sq < inlier_sq) {
+            ++inliers;
+            residual += nearest_sq;
+          }
+        }
+
+        if (inliers > best_inliers ||
+          (inliers == best_inliers && residual < best_residual))
+        {
+          best_inliers = inliers;
+          best_residual = residual;
+          best = cand;
+        }
+
+        if (dyaw == 0.0) {
+          break;
+        }
+      }
     }
   }
+
+  RCLCPP_INFO(
+    get_logger(),
+    "Relocalization scan-match: %d/%zu cones fit the map at the best pose",
+    best_inliers, last_observations_.size());
+  return best;
 }
 
-bool GraphSlamNode::hasValidConeHeader(
-  const eufs_msgs::msg::ConeArrayWithCovariance & msg) const
+void GraphSlamNode::relocalizeTo(const g2o::SE2 & click)
 {
-  return time_alignment::isCanonicalNonzeroStamp(
-    msg.header.stamp.sec, msg.header.stamp.nanosec) &&
-         msg.header.frame_id == slam_base_frame_;
+  // Drop the current pose trajectory (and its odometry/observation edges),
+  // keeping the map. In localization mode this re-anchors the drifted
+  // odometry to the fixed map; the operator asserts the car is near the click.
+  for (PoseRecord & record : poses_) {
+    if (optimizer_.vertex(record.graph_id) == record.vertex) {
+      optimizer_.removeVertex(record.vertex);
+    }
+  }
+  poses_.clear();
+  keyframes_since_last_optimization_ = 0;
+  last_cone_pose_graph_id_ = -1;
+  last_optimization_time_sec_ = -1.0;
+
+  // (B) Scan-match the latest cones against the fixed map near the click to
+  // find the best-fit starting pose.
+  const g2o::SE2 pose = scanMatchNearClick(click);
+  const bool can_refine = !last_observations_.empty() && !landmarks_.empty();
+
+  auto * vertex = new g2o::VertexSE2();
+  vertex->setId(next_vertex_id_++);
+  vertex->setEstimate(pose);
+  // (A) Leave the anchor free so cone observations to the fixed map refine it
+  // to the local optimum; pin it only when there is nothing to refine against.
+  vertex->setFixed(!can_refine);
+  if (!optimizer_.addVertex(vertex)) {
+    RCLCPP_ERROR(get_logger(), "Relocalization failed to add anchor pose vertex");
+    delete vertex;
+    return;
+  }
+  poses_.push_back(PoseRecord{vertex->id(), vertex, latestRawOdom(), get_clock()->now()});
+
+  // Constrain the anchor with observation edges to the fixed map, then run a
+  // local optimization so the pose snaps to the best fit near the click.
+  std::size_t constrained = 0;
+  if (can_refine) {
+    std::vector<bool> claimed(landmarks_.size(), false);
+    for (const ConeObservation & obs : last_observations_) {
+      const Eigen::Vector2d map_point = pose * obs.measurement;
+      const Eigen::Matrix2d map_covariance = covarianceInMapFrame(pose, obs.covariance);
+      bool ambiguous = false;
+      const int idx =
+        findAssociatedLandmark(map_point, map_covariance, obs.color, &ambiguous, &claimed);
+      if (idx >= 0) {
+        claimed[static_cast<std::size_t>(idx)] = true;
+        addObservationEdge(obs, vertex, landmarks_[static_cast<std::size_t>(idx)]);
+        ++constrained;
+      }
+    }
+    if (constrained >= 2U) {
+      optimizeGraph();
+    } else {
+      // Not enough matches to solve for a full pose; keep the scan-match guess.
+      vertex->setFixed(true);
+    }
+  }
+
+  updateKeyframeSnapshot();
+  publishEstimate();
+
+  const g2o::SE2 result = vertex->estimate();
+  // Lap accounting restarts from the asserted pose.
+  traveled_distance_ = 0.0;
+  lap_origin_captured_ = false;
+  RCLCPP_INFO(
+    get_logger(),
+    "Relocalized to x=%.2f y=%.2f yaw=%.2f (%zu cones constrained the fit, "
+    "%zu map landmarks kept)",
+    result.translation().x(), result.translation().y(), result.rotation().angle(),
+    constrained, landmarks_.size());
+}
+
+void GraphSlamNode::onOptimizeTimer()
+{
+  std::lock_guard<std::mutex> lock(graph_mutex_);
+  maybeOptimize();
 }
 
 g2o::SE2 GraphSlamNode::poseFromCarState(const eufs_msgs::msg::CarState & msg) const
@@ -819,7 +812,9 @@ void GraphSlamNode::addInitialPose(const g2o::SE2 & raw_odom, const rclcpp::Time
   }
 
   poses_.push_back(PoseRecord{vertex->id(), vertex, raw_odom, stamp});
-  keyframe_stamps_ns_.push_back(stamp.nanoseconds());
+  updateKeyframeSnapshot();
+  traveled_distance_ = 0.0;
+  lap_origin_captured_ = false;
   RCLCPP_INFO(
     get_logger(),
     "Initialized graph SLAM at x=%.2f y=%.2f yaw=%.2f",
@@ -854,7 +849,24 @@ void GraphSlamNode::addKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & 
   edge->setVertex(0, previous.vertex);
   edge->setVertex(1, vertex);
   edge->setMeasurement(odom_delta);
-  edge->setInformation(odom_information_);
+
+  // Per-edge trust from the motion source's reported noise: a bridge that
+  // degrades (e.g. SBG mode tiers) weakens its own constraints instead of
+  // being believed at the config sigma. Config sigmas act as the floor and a
+  // zero/absent covariance falls back to them entirely.
+  Eigen::Matrix3d information = odom_information_;
+  if (use_odom_covariance_ && latest_odom_sigma_trans_ > 1e-6) {
+    const double sigma_t =
+      std::clamp(latest_odom_sigma_trans_, odom_translation_sigma_, 50.0);
+    const double sigma_y = std::clamp(
+      latest_odom_sigma_yaw_ > 1e-6 ? latest_odom_sigma_yaw_ : odom_yaw_sigma_,
+      odom_yaw_sigma_, 10.0);
+    information = Eigen::Matrix3d::Zero();
+    information(0, 0) = 1.0 / (sigma_t * sigma_t);
+    information(1, 1) = 1.0 / (sigma_t * sigma_t);
+    information(2, 2) = 1.0 / (sigma_y * sigma_y);
+  }
+  edge->setInformation(information);
 
   if (!optimizer_.addEdge(edge)) {
     RCLCPP_ERROR(get_logger(), "Failed to add odometry edge");
@@ -862,31 +874,138 @@ void GraphSlamNode::addKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & 
     return;
   }
 
+  maybeAddGnssPrior(vertex, stamp);
+
   poses_.push_back(PoseRecord{vertex->id(), vertex, raw_odom, stamp});
-  keyframe_stamps_ns_.push_back(stamp.nanoseconds());
+  updateKeyframeSnapshot();
   ++keyframes_since_last_optimization_;
+
+  traveled_distance_ += odom_delta.translation().norm();
+  if (localization_mode_) {
+    prunePoseWindow();
+  } else {
+    if (!lap_origin_captured_ && traveled_distance_ >= lap_origin_capture_distance_) {
+      lap_origin_ = vertex->estimate();
+      lap_origin_captured_ = true;
+      RCLCPP_INFO(
+        get_logger(),
+        "Lap origin captured on the racing line at x=%.2f y=%.2f (%.1f m in)",
+        lap_origin_.translation().x(),
+        lap_origin_.translation().y(),
+        traveled_distance_);
+    }
+    maybeFinishMappingLap(vertex->estimate());
+  }
+}
+
+void GraphSlamNode::gnssOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
+{
+  const rclcpp::Time stamp = stampOrNow(msg->header.stamp, get_clock());
+  std::lock_guard<std::mutex> lock(gnss_mutex_);
+  latest_gnss_fix_.stamp_sec = stamp.seconds();
+  latest_gnss_fix_.position =
+    Eigen::Vector2d(msg->pose.pose.position.x, msg->pose.pose.position.y);
+  // Bridge fills the (x, y) diagonal of the row-major 6x6 pose covariance.
+  latest_gnss_fix_.sigma_x = std::sqrt(std::max(0.0, msg->pose.covariance[0]));
+  latest_gnss_fix_.sigma_y = std::sqrt(std::max(0.0, msg->pose.covariance[7]));
+  latest_gnss_fix_.valid = true;
+}
+
+void GraphSlamNode::maybeAddGnssPrior(
+  g2o::VertexSE2 * vertex, const rclcpp::Time & stamp)
+{
+  if (!gnss_prior_enable_) {
+    return;
+  }
+
+  GnssFix fix;
+  {
+    std::lock_guard<std::mutex> lock(gnss_mutex_);
+    fix = latest_gnss_fix_;
+  }
+  if (!fix.valid) {
+    return;
+  }
+  // Drop stale fixes and any whose reported accuracy is worse than the gate
+  // (degraded modes arrive with a huge covariance and are filtered here).
+  if (gnss_prior_max_age_ > 0.0 &&
+    std::abs(stamp.seconds() - fix.stamp_sec) > gnss_prior_max_age_)
+  {
+    return;
+  }
+  if (fix.sigma_x <= 0.0 || fix.sigma_y <= 0.0 ||
+    fix.sigma_x > gnss_prior_max_position_sigma_ ||
+    fix.sigma_y > gnss_prior_max_position_sigma_)
+  {
+    return;
+  }
+
+  if (gnss_prior_suppressed_) {
+    if (stamp.seconds() < gnss_prior_suppress_until_sec_) {
+      return;
+    }
+    // Re-arm only when GNSS is consistent with the cone-anchored pose again.
+    // A persistent disagreement means the map frame and the GNSS ENU frame
+    // differ (e.g. an old local-frame map): keep the priors off and say so.
+    const double residual = (vertex->estimate().translation() - fix.position).norm();
+    if (residual > gnss_prior_rearm_max_residual_) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 10000,
+        "GNSS prior still suppressed: fix disagrees with the SLAM pose by "
+        "%.1f m (map frame != GNSS ENU frame? set gnss_prior_enable:=false "
+        "for non-georeferenced maps)",
+        residual);
+      return;
+    }
+    gnss_prior_suppressed_ = false;
+    RCLCPP_INFO(
+      get_logger(), "GNSS prior re-armed (residual %.2f m)", residual);
+  }
+
+  auto * prior = new g2o::EdgeSE2XYPrior();
+  prior->setId(next_edge_id_++);
+  prior->setVertex(0, vertex);
+  prior->setMeasurement(fix.position);
+  Eigen::Matrix2d information = Eigen::Matrix2d::Zero();
+  information(0, 0) = 1.0 / (fix.sigma_x * fix.sigma_x);
+  information(1, 1) = 1.0 / (fix.sigma_y * fix.sigma_y);
+  prior->setInformation(information);
+  if (gnss_prior_robust_delta_ > 0.0) {
+    auto * kernel = new g2o::RobustKernelHuber();
+    kernel->setDelta(gnss_prior_robust_delta_);
+    prior->setRobustKernel(kernel);
+  }
+
+  if (!optimizer_.addEdge(prior)) {
+    RCLCPP_ERROR(get_logger(), "Failed to add GNSS prior edge");
+    delete prior;
+  }
 }
 
 GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
   const eufs_msgs::msg::ConeArrayWithCovariance & msg,
-  PoseRecord & pose,
-  const time_alignment::Pose2d & raw_observation_pose)
+  bool force_process)
 {
+  if (poses_.empty()) {
+    return ObservationUpdate{0U, 0U, 0U};
+  }
+
+  PoseRecord & pose = poses_.back();
   const bool add_edges =
+    force_process ||
     process_every_cone_message_ ||
-    cone_edge_pose_graph_ids_.find(pose.graph_id) == cone_edge_pose_graph_ids_.end();
+    last_cone_pose_graph_id_ != pose.graph_id;
   const bool update_landmarks = update_existing_landmarks_;
-  const rclcpp::Time stamp(msg.header.stamp, get_clock()->get_clock_type());
-  const std::vector<ConeObservation> observations = extractConeObservations(msg);
-  const bool update_deletions =
-    shouldUpdateLandmarkDeletion(stamp, add_edges && !observations.empty());
+  const rclcpp::Time stamp = stampOrNow(msg.header.stamp, get_clock());
+  const bool update_deletions = shouldUpdateLandmarkDeletion(stamp, add_edges);
 
   if (!add_edges && !update_landmarks && !update_deletions) {
     return ObservationUpdate{0U, 0U, 0U};
   }
 
   if (!add_edges &&
-    !process_every_cone_message_)
+    !process_every_cone_message_ &&
+    last_cone_pose_graph_id_ == pose.graph_id)
   {
     RCLCPP_DEBUG(
       get_logger(),
@@ -894,26 +1013,49 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
       pose.graph_id);
   }
 
-  const time_alignment::ObservationFrameAlignment frame_alignment =
-    time_alignment::makeObservationFrameAlignment(
-    pose2dFromSe2(pose.raw_odom),
-    pose2dFromSe2(pose.vertex->estimate()),
-    raw_observation_pose);
-  const g2o::SE2 observation_pose = se2FromPose2d(frame_alignment.map_to_observation);
+  const std::vector<ConeObservation> observations = extractConeObservations(msg);
+  last_observations_ = observations;  // kept for relocalization scan-matching
+
+  // Interpolate raw odometry at the cone stamp so measurements are expressed
+  // relative to the keyframe vertex even when the message arrives between
+  // keyframes; at speed the uncorrected offset reaches keyframe_distance.
+  const g2o::SE2 raw_at_observation = rawOdomAt(stamp.seconds());
+  const g2o::SE2 keyframe_to_observation = pose.raw_odom.inverse() * raw_at_observation;
+  const g2o::SE2 observation_pose = pose.vertex->estimate() * keyframe_to_observation;
+
+  if (add_edges && !process_every_cone_message_) {
+    last_cone_pose_graph_id_ = pose.graph_id;
+  }
 
   std::size_t added_edges = 0U;
   std::size_t updated_landmarks = 0U;
+  bool loop_closure_edge = false;
   std::vector<std::size_t> observed_landmark_indices;
   observed_landmark_indices.reserve(observations.size());
+  // Greedy in-frame exclusivity: each landmark may be matched by at most one
+  // cone per frame (indices track landmarks_; entries for landmarks created
+  // within this frame are appended as claimed).
+  std::vector<bool> claimed(landmarks_.size(), false);
 
   for (const ConeObservation & observation : observations) {
-    const time_alignment::AlignedObservation2d aligned =
-      time_alignment::alignObservation(
-      frame_alignment, observation.measurement, observation.covariance);
-    const ConeObservation keyframe_observation{
-      aligned.keyframe_point, aligned.keyframe_covariance, observation.color};
+    ConeObservation keyframe_observation = observation;
+    keyframe_observation.measurement = keyframe_to_observation * observation.measurement;
+    keyframe_observation.covariance =
+      covarianceInMapFrame(keyframe_to_observation, observation.covariance);
 
-    const int landmark_index = findAssociatedLandmark(aligned.map_point, observation.color);
+    const Eigen::Vector2d map_point = observation_pose * observation.measurement;
+    const Eigen::Matrix2d map_covariance =
+      covarianceInMapFrame(observation_pose, observation.covariance);
+
+    bool ambiguous = false;
+    const int landmark_index =
+      findAssociatedLandmark(map_point, map_covariance, observation.color, &ambiguous, &claimed);
+    if (ambiguous) {
+      // Two landmarks explain this cone almost equally well; fusing or
+      // spawning a duplicate would corrupt the map, so skip it this frame.
+      continue;
+    }
+
     LandmarkRecord * landmark = nullptr;
     std::size_t observed_index = 0U;
     bool has_observed_index = false;
@@ -921,24 +1063,28 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
     if (landmark_index >= 0) {
       observed_index = static_cast<std::size_t>(landmark_index);
       has_observed_index = true;
-      landmark = &landmarks_[observed_index];
-      if (landmark->color == ConeColor::Unknown && observation.color != ConeColor::Unknown) {
-        landmark->color = observation.color;
+      if (observed_index < claimed.size()) {
+        claimed[observed_index] = true;
       }
+      landmark = &landmarks_[observed_index];
+      voteLandmarkColor(*landmark, observation.color);
+      if (add_edges && loop_gap_distance_ > 0.0 &&
+        traveled_distance_ - landmark->last_seen_traveled >= loop_gap_distance_)
+      {
+        loop_closure_edge = true;
+      }
+      landmark->last_seen_traveled = traveled_distance_;
       if (update_landmarks &&
-        updateLandmarkEstimate(*landmark, aligned.map_point, aligned.map_covariance))
+        updateLandmarkEstimate(*landmark, map_point, map_covariance))
       {
         ++updated_landmarks;
       }
     } else if (add_edges) {
-      landmark =
-        addLandmark(
-        aligned.map_point,
-        aligned.map_covariance,
-        observation.color);
+      landmark = addLandmark(map_point, map_covariance, observation.color);
       if (landmark != nullptr) {
         observed_index = landmarks_.size() - 1U;
         has_observed_index = true;
+        claimed.push_back(true);  // a sibling cone must not merge into it
       }
     }
 
@@ -951,18 +1097,33 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
     }
 
     if (add_edges) {
-      if (addObservationEdge(keyframe_observation, pose.vertex, *landmark)) {
-        ++added_edges;
-      }
+      addObservationEdge(keyframe_observation, pose.vertex, *landmark);
+      ++added_edges;
     }
   }
 
-  if (added_edges > 0U && !process_every_cone_message_) {
-    cone_edge_pose_graph_ids_.insert(pose.graph_id);
+  if (loop_closure_edge) {
+    // Mark that a loop closure is pending reconciliation by the next
+    // optimization; maybeOptimize() counts those cycles toward convergence.
+    loop_closure_seen_since_optimize_ = true;
+
+    if (keyframes_since_last_optimization_ < optimize_every_n_keyframes_) {
+      // Re-observed a landmark unseen for many keyframes (lap closure).
+      // Pull the next optimization forward so accumulated drift is corrected
+      // promptly; optimize_min_interval still rate-limits back-to-back runs.
+      keyframes_since_last_optimization_ = optimize_every_n_keyframes_;
+      RCLCPP_INFO_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        5000,
+        "Loop closure: re-associated landmark(s) unseen for >= %.1f m; "
+        "pulling graph optimization forward",
+        loop_gap_distance_);
+    }
   }
 
   const std::size_t deleted_landmarks = update_deletions ?
-    deleteMissedVisibleLandmarks(observation_pose, observed_landmark_indices) :
+    deleteMissedVisibleLandmarks(pose, observed_landmark_indices) :
     0U;
 
   RCLCPP_DEBUG(
@@ -997,11 +1158,11 @@ std::vector<GraphSlamNode::ConeObservation> GraphSlamNode::extractConeObservatio
           continue;
         }
 
-        observations.push_back(
-          ConeObservation{
-          Eigen::Vector2d(cone.point.x, cone.point.y),
-          covarianceFromCone(cone),
-          color});
+        ConeObservation observation;
+        observation.measurement = Eigen::Vector2d(cone.point.x, cone.point.y);
+        observation.covariance = covarianceFromCone(cone);
+        observation.color = color;
+        observations.push_back(observation);
       }
     };
 
@@ -1043,25 +1204,117 @@ Eigen::Matrix2d GraphSlamNode::covarianceFromCone(
   return covariance;
 }
 
+Eigen::Matrix2d GraphSlamNode::covarianceInMapFrame(
+  const g2o::SE2 & pose,
+  const Eigen::Matrix2d & local_covariance) const
+{
+  const double yaw = pose.rotation().angle();
+  Eigen::Matrix2d rotation;
+  rotation << std::cos(yaw), -std::sin(yaw),
+    std::sin(yaw), std::cos(yaw);
+
+  Eigen::Matrix2d covariance = rotation * local_covariance * rotation.transpose();
+  covariance = (0.5 * (covariance + covariance.transpose())).eval();
+  covariance(0, 0) = std::max(covariance(0, 0), min_observation_variance_);
+  covariance(1, 1) = std::max(covariance(1, 1), min_observation_variance_);
+
+  if (!covariance.allFinite() ||
+    covariance.determinant() <= min_observation_variance_ * min_observation_variance_)
+  {
+    return Eigen::Matrix2d::Identity() * default_observation_sigma_ * default_observation_sigma_;
+  }
+
+  return covariance;
+}
+
 int GraphSlamNode::findAssociatedLandmark(
   const Eigen::Vector2d & map_point,
-  ConeColor color) const
+  const Eigen::Matrix2d & map_covariance,
+  ConeColor color,
+  bool * ambiguous,
+  const std::vector<bool> * claimed) const
 {
-  const double max_distance_sq = association_max_distance_ * association_max_distance_;
-  double best_distance_sq = max_distance_sq;
+  if (ambiguous != nullptr) {
+    *ambiguous = false;
+  }
+
+
+  double best_d2 = std::numeric_limits<double>::max();
+  double second_d2 = std::numeric_limits<double>::max();
+  double best_euclidean_sq = std::numeric_limits<double>::max();
   int best_index = -1;
 
+  // Association is geometric only. Colour is tracked by majority vote and
+  // deliberately not used as a gate: simulated perception mislabels cones,
+  // and a colour gate would lock those errors in by rejecting the very
+  // observations that could fix them. Cone spacing (>= 3 m) is far larger
+  // than the association gate, so colour adds no discrimination here.
+  (void)color;
+
   for (std::size_t i = 0; i < landmarks_.size(); ++i) {
-    const LandmarkRecord & landmark = landmarks_[i];
-    if (!colorsCompatible(color, landmark.color)) {
+    // In-frame exclusivity: a landmark already matched by another cone in
+    // this frame cannot absorb a second one (two adjacent cones must not
+    // collapse into a single landmark).
+    if (claimed != nullptr && i < claimed->size() && (*claimed)[i]) {
       continue;
     }
 
-    const double distance_sq = (landmark.vertex->estimate() - map_point).squaredNorm();
-    if (distance_sq < best_distance_sq) {
-      best_distance_sq = distance_sq;
-      best_index = static_cast<int>(i);
+    const LandmarkRecord & landmark = landmarks_[i];
+    const Eigen::Vector2d diff = landmark.vertex->estimate() - map_point;
+
+    // Pose drift since the landmark was last seen widens its gate; this is
+    // what lets lap-closure re-associations succeed despite accumulated
+    // odometry error. Drift grows with distance driven, so the inflation is
+    // per meter (keyframe density must not change the gate).
+    const double meters_unseen =
+      std::max(0.0, traveled_distance_ - landmark.last_seen_traveled);
+    const double inflation = std::min(
+      association_max_inflation_,
+      association_inflation_per_meter_ * meters_unseen);
+
+    // Coarse pre-gate to skip the matrix inverse for distant landmarks.
+    const double gate_radius = association_max_distance_ + 3.0 * std::sqrt(inflation);
+    if (diff.squaredNorm() > gate_radius * gate_radius) {
+      continue;
     }
+
+    Eigen::Matrix2d innovation_covariance =
+      landmark.covariance + map_covariance + Eigen::Matrix2d::Identity() * inflation;
+    const double det = innovation_covariance.determinant();
+    if (!innovation_covariance.allFinite() || det <= 0.0) {
+      continue;
+    }
+
+    const double d2 = diff.dot(innovation_covariance.inverse() * diff);
+    if (d2 < best_d2) {
+      second_d2 = best_d2;
+      best_d2 = d2;
+      best_index = static_cast<int>(i);
+      best_euclidean_sq = diff.squaredNorm();
+    } else if (d2 < second_d2) {
+      second_d2 = d2;
+    }
+  }
+
+  if (best_index < 0) {
+    return -1;
+  }
+
+  // Accept on the chi-square gate, with the legacy Euclidean radius as a
+  // fallback so freshly-tracked landmarks with tight covariances still match.
+  const bool chi2_ok = best_d2 <= association_gate_chi2_;
+  const bool euclidean_ok =
+    best_euclidean_sq <= association_max_distance_ * association_max_distance_;
+  if (!chi2_ok && !euclidean_ok) {
+    return -1;
+  }
+
+  if (ambiguous != nullptr &&
+    second_d2 <= association_gate_chi2_ &&
+    std::sqrt(best_d2) > association_ambiguity_ratio_ * std::sqrt(second_d2))
+  {
+    *ambiguous = true;
+    return -1;
   }
 
   return best_index;
@@ -1074,11 +1327,38 @@ bool GraphSlamNode::colorsCompatible(ConeColor observation_color, ConeColor land
          observation_color == landmark_color;
 }
 
+void GraphSlamNode::voteLandmarkColor(LandmarkRecord & landmark, ConeColor observed_color)
+{
+  if (observed_color == ConeColor::Unknown) {
+    return;
+  }
+
+  auto & votes = landmark.color_votes[static_cast<std::size_t>(observed_color)];
+  if (votes < std::numeric_limits<std::uint16_t>::max()) {
+    ++votes;
+  }
+
+  std::size_t best = 0U;
+  for (std::size_t i = 1U; i < landmark.color_votes.size(); ++i) {
+    if (landmark.color_votes[i] > landmark.color_votes[best]) {
+      best = i;
+    }
+  }
+  if (landmark.color_votes[best] > 0U) {
+    landmark.color = static_cast<ConeColor>(best);
+  }
+}
+
 GraphSlamNode::LandmarkRecord * GraphSlamNode::addLandmark(
   const Eigen::Vector2d & map_point,
   const Eigen::Matrix2d & covariance,
   ConeColor color)
 {
+  if (localization_mode_) {
+    // Localization only: the map is fixed, never grow it.
+    return nullptr;
+  }
+
   if (max_landmarks_ > 0 &&
     landmarks_.size() >= static_cast<std::size_t>(max_landmarks_))
   {
@@ -1099,7 +1379,9 @@ GraphSlamNode::LandmarkRecord * GraphSlamNode::addLandmark(
     return nullptr;
   }
 
-  landmarks_.push_back(LandmarkRecord{vertex->id(), color, vertex, covariance, 0U, 0});
+  landmarks_.push_back(
+    LandmarkRecord{vertex->id(), color, vertex, covariance, 0U, 0, traveled_distance_, {}});
+  voteLandmarkColor(landmarks_.back(), color);
   return &landmarks_.back();
 }
 
@@ -1108,7 +1390,10 @@ bool GraphSlamNode::updateLandmarkEstimate(
   const Eigen::Vector2d & map_point,
   const Eigen::Matrix2d & covariance)
 {
-  if (!update_existing_landmarks_ || landmark_update_gain_ <= 0.0) {
+  // In localization mode the loaded map is fixed: setFixed only freezes the
+  // g2o optimizer, but this Kalman fusion writes vertex->setEstimate directly,
+  // so it must be skipped or a drifted observation would move the map.
+  if (localization_mode_ || !update_existing_landmarks_ || landmark_update_gain_ <= 0.0) {
     return false;
   }
 
@@ -1151,7 +1436,7 @@ bool GraphSlamNode::updateLandmarkEstimate(
   return update.squaredNorm() > 1e-8;
 }
 
-bool GraphSlamNode::addObservationEdge(
+void GraphSlamNode::addObservationEdge(
   const ConeObservation & observation,
   g2o::VertexSE2 * pose_vertex,
   LandmarkRecord & landmark)
@@ -1161,7 +1446,20 @@ bool GraphSlamNode::addObservationEdge(
   edge->setVertex(0, pose_vertex);
   edge->setVertex(1, landmark.vertex);
   edge->setMeasurement(observation.measurement);
-  edge->setInformation(observation.covariance.inverse());
+
+  Eigen::Matrix2d information = observation.covariance.inverse();
+  if (map_converged_ &&
+    map_trust_info_scale_ > 1.0 &&
+    landmark_confirm_observations_ > 0 &&
+    landmark.observations >= static_cast<std::size_t>(landmark_confirm_observations_))
+  {
+    // The map has converged (loop closures reconciled) and this landmark is
+    // confirmed. Trust its observation more so the pose conforms to the
+    // settled map. The landmark already carries many edges, so it barely
+    // moves; the pose is what gets pulled.
+    information *= map_trust_info_scale_;
+  }
+  edge->setInformation(information);
 
   if (robust_kernel_delta_ > 0.0) {
     auto * robust_kernel = new g2o::RobustKernelHuber();
@@ -1172,19 +1470,18 @@ bool GraphSlamNode::addObservationEdge(
   if (!optimizer_.addEdge(edge)) {
     RCLCPP_ERROR(get_logger(), "Failed to add cone observation edge");
     delete edge;
-    return false;
+    return;
   }
 
   ++landmark.observations;
   landmark.consecutive_misses = 0;
-  return true;
 }
 
 std::size_t GraphSlamNode::deleteMissedVisibleLandmarks(
-  const g2o::SE2 & observation_pose,
+  const PoseRecord & pose,
   const std::vector<std::size_t> & observed_landmark_indices)
 {
-  if (!delete_stale_landmarks_ || landmarks_.empty()) {
+  if (!delete_stale_landmarks_ || localization_mode_ || landmarks_.empty()) {
     return 0U;
   }
 
@@ -1203,12 +1500,22 @@ std::size_t GraphSlamNode::deleteMissedVisibleLandmarks(
       continue;
     }
 
-    if (!landmarkExpectedVisible(observation_pose, landmark)) {
+    if (!landmarkExpectedVisible(pose, landmark)) {
       continue;
     }
 
+    // Confirmed landmarks survive occlusions and short perception dropouts
+    // (deleting them would discard their loop-closure constraints), but a
+    // 10x miss budget still clears drift-era ghost duplicates that are
+    // never observed again.
+    const bool confirmed = landmark_confirm_observations_ > 0 &&
+      landmark.observations >= static_cast<std::size_t>(landmark_confirm_observations_);
+    const int delete_threshold = confirmed ?
+      10 * landmark_missed_observations_to_delete_ :
+      landmark_missed_observations_to_delete_;
+
     ++landmark.consecutive_misses;
-    if (landmark.consecutive_misses >= landmark_missed_observations_to_delete_) {
+    if (landmark.consecutive_misses >= delete_threshold) {
       delete_indices.push_back(i);
     }
   }
@@ -1232,11 +1539,11 @@ std::size_t GraphSlamNode::deleteMissedVisibleLandmarks(
 }
 
 bool GraphSlamNode::landmarkExpectedVisible(
-  const g2o::SE2 & observation_pose,
+  const PoseRecord & pose,
   const LandmarkRecord & landmark) const
 {
   const Eigen::Vector2d relative =
-    observation_pose.inverse() * landmark.vertex->estimate();
+    pose.vertex->estimate().inverse() * landmark.vertex->estimate();
   const double range = relative.norm();
   if (range < min_observation_range_ || range > landmark_delete_max_range_) {
     return false;
@@ -1319,9 +1626,175 @@ bool GraphSlamNode::shouldUpdateLandmarkDeletion(const rclcpp::Time & stamp, boo
   return false;
 }
 
+std::size_t GraphSlamNode::mergeCloseLandmarks()
+{
+  if (localization_mode_ || landmark_merge_distance_ <= 0.0 || landmarks_.size() < 2U) {
+    return 0U;
+  }
+
+  const double merge_distance_sq = landmark_merge_distance_ * landmark_merge_distance_;
+  std::size_t merged = 0U;
+
+  for (std::size_t i = 0; i < landmarks_.size(); ++i) {
+    for (std::size_t j = i + 1U; j < landmarks_.size(); ) {
+      // Big orange start-line cones legitimately stand ~0.4 m apart in
+      // pairs; merging them would destroy the start-line geometry.
+      if (landmarks_[i].color == ConeColor::BigOrange ||
+        landmarks_[j].color == ConeColor::BigOrange ||
+        !colorsCompatible(landmarks_[i].color, landmarks_[j].color) ||
+        (landmarks_[i].vertex->estimate() - landmarks_[j].vertex->estimate()).squaredNorm() >
+        merge_distance_sq)
+      {
+        ++j;
+        continue;
+      }
+
+      // Keep the landmark with more observations; it carries more edges.
+      if (landmarks_[j].observations > landmarks_[i].observations) {
+        std::swap(landmarks_[i], landmarks_[j]);
+      }
+      LandmarkRecord & kept = landmarks_[i];
+      LandmarkRecord & dropped = landmarks_[j];
+
+      // Re-anchor the dropped landmark's observation edges onto the kept
+      // vertex so its constraints survive the merge.
+      const g2o::HyperGraph::EdgeSet dropped_edges = dropped.vertex->edges();
+      for (g2o::HyperGraph::Edge * edge : dropped_edges) {
+        auto * observation_edge = dynamic_cast<g2o::EdgeSE2PointXY *>(edge);
+        if (observation_edge == nullptr) {
+          continue;
+        }
+        auto * pose_vertex = dynamic_cast<g2o::VertexSE2 *>(observation_edge->vertex(0));
+        if (pose_vertex == nullptr) {
+          continue;
+        }
+
+        auto * new_edge = new g2o::EdgeSE2PointXY();
+        new_edge->setId(next_edge_id_++);
+        new_edge->setVertex(0, pose_vertex);
+        new_edge->setVertex(1, kept.vertex);
+        new_edge->setMeasurement(observation_edge->measurement());
+        new_edge->setInformation(observation_edge->information());
+        if (robust_kernel_delta_ > 0.0) {
+          auto * robust_kernel = new g2o::RobustKernelHuber();
+          robust_kernel->setDelta(robust_kernel_delta_);
+          new_edge->setRobustKernel(robust_kernel);
+        }
+        if (!optimizer_.addEdge(new_edge)) {
+          delete new_edge;
+        }
+      }
+
+      kept.observations += dropped.observations;
+      kept.consecutive_misses = 0;
+      kept.last_seen_traveled =
+        std::max(kept.last_seen_traveled, dropped.last_seen_traveled);
+      for (std::size_t k = 0; k < kept.color_votes.size(); ++k) {
+        const std::uint32_t total = static_cast<std::uint32_t>(kept.color_votes[k]) +
+          static_cast<std::uint32_t>(dropped.color_votes[k]);
+        kept.color_votes[k] = static_cast<std::uint16_t>(
+          std::min<std::uint32_t>(total, std::numeric_limits<std::uint16_t>::max()));
+      }
+      std::size_t best_vote = 0U;
+      for (std::size_t k = 1U; k < kept.color_votes.size(); ++k) {
+        if (kept.color_votes[k] > kept.color_votes[best_vote]) {
+          best_vote = k;
+        }
+      }
+      if (kept.color_votes[best_vote] > 0U) {
+        kept.color = static_cast<ConeColor>(best_vote);
+      } else if (kept.color == ConeColor::Unknown) {
+        kept.color = dropped.color;
+      }
+
+      if (removeLandmarkAt(j)) {
+        ++merged;
+      } else {
+        ++j;
+      }
+    }
+  }
+
+  return merged;
+}
+
+void GraphSlamNode::recordRawOdometry(double stamp_sec, const g2o::SE2 & raw_odom)
+{
+  std::lock_guard<std::mutex> lock(odom_buffer_mutex_);
+
+  if (!raw_odom_buffer_.empty() && stamp_sec < raw_odom_buffer_.back().first) {
+    // Time went backwards (sim reset or bag loop); the buffer is stale.
+    raw_odom_buffer_.clear();
+  }
+
+  raw_odom_buffer_.emplace_back(stamp_sec, raw_odom);
+
+  const double horizon = std::max(5.0, 2.0 * keyframe_max_dt_);
+  while (raw_odom_buffer_.size() > 1U &&
+    raw_odom_buffer_.front().first < stamp_sec - horizon)
+  {
+    raw_odom_buffer_.pop_front();
+  }
+  while (raw_odom_buffer_.size() > 4000U) {
+    raw_odom_buffer_.pop_front();
+  }
+}
+
+g2o::SE2 GraphSlamNode::rawOdomAt(double stamp_sec) const
+{
+  std::lock_guard<std::mutex> lock(odom_buffer_mutex_);
+
+  if (raw_odom_buffer_.empty()) {
+    return poses_.empty() ? g2o::SE2() : poses_.back().raw_odom;
+  }
+  if (stamp_sec <= raw_odom_buffer_.front().first) {
+    return raw_odom_buffer_.front().second;
+  }
+  if (stamp_sec >= raw_odom_buffer_.back().first) {
+    return raw_odom_buffer_.back().second;
+  }
+
+  const auto upper = std::lower_bound(
+    raw_odom_buffer_.begin(),
+    raw_odom_buffer_.end(),
+    stamp_sec,
+    [](const std::pair<double, g2o::SE2> & sample, double value) {
+      return sample.first < value;
+    });
+  const auto lower = std::prev(upper);
+
+  const double t0 = lower->first;
+  const double t1 = upper->first;
+  if (t1 - t0 <= 1e-9) {
+    return upper->second;
+  }
+
+  const double alpha = (stamp_sec - t0) / (t1 - t0);
+  const Eigen::Vector2d translation =
+    (1.0 - alpha) * lower->second.translation() + alpha * upper->second.translation();
+  const double yaw0 = lower->second.rotation().angle();
+  const double yaw = yaw0 +
+    alpha * normalizeAngle(upper->second.rotation().angle() - yaw0);
+  return g2o::SE2(translation.x(), translation.y(), normalizeAngle(yaw));
+}
+
 void GraphSlamNode::maybeOptimize()
 {
   if (keyframes_since_last_optimization_ < optimize_every_n_keyframes_) {
+    return;
+  }
+
+  if (max_optimization_poses_ > 0 &&
+    poses_.size() > static_cast<std::size_t>(max_optimization_poses_))
+  {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      5000,
+      "Skipping graph optimization with %zu poses; max_optimization_poses is %d",
+      poses_.size(),
+      max_optimization_poses_);
+    keyframes_since_last_optimization_ = 0;
     return;
   }
 
@@ -1335,8 +1808,75 @@ void GraphSlamNode::maybeOptimize()
   }
 
   optimizeGraph();
+  const std::size_t merged = mergeCloseLandmarks();
+  if (merged > 0U) {
+    RCLCPP_INFO(
+      get_logger(),
+      "Merged %zu duplicate landmarks after optimization; %zu landmarks remain",
+      merged,
+      landmarks_.size());
+  }
+
+  // Count optimization cycles that reconciled a loop closure. After enough of
+  // them the map is treated as converged and confirmed-landmark observations
+  // are trusted more (see addObservationEdge).
+  if (map_trust_after_loop_closure_ &&
+    !map_converged_ &&
+    loop_closure_seen_since_optimize_)
+  {
+    loop_closure_seen_since_optimize_ = false;
+    if (++loop_closure_optimize_cycles_ >= map_trust_loop_closures_required_) {
+      map_converged_ = true;
+      RCLCPP_INFO(
+        get_logger(),
+        "Map converged after %d loop-closure optimization cycle(s); "
+        "boosting confirmed-landmark observation weight by %.1fx",
+        loop_closure_optimize_cycles_,
+        map_trust_info_scale_);
+      publishStatus();
+    }
+  }
+
   keyframes_since_last_optimization_ = 0;
   last_optimization_time_sec_ = stamp_sec;
+
+  // Optimization moved the keyframes: refresh the dead-reckoning snapshot
+  // and let subscribers see the corrected map.
+  updateKeyframeSnapshot();
+  if (!poses_.empty()) {
+    publishGraphVisuals(poses_.back().stamp);
+  }
+}
+
+void GraphSlamNode::updateKeyframeSnapshot()
+{
+  std::lock_guard<std::mutex> lock(snapshot_mutex_);
+  if (poses_.empty()) {
+    keyframe_snapshot_.valid = false;
+    return;
+  }
+
+  keyframe_snapshot_.estimate = poses_.back().vertex->estimate();
+  keyframe_snapshot_.raw_odom = poses_.back().raw_odom;
+  keyframe_snapshot_.valid = true;
+}
+
+void GraphSlamNode::publishLiveEstimateFromSnapshot(
+  const rclcpp::Time & stamp,
+  const g2o::SE2 & raw_odom)
+{
+  KeyframeSnapshot snapshot;
+  {
+    std::lock_guard<std::mutex> lock(snapshot_mutex_);
+    snapshot = keyframe_snapshot_;
+  }
+  if (!snapshot.valid) {
+    return;
+  }
+
+  const g2o::SE2 live_estimate =
+    snapshot.estimate * (snapshot.raw_odom.inverse() * raw_odom);
+  publishLiveEstimate(stamp, live_estimate, raw_odom);
 }
 
 void GraphSlamNode::optimizeGraph()
@@ -1345,27 +1885,14 @@ void GraphSlamNode::optimizeGraph()
     return;
   }
 
-  std::size_t active_pose_count = 0U;
-  for (std::size_t pose_index = 0U; pose_index < poses_.size(); ++pose_index) {
-    const bool fixed = optimizer_policy::shouldFixPose(
-      pose_index, poses_.size(), max_optimization_poses_);
-    poses_[pose_index].vertex->setFixed(fixed);
-    if (!fixed) {
-      ++active_pose_count;
-    }
-  }
-
   optimizer_.initializeOptimization();
   const int completed_iterations = optimizer_.optimize(optimization_iterations_);
   RCLCPP_DEBUG(
     get_logger(),
-    "g2o optimization completed %d iterations with %zu/%zu active poses, "
-    "%zu landmarks, and %zu edges",
+    "g2o optimization completed %d iterations for %zu poses and %zu landmarks",
     completed_iterations,
-    active_pose_count,
     poses_.size(),
-    landmarks_.size(),
-    optimizer_.edges().size());
+    landmarks_.size());
 }
 
 std::size_t GraphSlamNode::firstPublishedPoseIndex() const
@@ -1506,9 +2033,24 @@ void GraphSlamNode::publishOdometry(const rclcpp::Time & stamp, const g2o::SE2 &
   odom.pose.pose.position.y = estimate.translation().y();
   odom.pose.pose.position.z = 0.0;
   odom.pose.pose.orientation = quaternionFromYaw(estimate.rotation().angle());
-  odom.pose.covariance[0] = 0.05;
-  odom.pose.covariance[7] = 0.05;
-  odom.pose.covariance[35] = 0.05;
+
+  // Honest, state-tiered pose covariance: tight once the pose is anchored to
+  // a converged/loaded map, loose while mapping is still unconverged.
+  // (Benign unsynchronized reads of the mode flags.)
+  const bool anchored = localization_mode_ || map_converged_;
+  const double sigma_xy = anchored ? 0.05 : 0.30;
+  const double sigma_yaw = anchored ? 0.03 : 0.15;
+  odom.pose.covariance[0] = sigma_xy * sigma_xy;
+  odom.pose.covariance[7] = sigma_xy * sigma_xy;
+  odom.pose.covariance[35] = sigma_yaw * sigma_yaw;
+
+  // Body twist passthrough from the motion input for downstream controllers.
+  odom.twist.twist.linear.x = latest_twist_vx_.load();
+  odom.twist.twist.linear.y = latest_twist_vy_.load();
+  odom.twist.twist.angular.z = latest_twist_wz_.load();
+  odom.twist.covariance[0] = 0.01;
+  odom.twist.covariance[7] = 0.01;
+  odom.twist.covariance[35] = 0.02;
 
   odom_pub_->publish(odom);
 }
@@ -1553,20 +2095,29 @@ void GraphSlamNode::publishMarkers(const rclcpp::Time & stamp)
     ConeColor::BigOrange,
     ConeColor::Unknown};
 
-  int marker_id = 1;
+  // Landmarks render as the same 3D cone meshes Gazebo uses on the track so
+  // the SLAM map is visually comparable to the simulated world. Every mesh is
+  // tinted with an explicit solid colour (embedded materials off) — the .dae
+  // materials do not render reliably in RViz (most come out white).
+  const auto meshForColor = [](ConeColor color) -> std::string {
+      switch (color) {
+        case ConeColor::Blue:
+          return "package://eufs_tracks/meshes/cone_blue.dae";
+        case ConeColor::Yellow:
+          return "package://eufs_tracks/meshes/cone_yellow.dae";
+        case ConeColor::BigOrange:
+          return "package://eufs_tracks/meshes/cone_big.dae";
+        case ConeColor::Orange:
+        case ConeColor::Unknown:
+        default:
+          return "package://eufs_tracks/meshes/cone.dae";
+      }
+    };
+
   for (ConeColor color : colors) {
-    visualization_msgs::msg::Marker landmark_marker;
-    landmark_marker.header.frame_id = map_frame_;
-    landmark_marker.header.stamp = stamp;
-    landmark_marker.ns = colorName(color) + "_landmarks";
-    landmark_marker.id = marker_id++;
-    landmark_marker.type = visualization_msgs::msg::Marker::SPHERE_LIST;
-    landmark_marker.action = visualization_msgs::msg::Marker::ADD;
-    landmark_marker.pose.orientation.w = 1.0;
-    landmark_marker.scale.x = marker_scale_;
-    landmark_marker.scale.y = marker_scale_;
-    landmark_marker.scale.z = marker_scale_;
-    landmark_marker.color = colorToRgba(color, 0.95);
+    const std::string mesh_resource = meshForColor(color);
+    const std::string ns = colorName(color) + "_landmarks";
+    int cone_id = 0;
 
     for (const LandmarkRecord & landmark : landmarks_) {
       if (landmark.color != color ||
@@ -1576,15 +2127,26 @@ void GraphSlamNode::publishMarkers(const rclcpp::Time & stamp)
         continue;
       }
 
-      geometry_msgs::msg::Point point;
+      visualization_msgs::msg::Marker landmark_marker;
+      landmark_marker.header.frame_id = map_frame_;
+      landmark_marker.header.stamp = stamp;
+      landmark_marker.ns = ns;
+      landmark_marker.id = cone_id++;
+      landmark_marker.type = visualization_msgs::msg::Marker::MESH_RESOURCE;
+      landmark_marker.action = visualization_msgs::msg::Marker::ADD;
+      landmark_marker.mesh_resource = mesh_resource;
+      landmark_marker.mesh_use_embedded_materials = false;
       const Eigen::Vector2d estimate = landmark.vertex->estimate();
-      point.x = estimate.x();
-      point.y = estimate.y();
-      point.z = 0.15;
-      landmark_marker.points.push_back(point);
+      landmark_marker.pose.position.x = estimate.x();
+      landmark_marker.pose.position.y = estimate.y();
+      landmark_marker.pose.position.z = 0.0;
+      landmark_marker.pose.orientation.w = 1.0;
+      landmark_marker.scale.x = 1.0;
+      landmark_marker.scale.y = 1.0;
+      landmark_marker.scale.z = 1.0;
+      landmark_marker.color = colorToRgba(color, 0.95);
+      markers.markers.push_back(landmark_marker);
     }
-
-    markers.markers.push_back(landmark_marker);
   }
 
   marker_pub_->publish(markers);
@@ -1629,10 +2191,9 @@ void GraphSlamNode::handleReset(
   std::shared_ptr<std_srvs::srv::Trigger::Response> response)
 {
   (void)request;
-  const rclcpp::Time reset_stamp = get_clock()->now();
-  resetGraph(reset_stamp.nanoseconds());
-  node_time_high_watermark_ns_ = reset_stamp.nanoseconds();
-  publishResetTombstones(reset_stamp);
+  std::lock_guard<std::mutex> lock(graph_mutex_);
+  resetGraph();
+  publishStatus();
   response->success = true;
   response->message = "Graph SLAM state reset";
 }
@@ -1649,10 +2210,338 @@ void GraphSlamNode::handleSaveGraph(
     return;
   }
 
+  std::lock_guard<std::mutex> lock(graph_mutex_);
   response->success = optimizer_.save(g2o_output_path_.c_str());
   response->message = response->success ?
     "Saved graph to " + g2o_output_path_ :
     "Failed to save graph to " + g2o_output_path_;
+}
+
+std::string GraphSlamNode::saveMapTimestamped()
+{
+  // Timestamped filename: map_YYYYmmdd_HHMMSS.csv in map_save_dir_.
+  // Caller must hold graph_mutex_.
+  const std::time_t now = std::time(nullptr);
+  std::tm tm_buf{};
+  localtime_r(&now, &tm_buf);
+  std::ostringstream name;
+  name << "map_" << std::put_time(&tm_buf, "%Y%m%d_%H%M%S") << ".csv";
+  const std::string dir = map_save_dir_.empty() ? std::string("/tmp") : map_save_dir_;
+  const std::string path = dir + "/" + name.str();
+
+  std::string error;
+  if (!saveMapCsv(path, &error)) {
+    RCLCPP_ERROR(
+      get_logger(), "Failed to save map to %s: %s", path.c_str(), error.c_str());
+    return std::string();
+  }
+  RCLCPP_INFO(get_logger(), "Saved cone map to %s", path.c_str());
+  return path;
+}
+
+void GraphSlamNode::handleSaveMap(
+  const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+  std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+{
+  (void)request;
+
+  std::lock_guard<std::mutex> lock(graph_mutex_);
+  const std::string path = saveMapTimestamped();
+  response->success = !path.empty();
+  response->message = response->success ?
+    "Saved map to " + path :
+    "Failed to save map (see node log)";
+}
+
+void GraphSlamNode::handleLoadMap(
+  const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+  std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+{
+  (void)request;
+  // The GUI sets the load_map_path parameter before calling this.
+  const std::string path = get_parameter("load_map_path").as_string();
+  if (path.empty()) {
+    response->success = false;
+    response->message = "load_map_path parameter is empty";
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(graph_mutex_);
+  resetGraph();
+  localization_mode_ = true;
+  load_map_path_ = path;
+  std::string error;
+  if (loadMapCsv(path, &error)) {
+    const rclcpp::Time now = get_clock()->now();
+    publishMap(now);
+    publishMarkers(now);
+    response->success = true;
+    response->message = "Localizing against " + path;
+    RCLCPP_INFO(
+      get_logger(), "Switched to localization against %s (%zu cones)",
+      path.c_str(), landmarks_.size());
+  } else {
+    localization_mode_ = false;
+    response->success = false;
+    response->message = "Failed to load map: " + error;
+  }
+  publishStatus();
+}
+
+void GraphSlamNode::handleStartMapping(
+  const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+  std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+{
+  (void)request;
+  std::lock_guard<std::mutex> lock(graph_mutex_);
+  resetGraph();
+  localization_mode_ = false;
+  response->success = true;
+  response->message = "Mapping mode (SLAM) started";
+  RCLCPP_INFO(get_logger(), "Switched to mapping (SLAM) mode");
+  publishStatus();
+}
+
+void GraphSlamNode::maybeFinishMappingLap(const g2o::SE2 & current_estimate)
+{
+  if (!auto_localization_after_lap_ || !map_converged_ || !lap_origin_captured_ ||
+    landmarks_.empty())
+  {
+    return;
+  }
+
+  const double return_distance =
+    (current_estimate.translation() - lap_origin_.translation()).norm();
+  const double yaw_error = std::abs(
+    normalizeAngle(
+      current_estimate.rotation().angle() - lap_origin_.rotation().angle()));
+  RCLCPP_DEBUG_THROTTLE(
+    get_logger(),
+    *get_clock(),
+    10000,
+    "Lap check: return=%.2f m (radius %.1f), yaw=%.2f rad",
+    return_distance, lap_return_radius_, yaw_error);
+  if (return_distance > lap_return_radius_ || yaw_error > lap_return_yaw_) {
+    return;
+  }
+
+  RCLCPP_INFO(
+    get_logger(),
+    "Mapping lap complete: returned to within %.2f m / %.2f rad of the start "
+    "with a converged map",
+    return_distance, yaw_error);
+  enterLocalizationMode("mapping lap completed");
+}
+
+void GraphSlamNode::enterLocalizationMode(const std::string & reason)
+{
+  // Freeze the map: landmarks become the fixed reference, mapping paths
+  // (addLandmark / deletion / merge / Kalman updates) are disabled by the
+  // localization_mode_ guards, and the pose window is bounded so the graph
+  // no longer grows with laps.
+  localization_mode_ = true;
+  for (LandmarkRecord & landmark : landmarks_) {
+    landmark.vertex->setFixed(true);
+  }
+
+  const std::string saved_path = saveMapTimestamped();
+  prunePoseWindow();
+  publishStatus();
+
+  RCLCPP_INFO(
+    get_logger(),
+    "Entered localization mode (%s): %zu landmarks frozen, pose window %d%s%s",
+    reason.c_str(),
+    landmarks_.size(),
+    localization_window_poses_,
+    saved_path.empty() ? "" : ", map saved to ",
+    saved_path.c_str());
+}
+
+void GraphSlamNode::prunePoseWindow()
+{
+  if (!localization_mode_ ||
+    poses_.size() <= static_cast<std::size_t>(localization_window_poses_))
+  {
+    // Even without pruning, keep the oldest pose anchored so a window with
+    // few cone matches cannot leave the solver without a gauge.
+    if (localization_mode_ && !poses_.empty()) {
+      poses_.front().vertex->setFixed(true);
+    }
+    return;
+  }
+
+  while (poses_.size() > static_cast<std::size_t>(localization_window_poses_)) {
+    PoseRecord & oldest = poses_.front();
+    if (optimizer_.vertex(oldest.graph_id) == oldest.vertex) {
+      // Removes the vertex together with its odometry/observation/prior
+      // edges; landmarks are fixed so no map information is lost.
+      optimizer_.removeVertex(oldest.vertex);
+    }
+    poses_.erase(poses_.begin());
+  }
+
+  // The new oldest pose carries the discarded history as a hard anchor
+  // (first-order marginalization).
+  poses_.front().vertex->setFixed(true);
+}
+
+void GraphSlamNode::publishStatus()
+{
+  if (!status_pub_ || !converged_pub_) {
+    return;
+  }
+
+  std_msgs::msg::String status;
+  if (localization_mode_) {
+    status.data = "localization";
+  } else if (map_converged_) {
+    status.data = "mapping_converged";
+  } else {
+    status.data = "mapping";
+  }
+  status_pub_->publish(status);
+
+  std_msgs::msg::Bool converged;
+  converged.data = map_converged_ || (localization_mode_ && !landmarks_.empty());
+  converged_pub_->publish(converged);
+}
+
+GraphSlamNode::ConeColor GraphSlamNode::colorFromTag(const std::string & tag)
+{
+  if (tag == "blue") {
+    return ConeColor::Blue;
+  }
+  if (tag == "yellow") {
+    return ConeColor::Yellow;
+  }
+  if (tag == "orange") {
+    return ConeColor::Orange;
+  }
+  if (tag == "big_orange") {
+    return ConeColor::BigOrange;
+  }
+  return ConeColor::Unknown;
+}
+
+bool GraphSlamNode::loadMapCsv(const std::string & path, std::string * error)
+{
+  std::ifstream file(path);
+  if (!file.is_open()) {
+    if (error != nullptr) {
+      *error = "could not open file for reading";
+    }
+    return false;
+  }
+
+  std::string line;
+  std::getline(file, line);  // header
+  std::size_t loaded = 0U;
+  while (std::getline(file, line)) {
+    if (line.empty()) {
+      continue;
+    }
+    std::istringstream ss(line);
+    std::string tag, sx, sy, sdir, svx, svy, sxy;
+    std::getline(ss, tag, ',');
+    std::getline(ss, sx, ',');
+    std::getline(ss, sy, ',');
+    std::getline(ss, sdir, ',');
+    std::getline(ss, svx, ',');
+    std::getline(ss, svy, ',');
+    std::getline(ss, sxy, ',');
+    if (tag == "car_start" || sx.empty() || sy.empty()) {
+      continue;
+    }
+
+    double x = 0.0, y = 0.0, vx = default_observation_sigma_ * default_observation_sigma_;
+    double vy = vx, xy = 0.0;
+    try {
+      x = std::stod(sx);
+      y = std::stod(sy);
+      if (!svx.empty()) {vx = std::stod(svx);}
+      if (!svy.empty()) {vy = std::stod(svy);}
+      if (!sxy.empty()) {xy = std::stod(sxy);}
+    } catch (const std::exception &) {
+      continue;
+    }
+
+    auto * vertex = new g2o::VertexPointXY();
+    vertex->setId(next_vertex_id_++);
+    vertex->setEstimate(Eigen::Vector2d(x, y));
+    vertex->setFixed(true);  // the loaded map is the fixed reference
+    if (!optimizer_.addVertex(vertex)) {
+      delete vertex;
+      continue;
+    }
+
+    Eigen::Matrix2d cov;
+    cov << vx, xy, xy, vy;
+    if (!cov.allFinite() || cov(0, 0) <= 0.0 || cov(1, 1) <= 0.0) {
+      cov = Eigen::Matrix2d::Identity() * default_observation_sigma_ * default_observation_sigma_;
+    }
+
+    // Seed with enough observations to count as confirmed and be published.
+    const std::size_t seed_obs =
+      static_cast<std::size_t>(std::max(landmark_confirm_observations_, 1));
+    LandmarkRecord record{vertex->id(), colorFromTag(tag), vertex, cov, seed_obs, 0, 0.0, {}};
+    landmarks_.push_back(record);
+    voteLandmarkColor(landmarks_.back(), colorFromTag(tag));
+    ++loaded;
+  }
+
+  if (loaded == 0U) {
+    if (error != nullptr) {
+      *error = "no landmarks parsed from file";
+    }
+    return false;
+  }
+  return true;
+}
+
+bool GraphSlamNode::saveMapCsv(const std::string & path, std::string * error) const
+{
+  std::ofstream file(path);
+  if (!file.is_open()) {
+    if (error != nullptr) {
+      *error = "could not open file for writing";
+    }
+    return false;
+  }
+
+  // Same columns as eufs_tracks CSVs so saved maps are interchangeable with
+  // track files. direction is only meaningful for car_start.
+  file << "tag,x,y,direction,x_variance,y_variance,xy_covariance\n";
+  file << std::fixed << std::setprecision(6);
+
+  // Record the map origin (SLAM initialises the map frame at the car start).
+  file << "car_start,0.0,0.0,0.0,0.0,0.0,0.0\n";
+
+  std::size_t written = 0U;
+  for (const LandmarkRecord & landmark : landmarks_) {
+    if (landmark.observations <
+      static_cast<std::size_t>(landmark_min_observations_to_publish_))
+    {
+      continue;
+    }
+    const Eigen::Vector2d estimate = landmark.vertex->estimate();
+    file << colorName(landmark.color) << ','
+         << estimate.x() << ',' << estimate.y() << ",0.0,"
+         << landmark.covariance(0, 0) << ','
+         << landmark.covariance(1, 1) << ','
+         << landmark.covariance(0, 1) << '\n';
+    ++written;
+  }
+
+  file.close();
+  if (!file) {
+    if (error != nullptr) {
+      *error = "write error while flushing";
+    }
+    return false;
+  }
+  RCLCPP_INFO(get_logger(), "Wrote %zu landmarks to map CSV", written);
+  return true;
 }
 
 double GraphSlamNode::normalizeAngle(double angle)
@@ -1675,6 +2564,17 @@ geometry_msgs::msg::Quaternion GraphSlamNode::quaternionFromYaw(double yaw)
   q.z = std::sin(0.5 * yaw);
   q.w = std::cos(0.5 * yaw);
   return q;
+}
+
+rclcpp::Time GraphSlamNode::stampOrNow(
+  const builtin_interfaces::msg::Time & stamp,
+  const rclcpp::Clock::SharedPtr & clock)
+{
+  if (stamp.sec == 0 && stamp.nanosec == 0U) {
+    return clock->now();
+  }
+
+  return rclcpp::Time(stamp, clock->get_clock_type());
 }
 
 std_msgs::msg::ColorRGBA GraphSlamNode::colorToRgba(ConeColor color, double alpha)

@@ -9,7 +9,9 @@ from python_qt_binding.QtWidgets import QWidget, QComboBox, QPushButton, QLabel
 # ROS
 from ament_index_python.packages import get_package_share_directory
 import rclpy
+from diagnostic_msgs.msg import DiagnosticStatus, DiagnosticArray
 from eufs_msgs.msg import CanState
+from std_msgs.msg import String, UInt8
 from std_srvs.srv import Trigger
 from eufs_msgs.srv import SetCanState
 
@@ -79,12 +81,43 @@ class MissionControlGUI(Plugin):
         self._widget.findChild(
             QPushButton, "DriveButton").clicked.connect(self.setManualDriving)
 
+        # GNSS failure injection for the simulated Ellipse-D (sim_ellipse_d).
+        # Dropdown selections publish immediately so failures can be injected
+        # mid-drive with one click.
+        self.gnss_modes = {
+            "4 NAV_POSITION (normal)": 4,
+            "3 NAV_VELOCITY (GPS pos lost)": 3,
+            "2 AHRS (GPS lost)": 2,
+            "1 VERTICAL_GYRO": 1,
+            "0 UNINITIALIZED": 0,
+        }
+        self.gnss_corrections = {
+            "RTK FIXED (0.01 m)": "rtk_fixed",
+            "RTK FLOAT (0.3 m)": "rtk_float",
+            "SINGLE (1.2 m)": "single",
+        }
+        gnss_mode_menu = self._widget.findChild(QComboBox, "GnssModeMenu")
+        for label in self.gnss_modes:
+            gnss_mode_menu.addItem(label)
+        gnss_corr_menu = self._widget.findChild(QComboBox, "GnssCorrectionMenu")
+        for label in self.gnss_corrections:
+            gnss_corr_menu.addItem(label)
+        # Connect after populating so the initial addItem does not publish.
+        gnss_mode_menu.currentTextChanged.connect(self.setGnssMode)
+        gnss_corr_menu.currentTextChanged.connect(self.setGnssCorrection)
+
         # Subscribers
         self.state_sub = self.node.create_subscription(CanState,
                                                        "/ros_can/state",
                                                        self.stateCallback, 10)
+        self.gnss_health_sub = self.node.create_subscription(
+            DiagnosticArray, "/sbg_bridge/status", self.gnssHealthCallback, 10)
 
         # Publishers
+        self.gnss_mode_pub = self.node.create_publisher(
+            UInt8, "/sim_ins/set_solution_mode", 10)
+        self.gnss_corr_pub = self.node.create_publisher(
+            String, "/sim_ins/set_correction_type", 10)
 
         # Services
         self.ebs_srv = self.node.create_client(Trigger, "/ros_can/ebs")
@@ -102,7 +135,16 @@ class MissionControlGUI(Plugin):
         thread.start()
 
     def ros_spin(self):
-        rclpy.spin(self.node)
+        try:
+            rclpy.spin(self.node)
+        except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+            # Normal Ctrl-C / launch shutdown while the GUI thread is spinning.
+            pass
+        except Exception:
+            # Shutdown races surface as varying rclpy errors (e.g. RCLError:
+            # "context is not valid"); only re-raise while ROS is still up.
+            if rclpy.ok():
+                raise
 
     def sendRequest(self, mission_ami_state):
         """Sends a mission request to the simulated ros_can
@@ -211,6 +253,39 @@ class MissionControlGUI(Plugin):
             self.node.get_logger().warn(
                 "/ros_can/ebs service is not available")
 
+    def setGnssMode(self, label):
+        """Publishes the selected simulated GNSS solution mode."""
+        mode = self.gnss_modes.get(label)
+        if mode is None:
+            return
+        self.gnss_mode_pub.publish(UInt8(data=mode))
+        self.node.get_logger().info(f"GNSS solution mode -> {label}")
+
+    def setGnssCorrection(self, label):
+        """Publishes the selected simulated RTK correction tier."""
+        correction = self.gnss_corrections.get(label)
+        if correction is None:
+            return
+        self.gnss_corr_pub.publish(String(data=correction))
+        self.node.get_logger().info(f"GNSS correction -> {correction}")
+
+    def gnssHealthCallback(self, msg):
+        """Shows the SBG bridge health (mode/anchor state) in the GUI."""
+        if not msg.status:
+            return
+        status = msg.status[0]
+        key = (status.level, status.message)
+        if getattr(self, "_last_gnss_health", None) == key:
+            return  # health arrives at nav rate; only repaint on change
+        self._last_gnss_health = key
+        colors = {DiagnosticStatus.OK: "green",
+                  DiagnosticStatus.WARN: "darkorange",
+                  DiagnosticStatus.ERROR: "red"}
+        display = self._widget.findChild(QLabel, "GnssStateDisplay")
+        display.setText(status.message)
+        display.setStyleSheet(
+            f"color: {colors.get(status.level, 'gray')};")
+
     def stateCallback(self, msg):
         """Reads the robot state from the message
         and displays it within the GUI
@@ -240,6 +315,12 @@ class MissionControlGUI(Plugin):
             self.ebs_srv)), "EBS client could not be destroyed"
         assert (self.node.destroy_client(
             self.reset_srv)), "State reset client could not be destroyed"
+        assert (self.node.destroy_subscription(
+            self.gnss_health_sub)), "GNSS health subscriber could not be destroyed"
+        assert (self.node.destroy_publisher(
+            self.gnss_mode_pub)), "GNSS mode publisher could not be destroyed"
+        assert (self.node.destroy_publisher(
+            self.gnss_corr_pub)), "GNSS correction publisher could not be destroyed"
         # Note: do not destroy the node in shutdown_plugin as this could
         # cause errors for the Robot Steering GUI. Let ROS 2 clean up nodes
 

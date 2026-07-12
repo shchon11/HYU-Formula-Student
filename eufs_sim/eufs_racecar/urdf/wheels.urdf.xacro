@@ -7,6 +7,10 @@
     <!-- Parameters -->
     <!-- ********** -->
 
+    <material name="tire_mat">
+      <color rgba="0.12 0.12 0.12 1.0"/>
+    </material>
+
     <xacro:property name="degrees_90" value="1.5708"/>
 
     <xacro:property name="wheel_mass" value="10.0"/>

@@ -1,17 +1,12 @@
-from pathlib import Path
 from typing import Dict
 
 import rclpy
+from cv_bridge import CvBridge, CvBridgeError
 from eufs_msgs.msg import BoundingBox, BoundingBoxes
-from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image
 
-from eufs_perception_baseline.ros_image_utils import (
-    image_message_to_numpy,
-    numpy_to_image_message,
-)
 from eufs_perception_baseline.yolov8_bbox_utils import (
     detections_from_ultralytics_results,
     looks_like_coco_pretrained_yolov8_weight,
@@ -28,18 +23,14 @@ class YoloV8BBoxNode(Node):
         self._declare_parameters()
         self._load_parameters()
 
-        self.model_path = self._validated_model_path(self.model_path)
+        self.bridge = CvBridge()
         self._warn_if_coco_smoke_test_model()
         self.model = self._load_model()
-        self._validate_model_classes()
+        self._resolve_device()
 
         sensor_qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
-            # Keep only the freshest frame while inference is busy.  The
-            # published bbox retains the acquisition timestamp, so fusion can
-            # synchronize it with buffered LiDAR/stereo data without building
-            # a stale camera backlog.
-            depth=1,
+            depth=5,
             reliability=ReliabilityPolicy.BEST_EFFORT,
         )
         self.image_sub = self.create_subscription(
@@ -125,66 +116,33 @@ class YoloV8BBoxNode(Node):
             ) from exc
         return YOLO(self.model_path)
 
-    @staticmethod
-    def _validated_model_path(model_path: str) -> str:
+    def _resolve_device(self) -> None:
+        """Fall back to CPU when a CUDA device is requested but unavailable.
+
+        Without this, a dead/faulted GPU makes every frame's inference raise
+        "Invalid CUDA 'device=0'" and get skipped, so the node silently
+        publishes zero detections. Degrading to CPU keeps perception running
+        (slower) instead of producing nothing.
         """
-        Return a canonical, readable local ``.pt`` model path.
-
-        Ultralytics interprets well-known missing weight names as download
-        requests.  Resolving and opening the file before constructing
-        ``YOLO`` keeps this runtime strictly offline and makes a bad model
-        configuration fail at node startup instead of silently fetching a
-        different artifact.
-        """
-        configured_path = str(model_path).strip()
-        if not configured_path:
-            raise RuntimeError("YOLO model_path must not be empty")
-
-        candidate = Path(configured_path).expanduser()
+        wants_cuda = self.device.lower() in {"cuda", "gpu"} or self.device.lower().startswith(
+            "cuda:"
+        ) or self.device.isdigit() or "," in self.device
+        if not wants_cuda:
+            return
         try:
-            resolved = candidate.resolve(strict=True)
-        except (OSError, RuntimeError) as exc:
-            raise RuntimeError(
-                "YOLO model_path must reference an existing local .pt file: "
-                f"{configured_path}"
-            ) from exc
+            import torch
 
-        if resolved.suffix.lower() != ".pt":
-            raise RuntimeError(
-                "YOLO model_path must reference a local .pt weight file: "
-                f"{resolved}"
+            available = torch.cuda.is_available()
+        except Exception as exc:  # noqa: BLE001
+            available = False
+            self.get_logger().warn(f"CUDA availability check failed ({exc}); using CPU.")
+        if not available:
+            self.get_logger().warn(
+                f"Requested device '{self.device}' but CUDA is unavailable "
+                "(faulted GPU or no driver). Falling back to device='cpu'. "
+                "Fix the GPU (often a reboot) and restart for GPU inference."
             )
-        if not resolved.is_file():
-            raise RuntimeError(
-                "YOLO model_path is not a regular file: "
-                f"{resolved}"
-            )
-
-        try:
-            with resolved.open("rb") as model_file:
-                model_file.read(1)
-        except OSError as exc:
-            raise RuntimeError(
-                f"YOLO model_path is not readable: {resolved}"
-            ) from exc
-        return str(resolved)
-
-    def _validate_model_classes(self) -> None:
-        names = getattr(self.model, "names", None)
-        if isinstance(names, dict):
-            model_names = {str(value).strip().lower() for value in names.values()}
-        elif isinstance(names, (list, tuple)):
-            model_names = {str(value).strip().lower() for value in names}
-        else:
-            raise RuntimeError("YOLO model does not expose a class-name table")
-
-        configured_names = {str(name).strip().lower() for name in self.class_map}
-        missing_names = configured_names - model_names
-        if missing_names:
-            raise RuntimeError(
-                "YOLO model is missing configured cone classes; "
-                f"missing={sorted(missing_names)}, model classes={sorted(model_names)}"
-            )
+            self.device = "cpu"
 
     def _warn_if_coco_smoke_test_model(self) -> None:
         if not looks_like_coco_pretrained_yolov8_weight(self.model_path):
@@ -201,11 +159,10 @@ class YoloV8BBoxNode(Node):
 
     def _image_callback(self, msg: Image) -> None:
         try:
-            image = image_message_to_numpy(msg, desired_encoding="bgr8")
-        except (TypeError, ValueError) as exc:
+            image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+        except CvBridgeError as exc:
             self.get_logger().warn(
-                "YOLO image conversion failed; dropped invalid frame "
-                f"without publishing detections ({exc})"
+                f"YOLO frame skipped: image conversion failed ({exc})"
             )
             return
 
@@ -224,25 +181,17 @@ class YoloV8BBoxNode(Node):
             results = self.model.predict(**predict_kwargs)
         except Exception as exc:  # noqa: BLE001
             self.get_logger().warn(
-                "YOLO inference failed; dropped frame without publishing "
-                f"detections ({exc})"
+                f"YOLO frame skipped: inference failed ({exc})"
             )
             return
 
-        try:
-            detections = detections_from_ultralytics_results(
-                results,
-                names=getattr(self.model, "names", None),
-                class_map=self.class_map,
-                confidence_threshold=self.confidence_threshold,
-                unknown_color_policy=self.unknown_color_policy,
-            )
-        except Exception as exc:  # noqa: BLE001
-            self.get_logger().warn(
-                "YOLO result conversion failed; dropped frame without "
-                f"publishing detections ({exc})"
-            )
-            return
+        detections = detections_from_ultralytics_results(
+            results,
+            names=getattr(self.model, "names", None),
+            class_map=self.class_map,
+            confidence_threshold=self.confidence_threshold,
+            unknown_color_policy=self.unknown_color_policy,
+        )
         self.bbox_pub.publish(self._to_bounding_boxes_msg(msg, detections))
 
         if self.debug_image_pub is not None and results:
@@ -272,12 +221,13 @@ class YoloV8BBoxNode(Node):
     def _publish_debug_image(self, image_msg: Image, result) -> None:
         try:
             annotated = result.plot()
-            debug_msg = numpy_to_image_message(annotated, image_msg.header)
+            debug_msg = self.bridge.cv2_to_imgmsg(annotated, encoding="bgr8")
         except Exception as exc:  # noqa: BLE001
             self.get_logger().warn(
                 f"YOLO debug image skipped: render failed ({exc})"
             )
             return
+        debug_msg.header = image_msg.header
         self.debug_image_pub.publish(debug_msg)
 
     @staticmethod
@@ -292,19 +242,11 @@ class YoloV8BBoxNode(Node):
 def main(args=None) -> None:
     rclpy.init(args=args)
     node = YoloV8BBoxNode()
-    executor = SingleThreadedExecutor()
-    executor.add_node(node)
     try:
-        executor.spin()
-    except KeyboardInterrupt:
-        pass
+        rclpy.spin(node)
     finally:
-        executor.shutdown()
-        try:
-            node.destroy_node()
-        except KeyboardInterrupt:
-            pass
-        rclpy.try_shutdown()
+        node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == "__main__":

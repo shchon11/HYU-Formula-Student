@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>planning_bringup</name>
+  <version>0.1.0</version>
+  <description>Integrated local and global planning launch composition.</description>
+  <maintainer email="maintainer@example.com">fsk</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>eufs_graph_slam</exec_depend>
+  <exec_depend>global_planner</exec_depend>
+  <exec_depend>frenet_conversion</exec_depend>
+  <exec_depend>state_machine</exec_depend>
+  <exec_depend>local_planner</exec_depend>
+  <exec_depend>path_selector</exec_depend>
+  <exec_depend>pure_pursuit_controller</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

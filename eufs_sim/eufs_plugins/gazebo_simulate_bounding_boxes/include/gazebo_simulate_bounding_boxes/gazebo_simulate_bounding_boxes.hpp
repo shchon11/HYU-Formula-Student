@@ -17,11 +17,7 @@
 #include <gazebo_ros/node.hpp>
 
 #include <tf2_ros/transform_listener.h>
-#if __has_include(<tf2_geometry_msgs/tf2_geometry_msgs.hpp>)
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
-#else
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
-#endif
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 #include <tf2_ros/buffer.h>
 
 #include "sensor_msgs/msg/camera_info.hpp"
@@ -53,14 +49,12 @@ class BoundingBoxesPlugin : public gazebo::ModelPlugin {
   BoundingBoxesPlugin();
 
   // Gazebo plugin functions
-  void Load(gazebo::physics::ModelPtr _parent, sdf::ElementPtr _sdf) override;
+  void Load(gazebo::physics::ModelPtr _parent, sdf::ElementPtr _sdf);
 
  private:
   void cones_callback(const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg);
 
-  void update_msg(eufs_msgs::msg::BoundingBoxes &bounding_boxes_msg,
-                  const std_msgs::msg::Header &source_header,
-                  const std_msgs::msg::Header &image_header,
+  void update_msg(eufs_msgs::msg::BoundingBoxes &bounding_boxes_msg, std_msgs::msg::Header header,
                   std::vector<std::vector<double>> blue_cones,
                   std::vector<std::vector<double>> yellow_cones,
                   std::vector<std::vector<double>> orange_cones,

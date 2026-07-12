@@ -19,6 +19,12 @@
   <depend>xacro</depend>
   <depend>gazebo_plugins</depend>
 
+  <!-- Runtime deps of the simulated Ellipse-D INS node (scripts/sim_ellipse_d.py). -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>eufs_msgs</exec_depend>
+  <exec_depend>sbg_driver</exec_depend>
+
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
 

@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>eufs_teleop</name>
+  <version>0.1.0</version>
+  <description>Comfortable keyboard teleoperation for the EUFS simulator with
+    driving-game style control shaping (speed-sensitive steering, auto
+    centering, cruise-style speed target, jerk-limited commands).</description>
+  <maintainer email="shchon724@gmail.com">shchon11</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>ackermann_msgs</depend>
+  <depend>eufs_msgs</depend>
+  <depend>std_srvs</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

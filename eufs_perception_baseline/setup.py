@@ -31,7 +31,7 @@ setup(
     install_requires=[
         "setuptools",
         "PyYAML>=5.0",
-        "ultralytics==8.4.60",
+        "ultralytics>=8.0.0,<9.0.0",
     ],
     zip_safe=True,
     maintainer="IRCV",

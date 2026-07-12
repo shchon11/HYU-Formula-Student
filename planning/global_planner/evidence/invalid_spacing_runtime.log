@@ -1,0 +1,11 @@
+executables:
+global_planner global_planner_debug_visualizer_node
+global_planner global_planner_trajectory_publisher_node
+global_planner planner_node
+global_planner wpnt_publisher_node
+runtime:
+[WARN] [1783636377.887042579] [planner_node]: waypoint_spacing_m must be finite and > 0. Using 0.001000 m.
+[INFO] [1783636377.894127196] [planner_node]: planner_node started: map=/localization/cone_map odom=/localization/ego_odom status=/graph_slam/status -> waypoints=/global_waypoints valid=/planning/global_path_valid
+[WARN] [1783636378.094364363] [planner_node]: Global path invalid: waiting for graph slam status
+[INFO] [1783636382.507399558] [rclcpp]: signal_handler(signum=15)
+runtime_exit_status=124

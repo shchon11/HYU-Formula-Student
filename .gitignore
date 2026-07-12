@@ -1,7 +1,6 @@
 build/
 install/
 log/
-g2o/
 
 .colcon/
 *.pyc
@@ -9,3 +8,6 @@ __pycache__/
 
 .vscode/
 .idea/
+.omx/
+.omo/
+AGENTS.md
