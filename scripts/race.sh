@@ -27,7 +27,18 @@ case "${1:-start}" in
 esac
 
 TRACK="${1:-small_track}"; [ $# -gt 0 ] && shift || true
-EXTRA="$*"
+
+# Perception selector: a bare 'sim' or 'real' token picks the mode
+# (default real = YOLO+LiDAR). 'sim' = lightweight Gazebo cones, no YOLO.
+PMODE="real"
+FILTERED=""
+for tok in "$@"; do
+  case "$tok" in
+    sim|real) PMODE="$tok" ;;
+    *) FILTERED="$FILTERED $tok" ;;
+  esac
+done
+EXTRA="perception_mode:=$PMODE$FILTERED"
 
 if [ ! -f "$WS_SETUP" ]; then
   echo "race: workspace not built ($WS_SETUP missing). Run 'fsb' first." >&2
@@ -45,7 +56,7 @@ tmux new-session -d -s "$SESSION" -n FSK
 # 0 · Simulator + perception ────────────────────────────────────────────────
 P_SIM=$(tmux list-panes -t "$SESSION" -F '#{pane_id}' | head -1)
 tmux send-keys -t "$P_SIM" \
-  "$SRC echo '[① SIM + PERCEPTION]'; ros2 launch eufs_launcher simulation.launch.py track:=$TRACK gazebo_gui:=false rviz:=true show_rqt_gui:=false perception:=true $EXTRA" C-m
+  "$SRC echo \"[① SIM + PERCEPTION ($PMODE)]\"; ros2 launch eufs_launcher simulation.launch.py track:=$TRACK gazebo_gui:=false rviz:=true show_rqt_gui:=false $EXTRA" C-m
 
 # 1 · Full planning graph (starts its OWN graph_slam) ────────────────────────
 P_PLAN=$(tmux split-window -h -t "$P_SIM" -P -F '#{pane_id}')

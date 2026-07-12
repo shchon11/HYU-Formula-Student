@@ -9,6 +9,7 @@ from launch.actions import IncludeLaunchDescription
 from launch.actions import LogInfo
 from launch.actions import OpaqueFunction
 from launch.actions import SetEnvironmentVariable
+from launch.actions import SetLaunchConfiguration
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch.substitutions import PathJoinSubstitution
@@ -39,12 +40,12 @@ def _default_python_executable():
 PERCEPTION_LAUNCH_ARGUMENTS = [
     (
         'perception_camera_view_distance',
-        '12',
+        '13',
         'Camera range used by the /cones simulated perception plugin.',
     ),
     (
         'perception_lidar_view_distance',
-        '100',
+        '15',
         'Radial lidar range used by the /cones simulated perception plugin.',
     ),
     (
@@ -108,6 +109,33 @@ PERCEPTION_LAUNCH_ARGUMENTS = [
         'Probability that an in-range /camera_*/cones oracle cone is published.',
     ),
 ]
+
+
+def _resolve_perception_mode(context):
+    """Map the single `perception_mode` knob onto launch_group + perception.
+
+    - real   : real YOLO+LiDAR fusion (launch_group=default, perception=true)
+    - sim     : lightweight simulated perception — Gazebo publishes /cones from
+                the ground-truth cone plugin (colored in camera FOV, unknown for
+                LiDAR-only), no YOLO/fusion nodes (launch_group=no_perception,
+                perception=false). Use this when the CPU/GPU can't feed YOLO.
+    - manual : leave launch_group/perception exactly as passed (advanced).
+    """
+    mode = LaunchConfiguration('perception_mode').perform(context).lower()
+    if mode == 'real':
+        return [
+            SetLaunchConfiguration('launch_group', 'default'),
+            SetLaunchConfiguration('perception', 'true'),
+        ]
+    if mode == 'sim':
+        return [
+            SetLaunchConfiguration('launch_group', 'no_perception'),
+            SetLaunchConfiguration('perception', 'false'),
+        ]
+    if mode == 'manual':
+        return []
+    raise RuntimeError(
+        f"perception_mode must be real|sim|manual, got '{mode}'")
 
 
 def _validate_perception_wiring(context):
@@ -210,6 +238,13 @@ def generate_launch_description():
             default_value='true',
             description="Condition to publish ground truth"),
 
+        # High-level perception selector; overrides launch_group/perception
+        # unless set to 'manual'. See _resolve_perception_mode.
+        DeclareLaunchArgument(
+            name='perception_mode',
+            default_value='manual',
+            description="real | sim | manual — sim uses lightweight Gazebo cones (no YOLO)."),
+
         # Set to 'no_perception' to turn off the perception code and use ground truth cones.
         DeclareLaunchArgument(
             name='launch_group',
@@ -248,8 +283,9 @@ def generate_launch_description():
             default_value=_default_python_executable(),
             description="Python interpreter used to run perception nodes"),
 
-        # Runs after all arguments above are declared; fails fast on /cones
-        # wiring mistakes (see _validate_perception_wiring docstring).
+        # Resolve perception_mode -> launch_group/perception FIRST, then
+        # validate the (possibly resolved) combination.
+        OpaqueFunction(function=_resolve_perception_mode),
         OpaqueFunction(function=_validate_perception_wiring),
 
         SetEnvironmentVariable(
