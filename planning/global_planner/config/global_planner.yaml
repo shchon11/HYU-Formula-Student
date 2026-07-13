@@ -55,13 +55,14 @@ planner_node:
     default_speed_mps: 4.0
     # Curvature+friction speed profile (corner slowdown). Set
     # max_lateral_accel_mps2 to the grip you trust.
-    max_speed_mps: 4.5
-    min_speed_mps: 1.5
+    max_speed_mps: 10.0
+    min_speed_mps: 3.0
     max_lateral_accel_mps2: 6.0
     max_accel_mps2: 3.0
     max_decel_mps2: 5.0
     duplicate_point_tolerance: 0.001
     odom_timeout_sec: 0.5
+    hold_last_valid_path: true
 
 wpnt_publisher:
   ros__parameters:

@@ -85,6 +85,7 @@ void PlannerNode::declareParameters()
   declare_parameter<double>("max_decel_mps2", 5.0);
   declare_parameter<double>("duplicate_point_tolerance", 0.001);
   declare_parameter<double>("odom_timeout_sec", 0.5);
+  declare_parameter<bool>("hold_last_valid_path", true);
 }
 
 void PlannerNode::loadParameters()
@@ -111,6 +112,7 @@ void PlannerNode::loadParameters()
   max_decel_mps2_ = get_parameter("max_decel_mps2").as_double();
   duplicate_point_tolerance_ = get_parameter("duplicate_point_tolerance").as_double();
   odom_timeout_sec_ = get_parameter("odom_timeout_sec").as_double();
+  hold_last_valid_path_ = get_parameter("hold_last_valid_path").as_bool();
 
   min_cones_per_side_ = std::max(1, min_cones_per_side_);
   max_boundary_gap_m_ = std::max(0.0, max_boundary_gap_m_);
@@ -185,6 +187,10 @@ void PlannerNode::onHeartbeat()
 {
   std::string reason;
   if (!inputsAllowPlanning(reason)) {
+    if (canHoldLastValidPath()) {
+      publishHeldPathValidity(reason);
+      return;
+    }
     setInvalid(reason);
     publishValidity(false, reason);
     return;
@@ -192,6 +198,10 @@ void PlannerNode::onHeartbeat()
 
   std::vector<PlannerWaypoint> waypoints;
   if (!buildCenterlineFromSlamMap(*latest_cone_map_, latest_ego_odom_, centerlineConfig(), waypoints, reason)) {
+    if (canHoldLastValidPath()) {
+      publishHeldPathValidity(reason);
+      return;
+    }
     setInvalid(reason);
     publishValidity(false, reason);
     return;
@@ -212,6 +222,11 @@ void PlannerNode::onHeartbeat()
   warned_invalid_ = false;
   last_invalid_reason_.clear();
   publishValidity(true);
+}
+
+bool PlannerNode::canHoldLastValidPath() const
+{
+  return hold_last_valid_path_ && path_valid_;
 }
 
 bool PlannerNode::inputsAllowPlanning(std::string & reason) const
@@ -298,6 +313,17 @@ eufs_msgs::msg::WaypointArrayStamped PlannerNode::buildWaypointMessage(
   }
 
   return msg;
+}
+
+void PlannerNode::publishHeldPathValidity(const std::string & reason)
+{
+  if (!warned_invalid_ || reason != last_invalid_reason_) {
+    RCLCPP_WARN(
+      get_logger(), "Holding last valid global path; refresh failed: %s", reason.c_str());
+    warned_invalid_ = true;
+    last_invalid_reason_ = reason;
+  }
+  publishValidity(true);
 }
 
 void PlannerNode::publishValidity(bool valid, const std::string & reason)

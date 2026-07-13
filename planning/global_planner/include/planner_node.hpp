@@ -32,9 +32,11 @@ private:
   void onHeartbeat();
 
   bool inputsAllowPlanning(std::string & reason) const;
+  bool canHoldLastValidPath() const;
   SlamCenterlineConfig centerlineConfig() const;
   eufs_msgs::msg::WaypointArrayStamped buildWaypointMessage(
     const std::vector<PlannerWaypoint> & waypoints) const;
+  void publishHeldPathValidity(const std::string & reason);
   void publishValidity(bool valid, const std::string & reason = "");
   void setInvalid(const std::string & reason);
 
@@ -63,6 +65,7 @@ private:
   double duplicate_point_tolerance_{0.001};
   double odom_timeout_sec_{0.5};
   double valid_heartbeat_hz_{5.0};
+  bool hold_last_valid_path_{true};
 
   bool has_cone_map_{false};
   bool has_ego_odom_{false};

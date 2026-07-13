@@ -32,5 +32,5 @@ local_planner_node:
     two_sided_horizon_m: 20.0
     fallback_horizon_m: 8.0
     fallback_offset_m: 1.5
-    two_sided_speed_mps: 3.0
-    fallback_speed_mps: 1.5
+    two_sided_speed_mps: 4.5
+    fallback_speed_mps: 3.0

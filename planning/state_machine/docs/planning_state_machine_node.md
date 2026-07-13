@@ -49,6 +49,14 @@ global waypoint snapshot을 버리고 GLOBAL에서 LOCAL로 demote한다. 복구
 fresh true heartbeat만으로는 충분하지 않으며, invalidation 이후에 새
 non-empty `/global_waypoints` snapshot이 들어와야 한다.
 
+SLAM `planner_node` writer의 기본 동작은 후속 refresh가 실패하면 마지막 valid
+global waypoint snapshot을 유지하는 것이다. 따라서 한 번 accepted global path가
+만들어진 뒤에는 후속 `/localization/cone_map` geometry jitter가 새 invalid
+heartbeat로 이어지지 않는다. 이후 refresh가 다시 성공하면 새 snapshot을
+publish하고 consumer가 그 path로 전환한다. 이 문서의 invalidation 규칙은
+selected writer가 실제로 `false`를 발행하거나 heartbeat가 stale해진 경우에
+적용된다.
+
 Wave 1에서는 Graph SLAM map을 기존 `ConeArrayWithCovariance`로 소비한다.
 landmark ID/version을 담는 planner-friendly `SlamConeMap.msg`는 호환 schema
 phase로 defer되어 있다.
@@ -134,9 +142,10 @@ validity/status/invalidation 조건만 GLOBAL에서 LOCAL로 demote한다.
 `planner_node`가 만드는 runtime global path는 blue/yellow cone boundaries의
 conservative centerline/global waypoint generator 결과이다. Production
 racing-line optimizer가 아니며, offline minimum-curvature CSV workflow와
-분리되어 있다.
+분리되어 있다. 기본 설정에서는 refresh 실패 시 마지막 valid 결과를 유지하고,
+refresh 성공 시 새 global path를 publish한다.
 
-`/global_waypoints`는 latched snapshot으로 처리하므로 wall-clock freshness timeout을 적용하지 않는다. 대신 `/planning/global_path_valid`가 `false`이거나 stale이면 state machine은 invalidation generation을 기록하고 현재 accepted waypoint snapshot을 버린다. 그 뒤에는 true heartbeat만으로 복구하지 않고, invalidation 이후에 새 non-empty waypoint snapshot을 받은 뒤에만 global path ready가 될 수 있다.
+`/global_waypoints`는 latched snapshot으로 처리하므로 wall-clock freshness timeout을 적용하지 않는다. 대신 `/planning/global_path_valid`가 `false`이거나 stale이면 state machine은 invalidation generation을 기록하고 현재 accepted waypoint snapshot을 버린다. 그 뒤에는 true heartbeat만으로 복구하지 않고, invalidation 이후에 새 non-empty waypoint snapshot을 받은 뒤에만 global path ready가 될 수 있다. 기본 SLAM `planner_node`는 refresh 실패 시 기존 valid snapshot을 유지해 이 invalidation 경로를 피한다.
 
 `GLOBAL -> LOCAL` demotion 조건:
 

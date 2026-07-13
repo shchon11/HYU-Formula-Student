@@ -40,11 +40,13 @@ In the integrated bringup, `path_selector_node` is the sole
 
 `/planning/global_path_valid` is a heartbeat, not a latched state. It is
 published as reliable volatile `std_msgs/Bool`: `false` on startup, while Graph
-SLAM is not in `localization`, on stale inputs, or after path generation fails;
-`true` repeats only while the currently published `/global_waypoints` snapshot
-is still valid. Consumers clear cached state on `false` or timeout and require a
-new `/global_waypoints` snapshot after invalidation before accepting recovered
-true heartbeats.
+SLAM is not in `localization`, on stale inputs, or before the first path can be
+generated. By default `planner_node` holds the last valid SLAM-derived
+`/global_waypoints` snapshot if a later refresh fails, so transient
+`/localization/cone_map` geometry failures do not invalidate the accepted
+global path. When a later refresh succeeds, `planner_node` publishes the new
+snapshot and consumers switch to it. Consumers still clear cached state on
+`false` or timeout if the selected writer emits one.
 
 The phase-1 SLAM planner consumes the existing
 `ConeArrayWithCovariance` map. A planner-specific `SlamConeMap.msg` with
@@ -87,7 +89,10 @@ ros2 launch global_planner slam_global_planner.launch.py \
 The integrated handoff gate requires a non-empty global snapshot, a fresh true
 `/planning/global_path_valid` heartbeat, fresh Frenet odometry, and a continuous
 `/planning/global_handoff_ready` dwell before the state machine selects
-`GLOBAL_FULL`. A false or stale validity heartbeat invalidates the accepted
+`GLOBAL_FULL`. With the default SLAM planner, later SLAM map geometry failures
+hold the last valid global snapshot instead of forcing a local-mode demotion;
+the next successful refresh publishes a replacement snapshot. A false or stale
+validity heartbeat from any selected writer still invalidates the accepted
 snapshot; a new snapshot is required for recovery.
 
 For CSV replay/debug with the same consumer gating:
