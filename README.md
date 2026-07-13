@@ -39,36 +39,77 @@ mission                       # ③ 미션 ARM → 5초 뒤 자율주행 시작
 
 ## 🧭 파이프라인
 
+센서 → 인지 → SLAM → 계획 → 제어. 모든 화살표는 실제 토픽입니다.
+
 ```mermaid
 flowchart LR
-    subgraph SP["SIM + PERCEPTION"]
+    subgraph SENS["🔌 SENSORS"]
         direction TB
-        ZED["ZED 카메라"] --> YOLO["YOLOv8<br/>(CUDA)"]
-        VLP["VLP-16"] --> FUSE["LiDAR×BBox fusion"]
-        YOLO --> FUSE
+        CAM["📷 ZED 스테레오"]
+        LID["📡 Velodyne VLP-16"]
+        SBG["🛰 SBG INS/GNSS"]
+        ENC["⚙️ 휠 odometry"]
     end
-    subgraph SL["SLAM"]
-        GS["graph_slam<br/>(mapping→localization)"]
-    end
-    subgraph PL["PLANNING"]
-        direction TB
-        LP["local_planner<br/>(라이브 콘→즉석 경로)"]
-        GP["global_planner<br/>(콘맵→레이스라인)"]
-        SM["state_machine<br/>(랩·전환·정지)"]
-        SEL["path_selector"]
-    end
-    CTRL["pure_pursuit<br/>controller"]
 
+    subgraph PERC["👁 PERCEPTION"]
+        direction TB
+        YOLO["YOLOv8 · FSOCO<br/>(CUDA)"]
+        FUSE["LiDAR×카메라<br/>3-tier fusion"]
+        YOLO -->|bbox| FUSE
+    end
+
+    subgraph SLAM["🗺 SLAM · graph_slam"]
+        GS["포즈그래프 최적화 (g2o)<br/>콘 = 랜드마크<br/>mapping → localization"]
+    end
+
+    subgraph PLAN["🧠 PLANNING"]
+        direction TB
+        SKID["skidpad_director<br/>미션 phase 콘 게이트"]
+        LP["local_planner<br/>즉석 경로"]
+        GP["global_planner<br/>레이스라인"]
+        SM["state_machine<br/>랩 · 전환 · 정지"]
+        SEL["path_selector"]
+        SKID -.->|"skidpad만: 게이트된 cone_map"| LP
+        LP -->|local_waypoints| SEL
+        GP -->|global 윈도우| SEL
+        SM ==>|path_source| SEL
+    end
+
+    subgraph CTRL["🎮 CONTROL"]
+        PP["pure_pursuit<br/>controller"]
+    end
+
+    CAM -->|image| YOLO
+    LID -->|points| FUSE
     FUSE -->|"/cones"| GS
-    FUSE -->|"/cones"| LP
-    GS -->|"cone_map · ego_odom · status"| GP
-    GS -->|"ego_odom"| LP
-    LP -->|"local_waypoints"| SEL
-    GP -->|"global 윈도우"| SEL
-    SM -->|"path_source"| SEL
-    SEL -->|"/path_waypoints"| CTRL
-    CTRL -->|"/cmd"| SP
+    SBG -->|"/gnss/odom · RTK prior"| GS
+    ENC -->|car_state| GS
+
+    GS -->|"cone_map + ego_odom"| LP
+    GS -->|"cone_map + ego_odom"| GP
+    GS -.->|cone_map| SKID
+    GS -->|"status (mapping/localization)"| SM
+    GS -->|ego_odom| PP
+
+    SM -.->|stop_request| PP
+    SEL ==>|"/path_waypoints"| PP
+    PP ==>|"/cmd"| CAR["🏎 차량 / Gazebo"]
+
+    classDef sens fill:#0b3d5c,stroke:#39a0e0,color:#eaf6ff
+    classDef perc fill:#4a2b57,stroke:#c77dde,color:#f7ecfc
+    classDef slam fill:#1d4d33,stroke:#4fca7f,color:#e9fbef
+    classDef plan fill:#5c4a12,stroke:#e0b93a,color:#fdf6de
+    classDef ctrl fill:#5a1f22,stroke:#e06a6f,color:#fdeaea
+    class CAM,LID,SBG,ENC sens
+    class YOLO,FUSE perc
+    class GS slam
+    class SKID,LP,GP,SM,SEL plan
+    class PP,CAR ctrl
 ```
+
+- **PERCEPTION**은 카메라·LiDAR만 소비해 `/cones`(색·위치·공분산) 하나로 요약합니다. sim 모드에선 Gazebo 플러그인이 이 토픽을 직접 냅니다.
+- **SLAM**은 `/cones` + 휠 odometry + (RTK일 때만) GNSS prior로 콘 랜드마크 포즈그래프를 풀어 **cone_map과 ego_odom**을 만들고, 루프 클로저가 확정되면 localization으로 전환합니다.
+- **PLANNING**에서 state_machine이 랩·상태 기반으로 `path_source`를 정하고, selector가 local/global 중 하나를 `/path_waypoints`로 확정 — **컨트롤러는 항상 이 토픽 하나만** 봅니다. skidpad 미션에선 director가 cone_map을 phase별로 걸러 local planner에 공급합니다.
 
 **2단계 주행 시나리오** — 이게 설계의 핵심입니다:
 
