@@ -85,6 +85,12 @@ std::vector<PlannerPoint> finiteConePoints(
   return points;
 }
 
+constexpr double kPi = 3.14159265358979323846;
+// No drivable track turns 60 deg between successive samples (at the 0.5 m
+// default spacing that is a sub-0.5 m turn radius). A step this sharp is a
+// folded seam or mispaired midpoints, never real geometry.
+constexpr double kMaxHeadingStepRad = 60.0 * kPi / 180.0;
+
 bool validateWaypoints(
   const std::vector<PlannerWaypoint> & waypoints, double duplicate_tolerance, std::string & reason)
 {
@@ -106,6 +112,14 @@ bool validateWaypoints(
       }
       if (distance(previous, current) <= duplicate_tolerance) {
         reason = "generated adjacent duplicate waypoint";
+        return false;
+      }
+      double heading_step = std::abs(waypoint.psi - waypoints[i - 1].psi);
+      if (heading_step > kPi) {
+        heading_step = 2.0 * kPi - heading_step;
+      }
+      if (heading_step > kMaxHeadingStepRad) {
+        reason = "generated heading reverses between adjacent waypoints";
         return false;
       }
     }
@@ -228,6 +242,28 @@ bool buildCenterlineFromSlamMap(
   // the per-sample yellow advance and any blue/yellow phase offset, small
   // enough that a blue sample can never reach across the closed-loop seam.
   const double forward_window = std::max(5.0, 2.0 * config.max_track_width_m);
+
+  // The monotonic projection cannot advance past ordered_yellow.back(). Each
+  // ring is seeded at its own nearest-to-ego cone, so on a closed loop the
+  // yellow arc can end before the blue sweep does; the final pairs then pin
+  // to yellow.back(), dragging the centerline tail sideways past the start
+  // (the fold-back "Z" at the seam). Extend a closed yellow ring virtually
+  // through its seam so the projection can wrap into the next lap's start.
+  std::vector<PlannerPoint> projection_yellow = ordered_yellow;
+  if (distance(ordered_yellow.front(), ordered_yellow.back()) <= config.close_loop_distance_m) {
+    double extended = 0.0;
+    PlannerPoint previous_point = ordered_yellow.back();
+    for (std::size_t i = 0; i < ordered_yellow.size() && extended < forward_window; ++i) {
+      const double step = distance(previous_point, ordered_yellow[i]);
+      if (step > config.duplicate_point_tolerance) {
+        projection_yellow.push_back(ordered_yellow[i]);
+        extended += step;
+        previous_point = ordered_yellow[i];
+      }
+    }
+  }
+  const auto projection_yellow_arc = cumulativeArcLengths(projection_yellow);
+
   double previous_yellow_s = 0.0;
   std::vector<PlannerPoint> centerline;
   centerline.reserve(pair_count + 1U);
@@ -236,8 +272,8 @@ bool buildCenterlineFromSlamMap(
     const double ratio = static_cast<double>(i) / static_cast<double>(pair_count - 1U);
     const auto blue = interpolateAtArcLength(ordered_blue, blue_arc, ratio * blue_arc.back());
     const auto yellow_projection = closestPointOnPolylineAfter(
-      blue, ordered_yellow, yellow_arc, previous_yellow_s, config.duplicate_point_tolerance,
-      forward_window);
+      blue, projection_yellow, projection_yellow_arc, previous_yellow_s,
+      config.duplicate_point_tolerance, forward_window);
     previous_yellow_s = yellow_projection.arc_s;
     const auto yellow = yellow_projection.point;
     const double width = distance(blue, yellow);
@@ -268,10 +304,30 @@ bool buildCenterlineFromSlamMap(
     reason = "centerline has fewer than two unique points";
     return false;
   }
-  if (distance(centerline.front(), centerline.back()) <= config.close_loop_distance_m &&
-    distance(centerline.front(), centerline.back()) > config.duplicate_point_tolerance)
-  {
-    centerline.push_back(centerline.front());
+  // Close the loop without folding back: the sweep can still carry the tail
+  // slightly past the start, and a blind chord to the front would double back
+  // against travel. Drop tail points whose closing chord reverses direction,
+  // then append the front point.
+  if (distance(centerline.front(), centerline.back()) <= config.close_loop_distance_m) {
+    while (centerline.size() > 2U &&
+      distance(centerline.front(), centerline.back()) > config.duplicate_point_tolerance)
+    {
+      const PlannerPoint & tail = centerline.back();
+      const PlannerPoint & before_tail = centerline[centerline.size() - 2U];
+      const double travel_x = tail.x - before_tail.x;
+      const double travel_y = tail.y - before_tail.y;
+      const double chord_x = centerline.front().x - tail.x;
+      const double chord_y = centerline.front().y - tail.y;
+      if (travel_x * chord_x + travel_y * chord_y >= 0.0) {
+        break;
+      }
+      centerline.pop_back();
+    }
+    if (distance(centerline.front(), centerline.back()) <= config.close_loop_distance_m &&
+      distance(centerline.front(), centerline.back()) > config.duplicate_point_tolerance)
+    {
+      centerline.push_back(centerline.front());
+    }
   }
 
   const auto resampled = resampleBySpacing(

@@ -149,6 +149,68 @@ bool headingAwareGraphOrder(
   return true;
 }
 
+double medianSegmentLength(const std::vector<PlannerPoint> & points)
+{
+  std::vector<double> segments;
+  segments.reserve(points.size());
+  for (std::size_t i = 1; i < points.size(); ++i) {
+    segments.push_back(distance(points[i - 1U], points[i]));
+  }
+  if (segments.empty()) {
+    return 0.0;
+  }
+  const std::size_t mid = segments.size() / 2U;
+  std::nth_element(segments.begin(), segments.begin() + mid, segments.end());
+  return segments[mid];
+}
+
+// The greedy walk must consume every cone, so a cone it bypasses (the heading
+// penalty can prefer a straighter continuation past a tight kink) is appended
+// at the end behind a jump far above the cone spacing. Those stragglers are
+// real boundary cones: splice each one back at its cheapest-detour position
+// instead of leaving a spur that folds the centerline at the seam. Stragglers
+// that genuinely belong at the end re-insert there at zero cost, so a real
+// sparse tail is left untouched.
+void reinsertTailStragglers(std::vector<PlannerPoint> & ordered, double max_gap)
+{
+  if (ordered.size() < 4U) {
+    return;
+  }
+  const double jump_limit =
+    std::min(max_gap, std::max(2.5 * medianSegmentLength(ordered), 2.0));
+  std::size_t jump_index = 0U;
+  for (std::size_t i = 1; i < ordered.size(); ++i) {
+    if (distance(ordered[i - 1U], ordered[i]) > jump_limit) {
+      jump_index = i;
+    }
+  }
+  if (jump_index == 0U) {
+    return;
+  }
+  // A long tail behind a jump is a genuinely broken map, not a few bypassed
+  // cones; leave it to the score gates below.
+  const std::size_t tail_count = ordered.size() - jump_index;
+  if (tail_count > ordered.size() / 4U) {
+    return;
+  }
+  const std::vector<PlannerPoint> stragglers(ordered.begin() + jump_index, ordered.end());
+  ordered.erase(ordered.begin() + jump_index, ordered.end());
+  for (const auto & straggler : stragglers) {
+    std::size_t best_position = ordered.size();
+    double best_cost = distance(ordered.back(), straggler) +
+      distance(straggler, ordered.front()) - distance(ordered.back(), ordered.front());
+    for (std::size_t i = 1; i < ordered.size(); ++i) {
+      const double cost = distance(ordered[i - 1U], straggler) +
+        distance(straggler, ordered[i]) - distance(ordered[i - 1U], ordered[i]);
+      if (cost < best_cost) {
+        best_cost = cost;
+        best_position = i;
+      }
+    }
+    ordered.insert(ordered.begin() + best_position, straggler);
+  }
+}
+
 bool orderBoundary(
   const std::vector<PlannerPoint> & input, const PlannerPoint & ego,
   double max_gap, std::vector<PlannerPoint> & ordered, std::string & reason)
@@ -162,6 +224,8 @@ bool orderBoundary(
     ordered = input;
     best_score = input_score;
   }
+  reinsertTailStragglers(ordered, max_gap);
+  best_score = scoreBoundaryOrder(ordered);
 
   if (best_score.self_intersections > 0U) {
     reason = "self_intersection";
@@ -176,21 +240,49 @@ bool orderBoundary(
 
 bool alignBoundaryDirections(std::vector<PlannerPoint> & blue, std::vector<PlannerPoint> & yellow)
 {
-  const std::size_t sample_count = std::min(blue.size(), yellow.size());
-  if (sample_count < 2U) {
+  if (blue.size() < 2U || yellow.size() < 2U) {
     return false;
   }
-  const auto blue_samples = sampleNormalized(blue, sample_count);
-  const auto yellow_samples = sampleNormalized(yellow, sample_count);
+  // Vote with geometric correspondence: each yellow segment against the
+  // direction of the blue segment nearest to it. Index-aligned sampling is
+  // not sound here -- each ring is seeded at its own nearest-to-ego cone, so
+  // equal indices sit at different track phases, and on a closed loop the
+  // index-wise dot oscillates in sign, letting opposite traversal directions
+  // survive the median vote.
   std::vector<double> direction_dots;
-  direction_dots.reserve(sample_count - 1U);
-  for (std::size_t i = 1; i < sample_count; ++i) {
-    const auto blue_segment = subtract(blue_samples[i], blue_samples[i - 1]);
-    const auto yellow_segment = subtract(yellow_samples[i], yellow_samples[i - 1]);
-    const double blue_length = std::hypot(blue_segment.x, blue_segment.y);
+  direction_dots.reserve(yellow.size() - 1U);
+  for (std::size_t i = 1; i < yellow.size(); ++i) {
+    const auto yellow_segment = subtract(yellow[i], yellow[i - 1]);
     const double yellow_length = std::hypot(yellow_segment.x, yellow_segment.y);
-    if (blue_length > kGeometryEpsilon && yellow_length > kGeometryEpsilon) {
-      direction_dots.push_back(dot(blue_segment, yellow_segment) / (blue_length * yellow_length));
+    if (yellow_length <= kGeometryEpsilon) {
+      continue;
+    }
+    const PlannerPoint yellow_mid{
+      0.5 * (yellow[i].x + yellow[i - 1].x), 0.5 * (yellow[i].y + yellow[i - 1].y)};
+    double best_d2 = std::numeric_limits<double>::max();
+    PlannerPoint best_segment{0.0, 0.0};
+    for (std::size_t j = 1; j < blue.size(); ++j) {
+      const auto blue_segment = subtract(blue[j], blue[j - 1]);
+      const double len2 = blue_segment.x * blue_segment.x + blue_segment.y * blue_segment.y;
+      double t = 0.0;
+      if (len2 > kGeometryEpsilon) {
+        t = std::clamp(
+          dot(subtract(yellow_mid, blue[j - 1]), blue_segment) / len2, 0.0, 1.0);
+      }
+      const PlannerPoint projection{
+        blue[j - 1].x + t * blue_segment.x, blue[j - 1].y + t * blue_segment.y};
+      const double dx = yellow_mid.x - projection.x;
+      const double dy = yellow_mid.y - projection.y;
+      const double d2 = dx * dx + dy * dy;
+      if (d2 < best_d2) {
+        best_d2 = d2;
+        best_segment = blue_segment;
+      }
+    }
+    const double blue_length = std::hypot(best_segment.x, best_segment.y);
+    if (blue_length > kGeometryEpsilon) {
+      direction_dots.push_back(
+        dot(best_segment, yellow_segment) / (blue_length * yellow_length));
     }
   }
   const auto direction_dot_median = median(direction_dots);
