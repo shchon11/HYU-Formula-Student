@@ -18,6 +18,12 @@
   <exec_depend>local_planner</exec_depend>
   <exec_depend>path_selector</exec_depend>
   <exec_depend>pure_pursuit_controller</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>eufs_msgs</exec_depend>
+  <exec_depend>ackermann_msgs</exec_depend>
+  <exec_depend>rviz_2d_overlay_msgs</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

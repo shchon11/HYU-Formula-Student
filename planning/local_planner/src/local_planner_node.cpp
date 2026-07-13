@@ -24,6 +24,8 @@ LocalPlannerNode::LocalPlannerNode(const rclcpp::NodeOptions & options)
     "path_topic", "/planning/local_waypoints/path");
   const auto validity_topic = declare_parameter<std::string>(
     "validity_topic", "/planning/local_path_valid");
+  const auto reason_topic = declare_parameter<std::string>(
+    "reason_topic", "/planning/local_path_reason");
   max_stamp_skew_sec_ = declare_parameter<double>("max_stamp_skew_sec", 0.1);
   max_input_age_sec_ = declare_parameter<double>("max_input_age_sec", 0.5);
   heartbeat_hz_ = declare_parameter<double>("heartbeat_hz", 10.0);
@@ -40,8 +42,12 @@ LocalPlannerNode::LocalPlannerNode(const rclcpp::NodeOptions & options)
   planner_config_.min_forward_projection_m = declare_parameter<double>(
     "min_forward_projection_m", 0.10);
   planner_config_.max_traversal_gap_m = declare_parameter<double>("max_traversal_gap_m", 6.0);
+  planner_config_.centerline_max_link_gap_m =
+    declare_parameter<double>("centerline_max_link_gap_m", 4.0);
   planner_config_.max_heading_change_rad = declare_parameter<double>(
     "max_heading_change_rad", 1.047);
+  planner_config_.max_u_turn_heading_change_rad = declare_parameter<double>(
+    "max_u_turn_heading_change_rad", 2.618);
   planner_config_.waypoint_spacing_m = declare_parameter<double>("waypoint_spacing_m", 0.5);
   planner_config_.max_start_distance_m = declare_parameter<double>("max_start_distance_m", 4.0);
   planner_config_.two_sided_horizon_m = declare_parameter<double>("two_sided_horizon_m", 20.0);
@@ -63,12 +69,13 @@ LocalPlannerNode::LocalPlannerNode(const rclcpp::NodeOptions & options)
   }
 
   output_ = std::make_unique<LocalPlannerOutput>(
-    *this, LocalPlannerOutputTopics{waypoints_topic, path_topic, validity_topic},
+    *this, LocalPlannerOutputTopics{waypoints_topic, path_topic, validity_topic, reason_topic},
     max_input_age_sec_, heartbeat_hz_);
   inputs_ = std::make_unique<LocalPlannerInputs>(
     *this, source_mode_,
     LocalPlannerInputTopics{cones_topic, slam_map_topic, odom_topic, slam_status_topic},
-    max_stamp_skew_sec_, [this] {output_->invalidateImmediately();},
+    max_stamp_skew_sec_,
+    [this](const std::string & reason) {output_->invalidateImmediately(reason);},
     [this](const LiveInputPair & input) {processLivePair(input);},
     [this](const SlamMapInput & input) {processSlamMap(input);});
 }
@@ -80,13 +87,13 @@ void LocalPlannerNode::processLivePair(const LiveInputPair & input)
     headerMetadata(input.cones->header, input.cones_receive_time), odom_metadata,
     max_stamp_skew_sec_, max_input_age_sec_);
   if (!validation.valid) {
-    output_->invalidateImmediately();
+    output_->invalidateImmediately(validation.reason);
     return;
   }
 
   const auto result = buildLocalPath(liveConeSet(*input.cones), planner_config_);
   if (!result.valid) {
-    output_->retainUntilStale();
+    output_->retainUntilStale(result.reason);
     return;
   }
   output_->publishPath(
@@ -102,7 +109,7 @@ void LocalPlannerNode::processSlamMap(const SlamMapInput & input)
   if (!validation.valid) {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 2000, "SLAM local input invalid: %s", validation.reason.c_str());
-    output_->invalidateImmediately();
+    output_->invalidateImmediately(validation.reason);
     return;
   }
 
@@ -112,7 +119,7 @@ void LocalPlannerNode::processSlamMap(const SlamMapInput & input)
   } else {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 2000, "SLAM local path invalid: %s", result.reason.c_str());
-    output_->invalidateImmediately();
+    output_->invalidateImmediately(result.reason);
   }
 }
 

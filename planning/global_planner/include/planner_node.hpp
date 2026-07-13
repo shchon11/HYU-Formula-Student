@@ -35,7 +35,7 @@ private:
   SlamCenterlineConfig centerlineConfig() const;
   eufs_msgs::msg::WaypointArrayStamped buildWaypointMessage(
     const std::vector<PlannerWaypoint> & waypoints) const;
-  void publishValidity(bool valid);
+  void publishValidity(bool valid, const std::string & reason = "");
   void setInvalid(const std::string & reason);
 
   std::string cone_map_topic_;
@@ -44,6 +44,7 @@ private:
   std::string graph_slam_map_converged_topic_;
   std::string global_waypoints_topic_;
   std::string global_path_valid_topic_;
+  std::string global_path_reason_topic_;
 
   int min_cones_per_side_{3};
   double max_boundary_gap_m_{12.0};
@@ -86,6 +87,7 @@ private:
   rclcpp::Publisher<eufs_msgs::msg::WaypointArrayStamped>::SharedPtr global_waypoints_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr global_path_viz_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr global_path_valid_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr global_path_reason_pub_;
   rclcpp::TimerBase::SharedPtr heartbeat_timer_;
 };
 

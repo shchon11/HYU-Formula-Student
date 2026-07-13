@@ -12,25 +12,51 @@ namespace global_planner
 namespace
 {
 
-// Closest point to `query` on the polyline `poly` (projected onto each segment,
-// not just the nearest vertex). Used to pair a boundary sample with the true
-// opposite-boundary point instead of assuming both boundaries share an
-// arc-length parameterisation — the latter mismatches whenever the two sides
-// have unequal length or offset start points (i.e. any full-loop map).
-PlannerPoint closestPointOnPolyline(
-  const PlannerPoint & query, const std::vector<PlannerPoint> & poly)
+struct MonotonicProjection
+{
+  PlannerPoint point;
+  double arc_s{0.0};
+};
+
+MonotonicProjection closestPointOnPolylineAfter(
+  const PlannerPoint & query,
+  const std::vector<PlannerPoint> & poly,
+  const std::vector<double> & arc_lengths,
+  double min_arc_s,
+  double duplicate_tolerance,
+  double forward_window)
 {
   PlannerPoint best = poly.front();
+  double best_arc_s = arc_lengths.empty() ? 0.0 : arc_lengths.front();
   double best_d2 = std::numeric_limits<double>::max();
   for (std::size_t i = 0; i + 1U < poly.size(); ++i) {
     const PlannerPoint & a = poly[i];
     const PlannerPoint & b = poly[i + 1U];
+    const double segment_start_s = arc_lengths[i];
+    const double segment_end_s = arc_lengths[i + 1U];
+    if (segment_end_s + duplicate_tolerance < min_arc_s) {
+      continue;  // wholly behind the monotonic frontier
+    }
+    // Bound the search to a forward window. Without this, on a CLOSED loop the
+    // seam makes ordered_yellow.back() physically adjacent to ordered_yellow
+    // .front() near the ego, so the first blue sample projects onto the far
+    // end of the arc and pins every later pair to yellow.back() -> the width
+    // blows past max_track_width and a geometrically valid loop is rejected.
+    if (segment_start_s > min_arc_s + forward_window) {
+      continue;
+    }
     const double vx = b.x - a.x;
     const double vy = b.y - a.y;
     const double len2 = vx * vx + vy * vy;
     double t = 0.0;
     if (len2 > 0.0) {
       t = std::clamp(((query.x - a.x) * vx + (query.y - a.y) * vy) / len2, 0.0, 1.0);
+      if (segment_end_s > segment_start_s && min_arc_s > segment_start_s) {
+        // min_t may land just past a segment end (within duplicate_tolerance);
+        // std::min keeps std::clamp's lo <= hi (lo > hi is undefined behaviour).
+        const double min_t = (min_arc_s - segment_start_s) / (segment_end_s - segment_start_s);
+        t = std::clamp(t, std::min(min_t, 1.0), 1.0);
+      }
     }
     const PlannerPoint proj{a.x + t * vx, a.y + t * vy};
     const double dx = query.x - proj.x;
@@ -39,9 +65,10 @@ PlannerPoint closestPointOnPolyline(
     if (d2 < best_d2) {
       best_d2 = d2;
       best = proj;
+      best_arc_s = segment_start_s + t * (segment_end_s - segment_start_s);
     }
   }
-  return best;
+  return MonotonicProjection{best, best_arc_s};
 }
 
 std::vector<PlannerPoint> finiteConePoints(
@@ -86,6 +113,44 @@ bool validateWaypoints(
   return true;
 }
 
+bool hasSameColorDuplicate(
+  const std::vector<PlannerPoint> & points, const char * side, double threshold, std::string & reason)
+{
+  (void)side;
+  for (std::size_t i = 0; i < points.size(); ++i) {
+    for (std::size_t j = i + 1U; j < points.size(); ++j) {
+      const double separation = distance(points[i], points[j]);
+      if (separation < threshold) {
+        reason = "duplicate_ghost";
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool hasInvalidNearestTrackWidth(
+  const std::vector<PlannerPoint> & blue_points,
+  const std::vector<PlannerPoint> & yellow_points,
+  const SlamCenterlineConfig & config,
+  std::string & reason)
+{
+  for (const auto * points : {&blue_points, &yellow_points}) {
+    const auto & opposite = points == &blue_points ? yellow_points : blue_points;
+    for (const auto & point : *points) {
+      double best_width = std::numeric_limits<double>::max();
+      for (const auto & candidate : opposite) {
+        best_width = std::min(best_width, distance(point, candidate));
+      }
+      if (best_width < config.min_track_width_m || best_width > config.max_track_width_m) {
+        reason = "invalid_width";
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 bool buildCenterlineFromSlamMap(
@@ -95,6 +160,8 @@ bool buildCenterlineFromSlamMap(
   std::vector<PlannerWaypoint> & waypoints,
   std::string & reason)
 {
+  waypoints.clear();
+
   if (!std::isfinite(config.waypoint_spacing_m) ||
     config.waypoint_spacing_m < kMinimumWaypointSpacingM)
   {
@@ -123,6 +190,17 @@ bool buildCenterlineFromSlamMap(
     return false;
   }
 
+  const double duplicate_ghost_threshold = std::max(
+    config.duplicate_point_tolerance, config.min_track_width_m * 0.25);
+  if (hasSameColorDuplicate(blue_points, "blue", duplicate_ghost_threshold, reason) ||
+    hasSameColorDuplicate(yellow_points, "yellow", duplicate_ghost_threshold, reason))
+  {
+    return false;
+  }
+  if (hasInvalidNearestTrackWidth(blue_points, yellow_points, config, reason)) {
+    return false;
+  }
+
   std::vector<PlannerPoint> ordered_blue;
   std::vector<PlannerPoint> ordered_yellow;
   if (!orderSlamBoundaries(
@@ -141,26 +219,35 @@ bool buildCenterlineFromSlamMap(
     return false;
   }
 
-  // Sample evenly along the blue boundary and pair each sample with the closest
-  // point on the yellow boundary. Nearest-point pairing (not shared arc-length
-  // ratio) keeps the pairing local, so it stays correct on full-loop maps where
-  // the two sides differ in length — e.g. loading a saved map in localization.
+  // Pairing is locked to the opposite boundary's forward arc coordinate. This
+  // prevents close branches from snapping backward across the track while still
+  // allowing unequal boundary lengths.
   const std::size_t pair_count = std::max<std::size_t>(
     2U, static_cast<std::size_t>(std::ceil(blue_arc.back() / config.waypoint_spacing_m)) + 1U);
-  (void)yellow_arc;
+  // Forward search window for the monotonic pairing: large enough to absorb
+  // the per-sample yellow advance and any blue/yellow phase offset, small
+  // enough that a blue sample can never reach across the closed-loop seam.
+  const double forward_window = std::max(5.0, 2.0 * config.max_track_width_m);
+  double previous_yellow_s = 0.0;
   std::vector<PlannerPoint> centerline;
   centerline.reserve(pair_count + 1U);
+  std::size_t out_of_range_pairs = 0U;
   for (std::size_t i = 0; i < pair_count; ++i) {
     const double ratio = static_cast<double>(i) / static_cast<double>(pair_count - 1U);
     const auto blue = interpolateAtArcLength(ordered_blue, blue_arc, ratio * blue_arc.back());
-    const auto yellow = closestPointOnPolyline(blue, ordered_yellow);
+    const auto yellow_projection = closestPointOnPolylineAfter(
+      blue, ordered_yellow, yellow_arc, previous_yellow_s, config.duplicate_point_tolerance,
+      forward_window);
+    previous_yellow_s = yellow_projection.arc_s;
+    const auto yellow = yellow_projection.point;
     const double width = distance(blue, yellow);
     if (width < config.min_track_width_m || width > config.max_track_width_m) {
-      std::ostringstream stream;
-      stream << "track width " << width << " m outside ["
-             << config.min_track_width_m << ", " << config.max_track_width_m << "]";
-      reason = stream.str();
-      return false;
+      // A single mispaired/noisy sample (SLAM cone jitter, a local pairing skew)
+      // must not discard the entire raceline. Skip this midpoint and let the
+      // neighbours bridge it; only a WIDESPREAD width failure (a genuinely
+      // wrong map, e.g. crossed boundaries) rejects the path below.
+      ++out_of_range_pairs;
+      continue;
     }
     const PlannerPoint midpoint = scale(add(blue, yellow), 0.5);
     if (centerline.empty() ||
@@ -170,6 +257,13 @@ bool buildCenterlineFromSlamMap(
     }
   }
 
+  // Tolerate isolated bad pairs, but a map where a large fraction of samples
+  // fail the width gate is genuinely wrong (crossed/duplicated boundaries) and
+  // must still fail closed.
+  if (out_of_range_pairs > pair_count / 4U) {
+    reason = "invalid_width";
+    return false;
+  }
   if (centerline.size() < 2U) {
     reason = "centerline has fewer than two unique points";
     return false;

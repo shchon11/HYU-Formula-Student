@@ -40,6 +40,8 @@ planner_node:
     # std_msgs/Bool, not transient-local.
     global_waypoints_topic: "/global_waypoints"
     global_path_valid_topic: "/planning/global_path_valid"
+    # Latched std_msgs/String: why the path is invalid ("" while valid).
+    global_path_reason_topic: "/planning/global_path_reason"
     valid_heartbeat_hz: 5.0
 
     # T4 planner algorithm defaults.

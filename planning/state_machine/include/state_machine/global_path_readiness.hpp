@@ -61,12 +61,21 @@ public:
   void refreshHandoff(const rclcpp::Time & current_time, double timeout_sec);
 
   bool ready(const rclcpp::Time & current_time, double timeout_sec) const;
+  bool ready(
+    const rclcpp::Time & current_time,
+    double timeout_sec,
+    bool require_graph_slam_localization) const;
   bool finalPathEndReached(
     const rclcpp::Time & current_time,
     double timeout_sec,
+    bool require_graph_slam_localization,
     bool has_frenet_odom,
     double current_s,
     double final_path_end_threshold) const;
+  std::string readinessReason(
+    const rclcpp::Time & current_time,
+    double timeout_sec,
+    bool require_graph_slam_localization) const;
   bool hasFreshValidity(const rclcpp::Time & current_time, double timeout_sec) const;
   bool hasFreshHandoff(const rclcpp::Time & current_time, double timeout_sec) const;
   bool handoffDwellReady(
@@ -88,7 +97,7 @@ public:
   std::size_t acceptedWaypointCount() const;
 
 private:
-  void invalidate();
+  void invalidate(const std::string & reason);
 
   bool has_global_waypoints_{false};
   bool has_graph_slam_status_{false};
@@ -99,6 +108,7 @@ private:
   bool global_handoff_ready_{false};
 
   std::string graph_slam_status_{"unknown"};
+  std::string last_readiness_loss_reason_;
   rclcpp::Time last_global_waypoints_time_;
   rclcpp::Time last_global_path_valid_time_;
   rclcpp::Time last_global_handoff_ready_time_;

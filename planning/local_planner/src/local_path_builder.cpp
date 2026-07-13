@@ -24,6 +24,7 @@ bool validConfig(const PlannerConfig & config)
     config.min_forward_projection_m,
     config.max_traversal_gap_m,
     config.max_heading_change_rad,
+    config.max_u_turn_heading_change_rad,
     config.waypoint_spacing_m,
     config.max_start_distance_m,
     config.two_sided_horizon_m,
@@ -42,11 +43,27 @@ bool validConfig(const PlannerConfig & config)
          config.min_track_width_m <= config.max_track_width_m &&
          config.duplicate_tolerance_m >= 0.0 && config.min_forward_projection_m >= 0.0 &&
          config.max_traversal_gap_m > 0.0 && config.max_heading_change_rad >= 0.0 &&
+         config.max_u_turn_heading_change_rad >= config.max_heading_change_rad &&
          config.waypoint_spacing_m > config.duplicate_tolerance_m &&
          config.max_start_distance_m > 0.0 &&
          config.two_sided_horizon_m > 0.0 && config.fallback_horizon_m > 0.0 &&
          config.fallback_offset_m > 0.0 && config.two_sided_speed_mps > 0.0 &&
          config.fallback_speed_mps > 0.0;
+}
+
+std::string traversalFailureReason(internal::TraversalFailure failure)
+{
+  switch (failure) {
+    case internal::TraversalFailure::kNone:
+      return "";
+    case internal::TraversalFailure::kTopologyGap:
+      return "local_topology_gap";
+    case internal::TraversalFailure::kHeadingJump:
+      return "local_heading_jump";
+    case internal::TraversalFailure::kUTurnBranchAmbiguous:
+      return "u_turn_branch_ambiguous";
+  }
+  return "local_topology_gap";
 }
 
 // Extend the final segment direction until the polyline reaches `target`
@@ -93,6 +110,9 @@ BuildResult buildSparseFallback(
   std::vector<Point2> midpoints;
   for (const Point2 & b : blue) {
     for (const Point2 & y : yellow) {
+      if (b.y <= y.y) {
+        continue;
+      }
       const double width = internal::distance(b, y);
       if (width >= config.min_track_width_m && width <= config.max_track_width_m) {
         midpoints.push_back({(b.x + y.x) * 0.5, (b.y + y.y) * 0.5});
@@ -169,6 +189,11 @@ BuildResult buildLocalPath(const ConeSet & cones, const PlannerConfig & config)
 
   const auto blue = internal::cropToRoi(cones.blue, config);
   const auto yellow = internal::cropToRoi(cones.yellow, config);
+  const bool had_boundary_input = !cones.blue.empty() || !cones.yellow.empty();
+  if (had_boundary_input && blue.empty() && yellow.empty()) {
+    invalid.reason = "roi_no_boundary_cones";
+    return invalid;
+  }
   BuildResult two_sided;
   if (blue.size() >= 2U && yellow.size() >= 2U) {
     const auto centerline = internal::boundaryMidpoints(blue, yellow, config);
@@ -219,13 +244,24 @@ BuildResult buildLocalPath(const ConeSet & cones, const PlannerConfig & config)
     invalid.reason = "one-sided boundary has fewer than three unique cones";
     return invalid;
   }
-  const auto boundary = internal::forwardTraversal(sanitized_boundary, config);
+  const auto traversal = internal::forwardTraversalWithReason(sanitized_boundary, config);
+  const auto & boundary = traversal.points;
+  if (traversal.failure == internal::TraversalFailure::kUTurnBranchAmbiguous) {
+    invalid.reason = traversalFailureReason(traversal.failure);
+    return invalid;
+  }
   if (!config.allow_partial_boundary && boundary.size() != sanitized_boundary.size()) {
-    invalid.reason = "one-sided traversal did not consume sanitized boundary";
+    invalid.reason = traversalFailureReason(traversal.failure);
+    if (invalid.reason.empty()) {
+      invalid.reason = "local_topology_gap";
+    }
     return invalid;
   }
   if (boundary.size() < 2U || pathSelfIntersects(boundary)) {
-    invalid.reason = "one-sided traversal is invalid";
+    invalid.reason = traversalFailureReason(traversal.failure);
+    if (invalid.reason.empty()) {
+      invalid.reason = "one-sided traversal is invalid";
+    }
     return invalid;
   }
   const auto centerline = internal::offsetBoundary(boundary, side, config.fallback_offset_m);

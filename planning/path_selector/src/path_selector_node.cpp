@@ -243,6 +243,11 @@ std::string PathSelectorNode::makeDiagnostic(
          << " selection_failure=" << toString(decision.failure)
          << " global_handoff_ready=" << (continuity.ready ? "true" : "false")
          << " continuity_failure=" << toString(continuity.failure)
+         << " local_candidate_failure=" << toString(continuity.local_candidate_failure)
+         << " global_candidate_failure=" << toString(continuity.global_candidate_failure)
+         << " odometry_failure=" << toString(continuity.odometry_failure)
+         << " local_trim_failure=" << toString(continuity.local_trim_failure)
+         << " global_trim_failure=" << toString(continuity.global_trim_failure)
          << " common_length_m=" << continuity.common_forward_length_m
          << " start_separation_m=" << continuity.start_separation_m
          << " heading_difference_rad=" << continuity.heading_difference_rad;

@@ -44,6 +44,9 @@ PlannerNode::PlannerNode()
     global_waypoints_topic_ + "/path", latched_qos);
   global_path_valid_pub_ = create_publisher<std_msgs::msg::Bool>(
     global_path_valid_topic_, valid_qos);
+  // Latched so a late-joining HUD immediately sees the last failure reason.
+  global_path_reason_pub_ = create_publisher<std_msgs::msg::String>(
+    global_path_reason_topic_, latched_qos);
 
   const double heartbeat_hz = std::max(0.1, valid_heartbeat_hz_);
   heartbeat_timer_ = create_wall_timer(
@@ -66,6 +69,7 @@ void PlannerNode::declareParameters()
   declare_parameter<std::string>("graph_slam_map_converged_topic", "/graph_slam/map_converged");
   declare_parameter<std::string>("global_waypoints_topic", "/global_waypoints");
   declare_parameter<std::string>("global_path_valid_topic", "/planning/global_path_valid");
+  declare_parameter<std::string>("global_path_reason_topic", "/planning/global_path_reason");
   declare_parameter<double>("valid_heartbeat_hz", 5.0);
   declare_parameter<int>("min_cones_per_side", 3);
   declare_parameter<double>("max_boundary_gap_m", 12.0);
@@ -91,6 +95,7 @@ void PlannerNode::loadParameters()
   graph_slam_map_converged_topic_ = get_parameter("graph_slam_map_converged_topic").as_string();
   global_waypoints_topic_ = get_parameter("global_waypoints_topic").as_string();
   global_path_valid_topic_ = get_parameter("global_path_valid_topic").as_string();
+  global_path_reason_topic_ = get_parameter("global_path_reason_topic").as_string();
   valid_heartbeat_hz_ = get_parameter("valid_heartbeat_hz").as_double();
   min_cones_per_side_ = get_parameter("min_cones_per_side").as_int();
   max_boundary_gap_m_ = get_parameter("max_boundary_gap_m").as_double();
@@ -181,14 +186,14 @@ void PlannerNode::onHeartbeat()
   std::string reason;
   if (!inputsAllowPlanning(reason)) {
     setInvalid(reason);
-    publishValidity(false);
+    publishValidity(false, reason);
     return;
   }
 
   std::vector<PlannerWaypoint> waypoints;
   if (!buildCenterlineFromSlamMap(*latest_cone_map_, latest_ego_odom_, centerlineConfig(), waypoints, reason)) {
     setInvalid(reason);
-    publishValidity(false);
+    publishValidity(false, reason);
     return;
   }
 
@@ -295,11 +300,14 @@ eufs_msgs::msg::WaypointArrayStamped PlannerNode::buildWaypointMessage(
   return msg;
 }
 
-void PlannerNode::publishValidity(bool valid)
+void PlannerNode::publishValidity(bool valid, const std::string & reason)
 {
   std_msgs::msg::Bool msg;
   msg.data = valid;
   global_path_valid_pub_->publish(msg);
+  std_msgs::msg::String reason_msg;
+  reason_msg.data = valid ? "" : reason;
+  global_path_reason_pub_->publish(reason_msg);
 }
 
 void PlannerNode::setInvalid(const std::string & reason)

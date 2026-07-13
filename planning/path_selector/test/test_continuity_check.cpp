@@ -149,6 +149,65 @@ TEST(ContinuityCheckTest, ContinuityReadyRequiresBoundedPositionHeadingAndLength
   EXPECT_EQ(short_path.failure, ContinuityFailure::InsufficientCommonLength);
 }
 
+TEST(ContinuityCheckTest, UTurnPathsRemainHandoffReadyWhenStartsAndHeadingsMatch)
+{
+  const ContinuityCheck check;
+  const auto result = check.evaluate(makeContinuityInputs(
+      {{0.0, 0.0}, {2.0, 0.0}, {2.0, 2.0}, {0.0, 2.0}, {-2.0, 2.0}},
+      {{0.0, 0.0}, {2.0, 0.0}, {2.0, 2.0}, {0.0, 2.0}, {-2.0, 2.0}}));
+
+  EXPECT_TRUE(result.ready) << toString(result.failure);
+  EXPECT_EQ(result.failure, ContinuityFailure::None);
+  EXPECT_GE(result.common_forward_length_m, check.thresholds().minimum_common_length_m);
+}
+
+TEST(ContinuityCheckTest, FailureReasonsAreDistinctForClosedHandoffCases)
+{
+  const ContinuityCheck check;
+  auto stale_path = makeCandidate({{0.0, 0.0}, {6.0, 0.0}});
+  stale_path.path_receive_time_sec = 9.49;
+  auto stale_odometry = OdometryInput{makeOdometry(), 9.49};
+
+  EXPECT_STREQ(
+    toString(check.validateCandidate(stale_path, kNowSec, kNowSec).failure),
+    "stale_path");
+  EXPECT_STREQ(
+    toString(check.validateOdometry(stale_odometry, kNowSec, kNowSec).failure),
+    "stale_odometry");
+  EXPECT_STREQ(
+    toString(check.evaluate(makeContinuityInputs(
+        {{0.0, 0.0}, {5.0, 0.0}},
+        {{1.51, 0.0}, {6.51, 0.0}})).failure),
+    "excessive_start_separation");
+  EXPECT_STREQ(
+    toString(check.evaluate(makeContinuityInputs(
+        {{0.0, 0.0}, {4.99, 0.0}},
+        {{0.0, 0.0}, {5.0, 0.0}})).failure),
+    "insufficient_common_length");
+  EXPECT_STREQ(
+    toString(check.evaluate(makeContinuityInputs(
+        {{0.0, 0.0}, {5.0, 0.0}},
+        {{0.0, 0.0}, {-5.0, 0.0}})).failure),
+    "excessive_heading_difference");
+}
+
+TEST(ContinuityCheckTest, AttributesMissingGlobalPathAsGlobalCandidateFailure)
+{
+  const ContinuityCheck check;
+  auto inputs = makeContinuityInputs(
+    {{0.0, 0.0}, {6.0, 0.0}},
+    {{0.0, 0.0}, {6.0, 0.0}});
+  inputs.global.path = std::nullopt;
+
+  const auto result = check.evaluate(inputs);
+
+  EXPECT_FALSE(result.ready);
+  EXPECT_EQ(result.failure, ContinuityFailure::MissingPath);
+  EXPECT_EQ(result.local_candidate_failure, ContinuityFailure::None);
+  EXPECT_EQ(result.global_candidate_failure, ContinuityFailure::MissingPath);
+  EXPECT_EQ(result.odometry_failure, ContinuityFailure::NotImplemented);
+}
+
 TEST(ContinuityCheckTest, SourceChangeTrimsAtEgoNearestPoint)
 {
   const ContinuityCheck check;

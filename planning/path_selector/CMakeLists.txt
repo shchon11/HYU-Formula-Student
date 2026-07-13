@@ -68,6 +68,21 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_continuity_check test/test_continuity_check.cpp)
   target_link_libraries(test_continuity_check path_selector_core)
+  add_test(
+    NAME empty_global_path
+    COMMAND $<TARGET_FILE:test_continuity_check>
+      --gtest_filter=ContinuityCheckTest.AttributesMissingGlobalPathAsGlobalCandidateFailure
+  )
+  add_test(
+    NAME common_length
+    COMMAND $<TARGET_FILE:test_continuity_check>
+      --gtest_filter=ContinuityCheckTest.FailureReasonsAreDistinctForClosedHandoffCases
+  )
+  add_test(
+    NAME heading_mismatch
+    COMMAND $<TARGET_FILE:test_continuity_check>
+      --gtest_filter=ContinuityCheckTest.FailureReasonsAreDistinctForClosedHandoffCases
+  )
 
   add_test(
     NAME path_selector_launch_starts

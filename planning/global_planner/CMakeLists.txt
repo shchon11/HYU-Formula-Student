@@ -13,6 +13,19 @@ find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 
+add_library(global_planner_slam_geometry
+  src/planner_geometry.cpp
+  src/slam_boundary_ordering.cpp
+  src/slam_centerline_builder.cpp
+)
+target_include_directories(global_planner_slam_geometry PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+ament_target_dependencies(global_planner_slam_geometry
+  eufs_msgs
+  nav_msgs
+)
+
 add_executable(global_planner_trajectory_publisher_node
   src/global_planner_trajectory_publisher_node.cpp
   src/trajectory_csv.cpp
@@ -40,13 +53,11 @@ ament_target_dependencies(global_planner_debug_visualizer_node
 
 add_executable(planner_node
   src/planner_node.cpp
-  src/planner_geometry.cpp
-  src/slam_boundary_ordering.cpp
-  src/slam_centerline_builder.cpp
 )
 target_include_directories(planner_node PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+target_link_libraries(planner_node global_planner_slam_geometry)
 ament_target_dependencies(planner_node
   rclcpp
   eufs_msgs
@@ -83,5 +94,28 @@ install(DIRECTORY
   launch
   DESTINATION share/${PROJECT_NAME}
 )
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+
+  get_filename_component(GLOBAL_PLANNER_SRC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+
+  foreach(test_target
+      slam_boundary_ordering_test
+      slam_centerline_builder_test
+      map_geometry_fail_closed_test
+      bad_map_duplicate_test
+      invalid_width_test
+      branch_jump_test)
+    ament_add_gtest(${test_target} test/${test_target}.cpp)
+    target_link_libraries(${test_target} global_planner_slam_geometry)
+    target_compile_definitions(${test_target} PRIVATE
+      GLOBAL_PLANNER_SRC_ROOT="${GLOBAL_PLANNER_SRC_ROOT}")
+    ament_target_dependencies(${test_target}
+      eufs_msgs
+      nav_msgs
+    )
+  endforeach()
+endif()
 
 ament_package()

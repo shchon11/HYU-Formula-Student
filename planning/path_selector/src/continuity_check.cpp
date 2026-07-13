@@ -115,32 +115,42 @@ TrimResult ContinuityCheck::trimAtEgoNearestPoint(
 
 ContinuityResult ContinuityCheck::evaluate(const ContinuityInputs & inputs) const
 {
+  ContinuityResult result;
   const auto local_validation = validateCandidate(
     inputs.local, inputs.receive_now_sec, inputs.stamp_now_sec);
+  result.local_candidate_failure = local_validation.failure;
   if (!local_validation.ready) {
-    return {false, local_validation.failure};
+    result.failure = local_validation.failure;
+    return result;
   }
   const auto global_validation = validateCandidate(
     inputs.global, inputs.receive_now_sec, inputs.stamp_now_sec);
+  result.global_candidate_failure = global_validation.failure;
   if (!global_validation.ready) {
-    return {false, global_validation.failure};
+    result.failure = global_validation.failure;
+    return result;
   }
   const auto odometry_validation = validateOdometry(
     inputs.odometry, inputs.receive_now_sec, inputs.stamp_now_sec);
+  result.odometry_failure = odometry_validation.failure;
   if (!odometry_validation.ready) {
-    return {false, odometry_validation.failure};
+    result.failure = odometry_validation.failure;
+    return result;
   }
 
   const auto local_trimmed = trimAtEgoNearestPoint(*inputs.local.path, *inputs.odometry.odometry);
+  result.local_trim_failure = local_trimmed.failure;
   if (!local_trimmed.success()) {
-    return {false, local_trimmed.failure};
+    result.failure = local_trimmed.failure;
+    return result;
   }
   const auto global_trimmed = trimAtEgoNearestPoint(*inputs.global.path, *inputs.odometry.odometry);
+  result.global_trim_failure = global_trimmed.failure;
   if (!global_trimmed.success()) {
-    return {false, global_trimmed.failure};
+    result.failure = global_trimmed.failure;
+    return result;
   }
 
-  ContinuityResult result;
   result.local_forward_length_m = continuity_geometry::forwardLength(*local_trimmed.path);
   result.global_forward_length_m = continuity_geometry::forwardLength(*global_trimmed.path);
   result.common_forward_length_m = std::min(

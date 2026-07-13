@@ -75,6 +75,11 @@ struct ContinuityResult
 {
   bool ready{false};
   ContinuityFailure failure{ContinuityFailure::NotImplemented};
+  ContinuityFailure local_candidate_failure{ContinuityFailure::NotImplemented};
+  ContinuityFailure global_candidate_failure{ContinuityFailure::NotImplemented};
+  ContinuityFailure odometry_failure{ContinuityFailure::NotImplemented};
+  ContinuityFailure local_trim_failure{ContinuityFailure::NotImplemented};
+  ContinuityFailure global_trim_failure{ContinuityFailure::NotImplemented};
   double local_forward_length_m{0.0};
   double global_forward_length_m{0.0};
   double common_forward_length_m{0.0};

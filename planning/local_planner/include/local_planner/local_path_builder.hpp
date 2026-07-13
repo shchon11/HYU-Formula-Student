@@ -36,7 +36,15 @@ struct PlannerConfig
   double duplicate_tolerance_m{0.05};
   double min_forward_projection_m{0.10};
   double max_traversal_gap_m{6.0};
+  // Max spacing when chaining corridor centerline midpoints forward from the
+  // ego. Must exceed the cone spacing on wide straights (midpoints sit one per
+  // cone pair, ~6 m apart on some tracks) or the centerline stalls after one
+  // point. Cross-corridor bridging (a folded/return passage) is a ~90 deg
+  // lateral jump blocked by the heading limit + normal-forward priority and by
+  // the pairing clearance filter, not by this gap.
+  double centerline_max_link_gap_m{6.0};
   double max_heading_change_rad{1.047};
+  double max_u_turn_heading_change_rad{2.618};
   double waypoint_spacing_m{0.5};
   double max_start_distance_m{4.0};
   double two_sided_horizon_m{20.0};

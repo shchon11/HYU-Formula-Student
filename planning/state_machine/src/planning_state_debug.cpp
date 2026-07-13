@@ -80,7 +80,12 @@ std::string makePlanningStateDebugString(const PlanningStateDebugSnapshot & snap
      << " stop_zone_s_start=" << snapshot.stop_zone_s_start
      << " stop_zone_s_end=" << snapshot.stop_zone_s_end
      << " global_path_ready=" << (snapshot.global_path_ready ? "true" : "false")
+     << " global_requires_graph_slam_localization=" << (
+      snapshot.global_requires_graph_slam_localization ? "true" : "false")
+     << " global_readiness_reason=" << snapshot.global_readiness_reason
+     << " global_entry_reason=" << snapshot.global_entry_reason
      << " stop_request=" << (snapshot.stop_request ? "true" : "false")
+     << " stop_request_reason=" << snapshot.stop_request_reason
      << " closest_segment_id=" << snapshot.closest_segment_id
      << " cone_frame_id=" << snapshot.cone_frame_id
      << " cones_blue=" << snapshot.blue_cone_count
@@ -105,7 +110,12 @@ std::string makePlanningStateDebugString(const PlanningStateDebugSnapshot & snap
      << " lap_path_valid=" << (snapshot.lap_path_valid ? "true" : "false")
      << " lap_armed=" << (snapshot.lap_armed ? "true" : "false")
      << " lap_path_length=" << snapshot.lap_path_length
-     << " lap_path_generation=" << snapshot.lap_path_generation;
+     << " lap_path_generation=" << snapshot.lap_path_generation
+     << " lap_gate_valid=" << (snapshot.lap_gate_valid ? "true" : "false")
+     << " lap_gate_armed=" << (snapshot.lap_gate_armed ? "true" : "false")
+     << " lap_time_last=" << snapshot.lap_time_last
+     << " lap_time_best=" << snapshot.lap_time_best
+     << " lap_elapsed=" << snapshot.lap_elapsed;
 
   return ss.str();
 }

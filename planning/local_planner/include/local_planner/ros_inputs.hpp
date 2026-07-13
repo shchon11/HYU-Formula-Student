@@ -62,7 +62,7 @@ ConeSet slamConeSet(const ConeArray & message, const OdomMetadata & odom);
 class LocalPlannerInputs
 {
 public:
-  using InvalidateCallback = std::function<void()>;
+  using InvalidateCallback = std::function<void(const std::string &)>;
   using LivePairCallback = std::function<void(const LiveInputPair &)>;
   using SlamMapCallback = std::function<void(const SlamMapInput &)>;
 

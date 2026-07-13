@@ -120,7 +120,7 @@ BuildResult finishPath(
     return result;
   }
   if (distance(raw_path.front(), {0.0, 0.0}) > config.max_start_distance_m) {
-    result.reason = "path starts too far from ego pose";
+    result.reason = "path_start_too_far";
     return result;
   }
   if (pathSelfIntersects(raw_path)) {

@@ -17,6 +17,7 @@ add_library(local_planner_core
   src/input_policy.cpp
   src/local_path_delaunay.cpp
   src/local_path_geometry.cpp
+  src/local_path_intersections.cpp
   src/local_path_builder.cpp
   src/local_path_sampling.cpp
 )

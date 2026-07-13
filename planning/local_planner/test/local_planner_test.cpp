@@ -45,7 +45,10 @@ bool expectStrictFinitePath(const BuildResult & result, double speed)
     EXPECT_TRUE(std::isfinite(waypoint.s));
     EXPECT_TRUE(std::isfinite(waypoint.psi));
     EXPECT_TRUE(std::isfinite(waypoint.kappa));
-    EXPECT_DOUBLE_EQ(waypoint.speed, speed);
+    // The per-path speed is the straight-line cap; the curvature profile may
+    // lower it in corners, so it is an upper bound, not an exact value.
+    EXPECT_LE(waypoint.speed, speed + 1.0e-9);
+    EXPECT_GT(waypoint.speed, 0.0);
     if (index > 0U) {
       EXPECT_GT(waypoint.s, result.waypoints[index - 1U].s);
     }
@@ -124,6 +127,74 @@ TEST(LocalPathBuilder, SparseMapUsesNearestUsableBoundaryAtReducedSpeed)
   }
   EXPECT_EQ(result.kind, PathKind::kYellowOnly);
   EXPECT_LT(result.waypoints.front().x, 2.0);
+}
+
+// Regression: real peanut-track SLAM map cropped to the local ROI at the
+// start/finish, where the ROI box also contains the folded-back return
+// passage (a second blue wall at y~5-8 and yellow at y~7). The old
+// arc-length-ratio pairing bridged the two corridors and produced no valid
+// path (local_topology_gap), stalling the car. The width-gated cross pairing
+// must follow only the corridor DIRECTLY AHEAD (near walls, y~0 / y~-3..-5),
+// never drifting up to the folded-back wall.
+TEST(LocalPathBuilder, PeanutFoldedPassageFollowsNearCorridorNotFarWall)
+{
+  ConeSet cones;
+  cones.blue = {
+    {-0.1, 1.7}, {0.3, 6.9}, {1.0, 5.5}, {1.6, 1.6}, {2.3, 4.2}, {3.6, 3.2},
+    {3.6, 1.2}, {4.6, 3.0}, {5.6, 2.9}, {6.3, 0.7}, {7.2, 3.2}, {8.1, -0.2},
+    {8.1, 0.5}, {8.6, 3.5}, {9.5, -1.0}, {10.2, -1.1}, {10.3, 4.7}, {11.7, -3.3},
+    {11.9, 6.1}, {13.1, -3.3}, {13.4, 7.4}, {14.6, -2.9}, {14.8, 8.0}};
+  cones.yellow = {
+    {-0.6, -2.8}, {1.3, -3.0}, {3.0, -3.1}, {3.9, -2.8}, {4.9, 7.5}, {6.0, -3.8},
+    {6.1, 7.4}, {7.2, 7.7}, {7.2, -4.4}, {8.3, -5.3}, {9.5, -6.3}, {11.2, -7.2},
+    {12.4, -7.4}, {14.2, -7.6}};
+
+  PlannerConfig config;                 // slam_map mode tolerates the outliers
+  config.allow_partial_boundary = true;
+  const auto result = buildLocalPath(cones, config);
+
+  ASSERT_TRUE(result.valid) << "peanut fold stalled the planner: " << result.reason;
+  EXPECT_EQ(result.kind, PathKind::kTwoSided);
+  // The centerline must hug the near corridor, never climbing onto the
+  // folded-back wall (which sits at y >= ~4).
+  for (const auto & waypoint : result.waypoints) {
+    EXPECT_LT(waypoint.y, 3.0) << "path drifted toward the folded-back passage";
+  }
+  // And it must make real forward progress, not stall at the ego.
+  EXPECT_GT(result.waypoints.back().s, 5.0);
+}
+
+// Regression for the dead u-turn branch: a TIGHT two-sided hairpin. The
+// centerline midpoints must chain around the ~180 deg apex, which requires
+// the u-turn continuation (return-lane links project backward / sit in the
+// 60-90 deg band). Before the fix the midpoint chain stranded at the apex.
+TEST(LocalPathBuilder, TwoSidedHairpinRoundsTheApex)
+{
+  // Bottom leg (centerline y=0, +x) and top leg (centerline y=6, -x), 3 m
+  // wide, joined by an apex near x=9.
+  ConeSet cones;
+  cones.blue = {  // inner wall (left of travel on both legs)
+    {0.0, 1.5}, {2.0, 1.5}, {4.0, 1.5}, {6.0, 1.5}, {8.0, 1.5},
+    {8.5, 3.0}, {8.0, 4.5}, {6.0, 4.5}, {4.0, 4.5}, {2.0, 4.5}, {0.0, 4.5}};
+  cones.yellow = {  // outer wall
+    {0.0, -1.5}, {2.0, -1.5}, {4.0, -1.5}, {6.0, -1.5}, {8.0, -1.5},
+    {10.0, 0.0}, {11.0, 3.0}, {10.0, 6.0},
+    {8.0, 7.5}, {6.0, 7.5}, {4.0, 7.5}, {2.0, 7.5}, {0.0, 7.5}};
+
+  PlannerConfig config;
+  config.allow_partial_boundary = true;
+  config.two_sided_horizon_m = 30.0;   // long enough to include the return leg
+  const auto result = buildLocalPath(cones, config);
+
+  ASSERT_TRUE(result.valid) << "hairpin stranded the planner: " << result.reason;
+  EXPECT_EQ(result.kind, PathKind::kTwoSided);
+  // The path must round the apex into the return leg (centerline y ~ 6),
+  // not stop on the outbound leg (centerline y ~ 0).
+  double max_y = 0.0;
+  for (const auto & waypoint : result.waypoints) {
+    max_y = std::max(max_y, waypoint.y);
+  }
+  EXPECT_GT(max_y, 4.0) << "midpoint chain never rounded the hairpin apex";
 }
 
 TEST(LocalPathBuilder, MapModeCanUseConnectedPrefixBeforeUnmappedGap)

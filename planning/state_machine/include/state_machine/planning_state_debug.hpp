@@ -32,7 +32,11 @@ struct PlanningStateDebugSnapshot
   double stop_zone_s_start{0.0};
   double stop_zone_s_end{0.0};
   bool global_path_ready{false};
+  bool global_requires_graph_slam_localization{true};
+  std::string global_readiness_reason{"missing_global_path"};
+  std::string global_entry_reason{"missing_global_path"};
   bool stop_request{false};
+  std::string stop_request_reason{"not_requested"};
   std::string closest_segment_id;
   std::string cone_frame_id;
   std::size_t blue_cone_count{0U};
@@ -53,6 +57,11 @@ struct PlanningStateDebugSnapshot
   bool lap_armed{false};
   double lap_path_length{0.0};
   std::uint64_t lap_path_generation{0U};
+  bool lap_gate_valid{false};
+  bool lap_gate_armed{false};
+  double lap_time_last{0.0};
+  double lap_time_best{0.0};
+  double lap_elapsed{-1.0};
 };
 
 PathSource selectPathSource(PlanningState state, int lap_count, int final_lap_start_count);

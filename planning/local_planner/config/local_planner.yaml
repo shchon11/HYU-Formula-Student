@@ -8,6 +8,8 @@ local_planner_node:
     waypoints_topic: /planning/local_waypoints
     path_topic: /planning/local_waypoints/path
     validity_topic: /planning/local_path_valid
+    # std_msgs/String heartbeat: why the path is invalid ("" while valid).
+    reason_topic: /planning/local_path_reason
     max_stamp_skew_sec: 0.1
     max_input_age_sec: 0.5
     heartbeat_hz: 10.0
@@ -20,7 +22,11 @@ local_planner_node:
     duplicate_tolerance_m: 0.05
     min_forward_projection_m: 0.10
     max_traversal_gap_m: 6.0
+    # Corridor centerline midpoint chaining gap; below inter-corridor
+    # spacing so folded/return passages never join the path (peanut/hairpin).
+    centerline_max_link_gap_m: 6.0
     max_heading_change_rad: 1.047
+    max_u_turn_heading_change_rad: 2.618
     waypoint_spacing_m: 0.5
     max_start_distance_m: 4.0
     two_sided_horizon_m: 20.0

@@ -7,8 +7,11 @@ namespace state_machine
 
 void PlanningStateMachineNode::publishOutputs()
 {
+  const rclcpp::Time current_time = now();
   const PathSource source = selectPathSource(state_, lap_count_, final_lap_start_count_);
   const bool stop_request = state_ == PlanningState::STOP;
+  const bool global_path_ready = global_path_readiness_.ready(
+    current_time, global_path_valid_timeout_sec_, global_requires_graph_slam_localization_);
 
   std_msgs::msg::String state_msg;
   state_msg.data = planningStateToString(state_);
@@ -21,6 +24,14 @@ void PlanningStateMachineNode::publishOutputs()
   std_msgs::msg::Int32 lap_count_msg;
   lap_count_msg.data = lap_count_;
   lap_count_pub_->publish(lap_count_msg);
+
+  std_msgs::msg::Float64 lap_time_msg;
+  lap_time_msg.data = gate_tracker_ && gate_tracker_->hasLapTime() ?
+    gate_tracker_->lastLapSec() : 0.0;
+  lap_time_last_pub_->publish(lap_time_msg);
+  lap_time_msg.data = gate_tracker_ && gate_tracker_->hasLapTime() ?
+    gate_tracker_->bestLapSec() : 0.0;
+  lap_time_best_pub_->publish(lap_time_msg);
 
   std_msgs::msg::Bool stop_request_msg;
   stop_request_msg.data = stop_request;
@@ -38,7 +49,7 @@ void PlanningStateMachineNode::publishOutputs()
     global_path_readiness_.graphSlamStatus(),
     global_path_readiness_.graphSlamLocalized(),
     global_path_readiness_.pathValid(),
-    global_path_readiness_.hasFreshValidity(now(), global_path_valid_timeout_sec_),
+    global_path_readiness_.hasFreshValidity(current_time, global_path_valid_timeout_sec_),
     global_path_readiness_.acceptedWaypointGeneration(),
     global_path_readiness_.invalidationGeneration(),
     global_path_readiness_.hasWaypoints() ?
@@ -49,8 +60,13 @@ void PlanningStateMachineNode::publishOutputs()
     stop_zone_valid_,
     stop_zone_s_start_,
     stop_zone_s_end_,
-    global_path_readiness_.ready(now(), global_path_valid_timeout_sec_),
+    global_path_ready,
+    global_requires_graph_slam_localization_,
+    global_path_readiness_.readinessReason(
+      current_time, global_path_valid_timeout_sec_, global_requires_graph_slam_localization_),
+    globalEntryReason(current_time),
     stop_request,
+    stop_request ? last_stop_request_reason_ : stopRequestReason(),
     closest_segment_id_,
     cone_frame_id_,
     blue_cone_count_,
@@ -64,15 +80,20 @@ void PlanningStateMachineNode::publishOutputs()
     has_local_path_valid_ ? last_local_path_valid_time_.seconds() : 0.0,
     global_path_readiness_.hasHandoff(),
     global_path_readiness_.handoffReady(),
-    global_path_readiness_.hasFreshHandoff(now(), global_handoff_timeout_sec_),
+    global_path_readiness_.hasFreshHandoff(current_time, global_handoff_timeout_sec_),
     global_path_readiness_.handoffDwellReady(
-      now(), global_handoff_timeout_sec_, global_entry_dwell_sec_),
+      current_time, global_handoff_timeout_sec_, global_entry_dwell_sec_),
     global_path_readiness_.hasHandoff() ?
     global_path_readiness_.lastHandoffTime().seconds() : 0.0,
     lap_tracking_policy_ && lap_tracking_policy_->pathValid(),
     lap_tracking_policy_ && lap_tracking_policy_->armed(),
     lap_tracking_policy_ ? lap_tracking_policy_->pathLength() : 0.0,
-    lap_tracking_policy_ ? lap_tracking_policy_->acceptedPathGeneration() : 0U});
+    lap_tracking_policy_ ? lap_tracking_policy_->acceptedPathGeneration() : 0U,
+    gate_tracker_ && gate_tracker_->gateValid(),
+    gate_tracker_ && gate_tracker_->armed(),
+    gate_tracker_ && gate_tracker_->hasLapTime() ? gate_tracker_->lastLapSec() : 0.0,
+    gate_tracker_ && gate_tracker_->hasLapTime() ? gate_tracker_->bestLapSec() : 0.0,
+    gate_tracker_ ? gate_tracker_->currentLapElapsedSec(current_time.seconds()) : -1.0});
   debug_pub_->publish(debug_msg);
 }
 

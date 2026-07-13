@@ -53,6 +53,7 @@ LocalPlannerOutput::LocalPlannerOutput(
     topics.waypoints, output_qos);
   path_publisher_ = node.create_publisher<nav_msgs::msg::Path>(topics.path, output_qos);
   validity_publisher_ = node.create_publisher<std_msgs::msg::Bool>(topics.validity, output_qos);
+  reason_publisher_ = node.create_publisher<std_msgs::msg::String>(topics.reason, output_qos);
 
   const auto heartbeat_period = std::chrono::duration_cast<std::chrono::nanoseconds>(
     std::chrono::duration<double>(1.0 / heartbeat_hz));
@@ -104,33 +105,42 @@ void LocalPlannerOutput::publishPath(
   std::lock_guard<std::mutex> lock(mutex_);
   current_valid_ = true;
   last_valid_receive_time_ = receive_time;
+  last_failure_reason_.clear();
 }
 
-void LocalPlannerOutput::retainUntilStale()
+void LocalPlannerOutput::retainUntilStale(const std::string & reason)
 {
   std::lock_guard<std::mutex> lock(mutex_);
+  last_failure_reason_ = reason;
   if (last_valid_receive_time_ == SteadyTime{}) {
     current_valid_ = false;
   }
 }
 
-void LocalPlannerOutput::invalidateImmediately()
+void LocalPlannerOutput::invalidateImmediately(const std::string & reason)
 {
   std::lock_guard<std::mutex> lock(mutex_);
+  last_failure_reason_ = reason;
   current_valid_ = false;
 }
 
 void LocalPlannerOutput::publishHeartbeat()
 {
   std_msgs::msg::Bool message;
+  std_msgs::msg::String reason_message;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (current_valid_ && steadyAge(last_valid_receive_time_) > max_input_age_sec_) {
       current_valid_ = false;
+      if (last_failure_reason_.empty()) {
+        last_failure_reason_ = "valid path went stale";
+      }
     }
     message.data = current_valid_;
+    reason_message.data = current_valid_ ? "" : last_failure_reason_;
   }
   validity_publisher_->publish(message);
+  reason_publisher_->publish(reason_message);
 }
 
 }

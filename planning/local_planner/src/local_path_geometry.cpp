@@ -23,12 +23,6 @@ double dot(const Point2 & first, const Point2 & second)
   return first.x * second.x + first.y * second.y;
 }
 
-double cross(const Point2 & first, const Point2 & second, const Point2 & third)
-{
-  return (second.x - first.x) * (third.y - first.y) -
-         (second.y - first.y) * (third.x - first.x);
-}
-
 bool finitePoint(const Point2 & point)
 {
   return std::isfinite(point.x) && std::isfinite(point.y);
@@ -39,36 +33,50 @@ bool lexicographicPoint(const Point2 & first, const Point2 & second)
   return std::tie(first.x, first.y) < std::tie(second.x, second.y);
 }
 
-bool pointOnSegment(const Point2 & first, const Point2 & second, const Point2 & point)
+bool uTurnContinuationAllowed(std::size_t ordered_count, std::size_t point_count)
 {
-  return std::abs(cross(first, second, point)) <= kEpsilon &&
-         point.x >= std::min(first.x, second.x) - kEpsilon &&
-         point.x <= std::max(first.x, second.x) + kEpsilon &&
-         point.y >= std::min(first.y, second.y) - kEpsilon &&
-         point.y <= std::max(first.y, second.y) + kEpsilon;
+  return ordered_count >= 2U && point_count >= 4U;
 }
 
-int orientation(const Point2 & first, const Point2 & second, const Point2 & third)
+struct TraversalCandidate
 {
-  const double value = cross(first, second, third);
-  return value > kEpsilon ? 1 : value < -kEpsilon ? -1 : 0;
+  std::size_t index{0U};
+  double gap{0.0};
+  double heading_change{0.0};
+  Point2 unit;
+};
+
+bool betterNormalCandidate(
+  const TraversalCandidate & candidate, const TraversalCandidate & best,
+  const std::vector<Point2> & points)
+{
+  return std::make_tuple(
+           candidate.gap, candidate.heading_change, points[candidate.index].x,
+           points[candidate.index].y, candidate.index) <
+         std::make_tuple(
+           best.gap, best.heading_change, points[best.index].x,
+           points[best.index].y, best.index);
 }
 
-bool segmentsIntersect(
-  const Point2 & first_a, const Point2 & first_b,
-  const Point2 & second_a, const Point2 & second_b)
+bool betterUTurnCandidate(
+  const TraversalCandidate & candidate, const TraversalCandidate & best,
+  const std::vector<Point2> & points)
 {
-  const int first_orientation = orientation(first_a, first_b, second_a);
-  const int second_orientation = orientation(first_a, first_b, second_b);
-  const int third_orientation = orientation(second_a, second_b, first_a);
-  const int fourth_orientation = orientation(second_a, second_b, first_b);
-  if (first_orientation != second_orientation && third_orientation != fourth_orientation) {
-    return true;
-  }
-  return (first_orientation == 0 && pointOnSegment(first_a, first_b, second_a)) ||
-         (second_orientation == 0 && pointOnSegment(first_a, first_b, second_a)) ||
-         (third_orientation == 0 && pointOnSegment(second_a, second_b, first_a)) ||
-         (fourth_orientation == 0 && pointOnSegment(second_a, second_b, first_b));
+  return std::make_tuple(
+           candidate.heading_change, candidate.gap, points[candidate.index].x,
+           points[candidate.index].y, candidate.index) <
+         std::make_tuple(
+           best.heading_change, best.gap, points[best.index].x,
+           points[best.index].y, best.index);
+}
+
+bool closeUTurnBranch(
+  const TraversalCandidate & first, const TraversalCandidate & second,
+  const PlannerConfig & config)
+{
+  constexpr double kHeadingToleranceRad = 0.17453292519943295;
+  return std::abs(first.gap - second.gap) <= config.waypoint_spacing_m &&
+         std::abs(first.heading_change - second.heading_change) <= kHeadingToleranceRad;
 }
 
 }
@@ -116,7 +124,8 @@ std::vector<Point2> deduplicate(
   return output;
 }
 
-std::vector<Point2> forwardTraversal(const std::vector<Point2> & points, const PlannerConfig & config)
+TraversalResult forwardTraversalWithReason(
+  const std::vector<Point2> & points, const PlannerConfig & config)
 {
   if (points.empty()) {
     return {};
@@ -141,9 +150,11 @@ std::vector<Point2> forwardTraversal(const std::vector<Point2> & points, const P
   std::vector<Point2> ordered{points[*seed]};
   Point2 tangent{1.0, 0.0};
   while (ordered.size() < points.size()) {
-    std::optional<std::size_t> next;
-    std::tuple<double, double, double, double, std::size_t> next_key;
-    Point2 next_tangent;
+    std::optional<TraversalCandidate> normal;
+    std::optional<TraversalCandidate> u_turn;
+    bool u_turn_ambiguous = false;
+    bool saw_connected = false;
+    bool saw_heading_jump = false;
     for (std::size_t index = 0; index < points.size(); ++index) {
       if (used[index]) {
         continue;
@@ -153,48 +164,89 @@ std::vector<Point2> forwardTraversal(const std::vector<Point2> & points, const P
       if (!std::isfinite(gap) || gap <= kEpsilon || gap > config.max_traversal_gap_m) {
         continue;
       }
-      if (!(dot(segment, tangent) > config.min_forward_projection_m)) {
-        continue;
-      }
+      saw_connected = true;
+      const double projection = dot(segment, tangent);
       const Point2 unit{segment.x / gap, segment.y / gap};
       const double heading_change = std::acos(std::clamp(dot(unit, tangent), -1.0, 1.0));
-      if (!std::isfinite(heading_change) || heading_change > config.max_heading_change_rad) {
+      if (!std::isfinite(heading_change)) {
         continue;
       }
-      const auto key = std::make_tuple(gap, heading_change, points[index].x, points[index].y, index);
-      if (!next.has_value() || key < next_key) {
-        next = index;
-        next_key = key;
-        next_tangent = unit;
-      }
-    }
-    if (!next.has_value()) {
-      break;
-    }
-    used[*next] = true;
-    ordered.push_back(points[*next]);
-    tangent = next_tangent;
-  }
-  return ordered;
-}
-
-}
-
-bool pathSelfIntersects(const std::vector<Point2> & points)
-{
-  if (points.size() < 4U) {
-    return false;
-  }
-  for (std::size_t first = 0; first + 1U < points.size(); ++first) {
-    for (std::size_t second = first + 2U; second + 1U < points.size(); ++second) {
-      if (segmentsIntersect(
-          points[first], points[first + 1U], points[second], points[second + 1U]))
+      // Smooth forward continuation: enough forward projection AND a gentle
+      // heading. Anything sharper falls through to the u-turn branch below.
+      if (projection > config.min_forward_projection_m &&
+        heading_change <= config.max_heading_change_rad)
       {
-        return true;
+        const TraversalCandidate candidate{index, gap, heading_change, unit};
+        if (!normal.has_value() || betterNormalCandidate(candidate, *normal, points)) {
+          normal = candidate;
+        }
+        continue;
+      }
+      const bool sharp_forward = projection > config.min_forward_projection_m;
+      // A sharp FORWARD turn is followed only when the map is trusted (SLAM /
+      // partial mode). In strict live mode it is a heading stop: on a single
+      // visible wall a sharp forward kink is more likely a perception artifact
+      // than a real corner, so fail closed instead of driving through it.
+      if (sharp_forward && !config.allow_partial_boundary) {
+        saw_heading_jump = true;
+        continue;
+      }
+      // u-turn continuation, bounded only by max_u_turn_heading_change_rad: a
+      // hairpin's return-lane bridge projects BACKWARD onto the outbound
+      // tangent, and the following return-lane cones sit in the 60-90 deg band
+      // the gentle cap rejects. Handling both here (rather than gating on
+      // projection sign, which made the u-turn cap unreachable) lets the
+      // traversal round a hairpin. u-turn candidates are used only when NO
+      // smooth forward candidate exists, so gentle tracks are unaffected.
+      if (!uTurnContinuationAllowed(ordered.size(), points.size())) {
+        if (sharp_forward) {
+          saw_heading_jump = true;  // sharp forward turn with no u-turn fallback
+        }
+        continue;
+      }
+      if (heading_change > config.max_u_turn_heading_change_rad) {
+        saw_heading_jump = true;
+        continue;
+      }
+      const TraversalCandidate candidate{index, gap, heading_change, unit};
+      if (!u_turn.has_value()) {
+        u_turn = candidate;
+      } else {
+        if (closeUTurnBranch(candidate, *u_turn, config)) {
+          u_turn_ambiguous = true;
+        }
+        if (betterUTurnCandidate(candidate, *u_turn, points)) {
+          u_turn = candidate;
+        }
       }
     }
+    if (normal.has_value()) {
+      used[normal->index] = true;
+      ordered.push_back(points[normal->index]);
+      tangent = normal->unit;
+      continue;
+    }
+    if (u_turn_ambiguous) {
+      return {ordered, TraversalFailure::kUTurnBranchAmbiguous};
+    }
+    if (u_turn.has_value()) {
+      used[u_turn->index] = true;
+      ordered.push_back(points[u_turn->index]);
+      tangent = u_turn->unit;
+      continue;
+    }
+    return {
+      ordered,
+      saw_heading_jump && saw_connected ?
+        TraversalFailure::kHeadingJump : TraversalFailure::kTopologyGap};
   }
-  return false;
+  return {ordered, TraversalFailure::kNone};
 }
 
+std::vector<Point2> forwardTraversal(const std::vector<Point2> & points, const PlannerConfig & config)
+{
+  return forwardTraversalWithReason(points, config).points;
+}
+
+}
 }

@@ -250,7 +250,7 @@ void LocalPlannerInputs::receiveSlamStatus(
     last_slam_status_ = message->data;
   }
   if (invalidate) {
-    invalidate_();
+    invalidate_("slam restarted mapping; latched cone map dropped");
   }
 }
 
@@ -264,7 +264,7 @@ void LocalPlannerInputs::processSlamOdom(const Odometry::SharedPtr message)
     input.map_receive_time = latched_map_receive_time_;
   }
   if (!input.map) {
-    invalidate_();
+    invalidate_("waiting for slam cone map");
     return;
   }
   slam_map_callback_(input);

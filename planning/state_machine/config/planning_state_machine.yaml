@@ -7,6 +7,8 @@ planning_state_machine_node:
     local_path_valid_topic: "/planning/local_path_valid"
     global_handoff_ready_topic: "/planning/global_handoff_ready"
     cone_map_topic: "/cones"
+    slam_cone_map_topic: "/localization/cone_map"
+    ego_odom_topic: "/localization/ego_odom"
     stop_zone_s_start_topic: "/stop_zone_s_start"
     stop_zone_s_end_topic: "/stop_zone_s_end"
     stop_zone_valid_topic: "/stop_zone_valid"
@@ -23,9 +25,18 @@ planning_state_machine_node:
     stop_zone_timeout_sec: 1.0
     lap_path_closure_tolerance_m: 1.0
     lap_closing_duplicate_tolerance_m: 0.05
+    # Orange start/finish gate (primary lap counter + lap timer): the pair of
+    # big-orange cone clusters in the SLAM map. Crossing counts a lap only
+    # after the car has been lap_gate_arm_distance_m away from the line.
+    lap_gate_cluster_tolerance_m: 2.0
+    lap_gate_min_width_m: 2.0
+    lap_gate_max_width_m: 7.0
+    lap_gate_arm_distance_m: 12.0
+    lap_gate_cooldown_sec: 10.0
 
     final_path_end_threshold: 2.0
     stop_zone_s_margin: 0.0
     max_abs_d_for_global: 2.0
     state_timer_period_ms: 50
     enable_manual_lap_override: false
+    global_requires_graph_slam_localization: true

@@ -55,6 +55,11 @@ def generate_launch_description():
         default_value="/planning/global_path_valid",
         description="Reliable volatile global path validity heartbeat topic.",
     )
+    global_path_reason_topic_arg = DeclareLaunchArgument(
+        "global_path_reason_topic",
+        default_value="/planning/global_path_reason",
+        description="Latched string explaining why the global path is invalid.",
+    )
     path_waypoints_topic_arg = DeclareLaunchArgument(
         "path_waypoints_topic",
         default_value="/path_waypoints",
@@ -88,6 +93,7 @@ def generate_launch_description():
                 "graph_slam_status_topic": LaunchConfiguration("graph_slam_status_topic"),
                 "global_waypoints_topic": LaunchConfiguration("global_waypoints_topic"),
                 "global_path_valid_topic": LaunchConfiguration("global_path_valid_topic"),
+                "global_path_reason_topic": LaunchConfiguration("global_path_reason_topic"),
                 "use_sim_time": use_sim_time,
             },
         ],
@@ -150,6 +156,7 @@ def generate_launch_description():
         graph_slam_status_topic_arg,
         global_waypoints_topic_arg,
         global_path_valid_topic_arg,
+        global_path_reason_topic_arg,
         path_waypoints_topic_arg,
         path_topic_arg,
         use_sim_time_arg,

@@ -2,7 +2,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node, SetRemap
 from launch_ros.substitutions import FindPackageShare
 
@@ -11,7 +11,7 @@ ARGUMENTS = (
     ("use_sim_time", "true", "Use the simulator clock for every planning node."),
     ("start_graph_slam", "true", "Start graph SLAM with the planning graph."),
     ("graph_slam_gui", "false", "Start the graph SLAM GUI."),
-    ("graph_slam_ate_monitor", "false", "Start the path-tracking CTE monitor (HUD + /planning/cte)."),
+    ("graph_slam_ate_monitor", "true", "Start the path-tracking CTE monitor (HUD + /planning/cte)."),
     ("graph_slam_localization_mode", "false", "Localize against a saved graph SLAM map."),
     ("graph_slam_load_map_path", "", "Saved graph SLAM map for localization mode."),
     ("graph_slam_publish_tf", "true", "Allow graph SLAM to publish the map TF."),
@@ -23,15 +23,19 @@ ARGUMENTS = (
     ("graph_slam_map_converged_topic", "/graph_slam/map_converged", "Graph SLAM map-ready status."),
     ("global_waypoints_topic", "/global_waypoints", "Latched full global waypoint path."),
     ("global_path_valid_topic", "/planning/global_path_valid", "Global-path validity heartbeat."),
+    ("global_path_reason_topic", "/planning/global_path_reason", "Why the global path is invalid (latched)."),
     ("global_path_waypoints_topic", "/planning/global_path_waypoints", "Global rolling waypoint window."),
     ("global_path_topic", "/planning/global_path_waypoints/path", "Global rolling window visualization."),
     ("frenet_odom_topic", "/car_state/frenet/odom", "Frenet odometry topic."),
     ("local_waypoints_topic", "/planning/local_waypoints", "Local planner waypoint output."),
     ("local_path_topic", "/planning/local_waypoints/path", "Local planner path visualization."),
     ("local_path_valid_topic", "/planning/local_path_valid", "Local-path validity heartbeat."),
+    ("local_path_reason_topic", "/planning/local_path_reason", "Why the local path is invalid (heartbeat)."),
     ("state_topic", "/planning/state", "Planning state output."),
     ("path_source_topic", "/planning/path_source", "State-selected path source."),
     ("lap_count_topic", "/planning/lap_count", "Planning lap-count output."),
+    ("lap_time_last_topic", "/planning/lap_time_last", "Last completed lap time (orange-gate)."),
+    ("lap_time_best_topic", "/planning/lap_time_best", "Best lap time (orange-gate)."),
     ("stop_request_topic", "/planning/stop_request", "State-machine stop request."),
     ("planning_debug_topic", "/planning/debug", "State-machine debug output."),
     ("selected_path_topic", "/path_waypoints", "Selector-owned controller path."),
@@ -47,6 +51,9 @@ ARGUMENTS = (
     ("local_max_start_distance_m", "4.0", "Max distance from ego to the local path start (m)."),
     ("enable_controller", "true", "Start the sole /cmd writer."),
     ("cmd_topic", "/cmd", "Controller command output."),
+    ("enable_hud", "true", "Start the RViz stack HUD overlay aggregator."),
+    ("hud_topic", "/planning/stack_hud", "Stack HUD board overlay."),
+    ("hud_banner_topic", "/planning/stack_hud_banner", "Stack HUD banner overlay."),
 )
 
 PARAMETER_FILES = (
@@ -82,6 +89,14 @@ def generate_launch_description() -> LaunchDescription:
                 choices=["live_cones", "slam_map"],
                 description="Local planner input source; slam_map uses the latched map and ego pose.",
             ),
+            DeclareLaunchArgument(
+                "global_requires_graph_slam_localization",
+                default_value=PythonExpression(
+                    ["'false' if '", LaunchConfiguration("planner_source"), "' == 'csv' else 'true'"]
+                ),
+                choices=["true", "false"],
+                description="Require Graph SLAM localization before GLOBAL; defaults false only for CSV.",
+            ),
         ]
     )
     arguments.extend(
@@ -93,7 +108,9 @@ def generate_launch_description() -> LaunchDescription:
         for name, package, filename, description in PARAMETER_FILES
     )
     configuration_names = [name for name, _, _ in ARGUMENTS]
-    configuration_names.extend(("planner_source", "local_source_mode"))
+    configuration_names.extend(
+        ("planner_source", "local_source_mode", "global_requires_graph_slam_localization")
+    )
     configuration_names.extend(name for name, _, _, _ in PARAMETER_FILES)
     values = {name: LaunchConfiguration(name) for name in configuration_names}
 
@@ -137,6 +154,7 @@ def generate_launch_description() -> LaunchDescription:
             "graph_slam_status_topic": values["graph_slam_status_topic"],
             "global_waypoints_topic": values["global_waypoints_topic"],
             "global_path_valid_topic": values["global_path_valid_topic"],
+            "global_path_reason_topic": values["global_path_reason_topic"],
             "path_waypoints_topic": values["global_path_waypoints_topic"],
             "path_topic": values["global_path_topic"],
             "use_sim_time": values["use_sim_time"],
@@ -170,6 +188,7 @@ def generate_launch_description() -> LaunchDescription:
                 "waypoints_topic": values["local_waypoints_topic"],
                 "path_topic": values["local_path_topic"],
                 "validity_topic": values["local_path_valid_topic"],
+                "reason_topic": values["local_path_reason_topic"],
                 "use_sim_time": values["use_sim_time"],
             },
         ],
@@ -189,9 +208,14 @@ def generate_launch_description() -> LaunchDescription:
                 "local_path_valid_topic": values["local_path_valid_topic"],
                 "global_handoff_ready_topic": values["global_handoff_ready_topic"],
                 "cone_map_topic": values["cones_topic"],
+                "slam_cone_map_topic": values["cone_map_topic"],
+                "ego_odom_topic": values["ego_odom_topic"],
                 "stop_zone_s_start_topic": values["stop_zone_s_start_topic"],
                 "stop_zone_s_end_topic": values["stop_zone_s_end_topic"],
                 "stop_zone_valid_topic": values["stop_zone_valid_topic"],
+                "global_requires_graph_slam_localization": values[
+                    "global_requires_graph_slam_localization"
+                ],
                 "use_sim_time": values["use_sim_time"],
             },
         ],
@@ -199,6 +223,8 @@ def generate_launch_description() -> LaunchDescription:
             ("/planning/state", values["state_topic"]),
             ("/planning/path_source", values["path_source_topic"]),
             ("/planning/lap_count", values["lap_count_topic"]),
+            ("/planning/lap_time_last", values["lap_time_last_topic"]),
+            ("/planning/lap_time_best", values["lap_time_best_topic"]),
             ("/planning/stop_request", values["stop_request_topic"]),
             ("/planning/debug", values["planning_debug_topic"]),
         ],
@@ -244,6 +270,34 @@ def generate_launch_description() -> LaunchDescription:
             ("/cmd", values["cmd_topic"]),
         ],
     )
+    stack_hud = Node(
+        package="planning_bringup",
+        executable="stack_hud.py",
+        name="stack_hud",
+        output="screen",
+        condition=IfCondition(values["enable_hud"]),
+        parameters=[
+            {
+                "hud_topic": values["hud_topic"],
+                "banner_topic": values["hud_banner_topic"],
+                "cones_topic": values["cones_topic"],
+                "cone_map_topic": values["cone_map_topic"],
+                "slam_status_topic": values["graph_slam_status_topic"],
+                "ego_odom_topic": values["ego_odom_topic"],
+                "planning_debug_topic": values["planning_debug_topic"],
+                "selector_debug_topic": values["selector_debug_topic"],
+                "local_path_valid_topic": values["local_path_valid_topic"],
+                "local_path_reason_topic": values["local_path_reason_topic"],
+                "global_path_valid_topic": values["global_path_valid_topic"],
+                "global_path_reason_topic": values["global_path_reason_topic"],
+                "selected_path_valid_topic": values["selected_path_valid_topic"],
+                "cmd_topic": values["cmd_topic"],
+                # Deliberately NOT use_sim_time: the HUD renders on wall time
+                # (all freshness is monotonic wall-clock) so it keeps drawing
+                # "SILENT" diagnoses even if /clock stalls.
+            },
+        ],
+    )
 
     return LaunchDescription([
         *arguments,
@@ -253,4 +307,5 @@ def generate_launch_description() -> LaunchDescription:
         state_machine,
         selector,
         controller,
+        stack_hud,
     ])

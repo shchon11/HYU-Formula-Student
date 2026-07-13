@@ -13,7 +13,91 @@ namespace
 
 constexpr double kGeometryEpsilon = 1.0e-9;
 
-bool nearestNeighborOrder(
+bool segmentsCross(
+  const PlannerPoint & a, const PlannerPoint & b,
+  const PlannerPoint & c, const PlannerPoint & d)
+{
+  const double ab_c = cross2d(subtract(b, a), subtract(c, a));
+  const double ab_d = cross2d(subtract(b, a), subtract(d, a));
+  const double cd_a = cross2d(subtract(d, c), subtract(a, c));
+  const double cd_b = cross2d(subtract(d, c), subtract(b, c));
+  return ab_c * ab_d < -kGeometryEpsilon && cd_a * cd_b < -kGeometryEpsilon;
+}
+
+std::size_t selfIntersectionCount(const std::vector<PlannerPoint> & points)
+{
+  std::size_t count = 0U;
+  if (points.size() < 4U) {
+    return count;
+  }
+  for (std::size_t i = 0; i + 1U < points.size(); ++i) {
+    for (std::size_t j = i + 2U; j + 1U < points.size(); ++j) {
+      if (segmentsCross(points[i], points[i + 1U], points[j], points[j + 1U])) {
+        ++count;
+      }
+    }
+  }
+  return count;
+}
+
+double maxSegmentGap(const std::vector<PlannerPoint> & points)
+{
+  double max_gap = 0.0;
+  for (std::size_t i = 1; i < points.size(); ++i) {
+    max_gap = std::max(max_gap, distance(points[i - 1U], points[i]));
+  }
+  return max_gap;
+}
+
+struct BoundaryOrderScore
+{
+  std::size_t self_intersections{0U};
+  double max_gap{0.0};
+  double loop_gap{0.0};
+};
+
+BoundaryOrderScore scoreBoundaryOrder(const std::vector<PlannerPoint> & points)
+{
+  BoundaryOrderScore score;
+  score.self_intersections = selfIntersectionCount(points);
+  score.max_gap = maxSegmentGap(points);
+  if (points.size() >= 2U) {
+    score.loop_gap = distance(points.front(), points.back());
+  }
+  return score;
+}
+
+bool betterBoundaryOrder(
+  const BoundaryOrderScore & candidate,
+  const BoundaryOrderScore & current)
+{
+  if (candidate.self_intersections != current.self_intersections) {
+    return candidate.self_intersections < current.self_intersections;
+  }
+  if (std::abs(candidate.max_gap - current.max_gap) > kGeometryEpsilon) {
+    return candidate.max_gap < current.max_gap;
+  }
+  return candidate.loop_gap < current.loop_gap;
+}
+
+double turnAngle(
+  const PlannerPoint & previous,
+  const PlannerPoint & current,
+  const PlannerPoint & candidate)
+{
+  const auto incoming = subtract(current, previous);
+  const auto outgoing = subtract(candidate, current);
+  const double incoming_length = std::hypot(incoming.x, incoming.y);
+  const double outgoing_length = std::hypot(outgoing.x, outgoing.y);
+  if (incoming_length <= kGeometryEpsilon || outgoing_length <= kGeometryEpsilon) {
+    return 0.0;
+  }
+  const double cosine = std::clamp(
+    dot(incoming, outgoing) / (incoming_length * outgoing_length), -1.0, 1.0);
+  return std::acos(cosine);
+}
+
+bool headingAwareGraphOrder(
   const std::vector<PlannerPoint> & input, const PlannerPoint & ego,
   double max_gap, std::vector<PlannerPoint> & ordered, std::string & reason)
 {
@@ -39,26 +123,53 @@ bool nearestNeighborOrder(
   ordered.push_back(input[current]);
   for (std::size_t count = 1; count < input.size(); ++count) {
     std::size_t next = input.size();
-    double best_distance = std::numeric_limits<double>::infinity();
+    double best_score = std::numeric_limits<double>::infinity();
     for (std::size_t i = 0; i < input.size(); ++i) {
-      if (!used[i] && distance(input[current], input[i]) < best_distance) {
-        best_distance = distance(input[current], input[i]);
+      const double candidate_distance = distance(input[current], input[i]);
+      if (used[i] || candidate_distance > max_gap) {
+        continue;
+      }
+      double score = candidate_distance;
+      if (ordered.size() >= 2U) {
+        score += max_gap * turnAngle(ordered[ordered.size() - 2U], ordered.back(), input[i]);
+      }
+      if (score < best_score) {
+        best_score = score;
         next = i;
       }
     }
     if (next == input.size()) {
-      reason = "nearest-neighbor ordering failed";
-      return false;
-    }
-    if (best_distance > max_gap) {
-      std::ostringstream stream;
-      stream << "boundary gap " << best_distance << " m exceeds " << max_gap << " m";
-      reason = stream.str();
+      reason = "branch_jump";
       return false;
     }
     used[next] = true;
     ordered.push_back(input[next]);
     current = next;
+  }
+  return true;
+}
+
+bool orderBoundary(
+  const std::vector<PlannerPoint> & input, const PlannerPoint & ego,
+  double max_gap, std::vector<PlannerPoint> & ordered, std::string & reason)
+{
+  if (!headingAwareGraphOrder(input, ego, max_gap, ordered, reason)) {
+    return false;
+  }
+  auto best_score = scoreBoundaryOrder(ordered);
+  const auto input_score = scoreBoundaryOrder(input);
+  if (input_score.max_gap <= max_gap && betterBoundaryOrder(input_score, best_score)) {
+    ordered = input;
+    best_score = input_score;
+  }
+
+  if (best_score.self_intersections > 0U) {
+    reason = "self_intersection";
+    return false;
+  }
+  if (best_score.max_gap > max_gap || best_score.loop_gap > max_gap) {
+    reason = "branch_jump";
+    return false;
   }
   return true;
 }
@@ -142,8 +253,8 @@ bool orderSlamBoundaries(
   std::vector<PlannerPoint> & ordered_yellow,
   std::string & reason)
 {
-  if (!nearestNeighborOrder(blue_points, ego, max_gap, ordered_blue, reason) ||
-    !nearestNeighborOrder(yellow_points, ego, max_gap, ordered_yellow, reason))
+  if (!orderBoundary(blue_points, ego, max_gap, ordered_blue, reason) ||
+    !orderBoundary(yellow_points, ego, max_gap, ordered_yellow, reason))
   {
     return false;
   }

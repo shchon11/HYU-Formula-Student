@@ -97,6 +97,9 @@ bool GlobalPathReadiness::onWaypoints(
   ++waypoint_message_generation_;
 
   if (msg.waypoints.empty()) {
+    if (!has_global_waypoints_) {
+      last_readiness_loss_reason_ = "missing_global_path";
+    }
     return false;
   }
 
@@ -106,6 +109,7 @@ bool GlobalPathReadiness::onWaypoints(
   accepted_waypoint_count_ = msg.waypoints.size();
   last_global_waypoints_time_ = current_time;
   global_path_length_ = msg.waypoints.back().s_m;
+  last_readiness_loss_reason_.clear();
   return true;
 }
 
@@ -126,7 +130,7 @@ void GlobalPathReadiness::onValidity(
   last_global_path_valid_time_ = current_time;
 
   if (!global_path_valid_) {
-    invalidate();
+    invalidate("global_path_validity_false");
   }
 }
 
@@ -143,7 +147,7 @@ void GlobalPathReadiness::refreshValidity(
   }
 
   global_path_valid_ = false;
-  invalidate();
+  invalidate("stale_global_path_validity");
 }
 
 void GlobalPathReadiness::onHandoffReady(
@@ -168,26 +172,64 @@ bool GlobalPathReadiness::ready(
   const rclcpp::Time & current_time,
   double timeout_sec) const
 {
+  return ready(current_time, timeout_sec, true);
+}
+
+bool GlobalPathReadiness::ready(
+  const rclcpp::Time & current_time,
+  double timeout_sec,
+  bool require_graph_slam_localization) const
+{
   return has_global_waypoints_ &&
          global_path_ready_ &&
          accepted_waypoint_count_ > 0U &&
          accepted_waypoint_generation_ > invalidation_generation_ &&
          hasFreshValidity(current_time, timeout_sec) &&
-         graphSlamLocalized();
+         (!require_graph_slam_localization || graphSlamLocalized());
 }
 
 bool GlobalPathReadiness::finalPathEndReached(
   const rclcpp::Time & current_time,
   double timeout_sec,
+  bool require_graph_slam_localization,
   bool has_frenet_odom,
   double current_s,
   double final_path_end_threshold) const
 {
-  if (!has_frenet_odom || !ready(current_time, timeout_sec)) {
+  if (!has_frenet_odom ||
+    !ready(current_time, timeout_sec, require_graph_slam_localization))
+  {
     return false;
   }
 
   return pathLength() - current_s < final_path_end_threshold;
+}
+
+std::string GlobalPathReadiness::readinessReason(
+  const rclcpp::Time & current_time,
+  double timeout_sec,
+  bool require_graph_slam_localization) const
+{
+  if (!has_global_waypoints_ || !global_path_ready_ || accepted_waypoint_count_ == 0U ||
+    accepted_waypoint_generation_ <= invalidation_generation_)
+  {
+    return last_readiness_loss_reason_.empty() ?
+           "missing_global_path" : last_readiness_loss_reason_;
+  }
+  if (!has_global_path_valid_) {
+    return "missing_global_path_validity";
+  }
+  if (!global_path_valid_) {
+    return last_readiness_loss_reason_.empty() ?
+           "global_path_validity_false" : last_readiness_loss_reason_;
+  }
+  if ((current_time - last_global_path_valid_time_).seconds() > timeout_sec) {
+    return "stale_global_path_validity";
+  }
+  if (require_graph_slam_localization && !graphSlamLocalized()) {
+    return "graph_slam_not_localized";
+  }
+  return "ready";
 }
 
 bool GlobalPathReadiness::hasFreshValidity(
@@ -275,13 +317,14 @@ std::size_t GlobalPathReadiness::acceptedWaypointCount() const
   return accepted_waypoint_count_;
 }
 
-void GlobalPathReadiness::invalidate()
+void GlobalPathReadiness::invalidate(const std::string & reason)
 {
   invalidation_generation_ = waypoint_message_generation_;
   has_global_waypoints_ = false;
   global_path_ready_ = false;
   global_path_length_ = 0.0;
   accepted_waypoint_count_ = 0U;
+  last_readiness_loss_reason_ = reason;
 }
 
 }
