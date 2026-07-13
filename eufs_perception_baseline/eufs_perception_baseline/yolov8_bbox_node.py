@@ -19,6 +19,21 @@ from eufs_perception_baseline.yolov8_bbox_utils import (
 )
 
 
+def _default_model_path() -> str:
+    """FSOCO weights bundled in the package source tree, when reachable.
+
+    With a symlink install, ``__file__`` resolves back into the source tree,
+    so the tracked checkpoint under ``models/`` works on any checkout without
+    machine-specific configuration. Copied installs fall back to "" and the
+    startup validation demands an explicit model_path.
+    """
+    candidate = (
+        Path(__file__).resolve().parent.parent
+        / "models" / "fsoco_yolov8n" / "weights" / "best.pt"
+    )
+    return str(candidate) if candidate.is_file() else ""
+
+
 class YoloV8BBoxNode(Node):
     """Publish YOLOv8 detections using the EUFS BoundingBoxes contract."""
 
@@ -70,10 +85,7 @@ class YoloV8BBoxNode(Node):
     def _declare_parameters(self) -> None:
         self.declare_parameter("image_topic", "/zed/left/image_rect_color")
         self.declare_parameter("bbox_topic", "/yolo_bounding_boxes")
-        self.declare_parameter(
-            "model_path",
-            "/home/dohyun/FS/artifacts/yolov8/fsoco_yolov8n/weights/best.pt",
-        )
+        self.declare_parameter("model_path", _default_model_path())
         self.declare_parameter("confidence_threshold", 0.25)
         self.declare_parameter("iou_threshold", 0.45)
         self.declare_parameter("imgsz", 640)
@@ -94,7 +106,11 @@ class YoloV8BBoxNode(Node):
     def _load_parameters(self) -> None:
         self.image_topic = self.get_parameter("image_topic").value
         self.bbox_topic = self.get_parameter("bbox_topic").value
-        self.model_path = self.get_parameter("model_path").value
+        # An empty configured path (the portable config default) falls back to
+        # the checkpoint tracked in the package source tree.
+        self.model_path = (
+            str(self.get_parameter("model_path").value).strip() or _default_model_path()
+        )
         self.confidence_threshold = float(
             self.get_parameter("confidence_threshold").value
         )

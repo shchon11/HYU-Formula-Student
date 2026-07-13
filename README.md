@@ -85,6 +85,19 @@ flowchart LR
 
 ## 🛠️ Setup
 
+> 아래 전부 **새 컴퓨터 기준 처음부터**입니다. 워크스페이스 위치는 자유입니다
+> (예시는 `~/fsk`) — 스크립트·launch가 전부 자기 위치 기준으로 경로를 찾습니다.
+
+### 0. 클론
+
+```bash
+mkdir -p ~/fsk && cd ~/fsk
+git clone <repo-url> src        # 이 저장소가 워크스페이스의 src/가 됩니다
+# (선택) 시스템 g2o(ros-humble-libg2o) 대신 소스 g2o를 쓰려면:
+#   git clone https://github.com/RainerKuemmerle/g2o.git ~/fsk/g2o
+#   — eufs_graph_slam이 시스템 g2o가 없으면 <워크스페이스>/g2o를 자동 탐지
+```
+
 ### 1. 시스템 의존성 (apt)
 
 ```bash
@@ -118,7 +131,8 @@ export COMMONROAD_CLCS_DIR="$HOME/commonroad-clcs"
 python3 -m pip install --user quadprog
 
 # (c) race 기본 perception pipeline에 필요한 YOLO 격리 venv
-python3 -m venv --system-site-packages ~/fsk/.venv-yolo
+#     반드시 시스템 파이썬(3.10)으로 만드세요 — conda 활성 상태면 rclpy가 깨집니다.
+/usr/bin/python3 -m venv --system-site-packages ~/fsk/.venv-yolo
 source ~/fsk/.venv-yolo/bin/activate
 pip install -U pip
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124  # GPU
@@ -127,7 +141,9 @@ pip uninstall -y opencv-python              # 시스템 cv2 사용
 deactivate
 ```
 
-> 기본 `race`는 CUDA YOLO+LiDAR perception을 실행합니다. GraphSLAM이 `map` TF를 소유하므로 real perception의 cross-time 보정 프레임은 기본 `odom`이고, SLAM 맵 오염을 막기 위해 LiDAR support 없는 visual-only fallback은 기본으로 끕니다. Gazebo simulated `/cones`만 쓰려면 `race sim` 또는 `perception_mode:=sim`을 명시합니다. YOLO 체크포인트는 `eufs_perception_baseline/models/fsoco_yolov8n/weights/best.pt`에 둡니다.
+> 기본 `race`는 CUDA YOLO+LiDAR perception을 실행합니다. GraphSLAM이 `map` TF를 소유하므로 real perception의 cross-time 보정 프레임은 기본 `odom`이고, SLAM 맵 오염을 막기 위해 LiDAR support 없는 visual-only fallback은 기본으로 끕니다. Gazebo simulated `/cones`만 쓰려면 `race sim` 또는 `perception_mode:=sim`을 명시합니다.
+>
+> **YOLO 체크포인트는 저장소에 포함**되어 있습니다 (`eufs_perception_baseline/models/fsoco_yolov8n/weights/best.pt`) — 노드가 소스 트리에서 자동으로 찾으므로 별도 배치가 필요 없고, 다른 모델을 쓸 때만 `yolo_model_path:=<file>`을 넘깁니다. venv는 launch가 `$EUFS_MASTER/.venv-yolo` → 시스템 파이썬 순으로 자동 감지합니다.
 
 ### 3. 빌드
 
@@ -137,49 +153,63 @@ rosdep install --from-paths src --ignore-src -r -y
 colcon build --symlink-install --base-paths src
 ```
 
-### 4. Shell aliases
+### 4. Shell aliases — 한 줄이면 끝
 
-`~/.zshrc`(또는 `~/.bashrc`) 맨 아래에 — bash·zsh 공용:
+`~/.bashrc` 또는 `~/.zshrc` 맨 아래에 **이 한 줄**만 추가하세요 (bash·zsh 공용):
 
 ```bash
-# ===== HYU Formula Student =====
-export EUFS_MASTER="$HOME/fsk"
-export COMMONROAD_CLCS_DIR="$HOME/commonroad-clcs"
-export ROS_LOCALHOST_ONLY=1
-if [ -n "$ZSH_VERSION" ]; then _fsk_ext=zsh; else _fsk_ext=bash; fi
-[ -f "/opt/ros/humble/setup.$_fsk_ext" ] && source "/opt/ros/humble/setup.$_fsk_ext"
-[ -f "$EUFS_MASTER/install/setup.$_fsk_ext" ] && source "$EUFS_MASTER/install/setup.$_fsk_ext"
-
-fsk() { cd "$EUFS_MASTER"; }
-fsb() { cd "$EUFS_MASTER" && colcon build --symlink-install --base-paths src && source "install/setup.$_fsk_ext"; }
-
-# 실행
-race()    { "$EUFS_MASTER/src/scripts/race.sh" "$@"; }  # 종료: race stop
-simfull() { ros2 launch eufs_launcher simulation.launch.py perception_mode:=sim rviz:=true "$@"; }
-pbring()  { ros2 launch planning_bringup local_global_planning.launch.py "$@"; }
-teleop()  { ros2 run eufs_teleop teleop "$@"; }
-
-# 헬퍼
-mission()  { ros2 service call /ros_can/set_mission eufs_msgs/srv/SetCanState "{ami_state: 14}"; }
-resetcar() { ros2 service call /ros_can/reset_vehicle_pos std_srvs/srv/Trigger; }
-slamreset(){ ros2 service call /graph_slam/start_mapping std_srvs/srv/Trigger; }
-rv()       { rviz2 -d "$EUFS_MASTER/install/eufs_launcher/share/eufs_launcher/config/default.rviz" "$@"; }
+source ~/fsk/src/scripts/fsk-shellrc
 ```
 
-적용: 새 터미널 또는 `source ~/.zshrc`.
+이 파일이 자기 위치에서 워크스페이스를 찾아 `EUFS_MASTER`·`COMMONROAD_CLCS_DIR`·
+`ROS_LOCALHOST_ONLY`를 설정하고 ROS/워크스페이스를 소싱한 뒤, 아래 함수들을 등록합니다:
+
+| 명령 | 역할 |
+|---|---|
+| `race [track] [sim\|real] [args...]` | 자율주행 전체 스택 (tmux). `race stop` / `race attach` |
+| `fsb` | 빌드 + 소싱 · `fsk` — 워크스페이스로 cd |
+| `simfull` / `pbring` / `teleop` | sim+perception / planning 전체 / 키보드 주행 |
+| `mission [ami]` / `resetcar` / `slamreset` / `rv` | 미션 ARM(기본 14) / 차 원위치 / 매핑 재시작 / RViz |
+
+워크스페이스가 `~/fsk`가 아니면 그 경로의 `src/scripts/fsk-shellrc`를 소싱하면 됩니다 —
+나머지는 알아서 맞춰집니다. 적용: 새 터미널 또는 `source ~/.bashrc`.
+
+> ⚠️ **conda 주의**: conda 환경이 활성화된 셸에서 `race`를 실행하면 ROS 파이썬
+> 노드들이 conda 파이썬으로 떠서 즉사합니다. `conda deactivate` 후 실행하세요.
 
 ---
 
-## ▶️ Running
+## ▶️ Running — 모드별 가이드
 
-### 자율주행 (기본)
+### 🏁 Trackdrive (기본 미션)
+랩 1은 local 경로로 탐험·매핑, 랩 완주 후 global 레이스라인으로 핸드오프.
 ```bash
-race                # small_track, CUDA YOLO+LiDAR perception, odom compensation, LiDAR-supported cones
-race sim            # small_track, simulated /cones, YOLO 없음
-race skidpad        # 트랙 지정
-race peanut sim gazebo_gui:=true     # sim일 때만 Gazebo simulated /cones 사용
+race                # small_track, CUDA YOLO+LiDAR perception (기본)
+race sim            # 같은 트랙, Gazebo simulated /cones (YOLO 없음 — 가볍고 빠름)
+race peanut         # 다른 트랙 (eufs_tracks/csv/ 의 이름)
+race peanut sim gazebo_gui:=true    # 트랙/모드 뒤 인자는 simulation.launch.py로 전달
 ```
 모니터 pane에서 `path_source: LOCAL → GLOBAL_FULL` 전환과 CTE를 실시간으로 봅니다.
+
+### 🛞 Skidpad (8자 미션)
+트랙 이름이 `skidpad*`면 **자동으로 skidpad 프로필**로 뜹니다: global planner 없이
+local planner만, skidpad_director가 미션 단계(진입→우측 원×N→좌측 원×N→탈출→정지)별로
+콘 피드를 게이트, AMI_SKIDPAD(12)로 ARM.
+```bash
+race skidpad_kase2026 real   # 넓은 버전 (KASE 2026)
+race skidpad real            # 좁은 표준 skidpad
+race skidpad sim             # simulated perception으로도 동일하게 동작
+```
+자주 만지는 튜닝 (전부 launch 인자/파라미터 — 코드 수정 불필요):
+
+| 항목 | 위치 | 기본값 |
+|---|---|---|
+| 원별 바퀴 수 | `pbring skidpad:=true skidpad_right_laps:=N skidpad_left_laps:=N` | 2 / 2 |
+| 콘 여유 (바깥 바이어스) | skidpad_director 파라미터 `circle_outward_bias_m` | 0.5 m |
+| 주행 속도 | `planning/local_planner/config/local_planner_skidpad.yaml` | 4.0 m/s |
+| 컨트롤러 (lookahead·상한) | `pure_pursuit_controller/config/pure_pursuit_controller_skidpad.yaml` | 3.0 m / 4.0 m/s |
+
+진행 단계는 `/skidpad/phase`로 확인 (모니터 pane에 표시됨).
 
 ### 자주 쓰는 변형
 ```bash

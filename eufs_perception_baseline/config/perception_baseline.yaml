@@ -127,9 +127,11 @@ yolov8_bbox_node:
   ros__parameters:
     image_topic: /zed/left/image_rect_color
     bbox_topic: /yolo_bounding_boxes
-    # FSOCO fine-tuned YOLOv8n cone detector. Keep this as an absolute path
-    # because the generated training artifact is intentionally outside git.
-    model_path: /home/dohyun/FS/artifacts/yolov8/fsoco_yolov8n/weights/best.pt
+    # FSOCO-finetuned YOLOv8n weights (training artifact, intentionally
+    # outside git). Left empty on purpose: race.sh real mode resolves
+    # <src>/eufs_perception_baseline/models/fsoco_yolov8n/weights/best.pt
+    # automatically; otherwise pass yolo_model_path:=<file> to the launch.
+    model_path: ""
     confidence_threshold: 0.25
     iou_threshold: 0.45
     imgsz: 640

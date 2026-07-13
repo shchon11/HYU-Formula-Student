@@ -8,7 +8,10 @@ global_planner_trajectory_publisher_node:
     # <output_root>/<map_name>/<trajectory_filename>. If trajectory_csv_path is
     # set, it takes precedence over output_root/map_name.
     trajectory_csv_path: ""
-    output_root: "/home/shchon11/fsk/src/planning/trajectory_generator/outputs"
+    # CSV mode only (planner_source:=csv). No portable default exists for
+    # generated artifacts: pass output_root:=<...>/trajectory_generator/outputs
+    # (or trajectory_csv_path) on the launch command line.
+    output_root: ""
     map_name: "peanut"
     trajectory_filename: "traj_race_cl.csv"
 
@@ -101,7 +104,8 @@ frenet_odom_node:
 global_planner_debug_visualizer_node:
   ros__parameters:
     # Layer CSVs are resolved as <output_root>/<map_name>/<*_filename>.
-    output_root: "/home/shchon11/fsk/src/planning/trajectory_generator/outputs"
+    # Debug-only node: pass output_root:=<...>/trajectory_generator/outputs.
+    output_root: ""
     map_name: "peanut"
 
     # Publishing

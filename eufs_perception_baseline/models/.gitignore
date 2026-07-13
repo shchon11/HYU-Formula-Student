@@ -5,3 +5,6 @@
 *.onnx
 *.engine
 *.weights
+
+# The shipped FSOCO YOLOv8n checkpoint is tracked (6 MB); other artifacts stay out.
+!fsoco_yolov8n/weights/best.pt

@@ -1,0 +1,50 @@
+# fsk-shellrc — HYU Formula Student shell setup (bash & zsh).
+#
+# Install (one line in ~/.bashrc or ~/.zshrc):
+#   source <path-to-workspace>/src/scripts/fsk-shellrc
+#
+# Everything below self-locates from this file's position, so the workspace
+# can live anywhere (~/fsk, ~/work/fsk, ...). Override any of the exports
+# BEFORE the source line if your layout differs.
+
+# --- locate the workspace (works when sourced from bash or zsh) -------------
+if [ -n "$ZSH_VERSION" ]; then
+  _fsk_this="${(%):-%N}"
+  _fsk_ext=zsh
+else
+  _fsk_this="${BASH_SOURCE[0]}"
+  _fsk_ext=bash
+fi
+_fsk_src_dir="$(cd -- "$(dirname -- "$_fsk_this")/.." && pwd)"       # .../src
+export EUFS_MASTER="${EUFS_MASTER:-$(cd "$_fsk_src_dir/.." && pwd)}" # workspace root
+
+# --- environment -------------------------------------------------------------
+export COMMONROAD_CLCS_DIR="${COMMONROAD_CLCS_DIR:-$HOME/commonroad-clcs}"
+export ROS_LOCALHOST_ONLY="${ROS_LOCALHOST_ONLY:-1}"
+
+[ -f "/opt/ros/humble/setup.$_fsk_ext" ] && source "/opt/ros/humble/setup.$_fsk_ext"
+[ -f "$EUFS_MASTER/install/setup.$_fsk_ext" ] && source "$EUFS_MASTER/install/setup.$_fsk_ext"
+
+# --- workspace ----------------------------------------------------------------
+fsk() { cd "$EUFS_MASTER"; }
+fsb() {
+  cd "$EUFS_MASTER" && colcon build --symlink-install --base-paths src "$@" &&
+    source "install/setup.$_fsk_ext"
+}
+
+# --- run ----------------------------------------------------------------------
+# race [track] [sim|real] [extra args...]  — full autonomous stack in tmux.
+#   Track skidpad / skidpad_kase2026 switches to the skidpad mission profile
+#   automatically. Stop: race stop | re-attach: race attach
+race()    { "$EUFS_MASTER/src/scripts/race.sh" "$@"; }
+simfull() { ros2 launch eufs_launcher simulation.launch.py perception_mode:=sim rviz:=true "$@"; }
+pbring()  { ros2 launch planning_bringup local_global_planning.launch.py "$@"; }
+teleop()  { ros2 run eufs_teleop teleop "$@"; }
+
+# --- helpers ------------------------------------------------------------------
+mission()  { ros2 service call /ros_can/set_mission eufs_msgs/srv/SetCanState "{ami_state: ${1:-14}}"; }
+resetcar() { ros2 service call /ros_can/reset_vehicle_pos std_srvs/srv/Trigger; }
+slamreset(){ ros2 service call /graph_slam/start_mapping std_srvs/srv/Trigger; }
+rv()       { rviz2 -d "$EUFS_MASTER/install/eufs_launcher/share/eufs_launcher/config/default.rviz" "$@"; }
+
+unset _fsk_this _fsk_src_dir
