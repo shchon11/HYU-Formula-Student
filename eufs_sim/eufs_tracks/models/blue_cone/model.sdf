@@ -18,6 +18,7 @@
         <geometry>
           <mesh>
             <uri>file://cone_blue.dae</uri>
+            <scale>1.197896 1.205467 1.483153</scale>
           </mesh>
         </geometry>
         <cast_shadows>1</cast_shadows>
@@ -27,6 +28,7 @@
         <geometry>
           <mesh>
             <uri>file://cone_blue.dae</uri>
+            <scale>1.197896 1.205467 1.483153</scale>
           </mesh>
         </geometry>
       </collision>

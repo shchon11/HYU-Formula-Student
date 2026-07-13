@@ -8,7 +8,7 @@
 </sdf>
 $===$
     <link name='%LINKTYPE%_%LINKNUM%'>
-      <pose frame=''>%PLACEX% %PLACEY% 0.15 0 -0 0</pose>
+      <pose frame=''>%PLACEX% %PLACEY% 0.225 0 -0 0</pose>
       %FILLCOVARIANCE%
       %FILLCOLLISION%
       <visual name="visual">
@@ -37,7 +37,7 @@ $===$
       </collision>
 $===$
     <ghostlink name='%LINKTYPE%_%LINKNUM%'>
-      <pose frame=''>%PLACEX% %PLACEY% 0.15 0 -0 0</pose>
+      <pose frame=''>%PLACEX% %PLACEY% 0.225 0 -0 0</pose>
       %FILLCOVARIANCE%
       %FILLCOLLISION%
       <visual name="visual">
@@ -52,7 +52,7 @@ $===$
       <covariance x="%XCOV%" y="%YCOV%" xy="%XYCOV%"/>
 $===$
     <include>
-      <pose>%PLACEX% %PLACEY% 0.15 0 0 0</pose>
+      <pose>%PLACEX% %PLACEY% 0.225 0 0 0</pose>
       <uri>%MODELNAME%</uri>
       <name>%LINKTYPE%_%LINKNUM%</name>
       %FILLCOVARIANCE%
