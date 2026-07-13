@@ -51,7 +51,8 @@ GraphSlamNode::GraphSlamNode()
   relocalize_inlier_distance_(0.6),
   association_inflation_per_meter_(0.01),
   association_max_inflation_(4.0),
-  landmark_merge_distance_(0.6),
+  landmark_merge_distance_(0.85),
+  map_trust_info_scale_(3.0),
   min_observation_range_(0.2),
   max_observation_range_(30.0),
   default_observation_sigma_(0.25),
@@ -77,7 +78,6 @@ GraphSlamNode::GraphSlamNode()
   landmark_confirm_observations_(3),
   loop_gap_distance_(20.0),
   map_trust_loop_closures_required_(2),
-  map_trust_info_scale_(3.0),
   localization_mode_(false),
   auto_localization_after_lap_(true),
   lap_return_radius_(6.0),
@@ -106,8 +106,21 @@ GraphSlamNode::GraphSlamNode()
   keyframes_since_last_optimization_(0),
   last_cone_pose_graph_id_(-1),
   map_converged_(false),
-  loop_closure_seen_since_optimize_(false),
-  loop_closure_optimize_cycles_(0)
+  loop_confirmation_window_(loop_confirmation_config_),
+  loop_confirmation_ready_for_optimize_(false),
+  loop_closure_optimize_cycles_(0),
+  loop_candidate_count_(0U),
+  loop_confirmed_count_(0U),
+  loop_rejected_count_(0U),
+  loop_candidate_window_count_(0U),
+  last_loop_confirmation_reason_(LoopConfirmationReason::PendingThreshold),
+  optimizer_skipped_pose_limit_(false),
+  last_odom_stamp_sec_(-1.0),
+  last_cone_stamp_sec_(-1.0),
+  last_map_update_stamp_sec_(-1.0),
+  last_live_odom_publish_stamp_sec_(-1.0),
+  lifecycle_map_saved_(false),
+  lap_return_criteria_satisfied_(false)
 {
   car_state_topic_ =
     declare_parameter<std::string>("car_state_topic", "/odometry_integration/car_state");
@@ -116,6 +129,8 @@ GraphSlamNode::GraphSlamNode()
   slam_odom_topic_ =
     declare_parameter<std::string>("slam_odom_topic", "/localization/ego_odom");
   status_topic_ = declare_parameter<std::string>("status_topic", "~/status");
+  lifecycle_diagnostics_topic_ =
+    declare_parameter<std::string>("lifecycle_diagnostics_topic", "~/lifecycle_diagnostics");
   map_converged_topic_ =
     declare_parameter<std::string>("map_converged_topic", "~/map_converged");
   path_topic_ = declare_parameter<std::string>("path_topic", "/graph_slam/path");
@@ -206,6 +221,28 @@ GraphSlamNode::GraphSlamNode()
     map_trust_loop_closures_required_);
   map_trust_info_scale_ =
     declare_parameter<double>("map_trust_info_scale", map_trust_info_scale_);
+  const int loop_confirmation_required_candidates =
+    declare_parameter<int>(
+    "loop_confirmation_required_candidates",
+    static_cast<int>(loop_confirmation_config_.required_candidates));
+  loop_confirmation_config_.required_candidates =
+    static_cast<std::size_t>(std::max<int>(1, loop_confirmation_required_candidates));
+  loop_confirmation_config_.min_travel_m =
+    declare_parameter<double>(
+    "loop_confirmation_min_travel_m",
+    loop_confirmation_config_.min_travel_m);
+  loop_confirmation_config_.min_elapsed_sec =
+    declare_parameter<double>(
+    "loop_confirmation_min_elapsed_sec",
+    loop_confirmation_config_.min_elapsed_sec);
+  loop_confirmation_config_.median_residual_max_m =
+    declare_parameter<double>(
+    "loop_confirmation_median_residual_max_m",
+    loop_confirmation_config_.median_residual_max_m);
+  loop_confirmation_config_.max_residual_m =
+    declare_parameter<double>(
+    "loop_confirmation_max_residual_m",
+    loop_confirmation_config_.max_residual_m);
 
   optimize_min_interval_ =
     declare_parameter<double>("optimize_min_interval", optimize_min_interval_);
@@ -270,6 +307,17 @@ GraphSlamNode::GraphSlamNode()
   landmark_merge_distance_ = std::max(0.0, landmark_merge_distance_);
   landmark_confirm_observations_ = std::max(0, landmark_confirm_observations_);
   loop_gap_distance_ = std::max(0.0, loop_gap_distance_);
+  loop_confirmation_config_.min_travel_m =
+    std::max(0.0, loop_confirmation_config_.min_travel_m);
+  loop_confirmation_config_.min_elapsed_sec =
+    std::max(0.0, loop_confirmation_config_.min_elapsed_sec);
+  loop_confirmation_config_.median_residual_max_m =
+    std::max(0.0, loop_confirmation_config_.median_residual_max_m);
+  loop_confirmation_config_.max_residual_m =
+    std::max(
+    loop_confirmation_config_.median_residual_max_m,
+    loop_confirmation_config_.max_residual_m);
+  loop_confirmation_window_ = LoopConfirmationWindow(loop_confirmation_config_);
   lap_origin_capture_distance_ = std::max(1.0, lap_origin_capture_distance_);
   lap_return_radius_ = std::max(0.5, lap_return_radius_);
   lap_return_yaw_ = std::max(0.05, lap_return_yaw_);
@@ -353,6 +401,8 @@ GraphSlamNode::GraphSlamNode()
   // Latched status so planning (local vs global) and RViz always see the
   // current SLAM lifecycle even when subscribing late.
   status_pub_ = create_publisher<std_msgs::msg::String>(status_topic_, transient_qos);
+  lifecycle_diagnostics_pub_ =
+    create_publisher<std_msgs::msg::String>(lifecycle_diagnostics_topic_, transient_qos);
   converged_pub_ = create_publisher<std_msgs::msg::Bool>(map_converged_topic_, transient_qos);
 
   if (publish_tf_) {
@@ -492,8 +542,21 @@ void GraphSlamNode::resetGraph()
   gnss_prior_suppressed_ = true;
   gnss_prior_suppress_until_sec_ = 0.0;
   map_converged_ = false;
-  loop_closure_seen_since_optimize_ = false;
+  loop_confirmation_window_.reset();
+  loop_confirmation_ready_for_optimize_ = false;
   loop_closure_optimize_cycles_ = 0;
+  loop_candidate_count_ = 0U;
+  loop_confirmed_count_ = 0U;
+  loop_rejected_count_ = 0U;
+  loop_candidate_window_count_ = 0U;
+  last_loop_confirmation_reason_ = LoopConfirmationReason::PendingThreshold;
+  optimizer_skipped_pose_limit_ = false;
+  last_odom_stamp_sec_ = -1.0;
+  last_cone_stamp_sec_ = -1.0;
+  last_map_update_stamp_sec_ = -1.0;
+  last_live_odom_publish_stamp_sec_ = -1.0;
+  lifecycle_map_saved_ = false;
+  lap_return_criteria_satisfied_ = false;
   traveled_distance_ = 0.0;
   lap_origin_captured_ = false;
   lap_origin_ = g2o::SE2();
@@ -507,6 +570,7 @@ void GraphSlamNode::stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg)
   const rclcpp::Time stamp = stampOrNow(msg->header.stamp, get_clock());
   const g2o::SE2 raw_odom = poseFromCarState(*msg);
   recordRawOdometry(stamp.seconds(), raw_odom);
+  last_odom_stamp_sec_ = stamp.seconds();
 
   // Motion-source trust and twist passthrough (see the member comments).
   latest_odom_sigma_trans_ =
@@ -549,6 +613,8 @@ void GraphSlamNode::conesCallback(
   }
 
   const ObservationUpdate update = addConeObservations(*msg, false);
+  const rclcpp::Time stamp = stampOrNow(msg->header.stamp, get_clock());
+  last_cone_stamp_sec_ = stamp.seconds();
 
   // Perception-driven optimization: correct the pose as soon as new cone
   // observations land, not only every N keyframes. optimize_min_interval
@@ -563,7 +629,8 @@ void GraphSlamNode::conesCallback(
     update.updated_landmarks > 0U ||
     update.deleted_landmarks > 0U)
   {
-    publishGraphVisuals(stampOrNow(msg->header.stamp, get_clock()));
+    last_map_update_stamp_sec_ = stamp.seconds();
+    publishGraphVisuals(stamp);
   }
 }
 
@@ -1053,6 +1120,21 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
     if (ambiguous) {
       // Two landmarks explain this cone almost equally well; fusing or
       // spawning a duplicate would corrupt the map, so skip it this frame.
+      const auto decision = loop_confirmation_window_.rejectAmbiguousAssociation();
+      ++loop_rejected_count_;
+      loop_candidate_window_count_ = decision.candidate_count;
+      last_loop_confirmation_reason_ = decision.reason;
+      RCLCPP_INFO_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        5000,
+        "Loop confirmation rejected: reason=%s loop_candidates=%zu "
+        "loop_confirmed=%zu loop_rejected=%zu",
+        toString(last_loop_confirmation_reason_),
+        loop_candidate_count_,
+        loop_confirmed_count_,
+        loop_rejected_count_);
+      publishLifecycleDiagnostics();
       continue;
     }
 
@@ -1068,10 +1150,50 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
       }
       landmark = &landmarks_[observed_index];
       voteLandmarkColor(*landmark, observation.color);
-      if (add_edges && loop_gap_distance_ > 0.0 &&
-        traveled_distance_ - landmark->last_seen_traveled >= loop_gap_distance_)
+      const bool stale_loop_candidate =
+        add_edges && loop_gap_distance_ > 0.0 &&
+        traveled_distance_ - landmark->last_seen_traveled >= loop_gap_distance_;
+      if (stale_loop_candidate)
       {
-        loop_closure_edge = true;
+        const double residual_m = (landmark->vertex->estimate() - map_point).norm();
+        const auto decision = loop_confirmation_window_.observeCandidate(
+          LoopCandidate{traveled_distance_, stamp.seconds(), residual_m});
+        ++loop_candidate_count_;
+        loop_candidate_window_count_ = decision.candidate_count;
+        last_loop_confirmation_reason_ = decision.reason;
+        if (decision.reason != LoopConfirmationReason::PendingThreshold &&
+          decision.reason != LoopConfirmationReason::Confirmed)
+        {
+          ++loop_rejected_count_;
+        }
+        if (decision.confirmed) {
+          loop_closure_edge = true;
+          loop_confirmation_ready_for_optimize_ = true;
+          RCLCPP_INFO(
+            get_logger(),
+            "Loop confirmation threshold reached: residual=%.3f m "
+            "loop_candidates=%zu loop_candidate_window=%zu loop_confirmed=%zu "
+            "loop_rejected=%zu; waiting for optimization",
+            residual_m,
+            loop_candidate_count_,
+            loop_candidate_window_count_,
+            loop_confirmed_count_,
+            loop_rejected_count_);
+        } else {
+          RCLCPP_INFO_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            5000,
+            "Loop confirmation %s: residual=%.3f m loop_candidates=%zu "
+            "loop_candidate_window=%zu loop_confirmed=%zu loop_rejected=%zu",
+            toString(last_loop_confirmation_reason_),
+            residual_m,
+            loop_candidate_count_,
+            loop_candidate_window_count_,
+            loop_confirmed_count_,
+            loop_rejected_count_);
+        }
+        publishLifecycleDiagnostics();
       }
       landmark->last_seen_traveled = traveled_distance_;
       if (update_landmarks &&
@@ -1103,22 +1225,17 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
   }
 
   if (loop_closure_edge) {
-    // Mark that a loop closure is pending reconciliation by the next
-    // optimization; maybeOptimize() counts those cycles toward convergence.
-    loop_closure_seen_since_optimize_ = true;
-
     if (keyframes_since_last_optimization_ < optimize_every_n_keyframes_) {
-      // Re-observed a landmark unseen for many keyframes (lap closure).
-      // Pull the next optimization forward so accumulated drift is corrected
-      // promptly; optimize_min_interval still rate-limits back-to-back runs.
       keyframes_since_last_optimization_ = optimize_every_n_keyframes_;
       RCLCPP_INFO_THROTTLE(
         get_logger(),
         *get_clock(),
         5000,
-        "Loop closure: re-associated landmark(s) unseen for >= %.1f m; "
-        "pulling graph optimization forward",
-        loop_gap_distance_);
+        "Loop closure confirmed by candidate gate; pulling graph optimization forward "
+        "loop_candidates=%zu loop_confirmed=%zu loop_rejected=%zu",
+        loop_candidate_count_,
+        loop_confirmed_count_,
+        loop_rejected_count_);
     }
   }
 
@@ -1243,6 +1360,7 @@ int GraphSlamNode::findAssociatedLandmark(
   double second_d2 = std::numeric_limits<double>::max();
   double best_euclidean_sq = std::numeric_limits<double>::max();
   int best_index = -1;
+  int second_index = -1;
 
   // Association is geometric only. Colour is tracked by majority vote and
   // deliberately not used as a gate: simulated perception mislabels cones,
@@ -1288,11 +1406,13 @@ int GraphSlamNode::findAssociatedLandmark(
     const double d2 = diff.dot(innovation_covariance.inverse() * diff);
     if (d2 < best_d2) {
       second_d2 = best_d2;
+      second_index = best_index;
       best_d2 = d2;
       best_index = static_cast<int>(i);
       best_euclidean_sq = diff.squaredNorm();
     } else if (d2 < second_d2) {
       second_d2 = d2;
+      second_index = static_cast<int>(i);
     }
   }
 
@@ -1313,8 +1433,21 @@ int GraphSlamNode::findAssociatedLandmark(
     second_d2 <= association_gate_chi2_ &&
     std::sqrt(best_d2) > association_ambiguity_ratio_ * std::sqrt(second_d2))
   {
-    *ambiguous = true;
-    return -1;
+    // Two landmarks explain this cone almost equally well. If they are close
+    // to EACH OTHER, they are two duplicate landmarks of ONE physical cone
+    // (drift spawned a second one), not two distinct cones — so this is not a
+    // real ambiguity. Rejecting it would refuse every revisit near a duplicate
+    // pair, which starves loop-closure confirmation (loop_rejected piles up,
+    // loop_confirmed stays 0), the map never converges, mapping never ends,
+    // and each extra lap adds more duplicates. Associate with the best instead
+    // and let mergeCloseLandmarks collapse the pair after the next optimize.
+    const double rival_separation = second_index < 0 ? std::numeric_limits<double>::max() :
+      (landmarks_[best_index].vertex->estimate() -
+      landmarks_[second_index].vertex->estimate()).norm();
+    if (rival_separation > association_max_distance_) {
+      *ambiguous = true;
+      return -1;
+    }
   }
 
   return best_index;
@@ -1794,6 +1927,8 @@ void GraphSlamNode::maybeOptimize()
       "Skipping graph optimization with %zu poses; max_optimization_poses is %d",
       poses_.size(),
       max_optimization_poses_);
+    optimizer_skipped_pose_limit_ = true;
+    publishLifecycleDiagnostics();
     keyframes_since_last_optimization_ = 0;
     return;
   }
@@ -1807,7 +1942,10 @@ void GraphSlamNode::maybeOptimize()
     return;
   }
 
-  optimizeGraph();
+  if (!optimizeGraph()) {
+    return;
+  }
+  optimizer_skipped_pose_limit_ = false;
   const std::size_t merged = mergeCloseLandmarks();
   if (merged > 0U) {
     RCLCPP_INFO(
@@ -1822,18 +1960,34 @@ void GraphSlamNode::maybeOptimize()
   // are trusted more (see addObservationEdge).
   if (map_trust_after_loop_closure_ &&
     !map_converged_ &&
-    loop_closure_seen_since_optimize_)
+    loop_confirmation_ready_for_optimize_)
   {
-    loop_closure_seen_since_optimize_ = false;
-    if (++loop_closure_optimize_cycles_ >= map_trust_loop_closures_required_) {
+    loop_confirmation_ready_for_optimize_ = false;
+    ++loop_confirmed_count_;
+    ++loop_closure_optimize_cycles_;
+    if (loop_closure_optimize_cycles_ >= map_trust_loop_closures_required_) {
       map_converged_ = true;
       RCLCPP_INFO(
         get_logger(),
         "Map converged after %d loop-closure optimization cycle(s); "
-        "boosting confirmed-landmark observation weight by %.1fx",
+        "boosting confirmed-landmark observation weight by %.1fx "
+        "loop_candidates=%zu loop_confirmed=%zu loop_rejected=%zu",
         loop_closure_optimize_cycles_,
-        map_trust_info_scale_);
+        map_trust_info_scale_,
+        loop_candidate_count_,
+        loop_confirmed_count_,
+        loop_rejected_count_);
       publishStatus();
+    } else {
+      RCLCPP_INFO(
+        get_logger(),
+        "Loop confirmed by optimization but waiting for map-trust threshold "
+        "loop_candidates=%zu loop_confirmed=%zu loop_rejected=%zu required=%d",
+        loop_candidate_count_,
+        loop_confirmed_count_,
+        loop_rejected_count_,
+        map_trust_loop_closures_required_);
+      publishLifecycleDiagnostics();
     }
   }
 
@@ -1879,10 +2033,10 @@ void GraphSlamNode::publishLiveEstimateFromSnapshot(
   publishLiveEstimate(stamp, live_estimate, raw_odom);
 }
 
-void GraphSlamNode::optimizeGraph()
+bool GraphSlamNode::optimizeGraph()
 {
   if (poses_.size() < 2U || optimizer_.edges().empty()) {
-    return;
+    return false;
   }
 
   optimizer_.initializeOptimization();
@@ -1893,6 +2047,7 @@ void GraphSlamNode::optimizeGraph()
     completed_iterations,
     poses_.size(),
     landmarks_.size());
+  return completed_iterations > 0;
 }
 
 std::size_t GraphSlamNode::firstPublishedPoseIndex() const
@@ -1947,6 +2102,7 @@ void GraphSlamNode::publishLiveEstimate(
   const g2o::SE2 & estimate,
   const g2o::SE2 & raw_odom)
 {
+  last_live_odom_publish_stamp_sec_ = stamp.seconds();
   publishOdometry(stamp, estimate);
   publishTransform(stamp, estimate, raw_odom);
 }
@@ -2235,6 +2391,7 @@ std::string GraphSlamNode::saveMapTimestamped()
       get_logger(), "Failed to save map to %s: %s", path.c_str(), error.c_str());
     return std::string();
   }
+  lifecycle_map_saved_ = true;
   RCLCPP_INFO(get_logger(), "Saved cone map to %s", path.c_str());
   return path;
 }
@@ -2304,8 +2461,7 @@ void GraphSlamNode::handleStartMapping(
 
 void GraphSlamNode::maybeFinishMappingLap(const g2o::SE2 & current_estimate)
 {
-  if (!auto_localization_after_lap_ || !map_converged_ || !lap_origin_captured_ ||
-    landmarks_.empty())
+  if (!auto_localization_after_lap_ || !lap_origin_captured_ || landmarks_.empty())
   {
     return;
   }
@@ -2324,6 +2480,23 @@ void GraphSlamNode::maybeFinishMappingLap(const g2o::SE2 & current_estimate)
   if (return_distance > lap_return_radius_ || yaw_error > lap_return_yaw_) {
     return;
   }
+  lap_return_criteria_satisfied_ = true;
+
+  if (!map_converged_) {
+    RCLCPP_INFO_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      5000,
+      "Mapping lap return gated by loop confirmation: mapping_stop_reason=%s "
+      "loop_candidates=%zu loop_confirmed=%zu loop_rejected=%zu last_loop_reason=%s",
+      toString(classifyMappingStopState()),
+      loop_candidate_count_,
+      loop_confirmed_count_,
+      loop_rejected_count_,
+      toString(last_loop_confirmation_reason_));
+    publishLifecycleDiagnostics();
+    return;
+  }
 
   RCLCPP_INFO(
     get_logger(),
@@ -2335,6 +2508,21 @@ void GraphSlamNode::maybeFinishMappingLap(const g2o::SE2 & current_estimate)
 
 void GraphSlamNode::enterLocalizationMode(const std::string & reason)
 {
+  // Final clean-up before the map freezes. The lap-closing loop closure has
+  // just pulled the drift-era duplicate landmarks (a physical cone re-mapped a
+  // second time while the pose estimate was still drifting) close together, so
+  // one more optimization to settle them followed by a merge pass removes the
+  // overlapping/doubled cones from the map that is about to become the fixed
+  // reference. Both are gated off by localization_mode_, so they must run now.
+  optimizeGraph();
+  const std::size_t merged_on_freeze = mergeCloseLandmarks();
+  if (merged_on_freeze > 0U) {
+    RCLCPP_INFO(
+      get_logger(),
+      "Merged %zu duplicate landmark(s) while freezing the map; %zu remain",
+      merged_on_freeze, landmarks_.size());
+  }
+
   // Freeze the map: landmarks become the fixed reference, mapping paths
   // (addLandmark / deletion / merge / Kalman updates) are disabled by the
   // localization_mode_ guards, and the pose window is bounded so the graph
@@ -2386,6 +2574,76 @@ void GraphSlamNode::prunePoseWindow()
   poses_.front().vertex->setFixed(true);
 }
 
+MappingStopReason GraphSlamNode::classifyMappingStopState()
+{
+  const double now_sec = get_clock()->now().seconds();
+  const double freshness_sec = std::max(2.0, 2.0 * keyframe_max_dt_);
+  const auto fresh =
+    [now_sec, freshness_sec](double stamp_sec)
+    {
+      if (stamp_sec < 0.0) {
+        return false;
+      }
+      if (now_sec <= 0.0 || stamp_sec <= 0.0 || stamp_sec > now_sec) {
+        return true;
+      }
+      return now_sec - stamp_sec <= freshness_sec;
+    };
+
+  MappingStopClassifierInput input;
+  input.localization_mode = localization_mode_;
+  input.map_converged = map_converged_;
+  input.map_saved = lifecycle_map_saved_;
+  input.lap_return_criteria_satisfied = lap_return_criteria_satisfied_;
+  input.loop_confirmed = loop_confirmed_count_ > 0U;
+  input.loop_pending =
+    !map_converged_ && (loop_candidate_window_count_ > 0U || lap_return_criteria_satisfied_);
+  input.ambiguous_association =
+    last_loop_confirmation_reason_ == LoopConfirmationReason::AmbiguousAssociation;
+  input.stable_map_geometry = map_converged_ && !landmarks_.empty();
+  input.optimizer_skipped_pose_limit = optimizer_skipped_pose_limit_;
+  input.odometry_fresh = fresh(last_odom_stamp_sec_);
+  input.cones_fresh = last_cone_stamp_sec_ < 0.0 || fresh(last_cone_stamp_sec_);
+  input.live_odometry_published = last_live_odom_publish_stamp_sec_ >= 0.0;
+  input.map_updates_stalled =
+    last_map_update_stamp_sec_ >= 0.0 &&
+    last_live_odom_publish_stamp_sec_ > last_map_update_stamp_sec_ + freshness_sec;
+  return classifyMappingStop(input);
+}
+
+void GraphSlamNode::publishLifecycleDiagnostics()
+{
+  if (!lifecycle_diagnostics_pub_) {
+    return;
+  }
+
+  const MappingStopReason reason = classifyMappingStopState();
+  std_msgs::msg::String diagnostics;
+  std::ostringstream out;
+  out << "mapping_stop_reason=" << toString(reason)
+      << " loop_candidates=" << loop_candidate_count_
+      << " loop_candidate_window=" << loop_candidate_window_count_
+      << " loop_confirmed=" << loop_confirmed_count_
+      << " loop_rejected=" << loop_rejected_count_
+      << " last_loop_reason=" << toString(last_loop_confirmation_reason_)
+      << " map_converged=" << (map_converged_ ? "true" : "false")
+      << " localization_mode=" << (localization_mode_ ? "true" : "false")
+      << " optimizer_skipped_pose_limit="
+      << (optimizer_skipped_pose_limit_ ? "true" : "false")
+      << " lap_return_criteria_satisfied="
+      << (lap_return_criteria_satisfied_ ? "true" : "false")
+      << " odometry_fresh="
+      << (classifyMappingStopState() == MappingStopReason::OdometryDropout ? "false" : "true");
+  diagnostics.data = out.str();
+  lifecycle_diagnostics_pub_->publish(diagnostics);
+  RCLCPP_INFO_THROTTLE(
+    get_logger(),
+    *get_clock(),
+    5000,
+    "SLAM lifecycle diagnostics: %s",
+    diagnostics.data.c_str());
+}
+
 void GraphSlamNode::publishStatus()
 {
   if (!status_pub_ || !converged_pub_) {
@@ -2405,6 +2663,7 @@ void GraphSlamNode::publishStatus()
   std_msgs::msg::Bool converged;
   converged.data = map_converged_ || (localization_mode_ && !landmarks_.empty());
   converged_pub_->publish(converged);
+  publishLifecycleDiagnostics();
 }
 
 GraphSlamNode::ConeColor GraphSlamNode::colorFromTag(const std::string & tag)

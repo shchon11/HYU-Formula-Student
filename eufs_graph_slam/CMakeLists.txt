@@ -118,7 +118,19 @@ install(DIRECTORY include/
   DESTINATION include)
 
 if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
   find_package(ament_lint_auto REQUIRED)
+
+  ament_add_gtest(loop_confirmation_test
+    test/loop_confirmation_test.cpp)
+  target_include_directories(loop_confirmation_test PRIVATE
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
+
+  ament_add_gtest(mapping_stop_classifier_test
+    test/mapping_stop_classifier_test.cpp)
+  target_include_directories(mapping_stop_classifier_test PRIVATE
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
+
   ament_lint_auto_find_test_dependencies()
 endif()
 

@@ -439,13 +439,12 @@ class SbgOdometryBridge(Node):
 
         ov = OverlayText()
         ov.action = OverlayText.ADD
-        # HUD stack (left edge, 8px gaps): CTE box (12,12,h110) -> SLAM status
-        # box (12,130,h34) -> this GNSS box (12,172). Keep the three publishers
-        # in sync when moving any of them.
+        # Sits below the stack HUD board (12,12,~h230 published by
+        # planning_bringup stack_hud.py). Keep positions in sync when moving.
         ov.width = 220
         ov.height = 96
         ov.horizontal_distance = 12
-        ov.vertical_distance = 172
+        ov.vertical_distance = 300
         ov.horizontal_alignment = OverlayText.LEFT
         ov.vertical_alignment = OverlayText.TOP
         ov.bg_color = ColorRGBA(r=0.0, g=0.0, b=0.0, a=0.55)

@@ -30,6 +30,7 @@
 #include "eufs_msgs/msg/car_state.hpp"
 #include "eufs_msgs/msg/cone_array_with_covariance.hpp"
 #include "eufs_msgs/msg/cone_with_covariance.hpp"
+#include "eufs_graph_slam/slam_lifecycle_classifiers.hpp"
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "geometry_msgs/msg/quaternion.hpp"
 #include "nav_msgs/msg/odometry.hpp"
@@ -165,7 +166,7 @@ private:
 
   void maybeOptimize();
   void onOptimizeTimer();
-  void optimizeGraph();
+  bool optimizeGraph();
   void updateKeyframeSnapshot();
   void publishLiveEstimateFromSnapshot(const rclcpp::Time & stamp, const g2o::SE2 & raw_odom);
   std::size_t firstPublishedPoseIndex() const;
@@ -211,6 +212,8 @@ private:
   void enterLocalizationMode(const std::string & reason);
   void prunePoseWindow();
   std::string saveMapTimestamped();
+  MappingStopReason classifyMappingStopState();
+  void publishLifecycleDiagnostics();
   void publishStatus();
 
   static double normalizeAngle(double angle);
@@ -234,6 +237,7 @@ private:
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr lifecycle_diagnostics_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr converged_pub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr save_graph_srv_;
@@ -259,6 +263,7 @@ private:
   std::string map_topic_;
   std::string slam_odom_topic_;
   std::string status_topic_;
+  std::string lifecycle_diagnostics_topic_;
   std::string map_converged_topic_;
   std::string path_topic_;
   std::string marker_topic_;
@@ -380,8 +385,22 @@ private:
   // map_converged_ turns on and confirmed-landmark observation edges are
   // trusted more so the pose conforms to the settled map.
   bool map_converged_;
-  bool loop_closure_seen_since_optimize_;
+  LoopConfirmationConfig loop_confirmation_config_;
+  LoopConfirmationWindow loop_confirmation_window_;
+  bool loop_confirmation_ready_for_optimize_;
   int loop_closure_optimize_cycles_;
+  std::size_t loop_candidate_count_;
+  std::size_t loop_confirmed_count_;
+  std::size_t loop_rejected_count_;
+  std::size_t loop_candidate_window_count_;
+  LoopConfirmationReason last_loop_confirmation_reason_;
+  bool optimizer_skipped_pose_limit_;
+  double last_odom_stamp_sec_;
+  double last_cone_stamp_sec_;
+  double last_map_update_stamp_sec_;
+  double last_live_odom_publish_stamp_sec_;
+  bool lifecycle_map_saved_;
+  bool lap_return_criteria_satisfied_;
 
   g2o::SE2 latest_estimate_;
   bool has_latest_pose_;

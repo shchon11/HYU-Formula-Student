@@ -8,6 +8,7 @@ graph_slam:
     map_topic: /localization/cone_map
     slam_odom_topic: /localization/ego_odom
     status_topic: ~/status
+    lifecycle_diagnostics_topic: ~/lifecycle_diagnostics
     map_converged_topic: ~/map_converged
     path_topic: /graph_slam/path
     marker_topic: /graph_slam/markers
@@ -76,7 +77,12 @@ graph_slam:
     landmark_min_observations_to_publish: 2
     landmark_confirm_observations: 3
     loop_gap_distance: 20.0
-    landmark_merge_distance: 0.6
+    loop_confirmation_required_candidates: 3
+    loop_confirmation_min_travel_m: 2.0
+    loop_confirmation_min_elapsed_sec: 1.0
+    loop_confirmation_median_residual_max_m: 1.0
+    loop_confirmation_max_residual_m: 2.0
+    landmark_merge_distance: 0.85
     # After the map converges (loop closures reconciled by this many
     # optimization cycles), confirmed-landmark observation edges get their
     # information scaled up so the pose conforms to the settled map.
