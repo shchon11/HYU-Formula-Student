@@ -14,6 +14,10 @@
   <xacro:arg name="perception_lidar_fov" default="3.141593"/>
   <xacro:arg name="perception_lidar_on" default="true"/>
   <xacro:arg name="perception_detection_probability" default="1.0"/>
+  <!-- 0.0 = lidar-accurate cone positions (the real pipeline takes positions
+       from lidar clustering; the camera only classifies color). Raise toward
+       1.0 to simulate camera-depth-dominant noise instead. -->
+  <xacro:arg name="perception_camera_noise_percentage" default="0.0"/>
   <xacro:arg name="camera_cones_view_distance" default="13"/>
   <xacro:arg name="camera_cones_min_view_distance" default="0.5"/>
   <xacro:arg name="camera_cones_fov" default="2.09"/>
@@ -80,6 +84,7 @@
       <simulatePerception>$(arg simulate_perception)</simulatePerception>
       <perceptionConesTopicName>/cones</perceptionConesTopicName>
       <detectionProbability>$(arg perception_detection_probability)</detectionProbability>
+      <perceptionCameraNoisePercentage>$(arg perception_camera_noise_percentage)</perceptionCameraNoisePercentage>
       <perceptionCameraDepthNoiseParameterA>0.01</perceptionCameraDepthNoiseParameterA>
       <perceptionCameraDepthNoiseParameterB>0.5</perceptionCameraDepthNoiseParameterB>
       <perceptionLidarNoise>0.03 0.03 0.0</perceptionLidarNoise>

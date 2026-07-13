@@ -57,6 +57,12 @@ PERCEPTION_XACRO_ARGS = [
         'Lidar FOV in radians used by the /cones simulated perception plugin.',
     ),
     (
+        'perception_camera_noise_percentage',
+        '0.0',
+        'Blend of camera depth noise vs lidar noise on /cones positions; '
+        '0.0 = lidar-accurate positions like the real fusion pipeline.',
+    ),
+    (
         'perception_lidar_on',
         'true',
         'Whether lidar-only cones are included in simulated perception.',
@@ -180,13 +186,13 @@ def spawn_car(context, *args, **kwargs):
         condition=IfCondition(LaunchConfiguration('show_rqt_gui'))
     )
 
-    rviz_config_file = join(
-        get_package_share_directory('eufs_launcher'), 'config', 'default.rviz')
-
-    default_user_config_file = join(os.path.expanduser("~"),
-                                    ".rviz2", "default.rviz")
-    if os.path.isfile(default_user_config_file):
-        rviz_config_file = default_user_config_file
+    # Always the shipped config so every checkout sees the same displays.
+    # A stale ~/.rviz2/default.rviz used to silently override this and hide
+    # new HUD/preset displays; pass rviz_config:=<path> to use another file.
+    rviz_config_file = LaunchConfiguration('rviz_config').perform(context)
+    if not rviz_config_file:
+        rviz_config_file = join(
+            get_package_share_directory('eufs_launcher'), 'config', 'default.rviz')
 
     rviz = Node(
         name='rviz',
@@ -245,6 +251,10 @@ def generate_launch_description():
 
         DeclareLaunchArgument('rviz', default_value='false',
                               description='Launch RViz'),
+
+        DeclareLaunchArgument('rviz_config', default_value='',
+                              description='RViz config path; empty = the '
+                                          'shipped eufs_launcher default.rviz'),
 
         DeclareLaunchArgument('use_sim_time', default_value='true',
                               description='Use the simulator clock'),

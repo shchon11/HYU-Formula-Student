@@ -48,6 +48,7 @@ tmux has-session -t "$SESSION" 2>/dev/null && { echo "race: already running — 
 
 SRC="source $ROS_SETUP; source $WS_SETUP; export EUFS_MASTER=$EUFS_MASTER ROS_LOCALHOST_ONLY=1;"
 WAIT_CAR="until ros2 node list 2>/dev/null | grep -q race_car; do sleep 2; done"
+WAIT_GT="until ros2 topic list 2>/dev/null | grep -q /ground_truth/state; do sleep 2; done"
 WAIT_STATE="until ros2 topic list 2>/dev/null | grep -q /planning/state; do sleep 2; done"
 
 echo "race: launching AUTONOMOUS stack on track '$TRACK'…"
@@ -68,10 +69,13 @@ P_DRIVE=$(tmux split-window -v -t "$P_SIM" -P -F '#{pane_id}')
 tmux send-keys -t "$P_DRIVE" \
   "$SRC echo '[③ MISSION] waiting for car…'; $WAIT_CAR; sleep 5; ros2 service call /ros_can/set_mission eufs_msgs/srv/SetCanState '{ami_state: 14}'; echo 'mission armed → controller now drives (no teleop). /cmd:'; ros2 topic hz /cmd" C-m
 
-# 3 · Live monitor: path source / state / lap / cross-track error ────────────
+P_GNSS=$(tmux split-window -v -t "$P_DRIVE" -P -F '#{pane_id}')
+tmux send-keys -t "$P_GNSS" \
+  "$SRC echo '[④ GNSS HUD] waiting for ground truth…'; $WAIT_GT; ros2 launch eufs_graph_slam ins_pipeline.launch.py slam:=false use_sim_time:=true car_state_topic:=/ins_odom/car_state" C-m
+
 P_MON=$(tmux split-window -v -t "$P_PLAN" -P -F '#{pane_id}')
 tmux send-keys -t "$P_MON" \
-  "$SRC echo '[④ MONITOR] waiting for planning…'; $WAIT_STATE; while true; do printf '\\n== %s ==\\n' \"\$(date +%H:%M:%S)\"; echo -n 'path_source: '; ros2 topic echo --once /planning/path_source 2>/dev/null | grep -o 'data:.*'; echo -n 'state:       '; ros2 topic echo --once /planning/state 2>/dev/null | grep -o 'data:.*'; echo -n 'lap:         '; ros2 topic echo --once /planning/lap_count 2>/dev/null | grep -o 'data:.*'; echo -n 'CTE d(m):    '; ros2 topic echo --once /planning/cte 2>/dev/null | grep -o 'data:.*'; sleep 3; done" C-m
+  "$SRC echo '[⑤ MONITOR] waiting for planning…'; $WAIT_STATE; while true; do printf '\\n== %s ==\\n' \"\$(date +%H:%M:%S)\"; echo -n 'path_source: '; ros2 topic echo --once /planning/path_source 2>/dev/null | grep -o 'data:.*'; echo -n 'state:       '; ros2 topic echo --once /planning/state 2>/dev/null | grep -o 'data:.*'; echo -n 'lap:         '; ros2 topic echo --once /planning/lap_count 2>/dev/null | grep -o 'data:.*'; echo -n 'CTE d(m):    '; ros2 topic echo --once /planning/cte 2>/dev/null | grep -o 'data:.*'; sleep 3; done" C-m
 
 tmux select-layout -t "$SESSION" tiled
 tmux select-pane   -t "$P_MON"
@@ -79,7 +83,7 @@ tmux set-option    -t "$SESSION" mouse on
 
 cat <<EOF
 race: up.  attach → 'race attach'   |   stop everything → 'race stop'
-  panes: ①sim+perception  ②planning(slam+global+local+SM+selector+controller)  ③mission  ④monitor
+  panes: ①sim+perception  ②planning(slam+global+local+SM+selector+controller)  ③mission  ④gnss-hud  ⑤monitor
   the CONTROLLER drives the car — no teleop. Lap 1 = local path, then handoff to global.
 EOF
 exec tmux attach -t "$SESSION"

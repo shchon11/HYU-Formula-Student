@@ -75,7 +75,7 @@ flowchart LR
 |---|---|---|
 | **랩 1 · 탐험** | `LOCAL` | SLAM이 누적한 **콘맵과 현재 pose로 local 경로** 생성, SLAM은 주행하며 콘맵 보강 |
 | **핸드오프** | — | 랩 완주 → SLAM `localization` 전환 → global_planner가 콘맵에서 **레이스라인** 생성 → selector가 안전 전환 |
-| **랩 2+ · 레이싱** | `GLOBAL_FULL` | 컨트롤러가 레이스라인 롤링 윈도우 추종. **CTE HUD**가 추종 오차(d) 표시 |
+| **랩 2+ · 레이싱** | `GLOBAL_FULL` | 컨트롤러가 레이스라인 롤링 윈도우 추종. HUD `TRACKING` 줄이 추종 오차(d) 표시 |
 | **종료** | — | state_machine이 스톱존 감지 → `stop_request` → 제동 |
 
 컨트롤러는 항상 `/path_waypoints` 하나만 봅니다 — local이냐 global이냐는 selector가 숨겨줍니다.
@@ -195,7 +195,15 @@ ros2 topic echo --once /ros_can/state_str
 ### INS/SBG 파이프라인 (선택)
 실제 하드웨어 GNSS/INS 경로를 시뮬에서 검증할 때:
 ```bash
-ros2 launch eufs_graph_slam ins_pipeline.launch.py    # pbring의 graph_slam과 동시 사용 금지
+ros2 launch eufs_graph_slam ins_pipeline.launch.py
+```
+
+`race`는 GNSS HUD만 채우도록 `ins_pipeline.launch.py slam:=false`를
+자동으로 같이 띄웁니다. `pbring`을 수동으로 켠 상태에서 GNSS HUD만 보고
+싶으면 같은 방식으로 graph_slam 중복 없이 실행하세요:
+
+```bash
+ros2 launch eufs_graph_slam ins_pipeline.launch.py slam:=false
 ```
 
 ---
@@ -217,6 +225,10 @@ ros2 launch eufs_graph_slam ins_pipeline.launch.py    # pbring의 graph_slam과 
 | `/path_waypoints` (+`/path`) | `WaypointArrayStamped` | **selector 확정 경로 = 컨트롤러 입력** |
 | `/car_state/frenet/odom` | `Odometry` | Frenet (x=s, y=d) — global 기준 |
 | `/planning/cte`, `/planning/cte_rmse` | `Float32` | 추종 횡오차 d, 누적 RMSE |
+| `/planning/local_path_reason`, `/planning/global_path_reason` | `String` | 경로 invalid **이유** (valid면 빈 문자열) |
+| `/planning/lap_count` | `Int32` | 완료 랩 수 (orange 게이트 통과 기준) |
+| `/planning/lap_time_last`, `/planning/lap_time_best` | `Float64` | 직전/최고 랩타임 (초) |
+| `/planning/stack_hud` (+`_banner`) | `OverlayText` | RViz 스택 HUD 보드/배너 (stack_hud 노드) |
 | `/cmd` | `AckermannDriveStamped` | 컨트롤러 출력 (유일 writer) |
 
 </details>
@@ -238,7 +250,7 @@ ros2 service call /graph_slam/save_map       std_srvs/srv/Trigger               
 
 `race`/`simfull`이 정리된 config로 RViz를 띄웁니다 (또는 `rv`). 디스플레이는 **Sensors / Perception / SLAM / Planning / HUD** 그룹, 콘은 실제 3D 메시.
 
-- **HUD (좌상단 스택)**: `PATH CTE`(레이스라인 대비 d·RMSE·max — global 단계에서 활성) → `SLAM 상태` → `GNSS`(INS 파이프라인 실행 시에만 채워짐)
+- **HUD**: **Stack HUD 보드**(좌상단) — perception/SLAM/global/local/selector/control/mission/tracking을 스테이지별 색상(●초록 정상 · ▲노랑 주의 · ✕빨강 장애 · ○회색 대기)으로 표시하고, 막힌 스테이지는 **실패 이유를 그 줄에 그대로** 보여줌 (예: `GLOBAL ✕ boundary gap 13.5 m exceeds 12 m`). **배너**(상단 중앙) — "지금 차가 뭘 하는지" 한 줄: `LAP 1 · MAPPING · LOCAL · 2.9 m/s` → `RACING · GLOBAL · lap 2/4` → `⚑ FINISHED`, 문제 시 빨간 `✕ NO PATH → BRAKING — <이유>`. `GNSS`는 INS 파이프라인 실행 시 보드 아래 채워짐
 - **원클릭 프리셋**: 아무 RViz에서나 `Add → By display type → fsk_rviz_presets → FSK Full Stack` — 토픽·QoS까지 세팅된 그룹이 통째로 추가
 
 ---
@@ -301,7 +313,9 @@ GPU가 죽으면(과거 Xid 폴트) YOLO가 CPU 폴백으로 돌며 CPU를 포�
 <details>
 <summary><b>graph_slam이 두 개 뜸 / TF 충돌</b></summary>
 
-`pbring`(또는 `race`)은 자체 graph_slam을 띄웁니다 — `ins_pipeline.launch.py`나 `graph_slam.launch.py`를 동시에 켜지 마세요.
+`pbring`(또는 `race`)은 자체 graph_slam을 띄웁니다 — 별도
+`graph_slam.launch.py`나 기본 `ins_pipeline.launch.py`를 동시에 켜지 마세요.
+GNSS HUD publisher만 필요하면 `ins_pipeline.launch.py slam:=false`로 실행합니다.
 </details>
 
 <details>

@@ -118,12 +118,14 @@ void PlanningStack::populate()
 void HudStack::populate()
 {
   setName("FSK HUD");
+  // Stack HUD board + banner subsume the old CTE/SLAM-status boxes; those
+  // topics still publish for anyone who adds the displays manually.
   addTopicDisplay(
-    "rviz_2d_overlay_plugins/TextOverlay", "Path CTE HUD", "/planning/cte_overlay",
+    "rviz_2d_overlay_plugins/TextOverlay", "Stack HUD", "/planning/stack_hud",
     "Reliable", "Transient Local");
   addTopicDisplay(
-    "rviz_2d_overlay_plugins/TextOverlay", "SLAM Status HUD",
-    "/graph_slam/status_overlay", "Reliable", "Transient Local");
+    "rviz_2d_overlay_plugins/TextOverlay", "Stack Banner",
+    "/planning/stack_hud_banner", "Reliable", "Transient Local");
   addTopicDisplay(
     "rviz_2d_overlay_plugins/TextOverlay", "GNSS HUD", "/gnss/overlay",
     "Reliable", "Transient Local");

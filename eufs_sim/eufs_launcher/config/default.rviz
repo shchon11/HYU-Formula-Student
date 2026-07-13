@@ -323,23 +323,23 @@ Visualization Manager:
       Displays:
         - Class: rviz_2d_overlay_plugins/TextOverlay
           Enabled: true
-          Name: Path CTE HUD
+          Name: Stack HUD
           Topic:
             Depth: 1
             Durability Policy: Transient Local
             History Policy: Keep Last
             Reliability Policy: Reliable
-            Value: /planning/cte_overlay
+            Value: /planning/stack_hud
           Value: true
         - Class: rviz_2d_overlay_plugins/TextOverlay
           Enabled: true
-          Name: SLAM Status HUD
+          Name: Stack Banner
           Topic:
             Depth: 1
             Durability Policy: Transient Local
             History Policy: Keep Last
             Reliability Policy: Reliable
-            Value: /graph_slam/status_overlay
+            Value: /planning/stack_hud_banner
           Value: true
         - Class: rviz_2d_overlay_plugins/TextOverlay
           Enabled: true
