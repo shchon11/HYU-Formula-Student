@@ -1,6 +1,6 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node, SetRemap
@@ -54,6 +54,16 @@ ARGUMENTS = (
     ("enable_hud", "true", "Start the RViz stack HUD overlay aggregator."),
     ("hud_topic", "/planning/stack_hud", "Stack HUD board overlay."),
     ("hud_banner_topic", "/planning/stack_hud_banner", "Stack HUD banner overlay."),
+    # Skidpad mission: the director gates the SLAM cone map by mission phase
+    # (entry -> right circle xN -> left circle xN -> exit -> stop) and the
+    # unchanged local planner drives that feed. The global planner is not
+    # started, and graph SLAM keeps mapping (no auto freeze) because the left
+    # circle is still unseen when the car first re-passes the start.
+    ("skidpad", "false", "Skidpad mission: phase-gated local-only planning."),
+    ("skidpad_right_laps", "2", "Skidpad right-circle laps before switching left."),
+    ("skidpad_left_laps", "2", "Skidpad left-circle laps before exiting."),
+    ("skidpad_cone_map_topic", "/skidpad/cone_map", "Phase-gated cone map for the local planner."),
+    ("skidpad_phase_topic", "/skidpad/phase", "Latched skidpad mission phase."),
 )
 
 PARAMETER_FILES = (
@@ -131,6 +141,9 @@ def generate_launch_description() -> LaunchDescription:
             "map_converged_topic": values["graph_slam_map_converged_topic"],
             "publish_tf": values["graph_slam_publish_tf"],
             "localization_mode": values["graph_slam_localization_mode"],
+            "auto_localization_after_lap": PythonExpression(
+                ["'false' if '", values["skidpad"], "' == 'true' else 'true'"]
+            ),
             "load_map_path": values["graph_slam_load_map_path"],
             "gui": values["graph_slam_gui"],
             "ate_monitor": values["graph_slam_ate_monitor"],
@@ -167,6 +180,51 @@ def generate_launch_description() -> LaunchDescription:
                 dst=values["graph_slam_map_converged_topic"],
             ),
             global_planner_launch,
+        ],
+        # Skidpad never hands off to a global path; the whole global group
+        # (planner, frenet odometry, waypoint window) stays down.
+        condition=UnlessCondition(values["skidpad"]),
+    )
+    skidpad_director = Node(
+        package="planning_bringup",
+        executable="skidpad_director.py",
+        name="skidpad_director",
+        output="screen",
+        condition=IfCondition(values["skidpad"]),
+        parameters=[
+            {
+                "use_sim_time": values["use_sim_time"],
+                "cone_map_topic": values["cone_map_topic"],
+                "ego_odom_topic": values["ego_odom_topic"],
+                "output_cone_map_topic": values["skidpad_cone_map_topic"],
+                "phase_topic": values["skidpad_phase_topic"],
+                "right_laps": values["skidpad_right_laps"],
+                "left_laps": values["skidpad_left_laps"],
+            },
+        ],
+    )
+    # Skidpad swaps in mission-tuned parameter files (slow speeds, short
+    # lookahead) without touching the trackdrive defaults.
+    local_params_selected = PythonExpression(
+        [
+            "'",
+            _params_file("local_planner", "local_planner_skidpad.yaml"),
+            "' if '",
+            values["skidpad"],
+            "' == 'true' else '",
+            values["local_params_file"],
+            "'",
+        ]
+    )
+    controller_params_selected = PythonExpression(
+        [
+            "'",
+            _params_file("pure_pursuit_controller", "pure_pursuit_controller_skidpad.yaml"),
+            "' if '",
+            values["skidpad"],
+            "' == 'true' else '",
+            values["controller_params_file"],
+            "'",
         ]
     )
     local_planner = Node(
@@ -175,14 +233,25 @@ def generate_launch_description() -> LaunchDescription:
         name="local_planner_node",
         output="screen",
         parameters=[
-            values["local_params_file"],
+            local_params_selected,
             {
                 "source_mode": values["local_source_mode"],
                 "max_stamp_skew_sec": values["local_max_stamp_skew_sec"],
                 "max_input_age_sec": values["local_max_input_age_sec"],
                 "max_start_distance_m": values["local_max_start_distance_m"],
                 "cones_topic": values["cones_topic"],
-                "slam_map_topic": values["cone_map_topic"],
+                # Skidpad feeds the planner the director's phase-gated map.
+                "slam_map_topic": PythonExpression(
+                    [
+                        "'",
+                        values["skidpad_cone_map_topic"],
+                        "' if '",
+                        values["skidpad"],
+                        "' == 'true' else '",
+                        values["cone_map_topic"],
+                        "'",
+                    ]
+                ),
                 "odom_topic": values["ego_odom_topic"],
                 "slam_status_topic": values["graph_slam_status_topic"],
                 "waypoints_topic": values["local_waypoints_topic"],
@@ -259,7 +328,7 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
         condition=IfCondition(values["enable_controller"]),
         parameters=[
-            values["controller_params_file"],
+            controller_params_selected,
             {"use_sim_time": values["use_sim_time"]},
         ],
         remappings=[
@@ -303,6 +372,7 @@ def generate_launch_description() -> LaunchDescription:
         *arguments,
         graph_slam,
         global_planner,
+        skidpad_director,
         local_planner,
         state_machine,
         selector,

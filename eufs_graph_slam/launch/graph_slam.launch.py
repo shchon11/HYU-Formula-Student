@@ -35,6 +35,7 @@ def generate_launch_description():
     slam_base_frame = LaunchConfiguration("slam_base_frame")
     publish_tf = LaunchConfiguration("publish_tf")
     localization_mode = LaunchConfiguration("localization_mode")
+    auto_localization_after_lap = LaunchConfiguration("auto_localization_after_lap")
     load_map_path = LaunchConfiguration("load_map_path")
     gui = LaunchConfiguration("gui")
     ate_monitor = LaunchConfiguration("ate_monitor")
@@ -112,6 +113,15 @@ def generate_launch_description():
                 description="Localize against a saved map instead of mapping.",
             ),
             DeclareLaunchArgument(
+                "auto_localization_after_lap",
+                default_value="true",
+                description=(
+                    "Freeze the map and switch to localization after the mapping "
+                    "lap closes. Disable for missions that keep discovering new "
+                    "track after re-passing the start (e.g. skidpad)."
+                ),
+            ),
+            DeclareLaunchArgument(
                 "load_map_path",
                 default_value="",
                 description="CSV map to load when localization_mode is true.",
@@ -173,6 +183,7 @@ def generate_launch_description():
                         "publish_tf": publish_tf,
                         "map_save_dir": DEFAULT_MAP_DIR,
                         "localization_mode": localization_mode,
+                        "auto_localization_after_lap": auto_localization_after_lap,
                         "load_map_path": load_map_path,
                     },
                 ],

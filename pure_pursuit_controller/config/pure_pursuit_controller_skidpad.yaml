@@ -1,0 +1,14 @@
+# Skidpad-mission controller tuning. The mission runs r=9.1 m circles with a
+# 3 m corridor: the trackdrive 5 m lookahead cuts ~1.4 m inside the circle
+# (L^2/2R), so shorten it, and cap speed to match the slow skidpad path.
+pure_pursuit_controller_node:
+  ros__parameters:
+    wheelbase_m: 1.58
+    lookahead_m: 3.0
+    max_steering_rad: 0.52
+    command_rate_hz: 20.0
+    input_timeout_sec: 0.5
+    max_speed_mps: 4.0
+    longitudinal_kp: 1.2
+    min_acceleration_mps2: -8.0
+    max_acceleration_mps2: 2.0

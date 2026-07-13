@@ -88,6 +88,21 @@ if [ "$PMODE" = "real" ] && [ "$HAS_STEREO_FALLBACK_ARG" -eq 0 ]; then
 fi
 EXTRA="perception_mode:=$PMODE$FILTERED"
 
+# Skidpad tracks run the skidpad mission profile: local-planner-only planning
+# behind the phase-gating director, no global planner, AMI_SKIDPAD mission.
+PLAN_EXTRA=""
+AMI_STATE=14   # AMI_TRACK_DRIVE
+MISSION_NOTE="Lap 1 = local path, then handoff to global."
+MONITOR_EXTRA=""
+case "$TRACK" in
+  skidpad*)
+    PLAN_EXTRA=" skidpad:=true"
+    AMI_STATE=12   # AMI_SKIDPAD
+    MISSION_NOTE="skidpad: entry → right x2 → left x2 → exit (laps via skidpad_right/left_laps)."
+    MONITOR_EXTRA="echo -n 'skidpad:     '; timeout 1 ros2 topic echo --once /skidpad/phase 2>/dev/null | grep -o 'data:.*'; "
+    ;;
+esac
+
 if [ ! -f "$WS_SETUP" ]; then
   echo "race: workspace not built ($WS_SETUP missing). Run 'fsb' first." >&2
   exit 1
@@ -110,12 +125,12 @@ tmux send-keys -t "$P_SIM" \
 # 1 · Full planning graph (starts its OWN graph_slam) ────────────────────────
 P_PLAN=$(tmux split-window -h -t "$P_SIM" -P -F '#{pane_id}')
 tmux send-keys -t "$P_PLAN" \
-  "$SRC echo '[② PLANNING: slam+global+local+SM+selector+controller] waiting for car…'; $WAIT_CAR; ros2 launch planning_bringup local_global_planning.launch.py graph_slam_ate_monitor:=true local_max_stamp_skew_sec:=2.0 local_max_input_age_sec:=3.0 local_max_start_distance_m:=8.0" C-m
+  "$SRC echo '[② PLANNING: slam+global+local+SM+selector+controller] waiting for car…'; $WAIT_CAR; ros2 launch planning_bringup local_global_planning.launch.py graph_slam_ate_monitor:=true local_max_stamp_skew_sec:=2.0 local_max_input_age_sec:=3.0 local_max_start_distance_m:=8.0$PLAN_EXTRA" C-m
 
 # 2 · Arm the mission — then the controller drives autonomously ──────────────
 P_DRIVE=$(tmux split-window -v -t "$P_SIM" -P -F '#{pane_id}')
 tmux send-keys -t "$P_DRIVE" \
-  "$SRC echo '[③ MISSION] waiting for car…'; $WAIT_CAR; sleep 5; ros2 service call /ros_can/set_mission eufs_msgs/srv/SetCanState '{ami_state: 14}'; echo 'mission armed → controller now drives (no teleop). /cmd:'; ros2 topic hz /cmd" C-m
+  "$SRC echo '[③ MISSION] waiting for car…'; $WAIT_CAR; sleep 5; ros2 service call /ros_can/set_mission eufs_msgs/srv/SetCanState '{ami_state: $AMI_STATE}'; echo 'mission armed → controller now drives (no teleop). /cmd:'; ros2 topic hz /cmd" C-m
 
 P_GNSS=$(tmux split-window -v -t "$P_DRIVE" -P -F '#{pane_id}')
 tmux send-keys -t "$P_GNSS" \
@@ -123,7 +138,7 @@ tmux send-keys -t "$P_GNSS" \
 
 P_MON=$(tmux split-window -v -t "$P_PLAN" -P -F '#{pane_id}')
 tmux send-keys -t "$P_MON" \
-  "$SRC echo '[⑤ MONITOR] waiting for planning…'; $WAIT_STATE; while true; do printf '\\n== %s ==\\n' \"\$(date +%H:%M:%S)\"; echo -n 'path_source: '; ros2 topic echo --once /planning/path_source 2>/dev/null | grep -o 'data:.*'; echo -n 'state:       '; ros2 topic echo --once /planning/state 2>/dev/null | grep -o 'data:.*'; echo -n 'lap:         '; ros2 topic echo --once /planning/lap_count 2>/dev/null | grep -o 'data:.*'; echo -n 'CTE d(m):    '; ros2 topic echo --once /planning/cte 2>/dev/null | grep -o 'data:.*'; sleep 3; done" C-m
+  "$SRC echo '[⑤ MONITOR] waiting for planning…'; $WAIT_STATE; while true; do printf '\\n== %s ==\\n' \"\$(date +%H:%M:%S)\"; echo -n 'path_source: '; ros2 topic echo --once /planning/path_source 2>/dev/null | grep -o 'data:.*'; echo -n 'state:       '; ros2 topic echo --once /planning/state 2>/dev/null | grep -o 'data:.*'; echo -n 'lap:         '; ros2 topic echo --once /planning/lap_count 2>/dev/null | grep -o 'data:.*'; echo -n 'CTE d(m):    '; ros2 topic echo --once /planning/cte 2>/dev/null | grep -o 'data:.*'; ${MONITOR_EXTRA}sleep 3; done" C-m
 
 tmux select-layout -t "$SESSION" tiled
 tmux select-pane   -t "$P_MON"
@@ -132,6 +147,6 @@ tmux set-option    -t "$SESSION" mouse on
 cat <<EOF
 race: up.  attach → 'race attach'   |   stop everything → 'race stop'
   panes: ①sim+perception  ②planning(slam+global+local+SM+selector+controller)  ③mission  ④gnss-hud  ⑤monitor
-  the CONTROLLER drives the car — no teleop. Lap 1 = local path, then handoff to global.
+  the CONTROLLER drives the car — no teleop. $MISSION_NOTE
 EOF
 exec tmux attach -t "$SESSION"
