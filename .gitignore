@@ -1,6 +1,8 @@
 build/
 install/
 log/
+CMakeFiles/
+CMakeCache.txt
 
 .colcon/
 *.pyc

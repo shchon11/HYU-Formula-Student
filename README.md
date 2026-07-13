@@ -17,7 +17,8 @@
 ## ⚡ Quick Start
 
 ```bash
-race            # 이거 하나. sim+perception+planning 전체가 뜨고 차가 스스로 달림
+race            # 이거 하나. YOLO+LiDAR perception + SLAM + planning 전체가 뜨고 차가 스스로 달림
+race sim        # Gazebo simulated /cones로만 돌릴 때
 race stop       # 전부 종료   |   race attach — 재접속
 ```
 
@@ -27,7 +28,7 @@ tmux 창 하나에 4개 pane이 뜹니다: ①sim+perception ②planning(SLAM+gl
 <summary><b>모듈별로 따로 띄우려면</b></summary>
 
 ```bash
-simfull track:=small_track    # ① sim + YOLO perception (+RViz)
+simfull track:=small_track    # ① sim + Gazebo /cones (+RViz, YOLO 없음)
 pbring                        # ② planning 전체 (자체 graph_slam 포함 — slam 계열과 같이 켜지 말 것)
 mission                       # ③ 미션 ARM → 5초 뒤 자율주행 시작
 ```
@@ -42,7 +43,7 @@ mission                       # ③ 미션 ARM → 5초 뒤 자율주행 시작
 flowchart LR
     subgraph SP["SIM + PERCEPTION"]
         direction TB
-        ZED["ZED 카메라"] --> YOLO["YOLOv8<br/>(GPU, CPU 폴백)"]
+        ZED["ZED 카메라"] --> YOLO["YOLOv8<br/>(CUDA)"]
         VLP["VLP-16"] --> FUSE["LiDAR×BBox fusion"]
         YOLO --> FUSE
     end
@@ -111,11 +112,12 @@ sudo rosdep init 2>/dev/null; rosdep update   # 최초 1회
 ```bash
 # (a) frenet_conversion이 컴파일하는 CommonRoad-CLCS
 git clone --depth 1 https://github.com/CommonRoad/commonroad-clcs.git ~/commonroad-clcs
+export COMMONROAD_CLCS_DIR="$HOME/commonroad-clcs"
 
 # (b) trajectory_generator용 (시스템 파이썬)
 python3 -m pip install --user quadprog
 
-# (c) YOLO 전용 격리 venv (torch가 ROS numpy를 깨지 않도록)
+# (c) race 기본 perception pipeline에 필요한 YOLO 격리 venv
 python3 -m venv --system-site-packages ~/fsk/.venv-yolo
 source ~/fsk/.venv-yolo/bin/activate
 pip install -U pip
@@ -125,14 +127,14 @@ pip uninstall -y opencv-python              # 시스템 cv2 사용
 deactivate
 ```
 
-> YOLO 체크포인트는 `eufs_perception_baseline/models/fsoco_yolov8n/weights/best.pt`. launch가 venv를 자동 감지하고, GPU가 죽어 있으면 CPU로 자동 폴백합니다.
+> 기본 `race`는 CUDA YOLO+LiDAR perception을 실행합니다. GraphSLAM이 `map` TF를 소유하므로 real perception의 cross-time 보정 프레임은 기본 `odom`이고, SLAM 맵 오염을 막기 위해 LiDAR support 없는 visual-only fallback은 기본으로 끕니다. Gazebo simulated `/cones`만 쓰려면 `race sim` 또는 `perception_mode:=sim`을 명시합니다. YOLO 체크포인트는 `eufs_perception_baseline/models/fsoco_yolov8n/weights/best.pt`에 둡니다.
 
 ### 3. 빌드
 
 ```bash
 cd ~/fsk && export EUFS_MASTER=$PWD
 rosdep install --from-paths src --ignore-src -r -y
-colcon build --symlink-install
+colcon build --symlink-install --base-paths src
 ```
 
 ### 4. Shell aliases
@@ -142,23 +144,26 @@ colcon build --symlink-install
 ```bash
 # ===== HYU Formula Student =====
 export EUFS_MASTER="$HOME/fsk"
+export COMMONROAD_CLCS_DIR="$HOME/commonroad-clcs"
+export ROS_LOCALHOST_ONLY=1
 if [ -n "$ZSH_VERSION" ]; then _fsk_ext=zsh; else _fsk_ext=bash; fi
+[ -f "/opt/ros/humble/setup.$_fsk_ext" ] && source "/opt/ros/humble/setup.$_fsk_ext"
 [ -f "$EUFS_MASTER/install/setup.$_fsk_ext" ] && source "$EUFS_MASTER/install/setup.$_fsk_ext"
 
-alias fsk='cd "$EUFS_MASTER"'
-alias fsb='cd "$EUFS_MASTER" && colcon build --symlink-install && source install/setup.$_fsk_ext'
+fsk() { cd "$EUFS_MASTER"; }
+fsb() { cd "$EUFS_MASTER" && colcon build --symlink-install --base-paths src && source "install/setup.$_fsk_ext"; }
 
 # 실행
-alias race='$EUFS_MASTER/src/scripts/race.sh'      # 자율주행 전체 한 방 (tmux). 종료: race stop
-alias simfull='ros2 launch eufs_launcher simulation.launch.py perception:=true rviz:=true'
-alias pbring='ros2 launch planning_bringup local_global_planning.launch.py'
-alias teleop='ros2 run eufs_teleop teleop'
+race()    { "$EUFS_MASTER/src/scripts/race.sh" "$@"; }  # 종료: race stop
+simfull() { ros2 launch eufs_launcher simulation.launch.py perception_mode:=sim rviz:=true "$@"; }
+pbring()  { ros2 launch planning_bringup local_global_planning.launch.py "$@"; }
+teleop()  { ros2 run eufs_teleop teleop "$@"; }
 
 # 헬퍼
-alias mission='ros2 service call /ros_can/set_mission eufs_msgs/srv/SetCanState "{ami_state: 14}"'
-alias resetcar='ros2 service call /ros_can/reset_vehicle_pos std_srvs/srv/Trigger'
-alias slamreset='ros2 service call /graph_slam/start_mapping std_srvs/srv/Trigger'
-alias rv='rviz2 -d "$EUFS_MASTER/install/eufs_launcher/share/eufs_launcher/config/default.rviz"'
+mission()  { ros2 service call /ros_can/set_mission eufs_msgs/srv/SetCanState "{ami_state: 14}"; }
+resetcar() { ros2 service call /ros_can/reset_vehicle_pos std_srvs/srv/Trigger; }
+slamreset(){ ros2 service call /graph_slam/start_mapping std_srvs/srv/Trigger; }
+rv()       { rviz2 -d "$EUFS_MASTER/install/eufs_launcher/share/eufs_launcher/config/default.rviz" "$@"; }
 ```
 
 적용: 새 터미널 또는 `source ~/.zshrc`.
@@ -169,9 +174,10 @@ alias rv='rviz2 -d "$EUFS_MASTER/install/eufs_launcher/share/eufs_launcher/confi
 
 ### 자율주행 (기본)
 ```bash
-race                # small_track
+race                # small_track, CUDA YOLO+LiDAR perception, odom compensation, LiDAR-supported cones
+race sim            # small_track, simulated /cones, YOLO 없음
 race skidpad        # 트랙 지정
-race peanut gazebo_gui:=true    # 트랙 뒤 인자는 simulation.launch.py로 전달 (가제보 창 켜기)
+race peanut sim gazebo_gui:=true     # sim일 때만 Gazebo simulated /cones 사용
 ```
 모니터 pane에서 `path_source: LOCAL → GLOBAL_FULL` 전환과 CTE를 실시간으로 봅니다.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # race.sh — full autonomous stack in one tmux session.
 #
-#   race [track] [extra simfull args...]   # start (default track: small_track)
+#   race [track] [sim|real] [extra sim args...]   # start (default: small_track real)
 #   race stop                              # tear down
 #   race attach                            # re-attach
 #
@@ -14,7 +14,16 @@
 set -o pipefail
 
 SESSION="race"
-EUFS_MASTER="${EUFS_MASTER:-$HOME/fsk}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SRC_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEFAULT_EUFS_MASTER="$(cd "$SRC_DIR/.." && pwd)"
+if [ ! -f "$DEFAULT_EUFS_MASTER/install/setup.zsh" ] && [ -f "$SRC_DIR/install/setup.zsh" ]; then
+  DEFAULT_EUFS_MASTER="$SRC_DIR"
+fi
+EUFS_MASTER="${EUFS_MASTER:-$DEFAULT_EUFS_MASTER}"
+if [ ! -f "$EUFS_MASTER/install/setup.zsh" ] && [ -f "$DEFAULT_EUFS_MASTER/install/setup.zsh" ]; then
+  EUFS_MASTER="$DEFAULT_EUFS_MASTER"
+fi
 WS_SETUP="$EUFS_MASTER/install/setup.zsh"       # tmux panes run zsh
 ROS_SETUP="/opt/ros/humble/setup.zsh"
 
@@ -26,18 +35,57 @@ case "${1:-start}" in
     exec tmux attach -t "$SESSION" ;;
 esac
 
-TRACK="${1:-small_track}"; [ $# -gt 0 ] && shift || true
-
-# Perception selector: a bare 'sim' or 'real' token picks the mode
-# (default real = YOLO+LiDAR). 'sim' = lightweight Gazebo cones, no YOLO.
+# Perception selector: default real = YOLO+LiDAR fusion. A bare 'sim' token
+# switches to lightweight Gazebo cones on /cones without YOLO.
+TRACK="small_track"
+TRACK_SET=0
 PMODE="real"
 FILTERED=""
+HAS_YOLO_MODEL_ARG=0
+HAS_YOLO_DEVICE_ARG=0
+HAS_MOTION_COMP_ARG=0
+HAS_MONOCULAR_FALLBACK_ARG=0
+HAS_STEREO_FALLBACK_ARG=0
 for tok in "$@"; do
   case "$tok" in
     sim|real) PMODE="$tok" ;;
-    *) FILTERED="$FILTERED $tok" ;;
+    *)
+      case "$tok" in
+        yolo_model_path:=*) HAS_YOLO_MODEL_ARG=1 ;;
+        yolo_device:=*) HAS_YOLO_DEVICE_ARG=1 ;;
+        perception_motion_compensation_frame:=*) HAS_MOTION_COMP_ARG=1 ;;
+        motion_compensation_frame:=*) HAS_MOTION_COMP_ARG=1 ;;
+        perception_monocular_fallback_enabled:=*) HAS_MONOCULAR_FALLBACK_ARG=1 ;;
+        monocular_fallback_enabled:=*) HAS_MONOCULAR_FALLBACK_ARG=1 ;;
+        perception_stereo_fallback_enabled:=*) HAS_STEREO_FALLBACK_ARG=1 ;;
+        stereo_fallback_enabled:=*) HAS_STEREO_FALLBACK_ARG=1 ;;
+      esac
+      if [ "$TRACK_SET" -eq 0 ] && [[ "$tok" != *":="* ]]; then
+        TRACK="$tok"
+        TRACK_SET=1
+      else
+        FILTERED="$FILTERED $tok"
+      fi
+      ;;
   esac
 done
+
+LOCAL_YOLO_MODEL="$SRC_DIR/eufs_perception_baseline/models/fsoco_yolov8n/weights/best.pt"
+if [ "$PMODE" = "real" ] && [ "$HAS_YOLO_MODEL_ARG" -eq 0 ] && [ -f "$LOCAL_YOLO_MODEL" ]; then
+  FILTERED="$FILTERED yolo_model_path:=$LOCAL_YOLO_MODEL"
+fi
+if [ "$PMODE" = "real" ] && [ "$HAS_YOLO_DEVICE_ARG" -eq 0 ]; then
+  FILTERED="$FILTERED yolo_device:=cuda"
+fi
+if [ "$PMODE" = "real" ] && [ "$HAS_MOTION_COMP_ARG" -eq 0 ]; then
+  FILTERED="$FILTERED perception_motion_compensation_frame:=odom"
+fi
+if [ "$PMODE" = "real" ] && [ "$HAS_MONOCULAR_FALLBACK_ARG" -eq 0 ]; then
+  FILTERED="$FILTERED perception_monocular_fallback_enabled:=false"
+fi
+if [ "$PMODE" = "real" ] && [ "$HAS_STEREO_FALLBACK_ARG" -eq 0 ]; then
+  FILTERED="$FILTERED perception_stereo_fallback_enabled:=false"
+fi
 EXTRA="perception_mode:=$PMODE$FILTERED"
 
 if [ ! -f "$WS_SETUP" ]; then
