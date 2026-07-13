@@ -1,5 +1,12 @@
 # eufs_perception_baseline Pipeline Verification Report
 
+> **Historical report (superseded 2026-07-10).** 이 문서는 수정 전 상태의 실패
+> 증거를 보존한다. 현재 구현은 `sensor_msgs_py`가 없을 때 package-local
+> `point_cloud2_compat`를 사용하며, 최신 실행 계약과 검증 범위는
+> `README.md`, `docs/iit_bombay_baseline_design.md`,
+> `docs/perception_baseline_usage.md`를 따른다. 아래 결론을 현재 상태 판정으로
+> 사용하지 않는다.
+
 검증 일시: 2026-06-03 16:08 KST
 재검증 일시: 2026-06-03 16:26 KST (`conda` environment: `eufs`)
 대상 경로: `/home/dohyun/FS/HYU-Formula-Student/eufs_perception_baseline`

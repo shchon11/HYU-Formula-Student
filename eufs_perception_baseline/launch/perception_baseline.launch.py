@@ -1,5 +1,3 @@
-import os
-import sys
 from functools import lru_cache
 from pathlib import Path
 
@@ -41,15 +39,17 @@ def _default(node_name: str, parameter_name: str) -> str:
 
 
 def _default_python_executable() -> str:
-    conda_prefix = os.environ.get("CONDA_PREFIX", "").strip()
-    if conda_prefix:
-        conda_python = Path(conda_prefix) / "bin" / "python3"
-        if conda_python.exists():
-            return str(conda_python)
-    return sys.executable
+    # An empty prefix lets ROS execute the installed console-script shebang.
+    # Alternate interpreters must be selected explicitly through the launch
+    # argument so an ambient Conda environment cannot change ROS ABI behavior.
+    return ""
 
 
 def _launch_nodes(context):
+    python_executable = LaunchConfiguration("python_executable").perform(
+        context
+    ).strip()
+    node_prefix = {"prefix": python_executable} if python_executable else {}
     bbox_source = (
         LaunchConfiguration("bbox_source")
         .perform(context)
@@ -114,6 +114,15 @@ def _launch_nodes(context):
             f"got '{bbox_source}'"
         )
 
+    # Simulator boxes are generated in the right camera, so they cannot seed
+    # a left-to-right stereo search.  YOLO boxes are left-image detections and
+    # may use the configured stereo fallback.
+    fusion_stereo_fallback_enabled = (
+        LaunchConfiguration("stereo_fallback_enabled")
+        if bbox_source == "yolov8"
+        else False
+    )
+
     nodes = []
     if bbox_source == "yolov8":
         nodes.append(
@@ -122,8 +131,9 @@ def _launch_nodes(context):
                 executable="yolov8_bbox_node",
                 name="yolov8_bbox_node",
                 output="screen",
-                prefix=LaunchConfiguration("python_executable"),
+                **node_prefix,
                 parameters=[
+                    _default_config_file(),
                     {
                         "use_sim_time": LaunchConfiguration("use_sim_time"),
                         "image_topic": yolo_image_topic,
@@ -159,22 +169,41 @@ def _launch_nodes(context):
             executable="perception_baseline_node",
             name="perception_baseline_node",
             output="screen",
-            prefix=LaunchConfiguration("python_executable"),
+            **node_prefix,
             parameters=[
+                _default_config_file(),
                 {
                     "use_sim_time": LaunchConfiguration("use_sim_time"),
                     "image_topic": fusion_image_topic,
+                    "right_image_topic": LaunchConfiguration(
+                        "right_image_topic"
+                    ),
                     "pointcloud_topic": LaunchConfiguration(
                         "pointcloud_topic"
                     ),
                     "bbox_topic": fusion_bbox_topic,
                     "camera_info_topic": fusion_camera_info_topic,
+                    "right_camera_info_topic": LaunchConfiguration(
+                        "right_camera_info_topic"
+                    ),
                     "camera_frame": fusion_camera_frame,
+                    "right_camera_frame": LaunchConfiguration(
+                        "right_camera_frame"
+                    ),
                     "projection_model": fusion_projection_model,
+                    "monocular_fallback_enabled": LaunchConfiguration(
+                        "monocular_fallback_enabled"
+                    ),
+                    "stereo_fallback_enabled": (
+                        fusion_stereo_fallback_enabled
+                    ),
                     "output_cones_topic": LaunchConfiguration(
                         "output_cones_topic"
                     ),
                     "output_frame": LaunchConfiguration("output_frame"),
+                    "motion_compensation_frame": LaunchConfiguration(
+                        "motion_compensation_frame"
+                    ),
                     "marker_scale": LaunchConfiguration("marker_scale"),
                     "oracle_cones_topic": LaunchConfiguration(
                         "oracle_cones_topic"
@@ -183,6 +212,21 @@ def _launch_nodes(context):
                         "publish_empty_on_sync"
                     ),
                     "sync_tolerance_sec": fusion_sync_tolerance_sec,
+                    "image_sync_tolerance_sec": LaunchConfiguration(
+                        "image_sync_tolerance_sec"
+                    ),
+                    "sync_queue_size": LaunchConfiguration(
+                        "sync_queue_size"
+                    ),
+                    "image_sync_queue_size": LaunchConfiguration(
+                        "image_sync_queue_size"
+                    ),
+                    "timestamp_reset_threshold_sec": LaunchConfiguration(
+                        "timestamp_reset_threshold_sec"
+                    ),
+                    "max_future_stamp_lead_sec": LaunchConfiguration(
+                        "max_future_stamp_lead_sec"
+                    ),
                     "fusion_enabled": LaunchConfiguration("fusion_enabled"),
                     "publish_fusion_debug": LaunchConfiguration(
                         "publish_fusion_debug"
@@ -190,7 +234,9 @@ def _launch_nodes(context):
                     "fusion_debug_prefix": LaunchConfiguration(
                         "fusion_debug_prefix"
                     ),
-                    "self_mask_enabled": LaunchConfiguration("self_mask_enabled"),
+                    "self_mask_enabled": LaunchConfiguration(
+                        "self_mask_enabled"
+                    ),
                     "self_mask_min_x": LaunchConfiguration("self_mask_min_x"),
                     "self_mask_max_x": LaunchConfiguration("self_mask_max_x"),
                     "self_mask_abs_y": LaunchConfiguration("self_mask_abs_y"),
@@ -235,9 +281,15 @@ def _launch_nodes(context):
                     "sparse_max_depth_span_ratio": LaunchConfiguration(
                         "sparse_max_depth_span_ratio"
                     ),
-                    "sparse_max_width": LaunchConfiguration("sparse_max_width"),
-                    "sparse_variance_x": LaunchConfiguration("sparse_variance_x"),
-                    "sparse_variance_y": LaunchConfiguration("sparse_variance_y"),
+                    "sparse_max_width": LaunchConfiguration(
+                        "sparse_max_width"
+                    ),
+                    "sparse_variance_x": LaunchConfiguration(
+                        "sparse_variance_x"
+                    ),
+                    "sparse_variance_y": LaunchConfiguration(
+                        "sparse_variance_y"
+                    ),
                 }
             ],
         )
@@ -257,8 +309,9 @@ def generate_launch_description():
                 "python_executable",
                 default_value=_default_python_executable(),
                 description=(
-                    "Python interpreter used to run perception nodes. Defaults "
-                    "to $CONDA_PREFIX/bin/python3 when a conda env is active."
+                    "Optional explicit Python interpreter prefix for "
+                    "perception nodes. Empty uses the installed ROS "
+                    "console-script shebang."
                 ),
             ),
             DeclareLaunchArgument(
@@ -266,6 +319,13 @@ def generate_launch_description():
                 default_value=_default(
                     "perception_baseline_node",
                     "image_topic",
+                ),
+            ),
+            DeclareLaunchArgument(
+                "right_image_topic",
+                default_value=_default(
+                    "perception_baseline_node",
+                    "right_image_topic",
                 ),
             ),
             DeclareLaunchArgument(
@@ -328,10 +388,24 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument(
+                "right_camera_info_topic",
+                default_value=_default(
+                    "perception_baseline_node",
+                    "right_camera_info_topic",
+                ),
+            ),
+            DeclareLaunchArgument(
                 "camera_frame",
                 default_value=_default(
                     "perception_baseline_node",
                     "camera_frame",
+                ),
+            ),
+            DeclareLaunchArgument(
+                "right_camera_frame",
+                default_value=_default(
+                    "perception_baseline_node",
+                    "right_camera_frame",
                 ),
             ),
             DeclareLaunchArgument(
@@ -382,10 +456,100 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "yolo_sync_tolerance_sec",
-                default_value="2.0",
+                default_value=_default(
+                    "perception_baseline_node",
+                    "sync_tolerance_sec",
+                ),
                 description=(
                     "YOLO mode timestamp tolerance between detector image "
-                    "boxes and LiDAR points. Used only when bbox_source:=yolov8."
+                    "boxes and LiDAR points. Used only when "
+                    "bbox_source:=yolov8."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "image_sync_tolerance_sec",
+                default_value=_default(
+                    "perception_baseline_node",
+                    "image_sync_tolerance_sec",
+                ),
+                description=(
+                    "Maximum timestamp difference between the selected bbox "
+                    "and left/right images."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "monocular_fallback_enabled",
+                default_value=_default(
+                    "perception_baseline_node",
+                    "monocular_fallback_enabled",
+                ),
+                description=(
+                    "Enable bbox-height monocular depth for detections that "
+                    "were not assigned to LiDAR support."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "stereo_fallback_enabled",
+                default_value=_default(
+                    "perception_baseline_node",
+                    "stereo_fallback_enabled",
+                ),
+                description=(
+                    "Enable SIFT stereo for left-image YOLO bboxes. Simulator "
+                    "right-camera bboxes always disable this tier."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "sync_queue_size",
+                default_value=_default(
+                    "perception_baseline_node",
+                    "sync_queue_size",
+                ),
+                description=(
+                    "Maximum messages retained per fusion input buffer."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "image_sync_queue_size",
+                default_value=_default(
+                    "perception_baseline_node",
+                    "image_sync_queue_size",
+                ),
+                description=(
+                    "Left/right image history retained for delayed detector "
+                    "bbox timestamps."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "timestamp_reset_threshold_sec",
+                default_value=_default(
+                    "perception_baseline_node",
+                    "timestamp_reset_threshold_sec",
+                ),
+                description=(
+                    "Backward ROS clock jump that starts a new synchronization epoch."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "max_future_stamp_lead_sec",
+                default_value=_default(
+                    "perception_baseline_node",
+                    "max_future_stamp_lead_sec",
+                ),
+                description=(
+                    "Maximum seconds a sensor timestamp may lead the node ROS clock, "
+                    "including during bounded rollback replay."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "motion_compensation_frame",
+                default_value=_default(
+                    "perception_baseline_node",
+                    "motion_compensation_frame",
+                ),
+                description=(
+                    "Fixed TF frame used to compensate LiDAR cloud time into "
+                    "the canonical bbox observation time."
                 ),
             ),
             DeclareLaunchArgument(
@@ -394,7 +558,9 @@ def generate_launch_description():
                     "perception_baseline_node",
                     "marker_scale",
                 ),
-                description="RViz sphere-list marker diameter for fused cones.",
+                description=(
+                    "RViz sphere-list marker diameter for fused cones."
+                ),
             ),
             DeclareLaunchArgument(
                 "fusion_enabled",
@@ -409,7 +575,9 @@ def generate_launch_description():
                     "perception_baseline_node",
                     "publish_fusion_debug",
                 ),
-                description="Publish /fusion/debug pointcloud and marker topics.",
+                description=(
+                    "Publish /fusion/debug pointcloud and marker topics."
+                ),
             ),
             DeclareLaunchArgument(
                 "fusion_debug_prefix",
@@ -427,23 +595,38 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "self_mask_min_x",
-                default_value=_default("perception_baseline_node", "self_mask_min_x"),
+                default_value=_default(
+                    "perception_baseline_node",
+                    "self_mask_min_x",
+                ),
             ),
             DeclareLaunchArgument(
                 "self_mask_max_x",
-                default_value=_default("perception_baseline_node", "self_mask_max_x"),
+                default_value=_default(
+                    "perception_baseline_node",
+                    "self_mask_max_x",
+                ),
             ),
             DeclareLaunchArgument(
                 "self_mask_abs_y",
-                default_value=_default("perception_baseline_node", "self_mask_abs_y"),
+                default_value=_default(
+                    "perception_baseline_node",
+                    "self_mask_abs_y",
+                ),
             ),
             DeclareLaunchArgument(
                 "self_mask_min_z",
-                default_value=_default("perception_baseline_node", "self_mask_min_z"),
+                default_value=_default(
+                    "perception_baseline_node",
+                    "self_mask_min_z",
+                ),
             ),
             DeclareLaunchArgument(
                 "self_mask_max_z",
-                default_value=_default("perception_baseline_node", "self_mask_max_z"),
+                default_value=_default(
+                    "perception_baseline_node",
+                    "self_mask_max_z",
+                ),
             ),
             DeclareLaunchArgument(
                 "sparse_association_enabled",

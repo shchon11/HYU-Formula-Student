@@ -1,17 +1,38 @@
 perception_baseline_node:
   ros__parameters:
-    image_topic: /zed/left/image_rect_color
+    # Simulator bboxes and /custom_camera_info are right-camera based.  The
+    # YOLO launch path overrides this primary input with the rectified left view.
+    image_topic: /zed/right/image_rect_color
+    right_image_topic: /zed/right/image_rect_color
     pointcloud_topic: /velodyne_points
     bbox_topic: /noisy_bounding_boxes
     camera_info_topic: /custom_camera_info
+    right_camera_info_topic: /zed/right/camera_info
     camera_frame: zed_right_camera_optical_frame
+    right_camera_frame: zed_right_camera_optical_frame
     projection_model: eufs_bbox
     clip_bboxes_to_image: false
     clip_projected_points_to_image: false
     output_cones_topic: /cones
     output_frame: base_footprint
+    # Canonicalize cloud-time LiDAR points into bbox-time base_footprint.
+    motion_compensation_frame: map
     marker_scale: 0.35
     sync_tolerance_sec: 0.15
+    image_sync_tolerance_sec: 0.05
+    sync_queue_size: 12
+    # 60 Hz stereo history must survive measured ~0.53 s YOLO latency.
+    image_sync_queue_size: 64
+    # Must stay above max_future_stamp_lead_sec (validated at startup). A sim
+    # reset jumps the clock back by tens of seconds, so 0.5 still detects it.
+    timestamp_reset_threshold_sec: 0.5
+    # Bounded DDS delivery skew accepted in both normal operation and rollback
+    # replay. Under GPU load (Gazebo + RViz + YOLO) the sim publishes /clock at
+    # ~6 Hz, so subscriber clocks lag sensor stamps by up to one clock period
+    # (~160 ms) plus the measured ~80 ms LiDAR-versus-/clock callback skew;
+    # 0.4 s covers both with margin. Replay is unaffected: stamps at/after the
+    # old clock watermark are still rejected by the replay guard.
+    max_future_stamp_lead_sec: 0.4
     publish_empty_on_sync: false
     fusion_enabled: true
     publish_fusion_debug: true
@@ -32,11 +53,17 @@ perception_baseline_node:
     min_variance: 0.0001
 
     roi_min_x: 0.5
-    roi_max_x: 40.0
-    roi_abs_y: 18.0
+    roi_max_x: 30.0
+    roi_abs_y: 15.0
     roi_min_z: -0.2
     roi_max_z: 1.5
     ground_min_z: 0.05
+    ground_ransac_enabled: true
+    ground_ransac_distance_threshold: 0.03
+    ground_ransac_max_iterations: 200
+    ground_ransac_max_tilt_degrees: 20.0
+    ground_ransac_min_inliers: 20
+    ground_ransac_seed: 7
 
     self_mask_enabled: true
     self_mask_min_x: -1.5
@@ -45,53 +72,68 @@ perception_baseline_node:
     self_mask_min_z: -0.4
     self_mask_max_z: 1.4
 
-    # Loosened for sparse LiDAR: accept clusters with fewer points and larger
-    # neighbourhood so cones farther than a couple of metres still fuse.
-    cluster_eps: 0.60
-    cluster_min_points: 2
+    cluster_eps: 0.35
+    cluster_min_points: 3
     cluster_min_height: 0.02
-    cluster_max_height: 0.90
-    cluster_max_width: 1.00
+    cluster_max_height: 0.80
+    cluster_max_width: 0.90
 
     min_bbox_probability: 0.0
     min_projected_points: 1
     min_project_depth: 0.2
 
-    # Sparse association carries the far cones. Everything here is loosened a
-    # lot: fewer points per band (down to a single point past the near zone),
-    # the lenient mid band extended out to 18 m, and the far YOLO
-    # probability / bbox-size / depth-span gates relaxed.
     sparse_association_enabled: true
-    sparse_bbox_margin_px: 8.0
-    sparse_bbox_margin_ratio: 0.30
-    sparse_near_range_m: 4.0
-    sparse_far_range_m: 18.0
-    sparse_near_min_points: 2
-    sparse_mid_min_points: 1
-    sparse_far_min_points: 1
-    sparse_far_min_probability: 0.10
-    sparse_far_min_bbox_width_px: 2.0
-    sparse_far_min_bbox_height_px: 2.0
-    sparse_max_depth_span_m: 2.0
-    sparse_max_depth_span_ratio: 0.60
-    sparse_max_width: 1.00
+    sparse_bbox_margin_px: 4.0
+    sparse_bbox_margin_ratio: 0.15
+    sparse_near_range_m: 6.0
+    sparse_far_range_m: 12.0
+    sparse_near_min_points: 4
+    sparse_mid_min_points: 2
+    sparse_far_min_points: 2
+    sparse_far_min_probability: 0.25
+    sparse_far_min_bbox_width_px: 4.0
+    sparse_far_min_bbox_height_px: 4.0
+    sparse_max_depth_span_m: 1.0
+    sparse_max_depth_span_ratio: 0.35
+    sparse_max_width: 0.90
     sparse_variance_x: 0.12
     sparse_variance_y: 0.12
+
+    # Paper Tier 2: D = 0.498 * h^-0.954, where h is normalized bbox height.
+    monocular_fallback_enabled: true
+    monocular_depth_coefficient: 0.498
+    monocular_depth_exponent: -0.954
+    monocular_min_depth_m: 0.5
+    monocular_max_depth_m: 30.0
+    good_cone_min_height_to_width: 1.2
+    good_cone_border_margin_ratio: 0.01
+    monocular_variance_x: 0.35
+    monocular_variance_y: 0.35
+
+    # Tier 3 uses rectified stereo SIFT when a detection is unsuitable for
+    # the monocular curve. Projection-matrix/TF baseline takes precedence.
+    stereo_fallback_enabled: true
+    stereo_baseline_m: 0.12
+    stereo_min_depth_m: 0.5
+    stereo_max_depth_m: 30.0
+    stereo_epipolar_tolerance_px: 2.0
+    stereo_slender_fraction: 0.5
+    stereo_ratio_threshold: 0.75
+    stereo_min_matches: 3
+    stereo_variance_x: 0.50
+    stereo_variance_y: 0.50
 
 yolov8_bbox_node:
   ros__parameters:
     image_topic: /zed/left/image_rect_color
     bbox_topic: /yolo_bounding_boxes
-    # FSOCO fine-tuned YOLOv8n cone detector. Absolute path to the checkpoint
-    # kept under eufs_perception_baseline/models (weights themselves stay out of
-    # git). Drop best.pt here when the checkpoint arrives, or override this path.
-    model_path: /home/shchon11/fsk/src/eufs_perception_baseline/models/fsoco_yolov8n/weights/best.pt
+    # FSOCO fine-tuned YOLOv8n cone detector. Keep this as an absolute path
+    # because the generated training artifact is intentionally outside git.
+    model_path: /home/dohyun/FS/artifacts/yolov8/fsoco_yolov8n/weights/best.pt
     confidence_threshold: 0.25
     iou_threshold: 0.45
     imgsz: 640
-    # GPU inference on cuda:0 (NVIDIA MX450). Set to "cpu" to force CPU.
-    # Use "cuda:0" (not "0") so launch serializes it as a string, not an int.
-    device: "cuda:0"
+    device: ""
     max_det: 100
     # Map FSOCO class names to the EUFS cone color contract.
     class_map: "blue_cone:blue,yellow_cone:yellow,orange_cone:orange,large_orange_cone:big_orange,unknown_cone:unknown"

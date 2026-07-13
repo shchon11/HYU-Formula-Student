@@ -13,9 +13,10 @@
 
 `eufs_perception_baseline`은 perception module의 baseline package이다.
 
-현재 목표는 완성된 cone detector를 만드는 것이 아니라, perception 출력 형식을
-SLAM이 요구하는 형태로 먼저 고정하고, LiDAR-camera fusion baseline으로 실제
-cone observation을 `/cones`에 publish하는 것이다.
+현재 package는 SLAM 출력 형식을 고정하고, IIT Bombay 논문의 우선순위를 따른
+three-tier baseline으로 실제 cone observation을 `/cones`에 publish한다. Tier 1은
+LiDAR-camera association, Tier 2는 normalized bbox-height monocular depth, Tier 3는
+paper-inspired SIFT stereo이다.
 
 SLAM output contract:
 
@@ -48,7 +49,7 @@ covariance: [xx, xy, yx, yy]
 
 현재 package에는 세 가지 실행 모드가 있다.
 
-### 2.1 LiDAR-Camera Fusion Baseline
+### 2.1 Simulator BBox + Three-Tier Baseline
 
 실제 perception baseline으로 사용할 모드이다.
 
@@ -56,10 +57,12 @@ covariance: [xx, xy, yx, yy]
 /noisy_bounding_boxes
 + /velodyne_points
 + /custom_camera_info
++ /zed/right/image_rect_color
 + /tf
         |
         v
-LiDAR-camera fusion
+LiDAR -> monocular fallback
+(simulator bbox stereo is disabled)
         |
         v
 /cones
@@ -70,6 +73,7 @@ LiDAR-camera fusion
 - `/noisy_bounding_boxes`: simulator가 주는 bbox와 cone color/class
 - `/velodyne_points`: cone 위치를 계산하기 위한 LiDAR point cloud
 - `/custom_camera_info`: camera intrinsic
+- `/zed/right/image_rect_color`: simulator bbox와 같은 right-camera image contract
 - `/tf`: LiDAR, camera, `base_footprint` 사이의 extrinsic transform
 - `/cones`: graph SLAM으로 넘길 최종 cone observation
 
@@ -80,7 +84,7 @@ LiDAR-camera fusion
 - YOLO weight나 camera model을 바꾸면 bbox topic, projection 관련 parameter,
   confidence threshold를 다시 맞춰야 한다.
 
-### 2.2 YOLOv8 Camera BBox Detector + LiDAR Fusion
+### 2.2 YOLOv8 Camera BBox Detector + Three-Tier Fusion
 
 실제 camera perception을 붙이는 모드이다. YOLOv8은 별도 detector node로
 동작하고, 기존 fusion node는 bbox topic만 바꿔서 그대로 사용한다.
@@ -95,6 +99,8 @@ yolov8_bbox_node
 /yolo_bounding_boxes
 + /velodyne_points
 + /zed/left/camera_info
++ /zed/right/image_rect_color
++ /zed/right/camera_info
 + /tf
         |
         v
@@ -130,7 +136,7 @@ Dependency boundary:
 
 - `package.xml`은 ROS/rosdep dependency와 `python3-pip` runtime을 명시한다.
 - `ultralytics`는 Galactic rosdep key가 없으므로 `setup.py`의
-  `install_requires=["ultralytics>=8.0.0,<9.0.0"]`가 authoritative PyPI
+  `install_requires=["ultralytics==8.4.60"]`가 authoritative PyPI
   dependency contract이다.
 - conda/Docker runtime은 ROS workspace 실행 전에 이 PyPI dependency가 설치되어
   있어야 한다.
@@ -186,13 +192,16 @@ eufs_perception_baseline/
 `perception_baseline_node.py`의 주요 함수:
 
 - `_try_publish_fusion()`
-  - 최신 point cloud, bbox, camera info가 모두 들어왔는지 확인한다.
-  - timestamp 차이가 `sync_tolerance_sec` 안에 있으면 fusion을 실행한다.
+  - bbox/cloud queue의 오래된 front 중 더 늦은 timestamp를 anchor로 삼는다.
+  - 반대 stream이 anchor까지 도달하면 predecessor/successor 중 가까운 sample을
+    one-shot으로 선택한다. 같은 timestamp는 즉시 처리하고 빠른 stream에서
+    건너뛴 sample은 폐기한다.
 
 - `_run_lidar_camera_fusion()`
-  - LiDAR-camera fusion pipeline 전체를 실행한다.
+  - three-tier pipeline 전체를 실행한다.
   - detection 추출, point cloud 변환, TF 변환, ROI filtering, clustering,
-    bbox-cluster association, `/cones` message 생성을 담당한다.
+    bbox-cluster/sparse association, mono/stereo fallback, `/cones` message 생성을
+    담당한다.
 
 - `_extract_detections()`
   - `eufs_msgs/msg/BoundingBoxes`를 내부 `Detection` 구조로 바꾼다.
@@ -202,9 +211,10 @@ eufs_perception_baseline/
   - `sensor_msgs/msg/PointCloud2`에서 `(x, y, z)` point들을 읽어 numpy array로
     바꾼다.
 
-- `_roi_mask()`
-  - `base_footprint` 기준 전방 ROI만 남긴다.
-  - 간단한 ground filtering도 같이 수행한다.
+- `_spatial_roi_mask()` / `_non_ground_mask()`
+  - `base_footprint` 기준 spatial ROI와 vehicle self-mask를 적용한다.
+  - tilt-constrained RANSAC으로 ground를 제거하고, plane이 성립하지 않으면
+    `ground_min_z` contingency를 적용한다.
 
 - `_cluster_cone_candidates()`
   - LiDAR point들을 XY plane에서 clustering한다.
@@ -218,6 +228,13 @@ eufs_perception_baseline/
 - `_associate_detections_to_clusters()`
   - projection된 LiDAR point가 bbox 안에 들어가는지 보고 bbox와 cluster를
     matching한다.
+
+- `_associate_sparse_detections()`
+  - global cluster가 없는 detection에 bbox-guided sparse LiDAR support를 적용한다.
+
+- `_associate_visual_detections()`
+  - LiDAR support가 전혀 없는 detection만 good cone은 monocular, bad cone은
+    SIFT stereo 한 경로로 보낸다. calibration/TF/match가 부족하면 fail-closed한다.
 
 - `_cluster_to_cone()`
   - matching된 LiDAR cluster centroid를 `ConeWithCovariance`로 변환한다.
@@ -246,7 +263,8 @@ YOLOv8 detector의 주요 정책:
 Fusion mode default:
 
 ```text
-image_topic: /zed/left/image_rect_color
+image_topic: /zed/right/image_rect_color
+right_image_topic: /zed/right/image_rect_color
 pointcloud_topic: /velodyne_points
 bbox_topic: /noisy_bounding_boxes
 camera_info_topic: /custom_camera_info
@@ -270,7 +288,7 @@ yolo_confidence_threshold: 0.25
 yolo_iou_threshold: 0.45
 yolo_imgsz: 640
 yolo_max_det: 100
-python_executable: $CONDA_PREFIX/bin/python3 when conda is active
+python_executable: ""  # installed console-script shebang 사용
 yolo_class_map: blue_cone:blue,yellow_cone:yellow,orange_cone:orange,large_orange_cone:big_orange,unknown_cone:unknown
 yolo_unknown_color_policy: unknown
 ```
@@ -564,6 +582,11 @@ adapter-bg and fusion-bg must not run at the same time.
 
 `hyu-docker` helper 없이 container 안에서 직접 실행할 수도 있다.
 
+아래 fusion 예시는 GraphSLAM이 `map -> odom -> base_footprint` TF를 소유하는
+통합 모드이므로 `motion_compensation_frame:=odom`을 사용한다. Simulator의
+ground-truth TF(`publish_gt_tf:=true`)만 사용할 때는 이를 `map`으로 바꾼다.
+두 TF publisher를 동시에 켜면 안 된다.
+
 ```bash
 source /workspace/install/setup.bash
 ```
@@ -574,6 +597,7 @@ Fusion:
 ros2 launch eufs_perception_baseline perception_baseline.launch.py \
   output_cones_topic:=/cones \
   output_frame:=base_footprint \
+  motion_compensation_frame:=odom \
   fusion_enabled:=true \
   publish_empty_on_sync:=false
 ```
@@ -585,9 +609,10 @@ LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7 \
   ros2 launch eufs_perception_baseline perception_baseline.launch.py \
   bbox_source:=yolov8 \
   use_sim_time:=true \
-  python_executable:=/home/dohyun/anaconda3/envs/eufs/bin/python3 \
+  python_executable:=python3 \
   output_cones_topic:=/cones \
   output_frame:=base_footprint \
+  motion_compensation_frame:=odom \
   fusion_enabled:=true \
   publish_empty_on_sync:=false \
   publish_fusion_debug:=true \
@@ -604,34 +629,6 @@ ros2 launch eufs_perception_baseline perception_baseline.launch.py \
   fusion_enabled:=false \
   publish_empty_on_sync:=false
 ```
-
-Sparse simulator oracle tuning:
-
-```bash
-ros2 launch eufs_launcher simulation.launch.py \
-  launch_group:=default \
-  camera_cones_view_distance:=8 \
-  camera_cones_fov:=1.4 \
-  camera_cones_detection_probability:=0.45
-```
-
-`oracle_cones_topic:=/camera_0/cones`를 쓰는 adapter 모드에서는
-`camera_cones_*` 값이 oracle 입력 cone 수를 줄인다.
-
-Simulator direct `/cones` tuning:
-
-```bash
-ros2 launch eufs_launcher simulation.launch.py \
-  launch_group:=no_perception \
-  perception_lidar_on:=false \
-  perception_camera_view_distance:=8 \
-  perception_camera_fov:=1.4 \
-  perception_detection_probability:=0.45
-```
-
-simulator가 직접 `/cones`를 publish하는 `launch_group:=no_perception` 경로에서는
-`perception_*` 값을 줄인다. 이 경로와 oracle adapter를 동시에 실행하면 `/cones`
-publisher가 둘이 될 수 있으므로 하나만 켠다.
 
 Graph SLAM:
 
@@ -650,7 +647,9 @@ ros2 launch eufs_graph_slam graph_slam.launch.py \
 Input/output:
 
 ```yaml
-image_topic: /zed/left/image_rect_color
+image_topic: /zed/right/image_rect_color
+right_image_topic: /zed/right/image_rect_color
+right_camera_info_topic: /zed/right/camera_info
 pointcloud_topic: /velodyne_points
 bbox_topic: /noisy_bounding_boxes
 camera_info_topic: /custom_camera_info
@@ -658,6 +657,7 @@ camera_frame: zed_right_camera_optical_frame
 projection_model: eufs_bbox
 output_cones_topic: /cones
 output_frame: base_footprint
+motion_compensation_frame: map
 fusion_enabled: true
 ```
 
@@ -668,14 +668,19 @@ yolo_image_topic: /zed/left/image_rect_color
 yolo_camera_info_topic: /zed/left/camera_info
 yolo_camera_frame: zed_left_camera_optical_frame
 yolo_projection_model: pinhole
-yolo_sync_tolerance_sec: 2.0
-python_executable: /home/dohyun/anaconda3/envs/eufs/bin/python3
+yolo_sync_tolerance_sec: 0.15
+python_executable: ""
 ```
 
 Sync:
 
 ```yaml
 sync_tolerance_sec: 0.15
+image_sync_tolerance_sec: 0.05
+sync_queue_size: 12
+image_sync_queue_size: 64
+timestamp_reset_threshold_sec: 0.1
+max_future_stamp_lead_sec: 0.09
 publish_empty_on_sync: false
 ```
 
@@ -688,6 +693,9 @@ roi_abs_y: 15.0
 roi_min_z: -0.2
 roi_max_z: 1.5
 ground_min_z: 0.05
+ground_ransac_enabled: true
+ground_ransac_distance_threshold: 0.03
+ground_ransac_max_tilt_degrees: 20.0
 ```
 
 Clustering:
@@ -708,6 +716,14 @@ min_projected_points: 1
 min_project_depth: 0.2
 ```
 
+Visual fallback:
+
+```yaml
+monocular_fallback_enabled: true
+stereo_fallback_enabled: true  # YOLO-left mode only; simulated mode forces false
+stereo_min_matches: 3
+```
+
 Covariance:
 
 ```yaml
@@ -725,19 +741,46 @@ min_variance: 0.0001
 - 기본 YOLO weight는 FSOCO fine-tuned model이고, `yolo_class_map`은 FSOCO class를
   EUFS cone color contract로 매핑한다. Offline target에서도 first-run download에
   의존하지 않고 absolute path weight를 사용한다.
-- Host Galactic + conda `eufs` 환경에서는 `cv_bridge`가 system `libp11-kit`과
-  conda `libffi`를 섞어 load하면서
-  `undefined symbol: ffi_type_pointer, version LIBFFI_BASE_7.0`로 죽을 수 있다.
-  이 경우 YOLO launch/run 명령 앞에
-  `LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7`를 붙인다.
-- ROS가 생성한 console script는 기본 shebang이 `/usr/bin/python3`일 수 있다.
-  이 경우 conda `eufs`에 설치된 `ultralytics`를 못 보고
-  `DistributionNotFound: ultralytics`로 죽는다. Host 실행에서는
-  `python_executable:=/home/dohyun/anaconda3/envs/eufs/bin/python3`를 명시한다.
-- YOLO inference가 늦게 끝나면 bbox timestamp와 LiDAR timestamp 차이가 simulator
-  기본 `sync_tolerance_sec: 0.15`보다 커져 fusion publish가 막힐 수 있다.
-  `bbox_source:=yolov8`에서는 launch가 `yolo_sync_tolerance_sec: 2.0`을 fusion
-  node에 전달한다. 실제 주행 성능 평가는 detector latency에 맞춰 다시 낮춘다.
+- ROS image 변환은 `cv_bridge` 없이 지원 encoding(`bgr8`, `rgb8`, `mono8`)을
+  직접 처리한다. Image 변환, inference 또는 result 변환 예외 frame은 bbox를
+  publish하지 않고 drop한다. 정상 inference의 실제 0 detections만 stamped empty
+  bbox를 publish하므로, detector 장애가 SLAM landmark miss로 오인되지 않는다.
+- YOLO bbox는 inference 완료 시각이 아니라 원본 image timestamp를 유지한다.
+  기본 `yolo_sync_tolerance_sec`는 `0.15`이며, bbox/cloud queue front 중 늦은
+  timestamp를 anchor로 삼아 반대 stream의 predecessor/첫 이후 frame 중 가까운
+  것을 one-to-one으로 선택한다.
+- `/cones` header는 bbox acquisition timestamp를 사용한다. LiDAR point는
+  `motion_compensation_frame`(기본 `map`)의 TF history로 cloud time에서 bbox-time
+  `base_footprint`로 변환하므로 한 array 안의 LiDAR/vision cone이 같은 시각과
+  좌표계 계약을 갖는다. 해당 동적 TF history가 없으면 pair를 소비하지 않고
+  재시도한다. Simulator ground-truth TF 모드는 `map`을 사용하고, GraphSLAM이
+  `map -> odom -> base_footprint`를 소유하는 통합 모드는 localization correction
+  jump를 ego-motion 보상에 섞지 않도록 `motion_compensation_frame:=odom`을 쓴다.
+- `image_sync_queue_size: 64`는 60 Hz 기준 약 1.07초의 좌/우 raw image 이력을
+  유지해 측정된 약 0.53초 YOLO 지연을 흡수한다. 1280x720 BGR 두 stream이 모두
+  가득 차면 payload만 약 340 MiB이므로, 실제 detector latency와 frame rate를
+  측정한 뒤 필요한 margin을 유지하는 범위에서 조정한다.
+- 같은 sensor stream에서 duplicate 또는 역순 도착한 timestamp는 해당 메시지만
+  폐기하며, timestamp는 stream별로 엄격히 증가해야 한다. Image/right image,
+  cloud, 선택된 bbox acquisition stamp, oracle stamp는 integer nanosecond로
+  바꾸기 전에 canonical nonzero ROS `Time`(`sec >= 0`,
+  `0 <= nanosec < 1e9`)인지 검사하며 malformed/zero stamp는 폐기한다.
+  기본 0.1초 이상의 ROS clock backward jump 또는 ROS time source 변경만 모든
+  sync buffer를 비우고 TF listener를 재생성해 simulation clock의 새 epoch를
+  시작한다. 정상적인 unregister 경로에서는 기존 TF buffer를 clear 후 재사용하므로
+  publisher가 이미 종료된 one-shot `/tf_static` cache는 유지되고, 이전 `/tf`
+  subscription의 volatile queue는 폐기된다. Unregister 실패 시에는 아직 살아 있는
+  이전 subscription의 재오염을 막기 위해 새 buffer로 격리한다.
+  Galactic이 정상적인 양의 clock tick에도 jump callback을 호출할 수 있어 callback
+  delta를 다시 검사하며, `max_future_stamp_lead_sec`는 rollback 기준보다 작아야 한다.
+  Rollback 직전 clock high watermark를 overflow-safe하게 복원해 replay guard 끝으로
+  저장한다. Clock이 그 지점에 다시 도달하기 전에도 DDS callback 순서 차이를 위해
+  설정된 `max_future_stamp_lead_sec`(기본 90 ms)까지 선행 stamp를 허용하지만, 기존
+  watermark 이상은 exclusive upper fence로 폐기한다. 새 epoch 시작보다 과거인 stamp도
+  폐기한다. Replay 중 다시 rollback되면 active watermark들을 함께 보존하고 inner부터
+  순서대로 해제한다. Timestamp만으로 허용된 replay window 안에서 두 epoch의 payload를 완전히
+  구별할 수는 없지만, 이 lower/upper fence와 buffer/subscription reset이 이전 epoch의
+  watermark 오염 범위를 제한한다.
 - `projection_model: eufs_bbox`는 HYU simulator bbox plugin의 projection convention에
   맞춘 simulated bbox 설정이다. `bbox_source:=yolov8`에서는 실제 ZED image
   projection을 위해 launch가 `yolo_projection_model:=pinhole`을 fusion node에
@@ -746,6 +789,15 @@ min_variance: 0.0001
   simulated bbox `camera_frame` parameter를 `zed_right_camera_optical_frame`으로
   둔다. YOLO mode에서는 `/zed/left/camera_info`와
   `zed_left_camera_optical_frame`을 사용한다.
+- Simulator bbox는 right-camera 기준이므로 left-to-right SIFT search를 시작할
+  left bbox가 없다. 이 모드의 stereo tier는 강제로 꺼지고, YOLO-left mode에서만
+  rectified right image와 함께 활성화된다.
+- 논문의 exact Tier 3인 RekTNet 7-keypoint/PnP는 weights와 3D keypoint template이
+  repository에 없어 재현하지 못한다. 현재 `stereo_sift`는 명시적으로
+  paper-inspired 구현이며 synthetic disparity 검증 범위까지만 보장한다.
+- `stereo_fallback_enabled:=true`인데 현재 OpenCV에 `cv2.SIFT_create`가 없으면
+  node는 해당 tier를 조용히 비활성화하지 않고 실행 시 actionable error로 종료한다.
+  project conda 환경을 사용하거나 SIFT-capable OpenCV를 준비해야 한다.
 - 실제 camera detector weight로 바꾸면 bbox clipping, confidence threshold,
   `yolo_class_map`을 다시 조정해야 한다.
 - Headless simulator에서는 camera rendering topic이 충분히 나오지 않을 수 있으므로
@@ -825,6 +877,8 @@ ros2 run tf2_ros tf2_echo zed_left_camera_optical_frame velodyne
 - TF가 없음
 - ROI나 clustering parameter가 너무 강함
 - 현재 시야에 bbox와 LiDAR가 동시에 잡히는 cone이 없음
+- mono/stereo fallback이면 bbox visibility, synchronized left/right image,
+  CameraInfo, rectification, SIFT match 수와 depth bound가 유효하지 않음
 
 ### `/graph_slam/map`이 비어 있음
 
@@ -847,7 +901,7 @@ ros2 topic echo --once /graph_slam/map
 ## 16. Recommended Development Flow
 
 1. `adapter-bg`로 SLAM wiring 확인
-2. `fusion-bg`로 LiDAR-camera fusion output 확인
+2. `fusion-bg`로 three-tier perception output 확인
 3. `/cones`와 `/graph_slam/map`을 동시에 확인
 4. 차량을 천천히 움직이며 detection 개수와 map 안정성 확인
 5. `bbox_source:=yolov8`으로 YOLO bbox path를 켜고 `/yolo_bounding_boxes` 확인
