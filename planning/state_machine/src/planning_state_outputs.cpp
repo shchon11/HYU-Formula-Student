@@ -42,6 +42,7 @@ void PlanningStateMachineNode::publishOutputs()
     state_,
     source,
     lap_count_,
+    target_lap_count_,
     current_s_,
     current_d_,
     global_path_readiness_.pathLength(),

@@ -14,6 +14,7 @@ struct PlanningStateDebugSnapshot
   PlanningState state{PlanningState::LOCAL};
   PathSource path_source{PathSource::LOCAL};
   int lap_count{0};
+  int target_lap_count{0};
   double current_s{0.0};
   double current_d{0.0};
   double global_path_length{0.0};

@@ -61,6 +61,7 @@ std::string makePlanningStateDebugString(const PlanningStateDebugSnapshot & snap
   ss << "state=" << planningStateToString(snapshot.state)
      << " path_source=" << pathSourceToString(snapshot.path_source)
      << " lap_count=" << snapshot.lap_count
+     << " target_lap_count=" << snapshot.target_lap_count
      << " current_s=" << snapshot.current_s
      << " current_d=" << snapshot.current_d
      << " global_path_length=" << snapshot.global_path_length

@@ -369,8 +369,11 @@ class StackHud(Node):
                 ctl = (B_OK, OK, body)
         lines.append(self._stage("CONTROL", *ctl))
 
-        # MISSION — sim AS/AMI + lap progress.
+        # MISSION — sim AS/AMI + lap progress. The lap target comes from the
+        # state machine's debug stream so the HUD always shows the value the
+        # mission actually uses; the parameter is only a pre-boot fallback.
         lap = debug.get("lap_count", "?")
+        self.target_laps = debug.get("target_lap_count", self.target_laps)
         if self.can.msg is None:
             mis = (B_DIM, DIM, "waiting for /ros_can/state")
         else:
