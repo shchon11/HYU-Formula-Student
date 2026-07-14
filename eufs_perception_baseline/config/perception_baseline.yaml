@@ -57,16 +57,20 @@ perception_baseline_node:
     sync_queue_size: 12
     # 60 Hz stereo history must survive measured ~0.53 s YOLO latency.
     image_sync_queue_size: 64
-    timestamp_reset_threshold_sec: 0.1
-    # Bounded DDS delivery skew accepted in both normal operation and rollback
-    # replay. 90 ms covers the measured ~80 ms LiDAR-versus-/clock callback
-    # skew while remaining below the 100 ms rollback threshold. During replay,
-    # stamps at/after the old clock watermark are still rejected.
-    max_future_stamp_lead_sec: 0.09
-    # Preserve short Gazebo/DDS callback skew instead of dropping the sample.
-    # Fusion still waits until it is within max_future_stamp_lead_sec; this only
-    # bounds how far-ahead a sample may enter the fixed-size sensor buffers.
-    max_deferred_future_stamp_lead_sec: 0.30
+    # These two are the values this team's working LiDAR path was tuned with on
+    # the fullstack branch; main shipped a tighter 0.1/0.09 pair. Keep the
+    # looser ones: a stamp arriving further ahead of /clock than
+    # max_future_stamp_lead_sec is dropped, so tightening it silently discards
+    # sensor frames that Gazebo/DDS delivers early.
+    # Invariant: max_future_stamp_lead_sec < timestamp_reset_threshold_sec, so
+    # every reset-triggering rollback is wider than the accepted future window.
+    timestamp_reset_threshold_sec: 0.5
+    max_future_stamp_lead_sec: 0.4
+    # Outer bound: a stamp further ahead of /clock than max_future_stamp_lead_sec
+    # is buffered until time catches up, and only dropped past THIS value. It is
+    # therefore the more permissive of the two and must be >= the one above,
+    # or the band between them is dropped instead of deferred.
+    max_deferred_future_stamp_lead_sec: 0.6
     # The simulated right camera can deliver the matching acquisition stamp
     # after YOLO has already published its left-image bbox. Wait boundedly for
     # that joint pair instead of prematurely running without stereo context.
