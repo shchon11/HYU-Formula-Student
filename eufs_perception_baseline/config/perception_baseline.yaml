@@ -77,7 +77,15 @@ perception_baseline_node:
     stereo_pair_wait_sec: 0.80
     # Delay output commit until acquisition time is safely behind ROS time so
     # a simultaneously queued /clock rollback invalidates the old result.
-    output_commit_settle_sec: 0.1
+    # 0 disables the age gate. It required /clock to advance this far PAST an
+    # image's stamp before its boxes could publish, but the worker keeps only the
+    # newest frame: the newest is always the youngest, so it always failed the
+    # gate and was overwritten before it aged. Measured 8 Hz in -> 1.35 Hz out
+    # with a 7.5 Hz sim /clock (133 ms steps) against a 100 ms gate.
+    # Clock jumps are already fenced by _clock_generation, and a stamp ahead of
+    # /clock is already bounded downstream by max_future_stamp_lead_sec (0.4 s),
+    # far beyond the sim clock's lag.
+    output_commit_settle_sec: 0.0
     publish_empty_on_sync: false
     fusion_enabled: true
     publish_fusion_debug: true
@@ -296,7 +304,15 @@ yolov8_bbox_node:
     device: ""
     max_det: 100
     timestamp_reset_threshold_sec: 0.1
-    output_commit_settle_sec: 0.1
+    # 0 disables the age gate. It required /clock to advance this far PAST an
+    # image's stamp before its boxes could publish, but the worker keeps only the
+    # newest frame: the newest is always the youngest, so it always failed the
+    # gate and was overwritten before it aged. Measured 8 Hz in -> 1.35 Hz out
+    # with a 7.5 Hz sim /clock (133 ms steps) against a 100 ms gate.
+    # Clock jumps are already fenced by _clock_generation, and a stamp ahead of
+    # /clock is already bounded downstream by max_future_stamp_lead_sec (0.4 s),
+    # far beyond the sim clock's lag.
+    output_commit_settle_sec: 0.0
     # Map this weight's class names to the EUFS cone color contract.
     class_map: "blue:blue,yellow:yellow,orange:orange,orange_big:big_orange,undefined:unknown"
     unknown_color_policy: unknown
