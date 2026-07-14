@@ -213,15 +213,23 @@ perception_baseline_node:
     # different height, so they route to stereo rather than take a biased
     # monocular estimate.
     monocular_allowed_colors: "blue,yellow,orange"
-    # D = c*h_n^e reads depth straight off the bbox height, so its relative
-    # error is dh/h -- a 1 px box error is 2.5% at 40 px (5 m) and 7.5% at 13 px
-    # (15 m). h = 201.7/D for this camera, so 20 px is the 10 m / ~5% mark, about
-    # where the paper's 4.49% sits. Past it a cone is off by more than the
-    # corridor's half-width, so it is dropped rather than routed to stereo (that
-    # would buy a SIFT pass per cone and collapse the fusion rate).
-    monocular_min_bbox_height_px: 20.0
-    monocular_depth_coefficient: 0.2801
-    monocular_depth_exponent: -1.0
+    # Tier-2 range cut, expressed in the only quantity available before the
+    # curve runs. 16 px is 10 m ON THE CURVE BELOW -- re-derive it if c/e change
+    # (h = 720*(D/c)^(1/e)), because the px<->m mapping moves with them.
+    # A cone past the cut is DROPPED, not demoted to stereo: stereo costs a SIFT
+    # pass per cone, and routing every far cone there was measured to burn 287%
+    # CPU in this node and collapse /cones to ~1 Hz.
+    monocular_min_bbox_height_px: 16.0
+    # Fitted against ground truth on small_track (n=2745 bbox/cone pairs), NOT
+    # the analytic pinhole curve. The analytic c=0.2801, e=-1.0 is exact only if
+    # the detector's box is exact; this one's is ~17% short past 6 m, so the
+    # curve read those cones as further away and over-estimated depth by 20-25%.
+    # Measured: analytic 17.60% mean / 50.06% p90, this fit 7.00% / 19.71%.
+    # e=-1 is what an undistorted lens implies; the detector's range-dependent
+    # box bias is what bends it, which is the same reason the paper carries
+    # -0.954. Re-fit per camera AND per detector weight.
+    monocular_depth_coefficient: 0.5575
+    monocular_depth_exponent: -0.7555
     monocular_min_depth_m: 0.5
     monocular_max_depth_m: 30.0
     good_cone_min_height_to_width: 1.2
