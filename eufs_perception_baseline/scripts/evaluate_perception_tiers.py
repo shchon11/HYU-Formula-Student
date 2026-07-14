@@ -42,7 +42,7 @@ or against a bag:
 import argparse
 import math
 import sys
-from collections import defaultdict
+from collections import defaultdict, deque
 
 try:
     import rclpy
@@ -75,9 +75,28 @@ def cones_of(msg):
             x, y = float(cone.point.x), float(cone.point.y)
             if not (math.isfinite(x) and math.isfinite(y)):
                 continue
-            covariance = list(getattr(cone, "covariance", []) or [0.0])
+            # cone.covariance is a numpy array; `array or [...]` raises
+            # "truth value is ambiguous", so test it by length, not truthiness.
+            raw_cov = getattr(cone, "covariance", None)
+            covariance = (
+                list(raw_cov) if raw_cov is not None and len(raw_cov) else [0.0]
+            )
             out.append((x, y, colour, float(covariance[0])))
     return out
+
+
+def stamp_ns(msg):
+    return int(msg.header.stamp.sec) * 1_000_000_000 + int(msg.header.stamp.nanosec)
+
+
+def nearest_by_stamp(buffer, target_ns):
+    """Entry in ``buffer`` whose stamp is closest to ``target_ns``."""
+    best, best_d = None, None
+    for stamp, value in buffer:
+        delta = abs(stamp - target_ns)
+        if best_d is None or delta < best_d:
+            best, best_d = value, delta
+    return best, best_d
 
 
 def tier_at(tiers, ex, ey, eps=0.05):
@@ -131,8 +150,15 @@ class TierEvaluator(Node):
         self.false_positives = 0
         self.missed_truths = 0
         self.frames = 0
-        self.latest_truth = None
-        self.latest_tiers = []
+        # /cones is stamped at BBOX CAPTURE time, which trails the simulator's
+        # ground truth by the detector's latency (~0.5 s). Comparing it against
+        # the NEWEST truth measures how far the car drove in between, not
+        # perception error -- so buffer truth by stamp and match on it.
+        self.truth_buffer = deque(maxlen=600)
+        self.tier_buffer = {}
+        self.tier_order = deque(maxlen=600)
+        self.skews = []
+        self.dropped_no_truth = 0
 
         sensor_qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
@@ -153,26 +179,42 @@ class TierEvaluator(Node):
         )
 
     def _on_tiers(self, msg):
-        self.latest_tiers = [
+        # Emitted from the same fusion result as /cones, so it carries the same
+        # bbox stamp -- an exact key, no nearest-match needed.
+        # MarkerArray has no header of its own; each Marker carries one, and
+        # they all share the fusion result's bbox stamp. markers[0] is the
+        # DELETEALL, which carries that header too.
+        if not msg.markers:
+            return
+        key = stamp_ns(msg.markers[0])
+        self.tier_buffer[key] = [
             (m.pose.position.x, m.pose.position.y, m.ns)
             for m in msg.markers
             if m.action != Marker.DELETEALL
         ]
+        self.tier_order.append(key)
+        while len(self.tier_buffer) > self.tier_order.maxlen:
+            self.tier_buffer.pop(self.tier_order.popleft(), None)
 
     def _on_truth(self, msg):
-        self.latest_truth = [
-            (x, y, colour) for x, y, colour, _ in cones_of(msg)
-        ]
+        self.truth_buffer.append((
+            stamp_ns(msg),
+            [(x, y, colour) for x, y, colour, _ in cones_of(msg)],
+        ))
 
     def _on_cones(self, msg):
-        if self.latest_truth is None:
-            return
         estimates = cones_of(msg)
         if not estimates:
             return
+        target = stamp_ns(msg)
+        truth, skew = nearest_by_stamp(self.truth_buffer, target)
+        if truth is None or skew > self.args.max_stamp_skew_sec * 1e9:
+            self.dropped_no_truth += 1
+            return
+        self.skews.append(skew / 1e9)
         pairs, misses, unseen = greedy_match(
-            estimates, self.latest_truth, self.args.match_radius,
-            self.latest_tiers)
+            estimates, truth, self.args.match_radius,
+            self.tier_buffer.get(target, []))
         self.samples.extend(pairs)
         self.false_positives += len(misses)
         self.missed_truths += unseen
@@ -189,6 +231,12 @@ class TierEvaluator(Node):
         print(f"matched cones      {len(self.samples)}")
         print(f"false positives    {self.false_positives}")
         print(f"missed truths      {self.missed_truths}")
+        if self.skews:
+            print(f"stamp skew         mean {1000 * sum(self.skews) / len(self.skews):.1f} ms"
+                  f"   max {1000 * max(self.skews):.1f} ms")
+        if self.dropped_no_truth:
+            print(f"frames dropped     {self.dropped_no_truth} "
+                  f"(no truth within {self.args.max_stamp_skew_sec}s)")
 
         # Depth error, which is what the paper's Table 1 reports.
         errors = [
@@ -252,6 +300,10 @@ class TierEvaluator(Node):
         print(f"  stereo slender SIFT  6.39 %")
         print(f"  mono + stereo routed 3.38 %")
         print(f"{'=' * 62}")
+        print(f"\nNOTE: {self.args.truth_topic} is itself FOV/range-filtered by the "
+              "simulated-perception\nplugin (cameraFOV, lidar*ViewDistance), so a real "
+              "detection outside that filter\ncounts as a false positive here. Range error "
+              "on matched cones is unaffected.")
         print("\nTier names: cluster/sparse = Tier 1 (LiDAR-camera), monocular* "
               "= Tier 2,\n"
               "stereo_rektnet_pnp_sift = Tier 3, lidar_only = LiDAR cluster the "
@@ -265,6 +317,9 @@ def main():
     parser.add_argument("--cones-topic", default="/cones")
     parser.add_argument("--truth-topic", default="/ground_truth/cones")
     parser.add_argument("--tiers-topic", default="/fusion/debug/cone_tiers")
+    parser.add_argument("--max-stamp-skew-sec", type=float, default=0.05,
+                        help="max |cones - truth| stamp gap to accept (s); "
+                             "truth publishes at 20 Hz")
     parser.add_argument("--match-radius", type=float, default=2.0,
                         help="max distance to call an estimate the same cone (m)")
     parser.add_argument("--duration", type=float, default=60.0,

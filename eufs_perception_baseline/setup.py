@@ -52,9 +52,10 @@ setup(
     install_requires=[
         "setuptools",
         "PyYAML>=5.0",
-        # YOLO26 pose weights need a build that knows the architecture; the old
-        # 8.4.60 pin predates it and fails to load the checkpoint.
-        "ultralytics>=8.4.90,<9",
+        # Floor is the oldest build verified to load the cone-pose checkpoint
+        # here (8.4.17 runs it and publishes keypoints). The >=8.4.90 pin this
+        # arrived with was never executed against ROS and only blocked startup.
+        "ultralytics>=8.4.17,<9",
     ],
     zip_safe=True,
     maintainer="IRCV",
