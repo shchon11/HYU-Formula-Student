@@ -493,6 +493,7 @@ class PerceptionBaselineNode(Node):
             "monocular_allowed_colors",
             "blue,yellow,orange",
         )
+        self.declare_parameter("monocular_min_bbox_height_px", 0.0)
         self.declare_parameter("monocular_depth_coefficient", 0.498)
         self.declare_parameter("monocular_depth_exponent", -0.954)
         self.declare_parameter("monocular_min_depth_m", 0.5)
@@ -729,6 +730,9 @@ class PerceptionBaselineNode(Node):
             ).split(",")
             if color.strip()
         }
+        self.monocular_min_bbox_height_px = float(
+            self.get_parameter("monocular_min_bbox_height_px").value
+        )
         self.monocular_depth_coefficient = float(
             self.get_parameter("monocular_depth_coefficient").value
         )
@@ -1117,6 +1121,8 @@ class PerceptionBaselineNode(Node):
         allowed_colors = {"blue", "yellow", "orange", "big_orange", "unknown"}
         if not self.monocular_allowed_colors <= allowed_colors:
             raise ValueError("monocular_allowed_colors contains an unknown color")
+        if self.monocular_min_bbox_height_px < 0.0:
+            raise ValueError("monocular_min_bbox_height_px must not be negative")
         if self.monocular_fallback_enabled and not self.monocular_allowed_colors:
             raise ValueError(
                 "monocular_allowed_colors must not be empty when mono is enabled"
@@ -3139,9 +3145,19 @@ class PerceptionBaselineNode(Node):
             mono_calibrated_class = (
                 detection.color in self.monocular_allowed_colors
             )
+            # Tier 2 reads depth straight off the bbox height, so its error is
+            # dh/h: a 1 px box error is 2.5% at 40 px (5 m) but 7.5% at 13 px
+            # (15 m). Below the floor the cone is off by more than the corridor's
+            # half-width, so drop it rather than let it through -- and drop it
+            # here rather than demote it to stereo, which costs a SIFT pass per
+            # cone and collapses the fusion rate.
+            mono_bbox_tall_enough = (
+                detection.ymax - detection.ymin
+            ) >= self.monocular_min_bbox_height_px
             if (
                 condition == "good"
                 and mono_calibrated_class
+                and mono_bbox_tall_enough
                 and self.monocular_fallback_enabled
             ):
                 assignment = self._monocular_assignment(

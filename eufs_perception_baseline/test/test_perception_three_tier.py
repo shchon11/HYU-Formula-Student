@@ -44,6 +44,7 @@ class ThreeTierRoutingTest(unittest.TestCase):
         node.big_cone_height_m = 0.5255
         node.big_cone_radius_m = 0.1307
         node.monocular_fallback_enabled = True
+        node.monocular_min_bbox_height_px = 0.0
         node.monocular_allowed_colors = {"blue", "yellow", "orange"}
         node.monocular_depth_coefficient = 0.498
         node.monocular_depth_exponent = -0.954
@@ -188,6 +189,40 @@ class ThreeTierRoutingTest(unittest.TestCase):
             "left_optical",
             stamp,
         )
+
+    def test_short_bbox_is_dropped_rather_than_demoted_to_stereo(self):
+        """Below the height floor Tier 2 is worse than no cone, and stereo is
+        not a free fallback -- it costs a SIFT pass per cone."""
+        node = self._node()
+        node.monocular_min_bbox_height_px = 20.0
+        # Good aspect ratio and clear of the border in the 100x100 fixture
+        # image, but only 10 px tall -- the far-cone case the floor targets.
+        detection = Detection("blue", 0.9, 45.0, 45.0, 51.0, 55.0)
+
+        with patch.object(
+            node_module,
+            "monocular_depth_from_bbox",
+            side_effect=AssertionError("short bbox must not enter monocular"),
+        ), patch.object(
+            node,
+            "_prepare_stereo_context",
+            side_effect=AssertionError("short bbox must not pay for stereo"),
+        ), patch.object(
+            node,
+            "_lookup_transform_matrix",
+            return_value=self._camera_to_base(),
+        ):
+            assignments = node._associate_visual_detections(
+                [detection],
+                set(),
+                self._camera_info(),
+                TimeMsg(sec=1),
+                None,
+                None,
+                None,
+            )
+
+        self.assertEqual(assignments, [])
 
     def test_bad_unmatched_cone_routes_to_rektnet_pnp_sift(self):
         node = self._node()

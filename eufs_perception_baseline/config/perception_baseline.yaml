@@ -213,6 +213,13 @@ perception_baseline_node:
     # different height, so they route to stereo rather than take a biased
     # monocular estimate.
     monocular_allowed_colors: "blue,yellow,orange"
+    # D = c*h_n^e reads depth straight off the bbox height, so its relative
+    # error is dh/h -- a 1 px box error is 2.5% at 40 px (5 m) and 7.5% at 13 px
+    # (15 m). h = 201.7/D for this camera, so 20 px is the 10 m / ~5% mark, about
+    # where the paper's 4.49% sits. Past it a cone is off by more than the
+    # corridor's half-width, so it is dropped rather than routed to stereo (that
+    # would buy a SIFT pass per cone and collapse the fusion rate).
+    monocular_min_bbox_height_px: 20.0
     monocular_depth_coefficient: 0.2801
     monocular_depth_exponent: -1.0
     monocular_min_depth_m: 0.5
