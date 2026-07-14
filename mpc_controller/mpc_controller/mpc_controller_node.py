@@ -14,7 +14,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile
 
 from ackermann_msgs.msg import AckermannDriveStamped
-from eufs_msgs.msg import WaypointArrayStamped
+from eufs_msgs.msg import WaypointArrayStamped, WheelSpeedsStamped
 from nav_msgs.msg import Odometry
 from std_msgs.msg import Bool
 
@@ -96,6 +96,13 @@ class MpcControllerNode(Node):
         # actuator really is.
         self.commanded_steering = 0.0
         self.estimated_steering = 0.0
+        # Measured actuator angle from /ros_can/wheel_speeds (sim and real
+        # publish it). The wall-clock slew estimator is only a fallback: under
+        # sim RTF < 1 it runs FAST, and that phase error alone can grow into
+        # oscillation.
+        self.measured_steering = None
+        self.measured_steering_prev = None
+        self.measured_steering_time = None
         self.steering_trim = 0.0
         self.last_tick = time.monotonic()
 
@@ -108,6 +115,8 @@ class MpcControllerNode(Node):
         self.create_subscription(Bool, "/planning/stop_request", self.on_stop, qos)
         self.create_subscription(
             Odometry, "/localization/ego_odom", self.on_odom, qos)
+        self.create_subscription(
+            WheelSpeedsStamped, "/ros_can/wheel_speeds", self.on_wheel_speeds, qos)
         self.create_timer(1.0 / config.command_rate_hz, self.on_timer)
         self.get_logger().info(
             f"MPC controller up: N={config.horizon_steps} dt={config.horizon_dt_sec}s "
@@ -135,6 +144,13 @@ class MpcControllerNode(Node):
     def on_stop(self, msg):
         self.stop_requested = msg.data
         self.stop_time = time.monotonic()
+
+    def on_wheel_speeds(self, msg):
+        if math.isfinite(msg.speeds.steering):
+            self.measured_steering_prev = (
+                self.measured_steering, self.measured_steering_time)
+            self.measured_steering = msg.speeds.steering
+            self.measured_steering_time = time.monotonic()
 
     def on_odom(self, msg):
         self.odom_frame_valid = (
@@ -164,6 +180,15 @@ class MpcControllerNode(Node):
         difference = self.commanded_steering - self.estimated_steering
         self.estimated_steering += max(-step, min(step, difference))
         steering_rate_estimate = (self.estimated_steering - previous_estimate) / elapsed
+        # Prefer the measured actuator angle whenever it is fresh.
+        if self.measured_steering is not None and self.fresh(self.measured_steering_time):
+            self.estimated_steering = self.measured_steering
+            prev_value, prev_time = self.measured_steering_prev or (None, None)
+            if prev_value is not None and prev_time is not None:
+                span = self.measured_steering_time - prev_time
+                if span > 1e-3:
+                    steering_rate_estimate = (
+                        self.measured_steering - prev_value) / span
 
         command = AckermannDriveStamped()
         command.header.stamp = self.get_clock().now().to_msg()

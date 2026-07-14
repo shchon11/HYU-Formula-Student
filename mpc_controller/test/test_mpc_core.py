@@ -141,5 +141,48 @@ def test_sharp_heading_error_recovers():
     assert max(abs(s.y) for s in settled) < 0.2
 
 
+def test_path_jitter_does_not_thrash_steering():
+    """Real-mode local paths jitter laterally between replans; the commanded
+    steering must stay calm (bounded activity), not slam the actuator."""
+    import random
+    config = MpcConfig()
+    rng = random.Random(7)
+
+    def jittered(state):
+        noise = [(rng.uniform(-0.1, 0.1), rng.uniform(-0.1, 0.1)) for _ in range(60)]
+        return [PathPoint(float(x) + noise[x][0], noise[x][1], 4.0)
+                for x in range(60)]
+
+    plant = Plant(EgoState(0.0, 0.0, 0.0, 3.0), config)
+    previous = None
+    estimated = 0.0
+    trim = 0.0
+    commands = []
+    dt = 0.05
+    for _ in range(200):
+        solution = solve(jittered(plant.state), plant.state, config,
+                         previous, current_steering=estimated)
+        assert solution is not None
+        trim *= max(0.0, 1.0 - 0.3 * dt)
+        if abs(solution.lateral_error_m) < 0.5:
+            trim -= 0.12 * solution.lateral_error_m * dt
+        trim = max(-0.08, min(0.08, trim))
+        commanded = max(-config.max_steering_rad,
+                        min(config.max_steering_rad, solution.steering_rad + trim))
+        commands.append(commanded)
+        plant.step(commanded, solution.acceleration_mps2, dt)
+        limit = config.max_steering_rate_radps * dt
+        difference = commanded - estimated
+        new_estimated = estimated + max(-limit, min(limit, difference))
+        rate = (new_estimated - estimated) / dt
+        estimated = new_estimated
+        previous = (rate, solution.acceleration_mps2)
+    activity = sum(abs(b - a) for a, b in zip(commands, commands[1:])) / len(commands)
+    # Commanded steering-rate demand must stay within what the actuator can
+    # actually do; thrash shows up as multiples of the slew limit.
+    assert activity / dt < 0.8 * config.max_steering_rate_radps,         f"steering activity {activity / dt:.2f} rad/s vs slew 1.04"
+    assert max(abs(s.y) for s in [plant.state]) < 1.0
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

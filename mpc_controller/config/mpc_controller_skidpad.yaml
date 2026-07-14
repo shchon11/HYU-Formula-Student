@@ -17,7 +17,7 @@ mpc_controller_node:
     q_steering: 0.1
     r_steering_rate: 1.0
     r_acceleration: 0.5
-    s_steering_rate: 2.0
+    s_steering_rate: 6.0
     s_acceleration_rate: 1.0
     command_rate_hz: 20.0
     input_timeout_sec: 0.5
