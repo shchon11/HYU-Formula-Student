@@ -285,6 +285,15 @@ def generate_launch_description():
             )),
 
         DeclareLaunchArgument(
+            name='perception_monocular_allowed_colors',
+            default_value='blue,yellow,orange',
+            description=(
+                "Colours the Tier-2 height curve is calibrated for. Empty it "
+                "(with perception_monocular_fallback_enabled:=false) to route "
+                "every cone to the stereo tier instead of dropping it."
+            )),
+
+        DeclareLaunchArgument(
             name='perception_monocular_fallback_enabled',
             default_value='true',
             description=(
@@ -367,6 +376,8 @@ def generate_launch_description():
                  LaunchConfiguration('perception_motion_compensation_frame')),
                 ('monocular_fallback_enabled',
                  LaunchConfiguration('perception_monocular_fallback_enabled')),
+                ('monocular_allowed_colors',
+                 LaunchConfiguration('perception_monocular_allowed_colors')),
                 ('stereo_fallback_enabled',
                  LaunchConfiguration('perception_stereo_fallback_enabled')),
                 ('python_executable',

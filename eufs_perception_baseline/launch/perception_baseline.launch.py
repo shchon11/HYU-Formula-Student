@@ -133,6 +133,17 @@ def _launch_nodes(context):
     # Simulator boxes are generated in the right camera, so they cannot seed
     # a left-to-right stereo search.  YOLO boxes are left-image detections and
     # may use the configured stereo fallback.
+    # ros2 launch rejects an empty argument value ("arg:=" is malformed), so
+    # "none" is how to say no colour uses the Tier-2 curve. Routing sends any
+    # colour the curve is not calibrated for to stereo, so that reroutes every
+    # cone there instead of dropping it.
+    _mono_allowed_raw = LaunchConfiguration(
+        "monocular_allowed_colors"
+    ).perform(context)
+    fusion_monocular_allowed_colors = (
+        "" if _mono_allowed_raw.strip().lower() in ("", "none") else _mono_allowed_raw
+    )
+
     fusion_stereo_fallback_enabled = (
         LaunchConfiguration("stereo_fallback_enabled")
         if bbox_source == "yolov8"
@@ -221,6 +232,12 @@ def _launch_nodes(context):
                     "projection_model": fusion_projection_model,
                     "stereo_fallback_enabled": (
                         fusion_stereo_fallback_enabled
+                    ),
+                    "monocular_fallback_enabled": LaunchConfiguration(
+                        "monocular_fallback_enabled"
+                    ),
+                    "monocular_allowed_colors": (
+                        fusion_monocular_allowed_colors
                     ),
                     "rektnet_model_path": LaunchConfiguration(
                         "rektnet_model_path"
@@ -515,6 +532,32 @@ def generate_launch_description():
                 description=(
                     "Enable ReKTNet/PnP-guided SIFT stereo for left-image YOLO "
                     "bboxes. Simulator right-camera bboxes disable this tier."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "monocular_fallback_enabled",
+                default_value=_default(
+                    "perception_baseline_node",
+                    "monocular_fallback_enabled",
+                ),
+                description=(
+                    "Enable the Tier-2 bbox-height monocular curve. With this "
+                    "false, a good cone is dropped rather than demoted -- clear "
+                    "monocular_allowed_colors as well to route those cones to "
+                    "the stereo tier instead."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "monocular_allowed_colors",
+                default_value=_default(
+                    "perception_baseline_node",
+                    "monocular_allowed_colors",
+                ),
+                description=(
+                    "Colours the Tier-2 height curve is calibrated for. Any "
+                    "other colour routes to stereo, so 'none' sends every "
+                    "cone to the stereo tier (pair with "
+                    "monocular_fallback_enabled:=false)."
                 ),
             ),
             DeclareLaunchArgument(
