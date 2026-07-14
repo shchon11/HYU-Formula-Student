@@ -13,9 +13,9 @@ planning_state_machine_node:
     stop_zone_s_end_topic: "/stop_zone_s_end"
     stop_zone_valid_topic: "/stop_zone_valid"
 
-    target_lap_count: 4
+    target_lap_count: 10
     initial_lap_count: 0
-    final_lap_start_count: 3
+    final_lap_start_count: 9
 
     frenet_odom_timeout_sec: 0.5
     global_path_valid_timeout_sec: 0.5
@@ -31,7 +31,10 @@ planning_state_machine_node:
     lap_gate_cluster_tolerance_m: 2.0
     lap_gate_min_width_m: 2.0
     lap_gate_max_width_m: 7.0
-    lap_gate_arm_distance_m: 12.0
+    # Direction check + cooldown already reject line-straddling jitter, so a
+    # short re-arm radius is enough and tolerates tight tracks that curl back
+    # near the start line.
+    lap_gate_arm_distance_m: 3.0
     lap_gate_cooldown_sec: 10.0
 
     final_path_end_threshold: 2.0
