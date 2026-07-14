@@ -15,9 +15,13 @@ How it works
 this subscribes to the fusion debug stream alongside it:
 
     /cones                       final cone positions, base_footprint
-    /fusion/debug/rejections     per-detection tier + reason (needs
+    /fusion/debug/cone_tiers     one marker per published cone, ns = the tier
+                                 that produced it, at the SAME position (needs
                                  publish_fusion_debug:=true)
     /ground_truth/cones          true cone positions, base_footprint
+
+Cones are attributed to a tier by matching the cone_tiers marker sitting on the
+same position, so one run gives the per-tier breakdown; no A/B runs needed.
 
 Each published cone is matched to its nearest ground-truth cone (greedy, gated
 by --match-radius). Unmatched cones are counted as false positives, and truths
@@ -45,6 +49,7 @@ try:
     from rclpy.node import Node
     from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
     from eufs_msgs.msg import ConeArrayWithCovariance
+    from visualization_msgs.msg import Marker, MarkerArray
 except ImportError:
     sys.exit(
         "This script needs a sourced ROS 2 workspace with eufs_msgs on the "
@@ -75,7 +80,21 @@ def cones_of(msg):
     return out
 
 
-def greedy_match(estimates, truths, radius):
+def tier_at(tiers, ex, ey, eps=0.05):
+    """Tier whose cone_tiers marker sits on this estimate.
+
+    The marker is emitted at the cone position the node published, so an exact
+    hit is expected; eps only absorbs message round-tripping.
+    """
+    best, best_d2 = "unattributed", eps * eps
+    for tx, ty, tier in tiers:
+        d2 = (ex - tx) ** 2 + (ey - ty) ** 2
+        if d2 <= best_d2:
+            best, best_d2 = tier, d2
+    return best
+
+
+def greedy_match(estimates, truths, radius, tiers=()):
     """Pair each estimate with its nearest unused truth inside ``radius``."""
     pairs, misses = [], []
     taken = set()
@@ -98,6 +117,7 @@ def greedy_match(estimates, truths, radius):
             "lateral_err": math.hypot(ex - tx, ey - ty),
             "colour_ok": ecolour == tcolour,
             "variance": evar,
+            "tier": tier_at(tiers, ex, ey),
         })
     unseen = len(truths) - len(taken)
     return pairs, misses, unseen
@@ -112,6 +132,7 @@ class TierEvaluator(Node):
         self.missed_truths = 0
         self.frames = 0
         self.latest_truth = None
+        self.latest_tiers = []
 
         sensor_qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
@@ -124,10 +145,19 @@ class TierEvaluator(Node):
         self.create_subscription(
             ConeArrayWithCovariance, args.cones_topic,
             self._on_cones, sensor_qos)
+        self.create_subscription(
+            MarkerArray, args.tiers_topic, self._on_tiers, sensor_qos)
         self.get_logger().info(
             f"comparing {args.cones_topic} against {args.truth_topic}; "
             f"match radius {args.match_radius} m"
         )
+
+    def _on_tiers(self, msg):
+        self.latest_tiers = [
+            (m.pose.position.x, m.pose.position.y, m.ns)
+            for m in msg.markers
+            if m.action != Marker.DELETEALL
+        ]
 
     def _on_truth(self, msg):
         self.latest_truth = [
@@ -141,7 +171,8 @@ class TierEvaluator(Node):
         if not estimates:
             return
         pairs, misses, unseen = greedy_match(
-            estimates, self.latest_truth, self.args.match_radius)
+            estimates, self.latest_truth, self.args.match_radius,
+            self.latest_tiers)
         self.samples.extend(pairs)
         self.false_positives += len(misses)
         self.missed_truths += unseen
@@ -195,19 +226,36 @@ class TierEvaluator(Node):
             print(f"  {band:2d}-{band + 5:2d} m   n={len(values):4d}   "
                   f"mean {sum(values) / len(values):6.2f} %")
 
+        # Per-tier: the whole point. cone_tiers labels each published cone with
+        # the tier that produced it, so no A/B runs are needed.
+        print(f"\nrange error by tier:")
+        by_tier = defaultdict(list)
+        for s in self.samples:
+            if s["true_range"] <= 0.1:
+                continue
+            err = abs(s["est_range"] - s["true_range"]) / s["true_range"] * 100.0
+            by_tier[s.get("tier", "unattributed")].append(err)
+        if not by_tier or set(by_tier) == {"unattributed"}:
+            print("  no tier labels received -- run the sim with "
+                  "perception_publish_fusion_debug:=true")
+        for tier in sorted(by_tier):
+            values = sorted(by_tier[tier])
+            mean = sum(values) / len(values)
+            median = values[len(values) // 2]
+            p90 = values[min(len(values) - 1, int(0.9 * len(values)))]
+            print(f"  {tier:26s} n={len(values):4d}  mean {mean:6.2f} %  "
+                  f"median {median:6.2f} %  p90 {p90:6.2f} %")
+
         print(f"\npaper Table 1 for reference:")
         print(f"  LiDAR-camera fusion  0.85 %")
         print(f"  monocular bb-height  4.49 %")
         print(f"  stereo slender SIFT  6.39 %")
         print(f"  mono + stereo routed 3.38 %")
         print(f"{'=' * 62}")
-        print("\nTo attribute error to a specific tier, run with only that tier "
-              "enabled:\n"
-              "  Tier 1 only:  monocular_fallback_enabled:=false "
-              "stereo_fallback_enabled:=false\n"
-              "  Tier 2 only:  fusion of LiDAR disabled is not supported; "
-              "instead compare\n"
-              "                the >10 m band, where LiDAR support is sparse.")
+        print("\nTier names: cluster/sparse = Tier 1 (LiDAR-camera), monocular* "
+              "= Tier 2,\n"
+              "stereo_rektnet_pnp_sift = Tier 3, lidar_only = LiDAR cluster the "
+              "camera never confirmed.")
 
 
 def main():
@@ -216,6 +264,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--cones-topic", default="/cones")
     parser.add_argument("--truth-topic", default="/ground_truth/cones")
+    parser.add_argument("--tiers-topic", default="/fusion/debug/cone_tiers")
     parser.add_argument("--match-radius", type=float, default=2.0,
                         help="max distance to call an estimate the same cone (m)")
     parser.add_argument("--duration", type=float, default=60.0,

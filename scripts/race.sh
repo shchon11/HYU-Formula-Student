@@ -2,6 +2,8 @@
 # race.sh — full autonomous stack in one tmux session.
 #
 #   race [track] [sim|real] [extra sim args...]   # start (default: small_track real)
+#   race perception [track] [extra args]   # sim+perception+SLAM+teleop only,
+#                                          # for per-tier evaluation vs GT cones
 #   race stop                              # tear down
 #   race attach                            # re-attach
 #
@@ -46,8 +48,10 @@ HAS_YOLO_DEVICE_ARG=0
 HAS_MOTION_COMP_ARG=0
 HAS_MONOCULAR_FALLBACK_ARG=0
 HAS_STEREO_FALLBACK_ARG=0
+EVAL_MODE=0
 for tok in "$@"; do
   case "$tok" in
+    perception) EVAL_MODE=1 ;;
     sim|real) PMODE="$tok" ;;
     *)
       case "$tok" in
@@ -70,8 +74,10 @@ for tok in "$@"; do
   esac
 done
 
+# Tier evaluation needs the package's own (pose) weight and ALL tiers on, so the
+# legacy-model pin and the tier disables below are skipped in perception mode.
 LOCAL_YOLO_MODEL="$SRC_DIR/eufs_perception_baseline/models/fsoco_yolov8n/weights/best.pt"
-if [ "$PMODE" = "real" ] && [ "$HAS_YOLO_MODEL_ARG" -eq 0 ] && [ -f "$LOCAL_YOLO_MODEL" ]; then
+if [ "$EVAL_MODE" -eq 0 ] && [ "$PMODE" = "real" ] && [ "$HAS_YOLO_MODEL_ARG" -eq 0 ] && [ -f "$LOCAL_YOLO_MODEL" ]; then
   FILTERED="$FILTERED yolo_model_path:=$LOCAL_YOLO_MODEL"
 fi
 if [ "$PMODE" = "real" ] && [ "$HAS_YOLO_DEVICE_ARG" -eq 0 ]; then
@@ -80,11 +86,15 @@ fi
 if [ "$PMODE" = "real" ] && [ "$HAS_MOTION_COMP_ARG" -eq 0 ]; then
   FILTERED="$FILTERED perception_motion_compensation_frame:=odom"
 fi
-if [ "$PMODE" = "real" ] && [ "$HAS_MONOCULAR_FALLBACK_ARG" -eq 0 ]; then
+if [ "$EVAL_MODE" -eq 0 ] && [ "$PMODE" = "real" ] && [ "$HAS_MONOCULAR_FALLBACK_ARG" -eq 0 ]; then
   FILTERED="$FILTERED perception_monocular_fallback_enabled:=false"
 fi
-if [ "$PMODE" = "real" ] && [ "$HAS_STEREO_FALLBACK_ARG" -eq 0 ]; then
+if [ "$EVAL_MODE" -eq 0 ] && [ "$PMODE" = "real" ] && [ "$HAS_STEREO_FALLBACK_ARG" -eq 0 ]; then
   FILTERED="$FILTERED perception_stereo_fallback_enabled:=false"
+fi
+if [ "$EVAL_MODE" -eq 1 ]; then
+  # cone_tiers labels every published cone with its tier; GT cones are the ruler.
+  FILTERED="$FILTERED perception_publish_fusion_debug:=true pub_ground_truth:=true"
 fi
 EXTRA="perception_mode:=$PMODE$FILTERED"
 
@@ -122,6 +132,47 @@ SRC="source $ROS_SETUP; source $WS_SETUP; export EUFS_MASTER=$EUFS_MASTER ROS_LO
 WAIT_CAR="until ros2 node list 2>/dev/null | grep -q race_car; do sleep 2; done"
 WAIT_GT="until ros2 topic list 2>/dev/null | grep -q /ground_truth/state; do sleep 2; done"
 WAIT_STATE="until ros2 topic list 2>/dev/null | grep -q /planning/state; do sleep 2; done"
+
+# Perception evaluation: sim + real 3-tier perception + SLAM + teleop. No
+# planner, no controller — you drive, and the evaluator scores each tier's range
+# error against the simulator's ground-truth cones.
+if [ "$EVAL_MODE" -eq 1 ]; then
+  echo "race: launching PERCEPTION+SLAM (teleop, no planner/controller) on track '$TRACK'…"
+  tmux new-session -d -s "$SESSION" -n FSK
+
+  P_SIM=$(tmux list-panes -t "$SESSION" -F '#{pane_id}' | head -1)
+  tmux send-keys -t "$P_SIM" \
+    "$SRC echo '[① SIM + PERCEPTION (real 3-tier, fusion debug on)]'; ros2 launch eufs_launcher simulation.launch.py track:=$TRACK gazebo_gui:=false rviz:=true show_rqt_gui:=false $EXTRA" C-m
+
+  P_SLAM=$(tmux split-window -h -t "$P_SIM" -P -F '#{pane_id}')
+  tmux send-keys -t "$P_SLAM" \
+    "$SRC echo '[② GRAPH SLAM only] waiting for car…'; $WAIT_CAR; ros2 launch eufs_graph_slam graph_slam.launch.py" C-m
+
+  # teleop arms AMI_MANUAL itself, so no separate mission pane is needed.
+  P_TELE=$(tmux split-window -v -t "$P_SIM" -P -F '#{pane_id}')
+  tmux send-keys -t "$P_TELE" \
+    "$SRC echo '[③ TELEOP — drive a lap. arms AMI_MANUAL itself]'; $WAIT_CAR; sleep 3; ros2 run eufs_teleop teleop" C-m
+
+  P_EVAL=$(tmux split-window -v -t "$P_TELE" -P -F '#{pane_id}')
+  tmux send-keys -t "$P_EVAL" \
+    "$SRC echo '[④ EVALUATOR] drive a lap first, then press Enter to score 60 s:'; echo '  ros2 run eufs_perception_baseline evaluate_perception_tiers.py --duration 60'" C-m
+
+  P_MON=$(tmux split-window -v -t "$P_SLAM" -P -F '#{pane_id}')
+  tmux send-keys -t "$P_MON" \
+    "$SRC echo '[⑤ MONITOR] waiting for cones…'; until ros2 topic list 2>/dev/null | grep -q /cones; do sleep 2; done; while true; do printf '\\n== %s ==\\n' \"\$(date +%H:%M:%S)\"; for t in /yolo_bounding_boxes /yolo_cone_keypoints /cones /fusion/debug/cone_tiers /ground_truth/cones /graph_slam/map; do printf '%-28s ' \"\$t\"; timeout 2 ros2 topic hz \"\$t\" 2>/dev/null | grep -m1 -o 'average rate: [0-9.]*' || echo '(silent)'; done; sleep 3; done" C-m
+
+  tmux select-layout -t "$SESSION" tiled
+  tmux select-pane   -t "$P_TELE"
+  tmux set-option    -t "$SESSION" mouse on
+
+  cat <<EOF
+race: perception+SLAM up on '$TRACK'.  attach → 'race attach'   |   stop → 'race stop'
+  panes: ①sim+perception(3-tier, debug on)  ②graph_slam  ③teleop  ④evaluator  ⑤monitor
+  NO planner/controller — drive with teleop (pane ③), then run the evaluator (pane ④).
+  Per-tier range error vs /ground_truth/cones comes from /fusion/debug/cone_tiers.
+EOF
+  exit 0
+fi
 
 echo "race: launching AUTONOMOUS stack on track '$TRACK'…"
 tmux new-session -d -s "$SESSION" -n FSK

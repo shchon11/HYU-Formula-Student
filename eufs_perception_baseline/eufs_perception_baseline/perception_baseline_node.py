@@ -149,6 +149,7 @@ class FusionComputation:
     cluster_markers: Optional[MarkerArray] = None
     support_markers: Optional[MarkerArray] = None
     rejection_markers: Optional[MarkerArray] = None
+    cone_tier_markers: Optional[MarkerArray] = None
 
 
 @dataclass(frozen=True)
@@ -232,6 +233,7 @@ class PerceptionBaselineNode(Node):
         self.debug_cluster_candidates_pub = None
         self.debug_bbox_support_pub = None
         self.debug_rejections_pub = None
+        self.debug_cone_tiers_pub = None
         if self.publish_fusion_debug:
             self.debug_roi_points_pub = self.create_publisher(
                 PointCloud2,
@@ -256,6 +258,13 @@ class PerceptionBaselineNode(Node):
             self.debug_rejections_pub = self.create_publisher(
                 MarkerArray,
                 f"{self.fusion_debug_prefix}/rejections",
+                10,
+            )
+            # Per-cone tier label at the cone's PUBLISHED position, so an
+            # evaluator can attribute range error to the tier that produced it.
+            self.debug_cone_tiers_pub = self.create_publisher(
+                MarkerArray,
+                f"{self.fusion_debug_prefix}/cone_tiers",
                 10,
             )
         self.image_sub = self.create_subscription(
@@ -2156,6 +2165,7 @@ class PerceptionBaselineNode(Node):
             (self.debug_cluster_candidates_pub, computation.cluster_markers),
             (self.debug_bbox_support_pub, computation.support_markers),
             (self.debug_rejections_pub, computation.rejection_markers),
+            (self.debug_cone_tiers_pub, computation.cone_tier_markers),
         ):
             if publisher is not None and message is not None:
                 publisher.publish(message)
@@ -2506,14 +2516,19 @@ class PerceptionBaselineNode(Node):
                 f"cluster pixels {self._cluster_summaries(clusters, camera_info)}",
             )
 
+        cone_tiers = []
         for assignment in assignments:
             cone = self._cluster_to_cone(assignment.cluster)
             self._append_cone_by_color(msg, assignment.detection.color, cone)
+            cone_tiers.append((cone, assignment.source))
 
         if self.publish_unmatched_lidar_clusters:
+            unknown_before = len(msg.unknown_color_cones)
             self._append_unmatched_lidar_cluster_cones(
                 msg, clusters, lidar_assignments
             )
+            for cone in msg.unknown_color_cones[unknown_before:]:
+                cone_tiers.append((cone, "lidar_only"))
 
         if collect_debug:
             return FusionComputation(
@@ -2523,6 +2538,11 @@ class PerceptionBaselineNode(Node):
                 cluster_markers=cluster_debug_markers,
                 support_markers=support_debug_markers,
                 rejection_markers=rejection_debug_markers,
+                cone_tier_markers=(
+                    self._cone_tier_markers(debug_header, cone_tiers)
+                    if debug_enabled
+                    else None
+                ),
             )
         return msg
 
@@ -3817,6 +3837,29 @@ class PerceptionBaselineNode(Node):
             )
             markers.markers.append(marker)
             marker_id += 1
+        return markers
+
+    def _cone_tier_markers(self, header, cone_tiers) -> MarkerArray:
+        """One marker per PUBLISHED cone, at its final position, ns = tier.
+
+        /cones carries no tier label, so error measured against ground truth
+        cannot be attributed to a tier from it alone. The bbox_support markers
+        sit on the LiDAR support centroid, which is absent for the vision tiers
+        -- exactly the ones worth measuring -- so this stream puts the tier on
+        the cone position that was actually published.
+        """
+        markers = MarkerArray()
+        markers.markers.append(self._clear_marker(header))
+        for marker_id, (cone, source) in enumerate(cone_tiers, start=1):
+            tier = source or "unknown_tier"
+            position = np.array(
+                [cone.point.x, cone.point.y, cone.point.z], dtype=np.float64
+            )
+            markers.markers.append(
+                self._text_marker(
+                    header, tier, marker_id, position, tier, (0.9, 0.9, 0.2, 0.9)
+                )
+            )
         return markers
 
     def _bbox_support_markers(

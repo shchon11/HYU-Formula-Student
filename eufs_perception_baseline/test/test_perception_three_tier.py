@@ -448,6 +448,7 @@ class FusionPairSelectionTest(unittest.TestCase):
         node.debug_cluster_candidates_pub = None
         node.debug_bbox_support_pub = None
         node.debug_rejections_pub = None
+        node.debug_cone_tiers_pub = None
         node.tf_buffer = Mock()
         node._reset_tf_epoch = Mock()
         node._warn_throttled = lambda *args, **kwargs: None
