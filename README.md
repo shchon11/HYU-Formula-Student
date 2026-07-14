@@ -76,7 +76,7 @@ flowchart LR
     end
 
     subgraph CTRL["🎮 CONTROL"]
-        PP["pure_pursuit<br/>controller"]
+        PP["controller<br/>MPC (기본) · pure_pursuit"]
     end
 
     CAM -->|image| YOLO
