@@ -264,15 +264,18 @@ race acceleration sim   # 같은 미션, Gazebo simulated /cones
 **제동 예산 (감속 성능 3 m/s² 가정 — 바뀌면 아래 두 감속값을 함께 수정):** 코리도 콘은 map
 x=+20에서 끝나고 경로는 그 1 m쯤 뒤에서 무효화되므로, 하드 브레이크는 top-speed V로 x≈21에서
 시작. braking zone은 피니시(x=+25)→정지박스(x=+50). 3 m/s² 정지거리 = V²/6 이 ~29 m(x21→x50)
-미만이어야 하므로 **V ≲ 13 m/s**. 기본 10 m/s면 x≈38에서 멈춰 박스까지 ~12 m 여유.
+미만이어야 하므로 **V ≲ 13.2 m/s**. 기본 12 m/s면 x≈45에서 멈춰 박스까지 ~5 m 여유(13 넘기려면 더 센 제동 또는 더 긴 zone 필요).
 
 자주 만지는 튜닝 (전부 파라미터 — 코드 수정 불필요):
 
 | 항목 | 위치 | 기본값 |
 |---|---|---|
-| 스프린트 속도 | `planning/local_planner/config/local_planner_acceleration.yaml` (`two_sided_speed_mps`) | 10 m/s |
+| 스프린트 속도 | `planning/local_planner/config/local_planner_acceleration.yaml` (`two_sided_speed_mps`) | 12 m/s |
 | 감속 성능 (in-path·하드브레이크) | `pure_pursuit_controller_acceleration.yaml` (`min_acceleration_mps2`, `brake_acceleration_mps2`) | −3 m/s² |
-| 상한·전진가속 | `pure_pursuit_controller_acceleration.yaml` (`max_speed_mps`, `max_acceleration_mps2`) | 10 m/s / +3 m/s² |
+| 상한·전진가속 | `pure_pursuit_controller_acceleration.yaml` (`max_speed_mps`, `max_acceleration_mps2`) | 12 m/s / +3 m/s² |
+| 직진 코리도 모드 (인지 지연 보정) | `local_planner_acceleration.yaml` (`extend_straight_to_horizon`, `roi_min_x`, `straight_extension_cap_m`) | on / −15 m / 5 m |
+
+> **직진 코리도 모드**: 인지가 느리면 차가 매핑된 콘 frontier를 앞질러(앞쪽 콘 없음) 경로가 순간 무효화 → **중간중간 제동 펄스**가 생깁니다. 이 모드는 two-sided/one-sided 로직 대신, **이미 지나온 콘(뒤)까지 포함해 코리도 중심선을 직선 fit**하고 ego에서 앞으로 투영합니다. frontier를 앞질러도 뒤쪽 콘으로 직선을 유지하므로 경로가 안 끊겨 제동 펄스가 사라집니다. 뒤쪽 콘을 ROI에 남기려고 `roi_min_x`를 −15로 넓혔습니다(지연 허용치 ≈ \|roi_min_x\|). 그리고 마지막 콘에서 `straight_extension_cap_m`(5 m)까지만 이으므로, 코리도가 그만큼 뒤로 빠지면 경로가 무효화돼 **정상 제동·정지**합니다(마지막 콘 x=+20 → 제동 ~x=+23, 12 m/s로 정지 ~x=+47). **직진 트랙에서만 안전** (곡선이면 벽으로 직진 → accel 프로필에서만 on).
 
 더 빠르게 하려면 속도 상한을 올리되(local 경로 속도 ≤ 컨트롤러 max_speed), 위 제동 예산 식으로
 정지거리가 braking zone을 넘지 않는지 확인하세요.

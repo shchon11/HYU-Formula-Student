@@ -34,6 +34,7 @@ bool validConfig(const PlannerConfig & config)
     config.fallback_speed_mps,
     config.unknown_absorb_lateral_m,
     config.unknown_geom_deadband_m,
+    config.straight_extension_cap_m,
   };
   for (const double value : values) {
     if (!std::isfinite(value)) {
@@ -51,7 +52,7 @@ bool validConfig(const PlannerConfig & config)
          config.two_sided_horizon_m > 0.0 && config.fallback_horizon_m > 0.0 &&
          config.fallback_offset_m > 0.0 && config.two_sided_speed_mps > 0.0 &&
          config.fallback_speed_mps > 0.0 && config.unknown_absorb_lateral_m >= 0.0 &&
-         config.unknown_geom_deadband_m >= 0.0;
+         config.unknown_geom_deadband_m >= 0.0 && config.straight_extension_cap_m >= 0.0;
 }
 
 std::string traversalFailureReason(internal::TraversalFailure failure)
@@ -71,41 +72,14 @@ std::string traversalFailureReason(internal::TraversalFailure failure)
   return "local_topology_gap";
 }
 
-// Extend the final segment direction until the polyline reaches `target`
-// arc length, so sparse fixes still yield enough geometry to resample.
+// Carry `points` forward until the polyline spans `target` arc length so a
+// sparse fix still yields enough geometry to resample. STRAIGHT extension along
+// the overall (first->last) heading -- no curvature/arc fitting. Using the
+// overall heading (not the last segment's tangent) keeps a noisy final point
+// from swinging the extension off-axis. Forward-only (dir_x > 0) so a centerline
+// that points backward near the end of a run is not flung behind the car. No-op
+// once the path already reaches `target`.
 std::vector<Point2> extendToLength(std::vector<Point2> points, double target)
-{
-  if (points.size() < 2U) {
-    return points;
-  }
-  double length = 0.0;
-  for (std::size_t i = 1U; i < points.size(); ++i) {
-    length += internal::distance(points[i - 1U], points[i]);
-  }
-  if (length >= target) {
-    return points;
-  }
-  const Point2 & tail = points[points.size() - 2U];
-  const Point2 & head = points.back();
-  const double segment = internal::distance(tail, head);
-  if (segment <= 0.0) {
-    return points;
-  }
-  const double extra = target - length;
-  points.push_back(
-    {head.x + (head.x - tail.x) / segment * extra,
-      head.y + (head.y - tail.y) / segment * extra});
-  return points;
-}
-
-// Straight-corridor prior: carry `points` forward from its end, along the
-// OVERALL (first->last) heading, until the polyline spans `target` arc length.
-// Perception lag leaves the mapped cones -- and so the built centerline --
-// short of the horizon; on a track guaranteed straight we extend rather than
-// let the path collapse and the car brake. The overall heading is used (not
-// just the last segment) so a noisy final midpoint cannot swing the extension
-// off the corridor axis. A no-op once the path already reaches `target`.
-std::vector<Point2> extendStraight(std::vector<Point2> points, double target)
 {
   if (points.size() < 2U) {
     return points;
@@ -122,12 +96,72 @@ std::vector<Point2> extendStraight(std::vector<Point2> points, double target)
   const double dir_x = last.x - first.x;
   const double dir_y = last.y - first.y;
   const double norm = std::hypot(dir_x, dir_y);
-  if (!std::isfinite(norm) || norm <= 0.0) {
+  if (!std::isfinite(norm) || norm <= 0.0 || dir_x <= 0.0) {
     return points;
   }
   const double extra = target - length;
   points.push_back({last.x + dir_x / norm * extra, last.y + dir_y / norm * extra});
   return points;
+}
+
+// Straight-corridor path (acceleration mission). Fits the corridor centerline
+// through EVERY width-gated blue/yellow midpoint -- the ones behind the ego as
+// well as ahead -- and returns a straight line from the ego forward to a bounded
+// distance past the last cone. Two effects:
+//   * No mid-run brake pulses. With slow perception the car keeps outrunning
+//     the mapped frontier; a forward-only centerline collapses and the path
+//     goes invalid (brake). Fitting through the cones the car has ALREADY
+//     passed gives a stable straight line to project forward, so the path stays
+//     valid across the frontier as long as behind cones remain in the ROI
+//     (widen roi_min_x to raise that tolerance).
+//   * Still stops. The line is only carried `straight_extension_cap_m` past the
+//     furthest cone, so once the whole corridor falls that far behind the ego
+//     the path shrinks to nothing, goes invalid, and the car brakes. The stop
+//     point is last-cone + cap (minus the resample minimum), independent of how
+//     wide roi_min_x is.
+// Returns an empty path (-> invalid -> brake) when the corridor is degenerate
+// or entirely behind the ego. SAFE ONLY on a genuinely straight track.
+std::vector<Point2> straightCorridorPath(
+  const std::vector<Point2> & blue, const std::vector<Point2> & yellow,
+  const PlannerConfig & config)
+{
+  std::vector<Point2> midpoints;
+  for (const Point2 & b : blue) {
+    for (const Point2 & y : yellow) {
+      const double width = internal::distance(b, y);
+      if (b.y > y.y && width >= config.min_track_width_m && width <= config.max_track_width_m) {
+        midpoints.push_back({0.5 * (b.x + y.x), 0.5 * (b.y + y.y)});
+      }
+    }
+  }
+  midpoints = internal::deduplicate(std::move(midpoints), config.waypoint_spacing_m);
+  if (midpoints.size() < 2U) {
+    return {};
+  }
+  // Least-squares line y = intercept + slope * x through the midpoints.
+  const double n = static_cast<double>(midpoints.size());
+  double sum_x = 0.0, sum_y = 0.0, sum_xx = 0.0, sum_xy = 0.0;
+  double x_max = -std::numeric_limits<double>::infinity();
+  for (const Point2 & m : midpoints) {
+    sum_x += m.x;
+    sum_y += m.y;
+    sum_xx += m.x * m.x;
+    sum_xy += m.x * m.y;
+    x_max = std::max(x_max, m.x);
+  }
+  const double denom = n * sum_xx - sum_x * sum_x;
+  if (!std::isfinite(denom) || std::abs(denom) < 1.0e-9) {
+    return {};  // corridor perpendicular to the car / all cones at one x -- reject
+  }
+  const double slope = (n * sum_xy - sum_x * sum_y) / denom;
+  const double intercept = (sum_y - slope * sum_x) / n;
+  const double x_end = x_max + config.straight_extension_cap_m;
+  if (!(x_end > 0.0)) {
+    return {};  // corridor entirely behind the ego -> no forward path -> stop
+  }
+  // Two endpoints define the straight line; finishPath resamples it. Start at
+  // the ego so the path is anchored at the car.
+  return {{0.0, intercept}, {x_end, intercept + slope * x_end}};
 }
 
 // Sparse-map fallback: runs only when the regular two-sided (2+2) and
@@ -233,16 +267,73 @@ BuildResult buildLocalPath(const ConeSet & cones, const PlannerConfig & config)
     internal::classifyUnknownCones(blue, yellow, unknown, config);
     had_boundary_input = had_boundary_input || !unknown.empty();
   }
+  // Straight-corridor missions fold in the big-orange start/finish gates. On an
+  // acceleration track the gates sit ON the corridor line (y = +/- half width),
+  // so splitting them by ego side gives the car boundary cones the instant it
+  // sees the start gate (it can launch immediately instead of waiting for two
+  // blue/yellow pairs) and carries the corridor across the finish gate at speed.
+  if (config.extend_straight_to_horizon && !cones.big_orange.empty()) {
+    for (const Point2 & cone : internal::cropToRoi(cones.big_orange, config)) {
+      if (cone.y >= config.unknown_geom_deadband_m) {
+        blue.push_back(cone);
+      } else if (cone.y <= -config.unknown_geom_deadband_m) {
+        yellow.push_back(cone);
+      }
+    }
+    had_boundary_input = had_boundary_input || !cones.big_orange.empty();
+  }
   if (had_boundary_input && blue.empty() && yellow.empty()) {
     invalid.reason = "roi_no_boundary_cones";
     return invalid;
   }
+  // Straight-corridor missions (acceleration) prefer a line fitted through the
+  // cones behind and ahead of the ego, bounded a little past the last cone: it
+  // keeps a valid forward path when the car outruns the mapped frontier (no
+  // mid-run brake pulses), and goes invalid -- so the car brakes and stops --
+  // once the corridor falls far enough behind. See straightCorridorPath. It
+  // needs at least two cone pairs to fit a line; when fewer are visible (the
+  // single pair at the very start of the run, or a gap) we fall through to the
+  // normal two-sided/one-sided/sparse logic so the car can still creep forward
+  // and accumulate the map.
+  if (config.extend_straight_to_horizon) {
+    // Fold the orange braking-zone cones into the boundary too, so the path
+    // stays continuous through the braking zone instead of collapsing onto the
+    // blue/yellow behind the car (which reads as a deviation at the stop).
+    // Speed: full while a corridor cone (blue/yellow/big-orange) is still at or
+    // ahead of the ego; once the whole corridor is behind (only orange ahead)
+    // the car is in the braking zone, so drop to the fallback speed and let it
+    // decelerate to the stop. Using the furthest corridor cone (not "anything
+    // strictly ahead") keeps full speed through a frontier outrun, where the
+    // last mapped cone sits right at the ego.
+    double corridor_max_x = -std::numeric_limits<double>::infinity();
+    for (const Point2 & cone : blue) {
+      corridor_max_x = std::max(corridor_max_x, cone.x);
+    }
+    for (const Point2 & cone : yellow) {
+      corridor_max_x = std::max(corridor_max_x, cone.x);
+    }
+    const bool in_corridor = corridor_max_x > -config.waypoint_spacing_m;
+    for (const Point2 & cone : internal::cropToRoi(cones.orange, config)) {
+      if (cone.y >= config.unknown_geom_deadband_m) {
+        blue.push_back(cone);
+      } else if (cone.y <= -config.unknown_geom_deadband_m) {
+        yellow.push_back(cone);
+      }
+    }
+    const double speed =
+      in_corridor ? config.two_sided_speed_mps : config.fallback_speed_mps;
+    const auto fitted = straightCorridorPath(blue, yellow, config);
+    if (fitted.size() >= 2U) {
+      const BuildResult straight = internal::finishPath(
+        fitted, config.two_sided_horizon_m, speed, PathKind::kTwoSided, config);
+      if (straight.valid) {
+        return straight;
+      }
+    }
+  }
   BuildResult two_sided;
   if (blue.size() >= 2U && yellow.size() >= 2U) {
-    auto centerline = internal::boundaryMidpoints(blue, yellow, config);
-    if (config.extend_straight_to_horizon) {
-      centerline = extendStraight(std::move(centerline), config.two_sided_horizon_m);
-    }
+    const auto centerline = internal::boundaryMidpoints(blue, yellow, config);
     two_sided = internal::finishPath(
       centerline, config.two_sided_horizon_m, config.two_sided_speed_mps,
       PathKind::kTwoSided, config);
@@ -310,10 +401,7 @@ BuildResult buildLocalPath(const ConeSet & cones, const PlannerConfig & config)
     }
     return invalid;
   }
-  auto centerline = internal::offsetBoundary(boundary, side, config.fallback_offset_m);
-  if (config.extend_straight_to_horizon) {
-    centerline = extendStraight(std::move(centerline), config.fallback_horizon_m);
-  }
+  const auto centerline = internal::offsetBoundary(boundary, side, config.fallback_offset_m);
   return internal::finishPath(
     centerline, config.fallback_horizon_m, config.fallback_speed_mps,
     use_blue ? PathKind::kBlueOnly : PathKind::kYellowOnly, config);

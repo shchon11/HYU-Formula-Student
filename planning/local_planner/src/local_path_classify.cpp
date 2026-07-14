@@ -95,11 +95,23 @@ void classifyUnknownCones(
         lateralToBoundary(cone, yellow_ref, radius) <= config.unknown_absorb_lateral_m;
       if (blue_ok && !yellow_ok) {
         blue.push_back(cone);
-      } else if (yellow_ok && !blue_ok) {
-        yellow.push_back(cone);
+        continue;
       }
-      // Both boundary lines explain the cone, or neither does: ambiguous -> drop.
-      continue;
+      if (yellow_ok && !blue_ok) {
+        yellow.push_back(cone);
+        continue;
+      }
+      if (blue_ok && yellow_ok) {
+        // Both fitted boundary lines explain the cone: genuinely ambiguous -> drop.
+        continue;
+      }
+      // Neither boundary line fits. This is dominated by a boundary too SPARSE to
+      // define a line (needs >=2 same-colour cones): on the skidpad tight circle
+      // the inner/outer cones fall outside the narrow camera FOV, arrive
+      // uncoloured, and used to be dropped here -> a starved boundary the path
+      // could not curve around. Fall through to the ego-frame side split so the
+      // boundary still gets its lidar cones; the dead-band still drops cones too
+      // central to call.
     }
     if (cone.y >= config.unknown_geom_deadband_m) {
       blue.push_back(cone);

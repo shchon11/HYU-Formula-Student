@@ -101,8 +101,8 @@ ConeSet liveConeSet(const ConeArray & message)
   return ConeSet{
     conePoints(message.blue_cones, identity, input_overflow),
     conePoints(message.yellow_cones, identity, input_overflow),
-    {},
-    {},
+    conePoints(message.orange_cones, identity, input_overflow),
+    conePoints(message.big_orange_cones, identity, input_overflow),
     conePoints(message.unknown_color_cones, identity, input_overflow),
     input_overflow,
   };
@@ -115,8 +115,8 @@ ConeSet slamConeSet(const ConeArray & message, const OdomMetadata & odom)
   return ConeSet{
     conePoints(message.blue_cones, transform, input_overflow),
     conePoints(message.yellow_cones, transform, input_overflow),
-    {},
-    {},
+    conePoints(message.orange_cones, transform, input_overflow),
+    conePoints(message.big_orange_cones, transform, input_overflow),
     conePoints(message.unknown_color_cones, transform, input_overflow),
     input_overflow,
   };

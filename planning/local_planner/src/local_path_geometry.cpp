@@ -50,24 +50,30 @@ bool betterNormalCandidate(
   const TraversalCandidate & candidate, const TraversalCandidate & best,
   const std::vector<Point2> & points)
 {
+  // Tie-break by |y| (proximity to the ego centreline), NOT signed y. Signed y
+  // preferred the smaller-y candidate on every near-tie, i.e. the car's right,
+  // which hugs the inside of a right-hand circle (stable) but walks the path
+  // toward the OUTER wall on a left-hand circle. |y| is mirror-symmetric, so
+  // both turn directions resolve ties identically.
   return std::make_tuple(
            candidate.gap, candidate.heading_change, points[candidate.index].x,
-           points[candidate.index].y, candidate.index) <
+           std::abs(points[candidate.index].y), candidate.index) <
          std::make_tuple(
            best.gap, best.heading_change, points[best.index].x,
-           points[best.index].y, best.index);
+           std::abs(points[best.index].y), best.index);
 }
 
 bool betterUTurnCandidate(
   const TraversalCandidate & candidate, const TraversalCandidate & best,
   const std::vector<Point2> & points)
 {
+  // Mirror-symmetric tie-break: |y|, not signed y (see betterNormalCandidate).
   return std::make_tuple(
            candidate.heading_change, candidate.gap, points[candidate.index].x,
-           points[candidate.index].y, candidate.index) <
+           std::abs(points[candidate.index].y), candidate.index) <
          std::make_tuple(
            best.heading_change, best.gap, points[best.index].x,
-           points[best.index].y, best.index);
+           std::abs(points[best.index].y), best.index);
 }
 
 bool closeUTurnBranch(
@@ -131,11 +137,14 @@ TraversalResult forwardTraversalWithReason(
     return {};
   }
   std::optional<std::size_t> seed;
-  std::tuple<double, double, double, double> seed_key;
+  // Key is (range, x, |y|) — mirror-symmetric. A signed-y final term used to
+  // break exact ties toward the car's right; dropping it keeps left/right
+  // circles symmetric (a genuine tie now keeps the first such point).
+  std::tuple<double, double, double> seed_key;
   for (std::size_t index = 0; index < points.size(); ++index) {
     const auto key = std::make_tuple(
       std::hypot(points[index].x, points[index].y), points[index].x,
-      std::abs(points[index].y), points[index].y);
+      std::abs(points[index].y));
     if (!seed.has_value() || key < seed_key) {
       seed = index;
       seed_key = key;

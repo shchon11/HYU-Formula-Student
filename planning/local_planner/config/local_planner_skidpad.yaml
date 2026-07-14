@@ -41,3 +41,6 @@ local_planner_node:
     use_unknown_cones: true
     unknown_absorb_lateral_m: 0.6
     unknown_geom_deadband_m: 0.75
+    # TEMP DEBUG: print a per-frame [localdiag] line (mode, ROI cone counts,
+    # path radius, failure reason). Set false once the left-circle path is fixed.
+    log_planner_diagnostics: true

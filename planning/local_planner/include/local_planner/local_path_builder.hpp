@@ -71,13 +71,19 @@ struct PlannerConfig
   // unknown cone: split by ego-frame side. |y| below this dead-band is too
   // central to call, so the cone is dropped.
   double unknown_geom_deadband_m{0.75};
-  // Straight-corridor prior (acceleration mission). When perception lags the
-  // mapped cones sit behind the car, leaving the built centerline far short of
-  // the horizon -- short enough to fail the path and stall the car. On a track
-  // that is guaranteed straight, carry the centerline forward along its own
-  // heading to the horizon instead. Only enable where the track really is
-  // straight; on any curved track this would drive the path into a wall.
+  // Straight-corridor mission mode (acceleration). Replaces the normal
+  // two-sided/one-sided logic with straightCorridorPath: a line fitted through
+  // the cones behind AND ahead of the ego, driven straight and bounded a little
+  // past the last cone. Keeps a valid forward path when the car outruns the
+  // mapped frontier (no mid-run brake pulses) yet still ends -- and stops -- a
+  // bounded distance past the corridor. Only enable where the track really is
+  // straight; on any curved track this drives the path into a wall. Pair with a
+  // wide (negative) roi_min_x so cones already passed stay available to the fit.
   bool extend_straight_to_horizon{false};
+  // How far past the furthest cone straightCorridorPath carries the line. Larger
+  // = more tolerance to a lagging frontier, but the car brakes later / stops
+  // further down the braking zone. Only used when extend_straight_to_horizon.
+  double straight_extension_cap_m{5.0};
 };
 
 enum class PathKind

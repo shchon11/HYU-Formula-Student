@@ -123,6 +123,14 @@ BuildResult finishPath(
     result.reason = "path_start_too_far";
     return result;
   }
+  // Straight-corridor missions must never publish a path that heads backward:
+  // once the corridor cones fall behind the ego the path should simply end so
+  // the car brakes, not fling a waypoint chain behind the car (dangerous near
+  // the braking-zone cones). Curved missions keep u-turns, so this is gated.
+  if (config.extend_straight_to_horizon && raw_path.back().x <= raw_path.front().x) {
+    result.reason = "path_heads_backward";
+    return result;
+  }
   if (pathSelfIntersects(raw_path)) {
     result.reason = "ordered path self-intersects";
     return result;

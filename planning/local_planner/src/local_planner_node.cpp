@@ -71,6 +71,8 @@ LocalPlannerNode::LocalPlannerNode(const rclcpp::NodeOptions & options)
     declare_parameter<double>("unknown_geom_deadband_m", 0.75);
   planner_config_.extend_straight_to_horizon =
     declare_parameter<bool>("extend_straight_to_horizon", false);
+  planner_config_.straight_extension_cap_m =
+    declare_parameter<double>("straight_extension_cap_m", 5.0);
   log_diagnostics_ = declare_parameter<bool>("log_planner_diagnostics", false);
 
   if (!std::isfinite(max_stamp_skew_sec_) || max_stamp_skew_sec_ < 0.0 ||
@@ -149,8 +151,14 @@ void LocalPlannerNode::logPlannerDiagnostics(const ConeSet & cones, const BuildR
   // does, so the reported counts are the ones the planner actually used.
   auto blue = internal::cropToRoi(cones.blue, planner_config_);
   auto yellow = internal::cropToRoi(cones.yellow, planner_config_);
+  // Pre-classify (already-coloured) and raw unknown counts, so we can tell a
+  // colour dropout (unk high, colour low) from a map that never saw the cone.
+  const std::size_t raw_blue = blue.size();
+  const std::size_t raw_yellow = yellow.size();
+  std::size_t roi_unknown = 0U;
   if (planner_config_.use_unknown_cones && !cones.unknown.empty()) {
     const auto unknown = internal::cropToRoi(cones.unknown, planner_config_);
+    roi_unknown = unknown.size();
     internal::classifyUnknownCones(blue, yellow, unknown, planner_config_);
   }
 
@@ -180,12 +188,16 @@ void LocalPlannerNode::logPlannerDiagnostics(const ConeSet & cones, const BuildR
   }
   const char * turn = kappa_mean > 0.02 ? "LEFT" : (kappa_mean < -0.02 ? "RIGHT" : "straight");
 
+  // roi_blue/roi_yellow are POST-classify (raw colour + absorbed unknowns).
+  // raw_* is colour-only; unk is uncoloured cones available to absorb. If unk is
+  // high while raw_blue stays low, the inner unknowns are being dropped, not
+  // absorbed (classifyUnknownCones can't fit a line from a sparse boundary).
   RCLCPP_INFO_THROTTLE(
     get_logger(), *get_clock(), 500,
-    "[localdiag] turn=%s kind=%s valid=%d roi_blue=%zu roi_yellow=%zu wp=%zu "
-    "kappa_mean=%.3f radius=%.2f kappa_std=%.3f reason=%s",
-    turn, kind, result.valid ? 1 : 0, blue.size(), yellow.size(), n,
-    kappa_mean, radius, kappa_std, result.reason.c_str());
+    "[localdiag] turn=%s kind=%s valid=%d roi_blue=%zu(raw%zu) roi_yellow=%zu(raw%zu) "
+    "unk=%zu wp=%zu kappa_mean=%.3f radius=%.2f kappa_std=%.3f reason=%s",
+    turn, kind, result.valid ? 1 : 0, blue.size(), raw_blue, yellow.size(), raw_yellow,
+    roi_unknown, n, kappa_mean, radius, kappa_std, result.reason.c_str());
 }
 
 }

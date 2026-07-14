@@ -410,6 +410,106 @@ TEST(LocalPathBuilder, CentrelineUnknownConeIsDropped)
   }
 }
 
+PlannerConfig straightCorridorConfig()
+{
+  PlannerConfig config;
+  config.extend_straight_to_horizon = true;
+  config.roi_min_x = -15.0;              // keep passed cones for the line fit
+  config.straight_extension_cap_m = 5.0;
+  return config;
+}
+
+TEST(LocalPathBuilder, StraightCorridorSurvivesFrontierOutrun)
+{
+  // The crux of the mid-run brake pulses: with slow perception the car outruns
+  // the mapped frontier, so NO cones sit ahead of the ego -- only the ones it
+  // has already passed. The line fit through those still yields a valid forward
+  // path (carried a bounded distance ahead), so the path stays valid and the
+  // car does not brake.
+  ConeSet cones;
+  for (double x : {-10.0, -5.0, 0.0}) {   // frontier is at the ego; nothing ahead
+    cones.blue.push_back({x, 1.5});
+    cones.yellow.push_back({x, -1.5});
+  }
+  const auto result = buildLocalPath(cones, straightCorridorConfig());
+  ASSERT_TRUE(result.valid) << result.reason;
+  EXPECT_EQ(result.kind, PathKind::kTwoSided);
+  // Carried straight ahead, centred, past the last cone by roughly the cap.
+  EXPECT_GT(result.waypoints.back().x, 3.0);
+  for (const auto & waypoint : result.waypoints) {
+    EXPECT_NEAR(waypoint.y, 0.0, 1.0e-6);
+    EXPECT_GE(waypoint.x, -1.0e-9);        // never behind the ego
+  }
+}
+
+TEST(LocalPathBuilder, StraightCorridorStartsFromSinglePair)
+{
+  // At the very start of the run only the first cone pair is in view -- too few
+  // for the line fit. The mission must still yield a valid forward creep path
+  // (via the sparse fallback) so the car can move off the line and accumulate
+  // the map; otherwise it never starts.
+  ConeSet cones;
+  cones.blue = {{8.0, 1.5}};
+  cones.yellow = {{8.0, -1.5}};
+  PlannerConfig config = straightCorridorConfig();
+  config.allow_partial_boundary = true;   // slam_map default for the mission
+  const auto result = buildLocalPath(cones, config);
+  ASSERT_TRUE(result.valid) << result.reason;
+  EXPECT_GT(result.waypoints.back().x, 0.0);   // heads forward, not stuck
+}
+
+TEST(LocalPathBuilder, StraightCorridorLaunchesOnStartGate)
+{
+  // The big-orange start gate (two cones each side, sitting on the corridor
+  // line) folds into the boundary, so the car launches at full speed off a
+  // single blue/yellow pair instead of only creeping via the sparse fallback.
+  ConeSet cones;
+  cones.blue = {{8.0, 1.5}};
+  cones.yellow = {{8.0, -1.5}};
+  cones.big_orange = {{3.0, 1.5}, {2.5, 1.5}, {3.0, -1.5}, {2.5, -1.5}};
+  PlannerConfig config = straightCorridorConfig();
+  config.allow_partial_boundary = true;
+  const auto result = buildLocalPath(cones, config);
+  ASSERT_TRUE(result.valid) << result.reason;
+  EXPECT_EQ(result.kind, PathKind::kTwoSided);   // straight line fit, not a creep
+  EXPECT_GT(result.waypoints.back().x, 3.0);
+}
+
+TEST(LocalPathBuilder, StraightCorridorFollowsOrangeBrakingZone)
+{
+  // Car has cleared the corridor: blue/yellow are behind, only the orange
+  // braking-zone cones lie ahead. The path must continue FORWARD through the
+  // orange (not deviate onto the cones behind) and at the reduced braking speed.
+  ConeSet cones;
+  cones.blue = {{-5.0, 1.5}, {-10.0, 1.5}};
+  cones.yellow = {{-5.0, -1.5}, {-10.0, -1.5}};
+  cones.orange = {{3.0, 1.5}, {8.0, 1.5}, {3.0, -1.5}, {8.0, -1.5}};
+  PlannerConfig config = straightCorridorConfig();
+  config.allow_partial_boundary = true;
+  const auto result = buildLocalPath(cones, config);
+  ASSERT_TRUE(result.valid) << result.reason;
+  EXPECT_GT(result.waypoints.back().x, 0.0);   // forward through the orange
+  for (const auto & waypoint : result.waypoints) {
+    EXPECT_GE(waypoint.x, -1.0e-9);            // never behind the ego
+    EXPECT_LE(waypoint.speed, config.fallback_speed_mps + 1.0e-9);  // braking speed
+  }
+}
+
+TEST(LocalPathBuilder, StraightCorridorStopsPastCorridorEnd)
+{
+  // Once the whole corridor has fallen more than the cap behind the ego there
+  // is no forward path -> invalid -> the car brakes and stops. This is what
+  // ends the run (the corridor cones do not extend past the finish).
+  ConeSet cones;
+  for (double x : {-10.0, -8.0, -6.5}) {   // all cones > cap(5) behind the ego
+    cones.blue.push_back({x, 1.5});
+    cones.yellow.push_back({x, -1.5});
+  }
+  const auto result = buildLocalPath(cones, straightCorridorConfig());
+  ASSERT_TRUE(result.evaluated);
+  EXPECT_FALSE(result.valid) << "corridor is behind the ego; path must be invalid";
+}
+
 TEST(LocalPathBuilder, PartialBoundarySinglePairBuildsSparsePath)
 {
   PlannerConfig config;

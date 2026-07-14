@@ -18,7 +18,10 @@ local_planner_node:
     max_stamp_skew_sec: 0.1
     max_input_age_sec: 0.5
     heartbeat_hz: 10.0
-    roi_min_x: -1.0
+    # Wide look-back: keep the cones the car has already passed in the ROI so the
+    # straight-corridor line fit stays stable when the car outruns the mapped
+    # frontier (slow perception). Tolerance to a lagging frontier ~= |roi_min_x|.
+    roi_min_x: -15.0
     roi_max_x: 20.0
     roi_abs_y: 8.0
     endpoint_match_tolerance_m: 0.05
@@ -39,14 +42,20 @@ local_planner_node:
     # controller ceiling (pure_pursuit_controller_acceleration.yaml max_speed);
     # raise both together for a faster run. The one-sided fallback stays slower
     # because it means a boundary side dropped out.
-    two_sided_speed_mps: 10.0
+    # 12 m/s: a moderate bump that still stops inside the braking zone under
+    # 3 m/s^2 braking (ceiling ~13.2 m/s; see the controller yaml budget). At
+    # 12 m/s the car stops near x=+45, ~5 m short of the x=+50 box.
+    two_sided_speed_mps: 12.0
     fallback_speed_mps: 4.0
     # Unknown-colour cone handling; see local_planner.yaml.
     use_unknown_cones: true
     unknown_absorb_lateral_m: 0.75
     unknown_geom_deadband_m: 0.75
-    # Straight-corridor prior. Perception lag leaves the mapped cones behind the
-    # car, shortening the centerline until the path fails and the car brakes.
-    # The acceleration track is dead straight, so carry the centerline forward
-    # to the horizon and hold speed. SAFE ONLY because this track is straight.
+    # Straight-corridor mode. Fits a line through the cones behind AND ahead of
+    # the ego and drives it straight, bounded straight_extension_cap_m past the
+    # last cone. Kills the mid-run brake pulses (car outrunning the frontier)
+    # yet still ends -> the car brakes ~straight_extension_cap_m past the corridor
+    # (last cone x=+20 -> brake ~x=+23, stop ~x=+47 at 12 m/s). SAFE ONLY on a
+    # straight track. Larger cap = later brake / longer stop.
     extend_straight_to_horizon: true
+    straight_extension_cap_m: 5.0
