@@ -26,6 +26,7 @@ setup(
         (
             f"share/{package_name}/docs",
             [
+                "docs/INTEGRATION.md",
                 "docs/iit_bombay_baseline_design.md",
                 "docs/perception_baseline_usage.md",
             ],
@@ -36,6 +37,17 @@ setup(
             f"share/{package_name}/models/cone_pose_8kpt/weights",
             ["models/cone_pose_8kpt/weights/best.pt"],
         ),
+        (
+            f"share/{package_name}/scripts",
+            [
+                "scripts/evaluate_perception_tiers.py",
+                "scripts/fit_mono_depth_curve.py",
+            ],
+        ),
+    ],
+    scripts=[
+        "scripts/evaluate_perception_tiers.py",
+        "scripts/fit_mono_depth_curve.py",
     ],
     install_requires=[
         "setuptools",
