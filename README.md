@@ -76,7 +76,7 @@ flowchart LR
     end
 
     subgraph CTRL["🎮 CONTROL"]
-        PP["controller<br/>MPC (기본) · pure_pursuit"]
+        PP["pure_pursuit<br/>controller"]
     end
 
     CAM -->|image| YOLO
@@ -254,7 +254,6 @@ race skidpad sim             # simulated perception으로도 동일하게 동작
 
 ### 자주 쓰는 변형
 ```bash
-pbring controller_type:=pure_pursuit # 컨트롤러 롤백 (기본: mpc — LTV-MPC, 조향 액추에이터 모델 포함)
 pbring enable_controller:=false      # 주행 없이 계획만 (수동 개입: teleop)
 pbring local_source_mode:=live_cones # local 경로 live perception 진단 override
 pbring planner_source:=csv           # global을 오프라인 raceline CSV로
@@ -342,8 +341,7 @@ eufs_graph_slam/          graph SLAM + INS/SBG 브리지 + CTE 모니터
 eufs_perception_baseline/ YOLOv8 + LiDAR-camera fusion → /cones
 eufs_teleop/              키보드 주행
 fsk_rviz_presets/         RViz 원클릭 디스플레이 그룹
-mpc_controller/           ★ 기본 컨트롤러: LTV-MPC (조향각=상태·조향속도=제어, 슬루 제약) → /cmd
-pure_pursuit_controller/  대체 컨트롤러 (controller_type:=pure_pursuit)
+pure_pursuit_controller/  경로 추종 제어 → /cmd (planning과 분리된 control 계층)
 scripts/                  race.sh (자율 전체 스택 tmux 런처)
 planning/
   ├─ planning_bringup/    ★ planning 전체 조립 launch (아래 전부 + graph_slam + controller)

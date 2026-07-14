@@ -1,0 +1,26 @@
+// Asphalt ground material for EUFS tracks.
+// Texture lives in ../textures/asphalt.jpg and is found via GAZEBO_RESOURCE_PATH
+// (eufs_tracks/materials is already on that path in simulation.launch).
+material EUFS/Asphalt
+{
+  receive_shadows on
+  technique
+  {
+    pass
+    {
+      ambient  0.5 0.5 0.5 1.0
+      diffuse  1.0 1.0 1.0 1.0
+      specular 0.0 0.0 0.0 1.0 0.0
+
+      texture_unit
+      {
+        texture asphalt.jpg
+        // Tiles the photo across the 1000 m ground plane.
+        // Smaller value = larger repeats. ~0.004 -> a ~4 m tile. Tune to taste.
+        scale 0.004 0.004
+        filtering anisotropic
+        max_anisotropy 16
+      }
+    }
+  }
+}

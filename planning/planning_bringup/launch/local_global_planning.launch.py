@@ -50,7 +50,6 @@ ARGUMENTS = (
     ("local_max_input_age_sec", "0.5", "Local planner input freshness gate (sec, sim time)."),
     ("local_max_start_distance_m", "4.0", "Max distance from ego to the local path start (m)."),
     ("enable_controller", "true", "Start the sole /cmd writer."),
-    ("controller_type", "mpc", "Drive controller: mpc | pure_pursuit."),
     ("cmd_topic", "/cmd", "Controller command output."),
     ("enable_hud", "true", "Start the RViz stack HUD overlay aggregator."),
     ("hud_topic", "/planning/stack_hud", "Stack HUD board overlay."),
@@ -74,7 +73,6 @@ PARAMETER_FILES = (
     ("state_params_file", "state_machine", "planning_state_machine.yaml", "Planning state-machine parameter file."),
     ("selector_params_file", "path_selector", "path_selector.yaml", "Path selector parameter file."),
     ("controller_params_file", "pure_pursuit_controller", "pure_pursuit_controller.yaml", "Pure Pursuit controller parameter file."),
-    ("mpc_params_file", "mpc_controller", "mpc_controller.yaml", "MPC controller parameter file."),
 )
 
 
@@ -229,17 +227,6 @@ def generate_launch_description() -> LaunchDescription:
             "'",
         ]
     )
-    mpc_params_selected = PythonExpression(
-        [
-            "'",
-            _params_file("mpc_controller", "mpc_controller_skidpad.yaml"),
-            "' if '",
-            values["skidpad"],
-            "' == 'true' else '",
-            values["mpc_params_file"],
-            "'",
-        ]
-    )
     local_planner = Node(
         package="local_planner",
         executable="local_planner_node",
@@ -346,31 +333,9 @@ def generate_launch_description() -> LaunchDescription:
         executable="pure_pursuit_controller_node",
         name="pure_pursuit_controller_node",
         output="screen",
-        condition=IfCondition(
-            PythonExpression(
-                ["'", values["enable_controller"], "' == 'true' and '",
-                 values["controller_type"], "' == 'pure_pursuit'"]
-            )
-        ),
+        condition=IfCondition(values["enable_controller"]),
         parameters=[
             controller_params_selected,
-            {"use_sim_time": values["use_sim_time"]},
-        ],
-        remappings=controller_remappings,
-    )
-    mpc = Node(
-        package="mpc_controller",
-        executable="mpc_controller_node",
-        name="mpc_controller_node",
-        output="screen",
-        condition=IfCondition(
-            PythonExpression(
-                ["'", values["enable_controller"], "' == 'true' and '",
-                 values["controller_type"], "' == 'mpc'"]
-            )
-        ),
-        parameters=[
-            mpc_params_selected,
             {"use_sim_time": values["use_sim_time"]},
         ],
         remappings=controller_remappings,
@@ -413,6 +378,5 @@ def generate_launch_description() -> LaunchDescription:
         state_machine,
         selector,
         controller,
-        mpc,
         stack_hud,
     ])
