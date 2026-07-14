@@ -1,0 +1,28 @@
+# Skidpad MPC tuning: r=9.1 m circles at ~4 m/s; tighter speed cap and
+# gentler acceleration than trackdrive.
+mpc_controller_node:
+  ros__parameters:
+    wheelbase_m: 1.58
+    horizon_steps: 12
+    horizon_dt_sec: 0.1
+    max_steering_rad: 0.52
+    max_steering_rate_radps: 1.04
+    max_speed_mps: 4.0
+    min_acceleration_mps2: -8.0
+    max_acceleration_mps2: 2.0
+    q_lateral: 8.0
+    q_longitudinal: 0.5
+    q_heading: 6.0
+    q_speed: 1.0
+    q_steering: 0.1
+    r_steering_rate: 1.0
+    r_acceleration: 0.5
+    s_steering_rate: 2.0
+    s_acceleration_rate: 1.0
+    command_rate_hz: 20.0
+    input_timeout_sec: 0.5
+    actuation_delay_sec: 0.05
+    terminal_weight: 8.0
+    # Lateral integral trim (anti-windup: frozen while |error| > 0.5 m).
+    integral_gain: 0.12
+    integral_limit_rad: 0.08
