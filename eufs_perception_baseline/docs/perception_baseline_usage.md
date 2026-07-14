@@ -16,7 +16,7 @@
 현재 package는 SLAM 출력 형식을 고정하고, IIT Bombay 논문의 우선순위를 따른
 three-tier baseline으로 실제 cone observation을 `/cones`에 publish한다. Tier 1은
 LiDAR-camera association, Tier 2는 normalized bbox-height monocular depth, Tier 3는
-paper-inspired SIFT stereo이다.
+ReKTNet 7-keypoint/PnP-guided SIFT stereo이다.
 
 SLAM output contract:
 
@@ -165,6 +165,7 @@ SLAM 연결 확인용 모드이다.
 ```text
 eufs_perception_baseline/
   eufs_perception_baseline/
+    latest_only_worker.py
     perception_baseline_node.py
     yolov8_bbox_node.py
     yolov8_bbox_utils.py
@@ -180,6 +181,8 @@ eufs_perception_baseline/
 파일 역할:
 
 - `perception_baseline_node.py`: 실제 node 구현
+- `latest_only_worker.py`: YOLO/fusion의 latest-only background compute와
+  executor-serialized completion 전달
 - `yolov8_bbox_node.py`: YOLOv8 image detector node
 - `yolov8_bbox_utils.py`: YOLO result -> EUFS bbox 변환 helper
 - `perception_baseline.yaml`: 기본 parameter 정리
@@ -196,6 +199,10 @@ eufs_perception_baseline/
   - 반대 stream이 anchor까지 도달하면 predecessor/successor 중 가까운 sample을
     one-shot으로 선택한다. 같은 timestamp는 즉시 처리하고 빠른 stream에서
     건너뛴 sample은 폐기한다.
+  - 선택한 pair를 generation-tagged worker job으로 제출한다. 계산 완료 후에도
+    같은 clock epoch와 같은 buffer entry이고 acquisition timestamp가
+    `output_commit_settle_sec`만큼 현재 ROS clock 뒤에 있을 때만 `/cones`를
+    publish한다.
 
 - `_run_lidar_camera_fusion()`
   - three-tier pipeline 전체를 실행한다.
@@ -234,7 +241,9 @@ eufs_perception_baseline/
 
 - `_associate_visual_detections()`
   - LiDAR support가 전혀 없는 detection만 good cone은 monocular, bad cone은
-    SIFT stereo 한 경로로 보낸다. calibration/TF/match가 부족하면 fail-closed한다.
+    ReKTNet/PnP/right-ROI/SIFT stereo로 보낸다. 좌/우 경계 standard cone의
+    confidence/height-gated mono recovery는 비논문 opt-in이며 기본값은 꺼져 있다.
+    상/하단 clipping은 fail-closed한다.
 
 - `_cluster_to_cone()`
   - matching된 LiDAR cluster centroid를 `ConeWithCovariance`로 변환한다.
@@ -257,6 +266,9 @@ YOLOv8 detector의 주요 정책:
   `Image.header`를 사용한다.
 - `unknown_color_policy` 기본값은 `unknown`이다. 색상 class를 알 수 없는
   detection은 fusion 후 `unknown_color_cones`로 들어간다.
+- 추론 중 새 frame이 들어오면 대기 slot에는 가장 최신 frame 하나만 남긴다.
+- `/clock` rollback 이전 generation의 완료 결과는 bbox/debug topic에 publish하지
+  않는다.
 
 ## 5. Default Topics
 
@@ -681,8 +693,15 @@ sync_queue_size: 12
 image_sync_queue_size: 64
 timestamp_reset_threshold_sec: 0.1
 max_future_stamp_lead_sec: 0.09
+max_deferred_future_stamp_lead_sec: 0.30
+stereo_pair_wait_sec: 0.80
+output_commit_settle_sec: 0.1
 publish_empty_on_sync: false
 ```
+
+`output_commit_settle_sec`는 `/clock` rollback과 worker completion이 같은 executor
+주기에 ready가 되었을 때 이전 epoch 결과가 먼저 publish되는 것을 막는 commit
+fence이다. ROS time이 비활성인 실차/system-time 실행에는 적용하지 않는다.
 
 ROI:
 
@@ -720,8 +739,16 @@ Visual fallback:
 
 ```yaml
 monocular_fallback_enabled: true
-stereo_fallback_enabled: true  # YOLO-left mode only; simulated mode forces false
-stereo_min_matches: 3
+stereo_fallback_enabled: false  # enable only after provisioning ReKTNet assets
+rektnet_model_path: /home/dohyun/FS/artifacts/rektnet/pretrained_kpt.pt
+rektnet_pnp_max_reprojection_error_px: 4.0
+rektnet_right_roi_padding_ratio: 0.08
+stereo_min_matches: 1  # IIT 논문 결과에 따라 최상 SIFT 대응점 1개 사용
+horizontal_clip_fallback_enabled: false  # non-paper recovery is opt-in
+horizontal_clip_min_probability: 0.70
+horizontal_clip_min_bbox_height_px: 20.0
+horizontal_clip_variance_x: 0.70
+horizontal_clip_variance_y: 1.40
 ```
 
 Covariance:
@@ -757,7 +784,10 @@ min_variance: 0.0001
   `map -> odom -> base_footprint`를 소유하는 통합 모드는 localization correction
   jump를 ego-motion 보상에 섞지 않도록 `motion_compensation_frame:=odom`을 쓴다.
 - `image_sync_queue_size: 64`는 60 Hz 기준 약 1.07초의 좌/우 raw image 이력을
-  유지해 측정된 약 0.53초 YOLO 지연을 흡수한다. 1280x720 BGR 두 stream이 모두
+  유지해 측정된 약 0.53초 YOLO 지연을 흡수한다. 좌/우 frame은 동일 stamp 우선,
+  허용 오차 내 mature nearest 차선의 one-to-one stereo pair로 먼저 묶이며 fusion은
+  이 joint pair만 사용한다. Bbox/cloud가 먼저 준비되면 right stream이 target을
+  지나거나 `stereo_pair_wait_sec`가 만료될 때까지만 기다린다. 1280x720 BGR 두 stream이 모두
   가득 차면 payload만 약 340 MiB이므로, 실제 detector latency와 frame rate를
   측정한 뒤 필요한 margin을 유지하는 범위에서 조정한다.
 - 같은 sensor stream에서 duplicate 또는 역순 도착한 timestamp는 해당 메시지만
@@ -773,6 +803,9 @@ min_variance: 0.0001
   이전 subscription의 재오염을 막기 위해 새 buffer로 격리한다.
   Galactic이 정상적인 양의 clock tick에도 jump callback을 호출할 수 있어 callback
   delta를 다시 검사하며, `max_future_stamp_lead_sec`는 rollback 기준보다 작아야 한다.
+  정상 epoch에서는 90 ms를 넘지만 `max_deferred_future_stamp_lead_sec`(기본 300 ms)
+  이내인 callback skew를 bounded buffer에 두고 ROS clock이 따라온 뒤 처리한다.
+  `use_sim_time`의 첫 nonzero `/clock` 이전 입력도 같은 방식으로 보관한다.
   Rollback 직전 clock high watermark를 overflow-safe하게 복원해 replay guard 끝으로
   저장한다. Clock이 그 지점에 다시 도달하기 전에도 DDS callback 순서 차이를 위해
   설정된 `max_future_stamp_lead_sec`(기본 90 ms)까지 선행 stamp를 허용하지만, 기존
@@ -789,12 +822,17 @@ min_variance: 0.0001
   simulated bbox `camera_frame` parameter를 `zed_right_camera_optical_frame`으로
   둔다. YOLO mode에서는 `/zed/left/camera_info`와
   `zed_left_camera_optical_frame`을 사용한다.
-- Simulator bbox는 right-camera 기준이므로 left-to-right SIFT search를 시작할
+- Simulator bbox는 right-camera 기준이므로 ReKTNet/PnP right projection을 시작할
   left bbox가 없다. 이 모드의 stereo tier는 강제로 꺼지고, YOLO-left mode에서만
   rectified right image와 함께 활성화된다.
-- 논문의 exact Tier 3인 RekTNet 7-keypoint/PnP는 weights와 3D keypoint template이
-  repository에 없어 재현하지 못한다. 현재 `stereo_sift`는 명시적으로
-  paper-inspired 구현이며 synthetic disparity 검증 범위까지만 보장한다.
+- Tier 3은 `YOLO bbox -> ReKTNet 7 keypoints -> robust PnP -> right ROI projection
+  -> slender ROI SIFT -> disparity` 순서를 구현한다. 공식 upstream checkpoint URL은
+  현재 403이고 IIT fine-tuned weight/template은 비공개이므로 compatible local
+  checkpoint와 실측 7x3 template/calibration이 필요하다. 기본 EUFS template은
+  직선 cone contour의 1/3, 2/3 height를 명시적 가정으로 사용한다.
+- `stereo_fallback_enabled:=true`인데 `rektnet_model_path`가 없거나 public
+  architecture와 호환되지 않으면 node는 bbox-only SIFT로 조용히 우회하지 않고
+  startup error로 종료한다.
 - `stereo_fallback_enabled:=true`인데 현재 OpenCV에 `cv2.SIFT_create`가 없으면
   node는 해당 tier를 조용히 비활성화하지 않고 실행 시 actionable error로 종료한다.
   project conda 환경을 사용하거나 SIFT-capable OpenCV를 준비해야 한다.

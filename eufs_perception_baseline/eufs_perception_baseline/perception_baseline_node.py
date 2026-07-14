@@ -1,8 +1,10 @@
 import math
 import struct
+import threading
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Tuple
+from typing import Any, Iterable, List, Optional, Tuple
 
 import numpy as np
 import rclpy
@@ -24,14 +26,22 @@ from tf2_ros import Buffer, TransformException, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
 from eufs_perception_baseline.fusion_core import (
-    baseline_from_projection,
     camera_point_from_depth,
     classify_cone_condition,
-    estimate_stereo_depth,
     monocular_depth_from_bbox,
     remove_ground_ransac,
 )
+from eufs_perception_baseline.latest_only_worker import (
+    LatestOnlyWorker,
+    WorkerCompletion,
+)
 from eufs_perception_baseline.ros_image_utils import image_message_to_numpy
+from eufs_perception_baseline.rektnet import (
+    RektNetInference,
+    cone_keypoint_template,
+    estimate_rektnet_stereo_depth,
+    rectified_right_from_left,
+)
 from eufs_perception_baseline.sync_buffer import TimestampBuffer
 
 try:
@@ -98,6 +108,57 @@ class DetectionDebugReport:
     support_centroid_base: Optional[np.ndarray]
 
 
+@dataclass(frozen=True)
+class FusionJob:
+    job_id: int
+    generation: int
+    key: SyncKey
+    bbox_entry: Any
+    cloud_entry: Any
+    tolerance_ns: int
+    pointcloud: PointCloud2
+    bboxes: BoundingBoxes
+    camera_info: CameraInfo
+    left_image: Optional[Image]
+    right_image: Optional[Image]
+    right_camera_info: Optional[CameraInfo]
+
+
+@dataclass(frozen=True)
+class FusionComputation:
+    cones: ConeArrayWithCovariance
+    roi_points: Optional[PointCloud2] = None
+    sparse_points: Optional[PointCloud2] = None
+    cluster_markers: Optional[MarkerArray] = None
+    support_markers: Optional[MarkerArray] = None
+    rejection_markers: Optional[MarkerArray] = None
+
+
+@dataclass(frozen=True)
+class StereoFrame:
+    """One jointly matched rectified left/right acquisition."""
+
+    left_stamp_ns: int
+    right_stamp_ns: int
+    left_image: Image
+    right_image: Image
+
+
+@dataclass(frozen=True)
+class StereoContext:
+    """Images and calibration required by RekTNet/PnP-guided stereo."""
+
+    left_image: np.ndarray
+    right_image: np.ndarray
+    left_camera_matrix: np.ndarray
+    right_camera_matrix: np.ndarray
+    left_distortion: np.ndarray
+    right_distortion: np.ndarray
+    right_from_left: np.ndarray
+    baseline_m: float
+    principal_offset_px: float
+
+
 class PerceptionBaselineNode(Node):
     """
     Baseline perception node for EUFS graph SLAM.
@@ -106,14 +167,22 @@ class PerceptionBaselineNode(Node):
     - Oracle adapter mode republishes simulator cone arrays into the SLAM contract.
     - Sensor fusion mode follows the IIT Bombay tier priority: projected LiDAR
       support first, normalized bbox-height monocular depth for good cones, and
-      central slender-region SIFT stereo for bad cones.
+      RekTNet/PnP-propagated slender-region SIFT stereo for bad cones.
     """
 
     def __init__(self) -> None:
         super().__init__("perception_baseline_node")
 
+        self._clock_generation = 0
+
         self._declare_parameters()
         self._load_parameters()
+        self.rektnet_estimator = None
+        if self.stereo_fallback_enabled:
+            self.rektnet_estimator = RektNetInference(
+                self.rektnet_model_path,
+                self.rektnet_device,
+            )
 
         sensor_qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
@@ -224,6 +293,7 @@ class PerceptionBaselineNode(Node):
         self.latest_right_camera_info: Optional[CameraInfo] = None
         self.image_buffer = TimestampBuffer(self.image_sync_queue_size)
         self.right_image_buffer = TimestampBuffer(self.image_sync_queue_size)
+        self.stereo_buffer = TimestampBuffer(self.image_sync_queue_size)
         self.pointcloud_buffer = TimestampBuffer(self.sync_queue_size)
         self.bbox_buffer = TimestampBuffer(self.sync_queue_size)
         self.latest_stream_stamp_ns = {}
@@ -236,6 +306,21 @@ class PerceptionBaselineNode(Node):
         self.last_empty_key: Optional[SyncKey] = None
         self.last_fusion_key: Optional[SyncKey] = None
         self.last_warning_time = {}
+        self._shutting_down = False
+        self._fusion_job_sequence = 0
+        self._fusion_job_inflight: Optional[FusionJob] = None
+        self._deferred_fusion_completion = None
+        self._tf_lock = threading.RLock()
+        self._fusion_worker = LatestOnlyWorker(
+            self,
+            self._compute_fusion_job,
+            self._commit_fusion_completion,
+            "perception-fusion",
+        )
+        self._completion_timer = self.create_timer(
+            0.02,
+            self._retry_deferred_fusion_completion,
+        )
         self.clock_jump_handler = self.get_clock().create_jump_callback(
             JumpThreshold(
                 # Galactic converts None to zero, which schedules this callback
@@ -248,6 +333,7 @@ class PerceptionBaselineNode(Node):
                 ),
                 on_clock_change=True,
             ),
+            pre_callback=self._before_clock_jump,
             post_callback=self._on_clock_jump,
         )
 
@@ -303,6 +389,8 @@ class PerceptionBaselineNode(Node):
         self.declare_parameter("image_sync_queue_size", 64)
         self.declare_parameter("timestamp_reset_threshold_sec", 0.1)
         self.declare_parameter("max_future_stamp_lead_sec", 0.09)
+        self.declare_parameter("max_deferred_future_stamp_lead_sec", 0.3)
+        self.declare_parameter("output_commit_settle_sec", 0.1)
         self.declare_parameter("publish_empty_on_sync", False)
         self.declare_parameter("fusion_enabled", True)
         self.declare_parameter("publish_fusion_debug", True)
@@ -358,26 +446,53 @@ class PerceptionBaselineNode(Node):
         self.declare_parameter("sparse_variance_y", 0.12)
 
         self.declare_parameter("monocular_fallback_enabled", True)
+        self.declare_parameter(
+            "monocular_allowed_colors",
+            "blue,yellow,orange",
+        )
         self.declare_parameter("monocular_depth_coefficient", 0.498)
         self.declare_parameter("monocular_depth_exponent", -0.954)
         self.declare_parameter("monocular_min_depth_m", 0.5)
         self.declare_parameter("monocular_max_depth_m", 30.0)
         self.declare_parameter("good_cone_min_height_to_width", 1.2)
         self.declare_parameter("good_cone_border_margin_ratio", 0.01)
+        self.declare_parameter("horizontal_clip_fallback_enabled", False)
+        self.declare_parameter("horizontal_clip_min_probability", 0.7)
+        self.declare_parameter("horizontal_clip_min_bbox_height_px", 20.0)
+        self.declare_parameter("horizontal_clip_variance_x", 0.70)
+        self.declare_parameter("horizontal_clip_variance_y", 1.40)
         self.declare_parameter("monocular_variance_x", 0.35)
         self.declare_parameter("monocular_variance_y", 0.35)
 
         # Direct execution defaults to the simulator's right-camera bbox
         # contract, which has no left-view bbox for stereo correspondence.
-        # The YOLO launch path explicitly enables stereo with left-view boxes.
+        # Enable this explicitly after provisioning a ReKTNet checkpoint and
+        # measured seven-point cone templates for YOLO-left operation.
         self.declare_parameter("stereo_fallback_enabled", False)
+        self.declare_parameter(
+            "rektnet_model_path",
+            "/home/dohyun/FS/artifacts/rektnet/pretrained_kpt.pt",
+        )
+        self.declare_parameter("rektnet_device", "")
+        self.declare_parameter("rektnet_min_heatmap_peak", 0.0)
+        self.declare_parameter("rektnet_pnp_max_reprojection_error_px", 4.0)
+        self.declare_parameter("rektnet_right_roi_padding_ratio", 0.08)
+        self.declare_parameter(
+            "rektnet_standard_object_points",
+            cone_keypoint_template(0.31, 0.11).reshape(-1).tolist(),
+        )
+        self.declare_parameter(
+            "rektnet_large_object_points",
+            cone_keypoint_template(0.53, 0.13).reshape(-1).tolist(),
+        )
+        self.declare_parameter("stereo_pair_wait_sec", 0.8)
         self.declare_parameter("stereo_baseline_m", 0.12)
         self.declare_parameter("stereo_min_depth_m", 0.5)
         self.declare_parameter("stereo_max_depth_m", 30.0)
         self.declare_parameter("stereo_epipolar_tolerance_px", 2.0)
         self.declare_parameter("stereo_slender_fraction", 0.5)
         self.declare_parameter("stereo_ratio_threshold", 0.75)
-        self.declare_parameter("stereo_min_matches", 3)
+        self.declare_parameter("stereo_min_matches", 1)
         self.declare_parameter("stereo_variance_x", 0.50)
         self.declare_parameter("stereo_variance_y", 0.50)
 
@@ -436,6 +551,12 @@ class PerceptionBaselineNode(Node):
         )
         self.max_future_stamp_lead_sec = float(
             self.get_parameter("max_future_stamp_lead_sec").value
+        )
+        self.max_deferred_future_stamp_lead_sec = float(
+            self.get_parameter("max_deferred_future_stamp_lead_sec").value
+        )
+        self.output_commit_settle_sec = float(
+            self.get_parameter("output_commit_settle_sec").value
         )
         self.publish_empty_on_sync = self._as_bool(
             self.get_parameter("publish_empty_on_sync").value
@@ -542,6 +663,13 @@ class PerceptionBaselineNode(Node):
         self.monocular_fallback_enabled = self._as_bool(
             self.get_parameter("monocular_fallback_enabled").value
         )
+        self.monocular_allowed_colors = {
+            color.strip().lower()
+            for color in str(
+                self.get_parameter("monocular_allowed_colors").value
+            ).split(",")
+            if color.strip()
+        }
         self.monocular_depth_coefficient = float(
             self.get_parameter("monocular_depth_coefficient").value
         )
@@ -560,6 +688,21 @@ class PerceptionBaselineNode(Node):
         self.good_cone_border_margin_ratio = float(
             self.get_parameter("good_cone_border_margin_ratio").value
         )
+        self.horizontal_clip_fallback_enabled = self._as_bool(
+            self.get_parameter("horizontal_clip_fallback_enabled").value
+        )
+        self.horizontal_clip_min_probability = float(
+            self.get_parameter("horizontal_clip_min_probability").value
+        )
+        self.horizontal_clip_min_bbox_height_px = float(
+            self.get_parameter("horizontal_clip_min_bbox_height_px").value
+        )
+        self.horizontal_clip_variance_x = float(
+            self.get_parameter("horizontal_clip_variance_x").value
+        )
+        self.horizontal_clip_variance_y = float(
+            self.get_parameter("horizontal_clip_variance_y").value
+        )
         self.monocular_variance_x = float(
             self.get_parameter("monocular_variance_x").value
         )
@@ -569,6 +712,34 @@ class PerceptionBaselineNode(Node):
 
         self.stereo_fallback_enabled = self._as_bool(
             self.get_parameter("stereo_fallback_enabled").value
+        )
+        self.rektnet_model_path = str(
+            self.get_parameter("rektnet_model_path").value
+        ).strip()
+        self.rektnet_device = str(
+            self.get_parameter("rektnet_device").value
+        ).strip()
+        self.rektnet_min_heatmap_peak = float(
+            self.get_parameter("rektnet_min_heatmap_peak").value
+        )
+        self.rektnet_pnp_max_reprojection_error_px = float(
+            self.get_parameter("rektnet_pnp_max_reprojection_error_px").value
+        )
+        self.rektnet_right_roi_padding_ratio = float(
+            self.get_parameter("rektnet_right_roi_padding_ratio").value
+        )
+        self.rektnet_standard_object_points = (
+            self._validated_rektnet_template(
+                self.get_parameter("rektnet_standard_object_points").value,
+                "rektnet_standard_object_points",
+            )
+        )
+        self.rektnet_large_object_points = self._validated_rektnet_template(
+            self.get_parameter("rektnet_large_object_points").value,
+            "rektnet_large_object_points",
+        )
+        self.stereo_pair_wait_sec = float(
+            self.get_parameter("stereo_pair_wait_sec").value
         )
         self.stereo_baseline_m = float(
             self.get_parameter("stereo_baseline_m").value
@@ -619,6 +790,119 @@ class PerceptionBaselineNode(Node):
         self._validate_parameters()
 
     def _validate_parameters(self) -> None:
+        finite_parameters = (
+            ("marker_scale", self.marker_scale),
+            ("sync_tolerance_sec", self.sync_tolerance_sec),
+            ("image_sync_tolerance_sec", self.image_sync_tolerance_sec),
+            ("output_commit_settle_sec", self.output_commit_settle_sec),
+            ("stereo_pair_wait_sec", self.stereo_pair_wait_sec),
+            ("roi_min_x", self.roi_min_x),
+            ("roi_max_x", self.roi_max_x),
+            ("roi_abs_y", self.roi_abs_y),
+            ("roi_min_z", self.roi_min_z),
+            ("roi_max_z", self.roi_max_z),
+            ("ground_min_z", self.ground_min_z),
+            (
+                "ground_ransac_distance_threshold",
+                self.ground_ransac_distance_threshold,
+            ),
+            (
+                "ground_ransac_max_tilt_degrees",
+                self.ground_ransac_max_tilt_degrees,
+            ),
+            ("self_mask_min_x", self.self_mask_min_x),
+            ("self_mask_max_x", self.self_mask_max_x),
+            ("self_mask_abs_y", self.self_mask_abs_y),
+            ("self_mask_min_z", self.self_mask_min_z),
+            ("self_mask_max_z", self.self_mask_max_z),
+            ("cluster_eps", self.cluster_eps),
+            ("cluster_min_height", self.cluster_min_height),
+            ("cluster_max_height", self.cluster_max_height),
+            ("cluster_max_width", self.cluster_max_width),
+            ("min_bbox_probability", self.min_bbox_probability),
+            ("min_project_depth", self.min_project_depth),
+            ("sparse_bbox_margin_px", self.sparse_bbox_margin_px),
+            ("sparse_bbox_margin_ratio", self.sparse_bbox_margin_ratio),
+            ("sparse_near_range_m", self.sparse_near_range_m),
+            ("sparse_far_range_m", self.sparse_far_range_m),
+            (
+                "sparse_far_min_probability",
+                self.sparse_far_min_probability,
+            ),
+            (
+                "sparse_far_min_bbox_width_px",
+                self.sparse_far_min_bbox_width_px,
+            ),
+            (
+                "sparse_far_min_bbox_height_px",
+                self.sparse_far_min_bbox_height_px,
+            ),
+            ("sparse_max_depth_span_m", self.sparse_max_depth_span_m),
+            (
+                "sparse_max_depth_span_ratio",
+                self.sparse_max_depth_span_ratio,
+            ),
+            ("sparse_max_width", self.sparse_max_width),
+            ("sparse_variance_x", self.sparse_variance_x),
+            ("sparse_variance_y", self.sparse_variance_y),
+            (
+                "monocular_depth_coefficient",
+                self.monocular_depth_coefficient,
+            ),
+            ("monocular_depth_exponent", self.monocular_depth_exponent),
+            ("monocular_min_depth_m", self.monocular_min_depth_m),
+            ("monocular_max_depth_m", self.monocular_max_depth_m),
+            (
+                "good_cone_min_height_to_width",
+                self.good_cone_min_height_to_width,
+            ),
+            (
+                "good_cone_border_margin_ratio",
+                self.good_cone_border_margin_ratio,
+            ),
+            (
+                "horizontal_clip_min_probability",
+                self.horizontal_clip_min_probability,
+            ),
+            (
+                "horizontal_clip_min_bbox_height_px",
+                self.horizontal_clip_min_bbox_height_px,
+            ),
+            ("horizontal_clip_variance_x", self.horizontal_clip_variance_x),
+            ("horizontal_clip_variance_y", self.horizontal_clip_variance_y),
+            ("monocular_variance_x", self.monocular_variance_x),
+            ("monocular_variance_y", self.monocular_variance_y),
+            ("stereo_baseline_m", self.stereo_baseline_m),
+            ("rektnet_min_heatmap_peak", self.rektnet_min_heatmap_peak),
+            (
+                "rektnet_pnp_max_reprojection_error_px",
+                self.rektnet_pnp_max_reprojection_error_px,
+            ),
+            (
+                "rektnet_right_roi_padding_ratio",
+                self.rektnet_right_roi_padding_ratio,
+            ),
+            ("stereo_min_depth_m", self.stereo_min_depth_m),
+            ("stereo_max_depth_m", self.stereo_max_depth_m),
+            (
+                "stereo_epipolar_tolerance_px",
+                self.stereo_epipolar_tolerance_px,
+            ),
+            ("stereo_slender_fraction", self.stereo_slender_fraction),
+            ("stereo_ratio_threshold", self.stereo_ratio_threshold),
+            ("stereo_variance_x", self.stereo_variance_x),
+            ("stereo_variance_y", self.stereo_variance_y),
+            ("default_variance_x", self.default_variance_x),
+            ("default_variance_y", self.default_variance_y),
+            ("fused_variance_x", self.fused_variance_x),
+            ("fused_variance_y", self.fused_variance_y),
+            ("range_variance_scale", self.range_variance_scale),
+            ("min_variance", self.min_variance),
+        )
+        for name, value in finite_parameters:
+            if not math.isfinite(value):
+                raise ValueError(f"{name} must be finite")
+
         if self.projection_model not in ("pinhole", "eufs_bbox"):
             raise ValueError(
                 "projection_model must be 'pinhole' or 'eufs_bbox', got "
@@ -629,8 +913,70 @@ class PerceptionBaselineNode(Node):
         if self.image_sync_queue_size <= 0:
             raise ValueError("image_sync_queue_size must be greater than zero")
         self._validate_time_parameters()
+        if self.output_commit_settle_sec < 0.0:
+            raise ValueError("output_commit_settle_sec must not be negative")
+        try:
+            self.output_commit_settle_ns = int(
+                round(self.output_commit_settle_sec * 1.0e9)
+            )
+        except (OverflowError, ValueError) as exc:
+            raise ValueError(
+                "output_commit_settle_sec must fit in an int64 nanosecond "
+                "duration"
+            ) from exc
+        if not 0 <= self.output_commit_settle_ns <= INT64_MAX:
+            raise ValueError(
+                "output_commit_settle_sec must fit in an int64 nanosecond "
+                "duration"
+            )
+        if self.stereo_pair_wait_sec < 0.0:
+            raise ValueError("stereo_pair_wait_sec must not be negative")
+        try:
+            self.stereo_pair_wait_ns = int(
+                round(self.stereo_pair_wait_sec * 1.0e9)
+            )
+        except (OverflowError, ValueError) as exc:
+            raise ValueError(
+                "stereo_pair_wait_sec must fit in an int64 nanosecond duration"
+            ) from exc
+        if not 0 <= self.stereo_pair_wait_ns <= INT64_MAX:
+            raise ValueError(
+                "stereo_pair_wait_sec must fit in an int64 nanosecond duration"
+            )
         if self.sync_tolerance_sec < 0.0 or self.image_sync_tolerance_sec < 0.0:
             raise ValueError("synchronization tolerances must not be negative")
+        for name, tolerance in (
+            ("sync_tolerance_sec", self.sync_tolerance_sec),
+            ("image_sync_tolerance_sec", self.image_sync_tolerance_sec),
+        ):
+            if tolerance * 1.0e9 > INT64_MAX:
+                raise ValueError(f"{name} must fit in an int64 nanosecond duration")
+        if not str(self.output_cones_topic).strip():
+            raise ValueError("output_cones_topic must not be empty")
+        if not str(self.output_frame).strip():
+            raise ValueError("output_frame must not be empty")
+        for name, value in (
+            ("image_topic", self.image_topic),
+            ("right_image_topic", self.right_image_topic),
+            ("pointcloud_topic", self.pointcloud_topic),
+            ("bbox_topic", self.bbox_topic),
+            ("camera_info_topic", self.camera_info_topic),
+            ("right_camera_info_topic", self.right_camera_info_topic),
+        ):
+            if not str(value).strip():
+                raise ValueError(f"{name} must not be empty")
+        if self.publish_fusion_debug and not str(
+            self.fusion_debug_prefix
+        ).strip():
+            raise ValueError(
+                "fusion_debug_prefix must not be empty when debug is enabled"
+            )
+        if self.marker_scale <= 0.0:
+            raise ValueError("marker_scale must be positive")
+        if self.fusion_enabled and str(self.oracle_cones_topic).strip():
+            raise ValueError(
+                "fusion_enabled and oracle_cones_topic are mutually exclusive"
+            )
         if not self.camera_frame:
             raise ValueError("camera_frame must not be empty")
         if not self.motion_compensation_frame:
@@ -644,6 +990,12 @@ class PerceptionBaselineNode(Node):
             raise ValueError("roi_min_z must be less than roi_max_z")
         if self.roi_abs_y <= 0.0:
             raise ValueError("roi_abs_y must be greater than zero")
+        if not (self.self_mask_min_x < self.self_mask_max_x):
+            raise ValueError("self_mask_min_x must be less than self_mask_max_x")
+        if not (self.self_mask_min_z < self.self_mask_max_z):
+            raise ValueError("self_mask_min_z must be less than self_mask_max_z")
+        if self.self_mask_abs_y <= 0.0:
+            raise ValueError("self_mask_abs_y must be positive")
         if self.ground_ransac_distance_threshold <= 0.0:
             raise ValueError("ground_ransac_distance_threshold must be positive")
         if self.ground_ransac_max_iterations <= 0:
@@ -654,20 +1006,82 @@ class PerceptionBaselineNode(Node):
             raise ValueError("ground_ransac_min_inliers must be at least 3")
         if self.cluster_eps <= 0.0 or self.cluster_min_points <= 0:
             raise ValueError("cluster_eps and cluster_min_points must be positive")
+        if (
+            self.cluster_min_height < 0.0
+            or self.cluster_max_height <= self.cluster_min_height
+            or self.cluster_max_width <= 0.0
+        ):
+            raise ValueError(
+                "cluster dimensions must satisfy 0 <= min_height < max_height "
+                "and max_width > 0"
+            )
+        if not 0.0 <= self.min_bbox_probability <= 1.0:
+            raise ValueError("min_bbox_probability must be in [0, 1]")
         if self.min_projected_points <= 0 or self.min_project_depth <= 0.0:
             raise ValueError("projection support thresholds must be positive")
+        if self.sparse_bbox_margin_px < 0.0 or self.sparse_bbox_margin_ratio < 0.0:
+            raise ValueError("sparse bbox margins must not be negative")
+        if not 0.0 < self.sparse_near_range_m < self.sparse_far_range_m:
+            raise ValueError(
+                "sparse ranges must satisfy 0 < near_range < far_range"
+            )
+        if min(
+            self.sparse_near_min_points,
+            self.sparse_mid_min_points,
+            self.sparse_far_min_points,
+        ) <= 0:
+            raise ValueError("sparse point thresholds must be positive")
+        if not 0.0 <= self.sparse_far_min_probability <= 1.0:
+            raise ValueError("sparse_far_min_probability must be in [0, 1]")
+        if (
+            self.sparse_far_min_bbox_width_px <= 0.0
+            or self.sparse_far_min_bbox_height_px <= 0.0
+            or self.sparse_max_depth_span_m <= 0.0
+            or self.sparse_max_depth_span_ratio <= 0.0
+            or self.sparse_max_width <= 0.0
+        ):
+            raise ValueError("sparse geometry thresholds must be positive")
         if self.monocular_depth_coefficient <= 0.0:
             raise ValueError("monocular_depth_coefficient must be positive")
+        allowed_colors = {"blue", "yellow", "orange", "big_orange", "unknown"}
+        if not self.monocular_allowed_colors <= allowed_colors:
+            raise ValueError("monocular_allowed_colors contains an unknown color")
+        if self.monocular_fallback_enabled and not self.monocular_allowed_colors:
+            raise ValueError(
+                "monocular_allowed_colors must not be empty when mono is enabled"
+            )
         if not 0.0 < self.good_cone_min_height_to_width:
             raise ValueError("good_cone_min_height_to_width must be positive")
         if not 0.0 <= self.good_cone_border_margin_ratio < 0.5:
             raise ValueError("good_cone_border_margin_ratio must be in [0, 0.5)")
+        if not 0.0 <= self.horizontal_clip_min_probability <= 1.0:
+            raise ValueError("horizontal_clip_min_probability must be in [0, 1]")
+        if self.horizontal_clip_min_bbox_height_px <= 0.0:
+            raise ValueError("horizontal_clip_min_bbox_height_px must be positive")
         if not 0.0 < self.stereo_slender_fraction <= 1.0:
             raise ValueError("stereo_slender_fraction must be in (0, 1]")
         if not 0.0 < self.stereo_ratio_threshold < 1.0:
             raise ValueError("stereo_ratio_threshold must be in (0, 1)")
         if self.stereo_min_matches <= 0:
             raise ValueError("stereo_min_matches must be positive")
+        if self.stereo_fallback_enabled and not self.rektnet_model_path:
+            raise ValueError(
+                "rektnet_model_path must be set when stereo fallback is enabled"
+            )
+        if not 0.0 <= self.rektnet_min_heatmap_peak <= 1.0:
+            raise ValueError("rektnet_min_heatmap_peak must be in [0, 1]")
+        if self.rektnet_pnp_max_reprojection_error_px <= 0.0:
+            raise ValueError(
+                "rektnet_pnp_max_reprojection_error_px must be positive"
+            )
+        if not 0.0 <= self.rektnet_right_roi_padding_ratio <= 1.0:
+            raise ValueError(
+                "rektnet_right_roi_padding_ratio must be in [0, 1]"
+            )
+        if self.stereo_baseline_m <= 0.0:
+            raise ValueError("stereo_baseline_m must be positive")
+        if self.stereo_epipolar_tolerance_px < 0.0:
+            raise ValueError("stereo_epipolar_tolerance_px must not be negative")
         for name, minimum, maximum in (
             (
                 "monocular depth",
@@ -678,6 +1092,25 @@ class PerceptionBaselineNode(Node):
         ):
             if minimum <= 0.0 or maximum <= minimum:
                 raise ValueError(f"{name} range must satisfy 0 < min < max")
+        for name, value in (
+            ("default_variance_x", self.default_variance_x),
+            ("default_variance_y", self.default_variance_y),
+            ("fused_variance_x", self.fused_variance_x),
+            ("fused_variance_y", self.fused_variance_y),
+            ("sparse_variance_x", self.sparse_variance_x),
+            ("sparse_variance_y", self.sparse_variance_y),
+            ("monocular_variance_x", self.monocular_variance_x),
+            ("monocular_variance_y", self.monocular_variance_y),
+            ("horizontal_clip_variance_x", self.horizontal_clip_variance_x),
+            ("horizontal_clip_variance_y", self.horizontal_clip_variance_y),
+            ("stereo_variance_x", self.stereo_variance_x),
+            ("stereo_variance_y", self.stereo_variance_y),
+            ("min_variance", self.min_variance),
+        ):
+            if value <= 0.0:
+                raise ValueError(f"{name} must be positive")
+        if self.range_variance_scale < 0.0:
+            raise ValueError("range_variance_scale must not be negative")
 
     def _validate_time_parameters(self) -> None:
         if (
@@ -696,6 +1129,14 @@ class PerceptionBaselineNode(Node):
                 "max_future_stamp_lead_sec must be finite, positive, and "
                 "representable as an int64 nanosecond duration"
             )
+        if (
+            not math.isfinite(self.max_deferred_future_stamp_lead_sec)
+            or self.max_deferred_future_stamp_lead_sec <= 0.0
+        ):
+            raise ValueError(
+                "max_deferred_future_stamp_lead_sec must be finite, positive, "
+                "and representable as an int64 nanosecond duration"
+            )
         try:
             reset_threshold_ns = int(
                 self.timestamp_reset_threshold_sec * 1.0e9
@@ -712,6 +1153,15 @@ class PerceptionBaselineNode(Node):
                 "max_future_stamp_lead_sec must convert to a positive int64 "
                 "nanosecond duration"
             ) from None
+        try:
+            max_deferred_future_ns = int(
+                self.max_deferred_future_stamp_lead_sec * 1.0e9
+            )
+        except (OverflowError, ValueError):
+            raise ValueError(
+                "max_deferred_future_stamp_lead_sec must convert to a positive "
+                "int64 nanosecond duration"
+            ) from None
         max_duration_ns = (1 << 63) - 1
         if reset_threshold_ns <= 0 or reset_threshold_ns > max_duration_ns:
             raise ValueError(
@@ -723,14 +1173,28 @@ class PerceptionBaselineNode(Node):
                 "max_future_stamp_lead_sec must convert to a positive int64 "
                 "nanosecond duration"
             )
+        if (
+            max_deferred_future_ns <= 0
+            or max_deferred_future_ns > max_duration_ns
+        ):
+            raise ValueError(
+                "max_deferred_future_stamp_lead_sec must convert to a positive "
+                "int64 nanosecond duration"
+            )
         if max_future_ns >= reset_threshold_ns:
             raise ValueError(
                 "max_future_stamp_lead_sec must be smaller than "
                 "timestamp_reset_threshold_sec to bound previous-epoch "
                 "watermark contamination after a rollback"
             )
+        if max_deferred_future_ns < max_future_ns:
+            raise ValueError(
+                "max_deferred_future_stamp_lead_sec must be greater than or equal "
+                "to max_future_stamp_lead_sec"
+            )
         self.timestamp_reset_threshold_ns = reset_threshold_ns
         self.max_future_stamp_lead_ns = max_future_ns
+        self.max_deferred_future_stamp_lead_ns = max_deferred_future_ns
 
     def _validate_stereo_capability(self) -> None:
         if self.stereo_fallback_enabled and not _sift_available():
@@ -781,7 +1245,12 @@ class PerceptionBaselineNode(Node):
             )
         info_frame = str(camera_info.header.frame_id).strip()
         expected_frame = str(expected_frame or "").strip()
-        if info_frame and expected_frame and info_frame != expected_frame:
+        if expected_frame and not info_frame:
+            raise RuntimeError(
+                "CameraInfo frame_id is empty; configured camera frame is "
+                f"{expected_frame!r}"
+            )
+        if expected_frame and info_frame != expected_frame:
             raise RuntimeError(
                 "CameraInfo frame_id differs from configured camera frame: "
                 f"camera_info={info_frame!r}, configured={expected_frame!r}"
@@ -795,7 +1264,12 @@ class PerceptionBaselineNode(Node):
     ) -> None:
         actual = str(frame_id or "").strip()
         expected = str(expected_frame or "").strip()
-        if actual and expected and actual != expected:
+        if expected and not actual:
+            raise RuntimeError(
+                f"{source_name} frame_id is empty; configured camera frame is "
+                f"{expected!r}"
+            )
+        if expected and actual != expected:
             raise RuntimeError(
                 f"{source_name} frame_id differs from configured camera frame: "
                 f"{source_name.lower()}={actual!r}, configured={expected!r}"
@@ -827,6 +1301,7 @@ class PerceptionBaselineNode(Node):
             return
         self.latest_image = msg
         self.image_buffer.add(stamp_ns, msg)
+        self._pair_ready_stereo_images()
         self._try_publish_empty_from_sensor_pair()
         self._try_publish_fusion()
 
@@ -838,7 +1313,55 @@ class PerceptionBaselineNode(Node):
             return
         self.latest_right_image = msg
         self.right_image_buffer.add(stamp_ns, msg)
+        self._pair_ready_stereo_images()
         self._try_publish_fusion()
+
+    def _pair_ready_stereo_images(self) -> None:
+        """Build deterministic one-to-one stereo pairs before bbox matching."""
+        tolerance_ns = int(round(self.image_sync_tolerance_sec * 1.0e9))
+        while len(self.image_buffer) and len(self.right_image_buffer):
+            left_entries = self.image_buffer.entries()
+            right_entries = self.right_image_buffer.entries()
+
+            exact = next(
+                (
+                    (left, right)
+                    for left in left_entries
+                    for right in right_entries
+                    if left.stamp_ns == right.stamp_ns
+                ),
+                None,
+            )
+            if exact is not None:
+                left_entry, right_entry = exact
+            else:
+                maturity_cutoff = min(
+                    left_entries[-1].stamp_ns,
+                    right_entries[-1].stamp_ns,
+                ) - tolerance_ns
+                candidates = [
+                    (abs(left.stamp_ns - right.stamp_ns), left.stamp_ns, right.stamp_ns, left, right)
+                    for left in left_entries
+                    for right in right_entries
+                    if left.stamp_ns <= maturity_cutoff
+                    and right.stamp_ns <= maturity_cutoff
+                    and abs(left.stamp_ns - right.stamp_ns) <= tolerance_ns
+                ]
+                if not candidates:
+                    return
+                _, _, _, left_entry, right_entry = min(candidates)
+
+            self.image_buffer.remove(left_entry.stamp_ns)
+            self.right_image_buffer.remove(right_entry.stamp_ns)
+            self.stereo_buffer.add(
+                left_entry.stamp_ns,
+                StereoFrame(
+                    left_stamp_ns=left_entry.stamp_ns,
+                    right_stamp_ns=right_entry.stamp_ns,
+                    left_image=left_entry.value,
+                    right_image=right_entry.value,
+                ),
+            )
 
     def _pointcloud_callback(self, msg: PointCloud2) -> None:
         stamp_ns = self._prepare_sensor_message_stamp(
@@ -867,10 +1390,19 @@ class PerceptionBaselineNode(Node):
         epoch_start_ros_time_ns: Optional[int] = None,
         fallback_rollback: bool = False,
         preserve_replay_guards: bool = False,
+        invalidate_generation: bool = True,
     ) -> None:
         """Discard all cross-sensor state at an authoritative clock epoch change."""
+        if invalidate_generation:
+            self._clock_generation += 1
+            worker = getattr(self, "_fusion_worker", None)
+            if worker is not None:
+                worker.clear_pending()
+        self._fusion_job_inflight = None
+        self._deferred_fusion_completion = None
         self.image_buffer.clear()
         self.right_image_buffer.clear()
+        self.stereo_buffer.clear()
         self.pointcloud_buffer.clear()
         self.bbox_buffer.clear()
         self.latest_stream_stamp_ns.clear()
@@ -878,6 +1410,8 @@ class PerceptionBaselineNode(Node):
         self.latest_right_image = None
         self.latest_pointcloud = None
         self.latest_bboxes = None
+        self.latest_camera_info = None
+        self.latest_right_camera_info = None
         self.last_empty_key = None
         self.last_fusion_key = None
         if epoch_start_ros_time_ns is None:
@@ -926,8 +1460,22 @@ class PerceptionBaselineNode(Node):
         self._reset_tf_epoch()
         self.sensor_epoch += 1
 
+    def _before_clock_jump(self) -> None:
+        """Invalidate in-flight output before rclpy applies the new ROS time."""
+        self._clock_generation += 1
+        self._fusion_job_inflight = None
+        self._deferred_fusion_completion = None
+        worker = getattr(self, "_fusion_worker", None)
+        if worker is not None:
+            worker.clear_pending()
+
     def _reset_tf_epoch(self) -> None:
         """Recreate the TF subscription while retaining cached static transforms."""
+        with getattr(self, "_tf_lock", nullcontext()):
+            self._reset_tf_epoch_locked()
+
+    def _reset_tf_epoch_locked(self) -> None:
+        """Reset TF while excluding worker lookups against the old listener."""
         old_listener = self.tf_listener
         listener_unregistered = False
         try:
@@ -982,6 +1530,7 @@ class PerceptionBaselineNode(Node):
             replay_guard_end_ros_time_ns=replay_guard_end_ns,
             epoch_start_ros_time_ns=new_now_ns,
             preserve_replay_guards=not clock_source_changed,
+            invalidate_generation=False,
         )
         self._warn_throttled(
             "sensor_time_reset",
@@ -1174,22 +1723,34 @@ class PerceptionBaselineNode(Node):
                 period_sec=1.0,
             )
             return False
-        if (
-            (replaying_rollback_interval or ros_time_is_active or now_ns > 0)
-            and stamp_ns > now_ns + max_future_ns
-        ):
+        waiting_for_first_ros_clock = (
+            ros_time_is_active
+            and now_ns <= 0
+            and not replaying_rollback_interval
+        )
+        clock_is_valid = (
+            replaying_rollback_interval
+            or (not waiting_for_first_ros_clock and now_ns > 0)
+        )
+        if clock_is_valid and stamp_ns > now_ns + max_future_ns:
+            max_deferred_ns = self.max_deferred_future_stamp_lead_ns
+            if replaying_rollback_interval or stamp_ns > now_ns + max_deferred_ns:
+                allowed_lead_ns = (
+                    max_future_ns if replaying_rollback_interval else max_deferred_ns
+                )
+                self._warn_throttled(
+                    f"future_{stream_name}",
+                    f"Dropping {stream_name} timestamp {stamp_ns} more than "
+                    f"{allowed_lead_ns * 1.0e-9:.3f} s ahead of ROS time",
+                    period_sec=1.0,
+                )
+                return False
             self._warn_throttled(
-                f"future_{stream_name}",
-                f"Dropping {stream_name} timestamp {stamp_ns} more than "
-                f"{max_future_ns * 1.0e-9:.3f} s ahead of ROS time"
-                + (
-                    " while replaying a rolled-back clock interval"
-                    if replaying_rollback_interval
-                    else ""
-                ),
-                period_sec=1.0,
+                f"deferred_future_{stream_name}",
+                f"Buffering {stream_name} timestamp {stamp_ns} until ROS time "
+                "catches up",
+                period_sec=5.0,
             )
-            return False
 
         previous = self.latest_stream_stamp_ns.get(stream_name)
         if previous is not None and stamp_ns <= previous:
@@ -1205,11 +1766,26 @@ class PerceptionBaselineNode(Node):
             self.latest_stream_stamp_ns[stream_name] = stamp_ns
         return True
 
+    def _stamp_ready_for_processing(self, stamp_ns: int) -> bool:
+        clock = self.get_clock()
+        now_ns = int(clock.now().nanoseconds)
+        if not bool(getattr(clock, "ros_time_is_active", False)) and now_ns <= 0:
+            return True
+        return stamp_ns <= now_ns + self.max_future_stamp_lead_ns
+
     def _camera_info_callback(self, msg: CameraInfo) -> None:
+        if self._prepare_sensor_message_stamp(
+            "left_camera_info", msg.header.stamp
+        ) is None:
+            return
         self.latest_camera_info = msg
         self._try_publish_fusion()
 
     def _right_camera_info_callback(self, msg: CameraInfo) -> None:
+        if self._prepare_sensor_message_stamp(
+            "right_camera_info", msg.header.stamp
+        ) is None:
+            return
         self.latest_right_camera_info = msg
         self._try_publish_fusion()
 
@@ -1238,7 +1814,11 @@ class PerceptionBaselineNode(Node):
         self._publish_cones(msg)
 
     def _try_publish_fusion(self) -> None:
-        if not self.fusion_enabled:
+        if (
+            not self.fusion_enabled
+            or self._shutting_down
+            or self._fusion_job_inflight is not None
+        ):
             return
         missing_inputs = []
         if len(self.pointcloud_buffer) == 0:
@@ -1269,6 +1849,10 @@ class PerceptionBaselineNode(Node):
             return
 
         bbox_entry, cloud_entry = selected
+        if not self._stamp_ready_for_processing(
+            max(bbox_entry.stamp_ns, cloud_entry.stamp_ns)
+        ):
+            return
         pointcloud = cloud_entry.value
         bboxes = bbox_entry.value
         cloud_stamp = pointcloud.header.stamp
@@ -1279,65 +1863,215 @@ class PerceptionBaselineNode(Node):
             self.pointcloud_buffer.remove(cloud_entry.stamp_ns)
             return
 
-        left_entry = self.image_buffer.nearest(
-            bbox_entry.stamp_ns,
-            image_tolerance_ns,
-        )
-        right_entry = self.right_image_buffer.nearest(
+        stereo_entry = self.stereo_buffer.nearest(
             bbox_entry.stamp_ns,
             image_tolerance_ns,
         )
         if (
-            left_entry is not None
-            and right_entry is not None
-            and abs(left_entry.stamp_ns - right_entry.stamp_ns)
-            > image_tolerance_ns
-        ):
-            # Each image may independently be close to the bbox while the
-            # stereo pair itself is too far apart.  Disable only the stereo
-            # tier for this bundle; LiDAR and monocular paths remain valid.
-            right_entry = None
-
-        try:
-            cones = self._run_lidar_camera_fusion(
-                pointcloud,
-                bboxes,
-                self.latest_camera_info,
-                left_image=left_entry.value if left_entry is not None else None,
-                right_image=right_entry.value if right_entry is not None else None,
-                right_camera_info=self.latest_right_camera_info,
+            self.stereo_fallback_enabled
+            and (
+                stereo_entry is None
+                or self.latest_right_camera_info is None
             )
-        except TransformException as exc:
-            self._warn_throttled("tf", f"Fusion skipped: missing TF ({exc})")
-            if self._drop_failed_pair_if_superseded(
-                bbox_entry,
-                cloud_entry,
-                tolerance_ns,
-            ):
-                self._try_publish_fusion()
+            and self._stereo_inputs_may_still_arrive(
+                bbox_entry.stamp_ns,
+                image_tolerance_ns,
+            )
+        ):
             return
-        except RuntimeError as exc:
-            self._warn_throttled("fusion", f"Fusion skipped: {exc}")
+        stereo_frame = stereo_entry.value if stereo_entry is not None else None
+        left_entry = None
+        if stereo_frame is None:
+            left_entry = self.image_buffer.nearest(
+                bbox_entry.stamp_ns,
+                image_tolerance_ns,
+            )
+
+        self._fusion_job_sequence += 1
+        job = FusionJob(
+            job_id=self._fusion_job_sequence,
+            generation=self._clock_generation,
+            key=key,
+            bbox_entry=bbox_entry,
+            cloud_entry=cloud_entry,
+            tolerance_ns=tolerance_ns,
+            pointcloud=pointcloud,
+            bboxes=bboxes,
+            camera_info=self.latest_camera_info,
+            left_image=(
+                stereo_frame.left_image
+                if stereo_frame is not None
+                else left_entry.value if left_entry is not None else None
+            ),
+            right_image=(
+                stereo_frame.right_image if stereo_frame is not None else None
+            ),
+            right_camera_info=self.latest_right_camera_info,
+        )
+        self._fusion_job_inflight = job
+        if not self._fusion_worker.submit(job):
+            self._fusion_job_inflight = None
+
+    def _stereo_inputs_may_still_arrive(
+        self,
+        target_stamp_ns: int,
+        tolerance_ns: int,
+    ) -> bool:
+        """Wait boundedly while the delayed right-camera stream can still match."""
+        wait_ns = int(getattr(self, "stereo_pair_wait_ns", 0))
+        if wait_ns <= 0:
+            return False
+
+        clock = self.get_clock()
+        now_ns = int(clock.now().nanoseconds)
+        ros_time_is_active = bool(
+            getattr(clock, "ros_time_is_active", False)
+        )
+        if ros_time_is_active and now_ns <= 0:
+            return True
+        if now_ns > target_stamp_ns + wait_ns:
+            return False
+
+        right_progress_stamps = [
+            entry.stamp_ns for entry in self.right_image_buffer.entries()
+        ]
+        right_progress_stamps.extend(
+            entry.value.right_stamp_ns for entry in self.stereo_buffer.entries()
+        )
+        if (
+            right_progress_stamps
+            and max(right_progress_stamps) > target_stamp_ns + tolerance_ns
+        ):
+            return False
+        return True
+
+    def _compute_fusion_job(self, job: FusionJob) -> FusionComputation:
+        result = self._run_lidar_camera_fusion(
+            job.pointcloud,
+            job.bboxes,
+            job.camera_info,
+            left_image=job.left_image,
+            right_image=job.right_image,
+            right_camera_info=job.right_camera_info,
+            collect_debug=True,
+        )
+        if isinstance(result, FusionComputation):
+            return result
+        return FusionComputation(result)
+
+    def _commit_fusion_completion(self, completion: WorkerCompletion) -> None:
+        job = completion.job
+        if self._shutting_down or job.generation != self._clock_generation:
+            self._release_fusion_job(job)
+            self._try_publish_fusion()
+            return
+
+        if completion.error is not None:
+            self._release_fusion_job(job)
+            if isinstance(completion.error, TransformException):
+                self._warn_throttled(
+                    "tf",
+                    f"Fusion skipped: missing TF ({completion.error})",
+                )
+            else:
+                self._warn_throttled(
+                    "fusion",
+                    f"Fusion skipped: {completion.error}",
+                )
             if self._drop_failed_pair_if_superseded(
-                bbox_entry,
-                cloud_entry,
-                tolerance_ns,
+                job.bbox_entry,
+                job.cloud_entry,
+                job.tolerance_ns,
             ):
                 self._try_publish_fusion()
             return
 
-        # Commit synchronization state only after successful fusion.  This
-        # keeps a transient TF/calibration failure retryable and guarantees
-        # that neither bbox nor cloud is reused in another output.
-        self.bbox_buffer.remove(bbox_entry.stamp_ns)
-        self.pointcloud_buffer.remove(cloud_entry.stamp_ns)
-        self.last_fusion_key = key
+        if self._completion_needs_settle(
+            self._bounding_boxes_stamp(job.bboxes)
+        ):
+            self._deferred_fusion_completion = completion
+            return
+
+        self._release_fusion_job(job)
+
+        # Object identity matters here: a rosbag loop can reuse the same
+        # numeric timestamp in the next epoch.  A stale completion must never
+        # consume that new message merely because its stamp matches.
+        if not self._buffer_contains_entry(
+            self.bbox_buffer,
+            job.bbox_entry,
+        ) or not self._buffer_contains_entry(
+            self.pointcloud_buffer,
+            job.cloud_entry,
+        ):
+            self._try_publish_fusion()
+            return
+
+        computation = completion.result
+        self.bbox_buffer.remove(job.bbox_entry.stamp_ns)
+        self.pointcloud_buffer.remove(job.cloud_entry.stamp_ns)
+        self.last_fusion_key = job.key
+        self._publish_fusion_debug(computation)
         self._info_throttled(
             "fusion_success",
-            "Fusion published cones: " + self._cone_count_summary(cones),
+            "Fusion published cones: "
+            + self._cone_count_summary(computation.cones),
             period_sec=2.0,
         )
-        self._publish_cones(cones)
+        self._publish_cones(computation.cones)
+        self._try_publish_fusion()
+
+    def _retry_deferred_fusion_completion(self) -> None:
+        completion = self._deferred_fusion_completion
+        if completion is None:
+            # Sensor callbacks may arrive slightly ahead of /clock. Their
+            # bounded input buffers are retried once ROS time catches up.
+            self._try_publish_fusion()
+            return
+        job = completion.job
+        if self._shutting_down or job.generation != self._clock_generation:
+            self._deferred_fusion_completion = None
+            self._commit_fusion_completion(completion)
+            return
+        if self._completion_needs_settle(
+            self._bounding_boxes_stamp(job.bboxes)
+        ):
+            return
+        self._deferred_fusion_completion = None
+        self._commit_fusion_completion(completion)
+
+    def _release_fusion_job(self, job: FusionJob) -> None:
+        inflight = self._fusion_job_inflight
+        if inflight is not None and inflight.job_id == job.job_id:
+            self._fusion_job_inflight = None
+        deferred = self._deferred_fusion_completion
+        if deferred is not None and deferred.job.job_id == job.job_id:
+            self._deferred_fusion_completion = None
+
+    def _completion_needs_settle(self, stamp) -> bool:
+        settle_ns = int(getattr(self, "output_commit_settle_ns", 0))
+        if settle_ns <= 0:
+            return False
+        clock = self.get_clock()
+        if not bool(getattr(clock, "ros_time_is_active", False)):
+            return False
+        stamp_ns = self._stamp_to_ns(stamp)
+        return stamp_ns > int(clock.now().nanoseconds) - settle_ns
+
+    @staticmethod
+    def _buffer_contains_entry(buffer, expected_entry) -> bool:
+        return any(entry is expected_entry for entry in buffer.entries())
+
+    def _publish_fusion_debug(self, computation: FusionComputation) -> None:
+        for publisher, message in (
+            (self.debug_roi_points_pub, computation.roi_points),
+            (self.debug_sparse_support_pub, computation.sparse_points),
+            (self.debug_cluster_candidates_pub, computation.cluster_markers),
+            (self.debug_bbox_support_pub, computation.support_markers),
+            (self.debug_rejections_pub, computation.rejection_markers),
+        ):
+            if publisher is not None and message is not None:
+                publisher.publish(message)
 
     def _select_ready_fusion_pair(self, tolerance_ns: int):
         """
@@ -1450,7 +2184,8 @@ class PerceptionBaselineNode(Node):
         left_image: Optional[Image] = None,
         right_image: Optional[Image] = None,
         right_camera_info: Optional[CameraInfo] = None,
-    ) -> ConeArrayWithCovariance:
+        collect_debug: bool = False,
+    ):
         self._validate_camera_info(camera_info, left_image, self.camera_frame)
         self._validate_camera_frame(
             bboxes.image_header.frame_id,
@@ -1472,7 +2207,7 @@ class PerceptionBaselineNode(Node):
                 "no_detections",
                 "Fusion produced no cones: no bbox detections after filtering",
             )
-            return msg
+            return FusionComputation(msg) if collect_debug else msg
 
         if not self.camera_frame:
             raise RuntimeError("camera frame is empty")
@@ -1514,12 +2249,21 @@ class PerceptionBaselineNode(Node):
                 points_base = roi_base[ground_mask]
                 points_camera = roi_camera[ground_mask]
 
+        debug_enabled = bool(getattr(self, "publish_fusion_debug", False))
         debug_header = self._debug_header(pointcloud, bbox_stamp)
-        self._publish_debug_pointcloud(
-            self.debug_roi_points_pub,
-            debug_header,
-            points_base,
-        )
+        roi_debug_msg = None
+        if debug_enabled:
+            if collect_debug:
+                roi_debug_msg = self._xyz_to_pointcloud2(
+                    debug_header,
+                    points_base,
+                )
+            else:
+                self._publish_debug_pointcloud(
+                    self.debug_roi_points_pub,
+                    debug_header,
+                    points_base,
+                )
         if points_base.size == 0 and points_lidar.size > 0:
             self._warn_throttled(
                 "empty_roi",
@@ -1591,37 +2335,67 @@ class PerceptionBaselineNode(Node):
             right_camera_info,
         )
         assignments = lidar_assignments + visual_assignments
-        reports = self._build_detection_debug_reports(
-            detections,
-            points_base_all,
-            points_camera_all,
-            points_base,
-            points_camera,
-            clusters,
-            camera_info,
-            assignments,
-        )
-        self._publish_debug_pointcloud(
-            self.debug_sparse_support_pub,
-            debug_header,
-            self._assignment_support_points(sparse_assignments),
-        )
-        self._publish_fusion_debug_markers(
-            debug_header,
-            clusters,
-            assignments,
-            reports,
-        )
-        self._log_fusion_debug_summary(
-            raw_point_count,
-            int(points_base.shape[0]),
-            detections,
-            clusters,
-            cluster_assignments,
-            sparse_assignments,
-            visual_assignments,
-            reports,
-        )
+        reports = []
+        sparse_debug_msg = None
+        cluster_debug_markers = None
+        support_debug_markers = None
+        rejection_debug_markers = None
+        if debug_enabled:
+            reports = self._build_detection_debug_reports(
+                detections,
+                points_base_all,
+                points_camera_all,
+                points_base,
+                points_camera,
+                clusters,
+                camera_info,
+                assignments,
+            )
+            sparse_support_points = self._assignment_support_points(
+                sparse_assignments
+            )
+            if collect_debug:
+                sparse_debug_msg = self._xyz_to_pointcloud2(
+                    debug_header,
+                    sparse_support_points,
+                )
+                cluster_debug_markers = self._cluster_debug_markers(
+                    debug_header,
+                    clusters,
+                    assignments,
+                )
+                support_debug_markers = self._bbox_support_markers(
+                    debug_header,
+                    reports,
+                    rejections_only=False,
+                )
+                rejection_debug_markers = self._bbox_support_markers(
+                    debug_header,
+                    reports,
+                    rejections_only=True,
+                )
+            else:
+                self._publish_debug_pointcloud(
+                    self.debug_sparse_support_pub,
+                    debug_header,
+                    sparse_support_points,
+                )
+                self._publish_fusion_debug_markers(
+                    debug_header,
+                    clusters,
+                    assignments,
+                    reports,
+                )
+            self._log_fusion_debug_summary(
+                raw_point_count,
+                int(points_base.shape[0]),
+                detections,
+                clusters,
+                cluster_assignments,
+                sparse_assignments,
+                visual_assignments,
+                reports,
+            )
         if visual_assignments:
             sources = ", ".join(
                 f"#{assignment.detection_index}:{assignment.source}"
@@ -1654,6 +2428,15 @@ class PerceptionBaselineNode(Node):
                 msg, clusters, lidar_assignments
             )
 
+        if collect_debug:
+            return FusionComputation(
+                cones=msg,
+                roi_points=roi_debug_msg,
+                sparse_points=sparse_debug_msg,
+                cluster_markers=cluster_debug_markers,
+                support_markers=support_debug_markers,
+                rejection_markers=rejection_debug_markers,
+            )
         return msg
 
     def _extract_detections(
@@ -1663,12 +2446,25 @@ class PerceptionBaselineNode(Node):
     ) -> List[Detection]:
         detections = []
         for bbox in bboxes.bounding_boxes:
+            if int(bbox.type) not in (
+                int(BoundingBox.PIXEL),
+                int(BoundingBox.PERCENTAGE),
+            ):
+                continue
             probability = float(bbox.probability)
-            if probability < self.min_bbox_probability:
+            if (
+                not math.isfinite(probability)
+                or not 0.0 <= probability <= 1.0
+                or probability < self.min_bbox_probability
+            ):
                 continue
 
             xmin, ymin, xmax, ymax = self._bbox_to_pixels(bbox, camera_info)
-            if xmax <= xmin or ymax <= ymin:
+            if (
+                not all(math.isfinite(value) for value in (xmin, ymin, xmax, ymax))
+                or xmax <= xmin
+                or ymax <= ymin
+            ):
                 continue
 
             detections.append(
@@ -2173,43 +2969,39 @@ class PerceptionBaselineNode(Node):
 
             # The paper routes upright, fully visible cones to its fitted
             # bbox-height curve.  Here h is explicitly image-height normalized.
-            if condition == "good" and self.monocular_fallback_enabled:
-                depth = monocular_depth_from_bbox(
-                    detection.ymax - detection.ymin,
-                    float(camera_info.height),
-                    coefficient=self.monocular_depth_coefficient,
-                    exponent=self.monocular_depth_exponent,
+            mono_calibrated_class = (
+                detection.color in self.monocular_allowed_colors
+            )
+            if (
+                condition == "good"
+                and mono_calibrated_class
+                and self.monocular_fallback_enabled
+            ):
+                assignment = self._monocular_assignment(
+                    detection_index,
+                    detection,
+                    camera_info,
+                    camera_matrix,
+                    camera_to_base,
+                    source="monocular",
                 )
-                if (
-                    depth is not None
-                    and self.monocular_min_depth_m <= depth <= self.monocular_max_depth_m
-                ):
-                    cluster = self._visual_cluster(
-                        detection,
-                        depth,
-                        camera_matrix,
-                        camera_to_base,
-                        source="monocular",
-                        support_count=1,
-                    )
-                    if cluster is not None:
-                        assignments.append(
-                            Assignment(
-                                detection_index=detection_index,
-                                detection=detection,
-                                cluster=cluster,
-                                source="monocular",
-                                support_count=1,
-                            )
-                        )
+                if assignment is not None:
+                    assignments.append(assignment)
                 # A good cone belongs only to the monocular tier.  Invalid or
                 # out-of-calibration estimates fail closed instead of silently
                 # changing the paper's routing contract.
                 continue
 
-            if condition != "bad" or not self.stereo_fallback_enabled:
+            # Large/unknown cones are deliberately excluded from the single
+            # standard-cone height curve.  Even when their bbox geometry looks
+            # upright, route them to stereo instead of applying a scale model
+            # that can underestimate big-orange depth by roughly 40%.
+            stereo_required = condition in ("bad", "horizontal_clip") or (
+                condition == "good" and not mono_calibrated_class
+            )
+            if not stereo_required:
                 continue
-            if not stereo_context_attempted:
+            if self.stereo_fallback_enabled and not stereo_context_attempted:
                 stereo_context_attempted = True
                 stereo_context = self._prepare_stereo_context(
                     camera_info,
@@ -2218,46 +3010,143 @@ class PerceptionBaselineNode(Node):
                     left_image,
                     right_image,
                 )
-            if stereo_context is None:
-                continue
-
-            left_gray, right_gray, baseline_m, principal_offset_px = stereo_context
-            estimate = estimate_stereo_depth(
-                left_gray,
-                right_gray,
-                bbox,
-                fx=float(camera_matrix[0, 0]),
-                baseline_m=baseline_m,
-                min_depth_m=self.stereo_min_depth_m,
-                max_depth_m=self.stereo_max_depth_m,
-                epipolar_tolerance_px=self.stereo_epipolar_tolerance_px,
-                slender_fraction=self.stereo_slender_fraction,
-                ratio_threshold=self.stereo_ratio_threshold,
-                min_matches=self.stereo_min_matches,
-                principal_point_offset_px=principal_offset_px,
-            )
-            if estimate is None:
-                continue
-            cluster = self._visual_cluster(
-                detection,
-                estimate.depth_m,
-                camera_matrix,
-                camera_to_base,
-                source="stereo_sift",
-                support_count=estimate.match_count,
-            )
-            if cluster is None:
-                continue
-            assignments.append(
-                Assignment(
-                    detection_index=detection_index,
-                    detection=detection,
-                    cluster=cluster,
-                    source="stereo_sift",
-                    support_count=estimate.match_count,
+            if stereo_context is not None:
+                cone_template = self._rektnet_cone_template(detection.color)
+                stereo_result = estimate_rektnet_stereo_depth(
+                    self.rektnet_estimator,
+                    stereo_context.left_image,
+                    stereo_context.right_image,
+                    bbox,
+                    cone_template,
+                    stereo_context.left_camera_matrix,
+                    stereo_context.left_distortion,
+                    stereo_context.right_camera_matrix,
+                    stereo_context.right_distortion,
+                    stereo_context.right_from_left,
+                    baseline_m=stereo_context.baseline_m,
+                    min_depth_m=self.stereo_min_depth_m,
+                    max_depth_m=self.stereo_max_depth_m,
+                    max_reprojection_error_px=(
+                        self.rektnet_pnp_max_reprojection_error_px
+                    ),
+                    right_roi_padding_ratio=(
+                        self.rektnet_right_roi_padding_ratio
+                    ),
+                    min_heatmap_peak=self.rektnet_min_heatmap_peak,
+                    epipolar_tolerance_px=self.stereo_epipolar_tolerance_px,
+                    slender_fraction=self.stereo_slender_fraction,
+                    ratio_threshold=self.stereo_ratio_threshold,
+                    min_matches=self.stereo_min_matches,
+                    principal_point_offset_px=(
+                        stereo_context.principal_offset_px
+                    ),
                 )
-            )
+                if stereo_result is not None:
+                    estimate = stereo_result.depth
+                    cluster = self._visual_cluster(
+                        detection,
+                        estimate.depth_m,
+                        camera_matrix,
+                        camera_to_base,
+                        source="stereo_rektnet_pnp_sift",
+                        support_count=estimate.match_count,
+                    )
+                    if cluster is not None:
+                        assignments.append(
+                            Assignment(
+                                detection_index=detection_index,
+                                detection=detection,
+                                cluster=cluster,
+                                source="stereo_rektnet_pnp_sift",
+                                support_count=estimate.match_count,
+                            )
+                        )
+                        continue
+
+            # A side-clipped cone retains its full pixel height. Recover only
+            # high-confidence standard cones, and publish them with deliberately
+            # inflated covariance because their horizontal bearing is biased.
+            if (
+                condition == "horizontal_clip"
+                and self.horizontal_clip_fallback_enabled
+                and self.monocular_fallback_enabled
+                and mono_calibrated_class
+                and detection.probability >= self.horizontal_clip_min_probability
+                and detection.ymax - detection.ymin
+                >= self.horizontal_clip_min_bbox_height_px
+            ):
+                assignment = self._monocular_assignment(
+                    detection_index,
+                    detection,
+                    camera_info,
+                    camera_matrix,
+                    camera_to_base,
+                    source="monocular_horizontal_clip",
+                )
+                if assignment is not None:
+                    assignments.append(assignment)
         return assignments
+
+    def _rektnet_cone_template(self, color: str) -> np.ndarray:
+        if str(color).strip().lower() == "big_orange":
+            return self.rektnet_large_object_points.copy()
+        return self.rektnet_standard_object_points.copy()
+
+    @staticmethod
+    def _validated_rektnet_template(values, name: str) -> np.ndarray:
+        try:
+            points = np.asarray(values, dtype=np.float64).reshape(7, 3)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} must contain exactly 21 numeric values") from exc
+        centered = points - np.mean(points, axis=0)
+        if (
+            not np.all(np.isfinite(points))
+            or np.unique(points, axis=0).shape[0] != 7
+            or np.linalg.matrix_rank(centered) < 2
+        ):
+            raise ValueError(
+                f"{name} must contain seven finite, unique, non-collinear 3D points"
+            )
+        return points
+
+    def _monocular_assignment(
+        self,
+        detection_index: int,
+        detection: Detection,
+        camera_info: CameraInfo,
+        camera_matrix: np.ndarray,
+        camera_to_base: np.ndarray,
+        source: str,
+    ) -> Optional[Assignment]:
+        depth = monocular_depth_from_bbox(
+            detection.ymax - detection.ymin,
+            float(camera_info.height),
+            coefficient=self.monocular_depth_coefficient,
+            exponent=self.monocular_depth_exponent,
+        )
+        if (
+            depth is None
+            or depth < self.monocular_min_depth_m
+            or depth > self.monocular_max_depth_m
+        ):
+            return None
+        cluster = self._visual_cluster(
+            detection,
+            depth,
+            camera_matrix,
+            camera_to_base,
+            source=source,
+            support_count=1,
+        )
+        if cluster is None:
+            return None
+        return Assignment(
+            detection_index=detection_index,
+            detection=detection,
+            cluster=cluster,
+            source=source,
+            support_count=1,
+        )
 
     def _prepare_stereo_context(
         self,
@@ -2286,8 +3175,8 @@ class PerceptionBaselineNode(Node):
                 or int(left_image.height) != int(right_image.height)
             ):
                 raise ValueError("left and right rectified images differ in size")
-            left_gray = image_message_to_numpy(left_image, desired_encoding="mono8")
-            right_gray = image_message_to_numpy(right_image, desired_encoding="mono8")
+            left_array = image_message_to_numpy(left_image, desired_encoding="bgr8")
+            right_array = image_message_to_numpy(right_image, desired_encoding="bgr8")
         except (RuntimeError, TypeError, ValueError) as exc:
             self._warn_throttled(
                 "stereo_image",
@@ -2296,35 +3185,51 @@ class PerceptionBaselineNode(Node):
             )
             return None
 
-        baseline_m = self._resolve_stereo_baseline(
+        right_from_left = self._resolve_stereo_transform(
             left_camera_info,
             right_camera_info,
             stamp,
         )
-        if baseline_m is None:
+        if right_from_left is None:
             self._warn_throttled(
                 "stereo_baseline",
-                "Stereo fallback has no valid projection, TF, or configured baseline",
+                "ReKTNet stereo has no valid left-to-right projection, TF, or "
+                "configured rectified baseline",
                 period_sec=5.0,
             )
             return None
+        baseline_m = float(np.linalg.norm(right_from_left[:3, 3]))
         left_matrix = self._camera_matrix(left_camera_info)
         right_matrix = self._camera_matrix(right_camera_info)
         principal_offset_px = float(left_matrix[0, 2] - right_matrix[0, 2])
-        return left_gray, right_gray, baseline_m, principal_offset_px
+        # The configured inputs are rectified images and _camera_matrix uses
+        # CameraInfo.P.  CameraInfo.D describes the raw optical image; applying
+        # it again here would double-distort PnP and right-ROI projection.
+        rectified_distortion = np.zeros(5, dtype=np.float64)
+        return StereoContext(
+            left_image=left_array,
+            right_image=right_array,
+            left_camera_matrix=left_matrix,
+            right_camera_matrix=right_matrix,
+            left_distortion=rectified_distortion.copy(),
+            right_distortion=rectified_distortion.copy(),
+            right_from_left=right_from_left,
+            baseline_m=baseline_m,
+            principal_offset_px=principal_offset_px,
+        )
 
-    def _resolve_stereo_baseline(
+    def _resolve_stereo_transform(
         self,
         left_camera_info: CameraInfo,
         right_camera_info: CameraInfo,
         stamp,
-    ) -> Optional[float]:
-        baseline = baseline_from_projection(
+    ) -> Optional[np.ndarray]:
+        transform = rectified_right_from_left(
             left_camera_info.p,
             right_camera_info.p,
         )
-        if baseline is not None:
-            return baseline
+        if transform is not None:
+            return transform
 
         left_frame = str(left_camera_info.header.frame_id).strip() or self.camera_frame
         right_frame = (
@@ -2333,20 +3238,40 @@ class PerceptionBaselineNode(Node):
         )
         if left_frame and right_frame and left_frame != right_frame:
             try:
-                right_to_left = self._lookup_transform_matrix(
-                    left_frame,
+                transform = self._lookup_transform_matrix(
                     right_frame,
+                    left_frame,
                     stamp,
                 )
-                baseline = float(np.linalg.norm(right_to_left[:3, 3]))
+                baseline = float(np.linalg.norm(transform[:3, 3]))
                 if math.isfinite(baseline) and baseline > 0.0:
-                    return baseline
+                    return transform
             except TransformException:
                 pass
 
         if math.isfinite(self.stereo_baseline_m) and self.stereo_baseline_m > 0.0:
-            return self.stereo_baseline_m
+            # Rectified optical frames have parallel axes.  A point expressed
+            # in the right camera is shifted left by the physical baseline.
+            transform = np.eye(4, dtype=np.float64)
+            transform[0, 3] = -self.stereo_baseline_m
+            return transform
         return None
+
+    def _resolve_stereo_baseline(
+        self,
+        left_camera_info: CameraInfo,
+        right_camera_info: CameraInfo,
+        stamp,
+    ) -> Optional[float]:
+        transform = self._resolve_stereo_transform(
+            left_camera_info,
+            right_camera_info,
+            stamp,
+        )
+        if transform is None:
+            return None
+        baseline = float(np.linalg.norm(transform[:3, 3]))
+        return baseline if math.isfinite(baseline) and baseline > 0.0 else None
 
     def _visual_cluster(
         self,
@@ -2662,18 +3587,23 @@ class PerceptionBaselineNode(Node):
             markers.markers.append(marker)
             marker_id += 1
         for assignment in assignments:
-            if assignment.source not in ("sparse", "monocular", "stereo_sift"):
+            if assignment.source not in (
+                "sparse",
+                "monocular",
+                "monocular_horizontal_clip",
+                "stereo_rektnet_pnp_sift",
+            ):
                 continue
             if assignment.source == "sparse":
                 namespace = "sparse_candidate"
                 scale = 0.28
                 color = (1.0, 0.55, 0.0, 0.9)
-            elif assignment.source == "monocular":
-                namespace = "monocular_candidate"
+            elif assignment.source in ("monocular", "monocular_horizontal_clip"):
+                namespace = assignment.source + "_candidate"
                 scale = 0.30
                 color = (0.8, 0.2, 1.0, 0.9)
             else:
-                namespace = "stereo_sift_candidate"
+                namespace = "stereo_rektnet_pnp_sift_candidate"
                 scale = 0.30
                 color = (0.2, 1.0, 0.4, 0.9)
             marker = self._sphere_marker(
@@ -2842,7 +3772,14 @@ class PerceptionBaselineNode(Node):
                 self.monocular_variance_x,
                 self.monocular_variance_y,
             ),
-            "stereo_sift": (self.stereo_variance_x, self.stereo_variance_y),
+            "monocular_horizontal_clip": (
+                self.horizontal_clip_variance_x,
+                self.horizontal_clip_variance_y,
+            ),
+            "stereo_rektnet_pnp_sift": (
+                self.stereo_variance_x,
+                self.stereo_variance_y,
+            ),
             "lidar_only": (
                 self.lidar_only_variance_x,
                 self.lidar_only_variance_y,
@@ -2961,15 +3898,15 @@ class PerceptionBaselineNode(Node):
             lookup_time = stamp
         else:
             lookup_time = Time.from_msg(stamp)
-        transform = self.tf_buffer.lookup_transform(
-            target_frame,
-            source_frame,
-            lookup_time,
-            # This node uses a single-threaded executor. Blocking here would
-            # prevent the /tf callback that could satisfy the lookup from
-            # running; the synchronized sensor pair is retained and retried.
-            timeout=Duration(seconds=0.0),
-        )
+        with getattr(self, "_tf_lock", nullcontext()):
+            transform = self.tf_buffer.lookup_transform(
+                target_frame,
+                source_frame,
+                lookup_time,
+                # TF callbacks remain on the ROS executor. Never block the
+                # worker waiting for data that only that executor can ingest.
+                timeout=Duration(seconds=0.0),
+            )
         return self._transform_to_matrix(transform.transform)
 
     def _lookup_transform_matrix_between_times(
@@ -2987,14 +3924,15 @@ class PerceptionBaselineNode(Node):
                 target_stamp,
             )
 
-        transform = self.tf_buffer.lookup_transform_full(
-            target_frame,
-            Time.from_msg(target_stamp),
-            source_frame,
-            Time.from_msg(source_stamp),
-            self.motion_compensation_frame,
-            timeout=Duration(seconds=0.0),
-        )
+        with getattr(self, "_tf_lock", nullcontext()):
+            transform = self.tf_buffer.lookup_transform_full(
+                target_frame,
+                Time.from_msg(target_stamp),
+                source_frame,
+                Time.from_msg(source_stamp),
+                self.motion_compensation_frame,
+                timeout=Duration(seconds=0.0),
+            )
         return self._transform_to_matrix(transform.transform)
 
     @staticmethod
@@ -3314,6 +4252,14 @@ class PerceptionBaselineNode(Node):
         if isinstance(value, str):
             return value.strip().lower() in ("1", "true", "yes", "on")
         return bool(value)
+
+    def destroy_node(self):
+        self._shutting_down = True
+        self._clock_generation += 1
+        self._deferred_fusion_completion = None
+        self._fusion_worker.clear_pending()
+        self._fusion_worker.shutdown()
+        return super().destroy_node()
 
 
 def main(args=None) -> None:

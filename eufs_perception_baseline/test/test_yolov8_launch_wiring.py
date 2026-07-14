@@ -181,8 +181,9 @@ class YoloV8LaunchWiringTest(unittest.TestCase):
                 "timestamp_reset_threshold_sec",
                 "max_future_stamp_lead_sec",
                 "motion_compensation_frame",
-                "monocular_fallback_enabled",
                 "stereo_fallback_enabled",
+                "rektnet_model_path",
+                "rektnet_device",
                 "python_executable",
             }.issubset(arguments)
         )
@@ -216,8 +217,9 @@ class YoloV8LaunchWiringTest(unittest.TestCase):
                 "timestamp_reset_threshold_sec",
                 "max_future_stamp_lead_sec",
                 "motion_compensation_frame",
-                "monocular_fallback_enabled",
                 "stereo_fallback_enabled",
+                "rektnet_model_path",
+                "rektnet_device",
             }.issubset(fusion_overrides)
         )
 
@@ -259,7 +261,29 @@ class YoloV8LaunchWiringTest(unittest.TestCase):
         )
         self.assertTrue(self.perception_params["ground_ransac_enabled"])
         self.assertTrue(self.perception_params["monocular_fallback_enabled"])
-        self.assertTrue(self.perception_params["stereo_fallback_enabled"])
+        self.assertFalse(self.perception_params["stereo_fallback_enabled"])
+        self.assertFalse(
+            self.perception_params["horizontal_clip_fallback_enabled"]
+        )
+        self.assertTrue(
+            self.perception_params["rektnet_model_path"].endswith(
+                "/artifacts/rektnet/pretrained_kpt.pt"
+            )
+        )
+        self.assertEqual(
+            4.0,
+            self.perception_params[
+                "rektnet_pnp_max_reprojection_error_px"
+            ],
+        )
+        self.assertEqual(
+            21,
+            len(self.perception_params["rektnet_standard_object_points"]),
+        )
+        self.assertEqual(
+            21,
+            len(self.perception_params["rektnet_large_object_points"]),
+        )
         self.assertEqual(2, self.perception_params["sparse_mid_min_points"])
 
     def test_launch_does_not_select_an_ambient_conda_interpreter(self):
@@ -280,8 +304,6 @@ class YoloV8LaunchWiringTest(unittest.TestCase):
                 "perception_right_camera_info_topic",
                 "perception_right_camera_frame",
                 "perception_motion_compensation_frame",
-                "perception_monocular_fallback_enabled",
-                "perception_stereo_fallback_enabled",
                 "perception_python_executable",
             }.issubset(declared)
         )
@@ -293,8 +315,6 @@ class YoloV8LaunchWiringTest(unittest.TestCase):
                 "right_camera_info_topic",
                 "right_camera_frame",
                 "motion_compensation_frame",
-                "monocular_fallback_enabled",
-                "stereo_fallback_enabled",
                 "python_executable",
             }.issubset(forwarded)
         )

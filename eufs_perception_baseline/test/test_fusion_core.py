@@ -118,7 +118,7 @@ class MonocularDepthTest(unittest.TestCase):
         )
         np.testing.assert_allclose(point, [0.5, -0.25, 5.0])
 
-    def test_good_bad_policy_is_explicit(self):
+    def test_good_horizontal_clip_bad_policy_is_explicit(self):
         self.assertEqual(
             classify_cone_condition((40, 20, 60, 80), (100, 100)),
             "good",
@@ -129,6 +129,10 @@ class MonocularDepthTest(unittest.TestCase):
         )
         self.assertEqual(
             classify_cone_condition((0, 20, 20, 80), (100, 100)),
+            "horizontal_clip",
+        )
+        self.assertEqual(
+            classify_cone_condition((40, 0, 60, 60), (100, 100)),
             "bad",
         )
 
@@ -162,6 +166,7 @@ class StereoDepthTest(unittest.TestCase):
             left,
             right,
             (150, 40, 230, 140),
+            (142, 40, 222, 140),
             fx=400.0,
             baseline_m=0.12,
             min_depth_m=2.0,
@@ -191,6 +196,7 @@ class StereoDepthTest(unittest.TestCase):
             left,
             right,
             (150, 40, 230, 140),
+            (140, 40, 220, 140),
             fx=400.0,
             baseline_m=0.12,
             min_depth_m=2.0,

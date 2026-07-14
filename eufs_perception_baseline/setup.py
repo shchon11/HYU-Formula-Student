@@ -11,7 +11,10 @@ setup(
             "share/ament_index/resource_index/packages",
             [f"resource/{package_name}"],
         ),
-        (f"share/{package_name}", ["package.xml"]),
+        (
+            f"share/{package_name}",
+            ["package.xml", "THIRD_PARTY_NOTICES.md"],
+        ),
         (
             f"share/{package_name}/config",
             ["config/perception_baseline.yaml"],

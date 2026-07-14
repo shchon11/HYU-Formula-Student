@@ -1,12 +1,18 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 import numpy as np
 from sensor_msgs.msg import Image
 
-from eufs_perception_baseline.yolov8_bbox_node import YoloV8BBoxNode
+from eufs_perception_baseline.latest_only_worker import WorkerCompletion
+from eufs_perception_baseline.yolov8_bbox_node import (
+    YoloComputation,
+    YoloJob,
+    YoloV8BBoxNode,
+)
 
 
 class _PublisherRecorder:
@@ -40,6 +46,24 @@ class _SuccessfulModel:
 
 
 class YoloV8BBoxNodeTest(unittest.TestCase):
+    class _InlineWorker:
+        def __init__(self, node):
+            self.node = node
+
+        def submit(self, job):
+            try:
+                completion = WorkerCompletion(
+                    job=job,
+                    result=self.node._compute_yolo_job(job),
+                )
+            except BaseException as exc:  # noqa: BLE001 - test worker seam
+                completion = WorkerCompletion(job=job, error=exc)
+            self.node._commit_yolo_completion(completion)
+            return True
+
+        def clear_pending(self):
+            pass
+
     def _callback_node(self):
         node = object.__new__(YoloV8BBoxNode)
         node.bbox_pub = _PublisherRecorder()
@@ -52,6 +76,10 @@ class YoloV8BBoxNodeTest(unittest.TestCase):
         node.device = ""
         node.class_map = {"blue_cone": "blue"}
         node.unknown_color_policy = "unknown"
+        node.output_commit_settle_sec = 0.1
+        node._clock_generation = 0
+        node._shutting_down = False
+        node._worker = self._InlineWorker(node)
         return node
 
     @staticmethod
@@ -117,6 +145,31 @@ class YoloV8BBoxNodeTest(unittest.TestCase):
         node.class_map = {"yellow_cone": "yellow"}
         with self.assertRaisesRegex(RuntimeError, "missing configured cone classes"):
             node._validate_model_classes()
+
+    def test_invalid_numeric_parameters_fail_closed(self):
+        node = self._callback_node()
+        node.timestamp_reset_threshold_sec = 0.1
+        node.unknown_color_policy = "unknown"
+
+        cases = (
+            ("confidence_threshold", float("nan")),
+            ("confidence_threshold", -0.1),
+            ("iou_threshold", float("inf")),
+            ("iou_threshold", 1.1),
+            ("imgsz", 0),
+            ("max_det", 0),
+            ("timestamp_reset_threshold_sec", 0.0),
+            ("timestamp_reset_threshold_sec", 1.0e20),
+            ("timestamp_reset_threshold_sec", 1.0e308),
+            ("output_commit_settle_sec", 1.0e308),
+        )
+        for attribute, invalid_value in cases:
+            with self.subTest(attribute=attribute, value=invalid_value):
+                original = getattr(node, attribute)
+                setattr(node, attribute, invalid_value)
+                with self.assertRaises(ValueError):
+                    node._validate_parameters()
+                setattr(node, attribute, original)
 
         node.class_map = {"blue_cone": "blue", "yellow_cone": "yellow"}
         with self.assertRaisesRegex(RuntimeError, "yellow_cone"):
@@ -189,6 +242,71 @@ class YoloV8BBoxNodeTest(unittest.TestCase):
             image,
             node.bbox_pub.messages[0],
         )
+
+    def test_completion_from_previous_clock_epoch_is_not_published(self):
+        node = self._callback_node()
+        image = self._image_message()
+        stale_job = YoloJob(generation=0, image_msg=image)
+        debug_publisher = _PublisherRecorder()
+        node.debug_image_pub = debug_publisher
+
+        node._clock_generation = 1
+        node._commit_yolo_completion(
+            WorkerCompletion(
+                job=stale_job,
+                result=YoloComputation([], debug_msg=Image()),
+            )
+        )
+
+        self.assertEqual(node.bbox_pub.messages, [])
+        self.assertEqual(debug_publisher.messages, [])
+
+    def test_completion_from_current_clock_epoch_publishes_once(self):
+        node = self._callback_node()
+        image = self._image_message()
+        current_job = YoloJob(generation=7, image_msg=image)
+        node._clock_generation = 7
+
+        node._commit_yolo_completion(
+            WorkerCompletion(
+                job=current_job,
+                result=YoloComputation([]),
+            )
+        )
+
+        self.assertEqual(len(node.bbox_pub.messages), 1)
+        self.assert_empty_detection_for_same_frame(
+            image,
+            node.bbox_pub.messages[0],
+        )
+
+    def test_completion_waits_for_clock_settle_before_publish(self):
+        node = self._callback_node()
+        image = self._image_message()
+        image.header.stamp.sec = 1
+        image.header.stamp.nanosec = 0
+        now_ns = [1_050_000_000]
+        node.output_commit_settle_ns = 100_000_000
+        node._deferred_completion = None
+        node.get_clock = lambda: SimpleNamespace(
+            ros_time_is_active=True,
+            now=lambda: SimpleNamespace(nanoseconds=now_ns[0]),
+        )
+        completion = WorkerCompletion(
+            job=YoloJob(generation=0, image_msg=image),
+            result=YoloComputation([]),
+        )
+
+        node._commit_yolo_completion(completion)
+
+        self.assertEqual(node.bbox_pub.messages, [])
+        self.assertIs(node._deferred_completion, completion)
+
+        now_ns[0] = 1_100_000_000
+        node._retry_deferred_completion()
+
+        self.assertEqual(len(node.bbox_pub.messages), 1)
+        self.assertIsNone(node._deferred_completion)
 
 
 if __name__ == "__main__":

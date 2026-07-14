@@ -105,6 +105,42 @@ class YoloV8BBoxUtilsTest(unittest.TestCase):
 
         self.assertEqual(detections, [])
 
+    def test_detections_from_ultralytics_results_skips_nonfinite_rows(self):
+        result = FakeResult(
+            boxes=FakeBoxes(
+                xyxy=[
+                    [0, 0, 10, 10],
+                    [0, 0, float("inf"), 10],
+                    [0, float("nan"), 10, 10],
+                    [0, 0, 10, 10],
+                    [0, 0, 10, 10],
+                ],
+                conf=[0.9, 0.9, 0.9, float("nan"), 0.9],
+                cls=[0, 0, 0, 0, float("inf")],
+            ),
+            names={0: "blue_cone"},
+        )
+
+        detections = detections_from_ultralytics_results([result])
+
+        self.assertEqual(len(detections), 1)
+        self.assertEqual(detections[0].color, "blue")
+
+    def test_detections_from_ultralytics_results_skips_invalid_class_ids(self):
+        result = FakeResult(
+            boxes=FakeBoxes(
+                xyxy=[[0, 0, 10, 10]] * 3,
+                conf=[0.9, 0.9, 0.9],
+                cls=[-1, 0.5, 0],
+            ),
+            names={0: "blue_cone"},
+        )
+
+        detections = detections_from_ultralytics_results([result])
+
+        self.assertEqual(len(detections), 1)
+        self.assertEqual(detections[0].color, "blue")
+
     def test_looks_like_coco_pretrained_yolov8_weight(self):
         self.assertTrue(
             looks_like_coco_pretrained_yolov8_weight("/models/yolov8n.pt")

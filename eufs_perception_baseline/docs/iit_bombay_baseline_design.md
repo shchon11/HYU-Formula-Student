@@ -15,11 +15,13 @@ model. This substitution changes the 2D detector, but preserves the downstream
 contract: each detection supplies a pixel bounding box, confidence, and cone
 class/color.
 
-The paper's stereo tier depends on RekTNet, seven cone keypoints, a cone 3D
-template, and the corresponding trained assets. Those assets are not present in
-this workspace. Consequently, this package uses a central-slender-crop SIFT
-stereo estimator and labels that path `stereo_sift`. It is a paper-inspired
-fallback, not an exact reproduction of the RekTNet/keypoint/template pipeline.
+The stereo tier now restores the paper's complete method ordering and labels its
+output `stereo_rektnet_pnp_sift`: public ReKTNet 7-keypoint inference, robust
+PnP, left-to-right keypoint/ROI projection, and slender-ROI SIFT disparity. The
+public model topology is checkpoint-compatible with MIT/Delft's Apache-2.0
+implementation. IIT's extra 1,000-image weight and exact metric template were
+not published, so deployment still requires a compatible locally trained/public
+checkpoint and a vehicle-specific measured template/calibration.
 
 ## SLAM Output Contract
 
@@ -53,13 +55,20 @@ fallback, so one physical cone cannot be duplicated with an unrelated depth.
 2. **Normalized-bbox monocular depth**
    - Only unmatched detections classified as upright and fully visible enter
      this tier.
+   - The single fitted curve is restricted to calibrated standard cone classes
+     (`blue`, `yellow`, and standard `orange`). Large-orange and unknown classes
+     are routed to stereo because their physical height is different.
    - Estimate optical depth from the normalized bbox-height curve below.
-3. **Paper-inspired SIFT stereo depth**
+3. **ReKTNet/PnP-guided SIFT stereo depth**
    - Only unmatched detections classified as clipped, wide/fallen, or otherwise
      unsuitable for the monocular curve enter this tier.
-   - Match SIFT features from a slender central crop against a physically valid
-     rectified-right-image search region, then convert robust disparity to
-     depth.
+   - Predict the seven semantic left-image keypoints with ReKTNet.
+   - Solve 7-point PnP; if its reprojection error fails, evaluate all seven
+     leave-one-out 6-point candidates and keep the valid minimum-error pose.
+   - Compose the known left-to-right calibration, project the 3D cone template,
+     and form the right ROI before running SIFT in both slender crops.
+   - Convert robust feature disparity to depth. The optional side-clipped mono
+     recovery remains available but is disabled in the paper-faithful default.
 
 If a tier lacks valid calibration, synchronized input, geometrically valid
 depth, or sufficient feature support, it emits no cone for that detection. It
@@ -120,25 +129,46 @@ The upright/full-visibility classifier is a deterministic heuristic based on
 bbox height-to-width ratio and border margin. It is not a learned fallen-cone
 classifier.
 
-## Tier 3: Paper-Inspired SIFT Stereo
+Applying this standard-cone curve to a 0.53 m large-orange cone as if it were a
+roughly 0.31 m standard cone would create a large systematic depth bias. The
+implementation therefore fails closed or uses stereo for that class instead of
+claiming a calibrated monocular estimate.
+
+## Tier 3: ReKTNet/PnP-Guided SIFT Stereo
 
 The local fallback expects a left-image detection, rectified left/right images,
 and valid stereo calibration. Simulator bboxes are right-image detections, so
 launch disables this tier in simulated mode. In YOLO-left mode it:
 
-1. Crops the horizontal center of the left bbox to reduce background matches.
-2. Derives a right-image search interval from focal length, baseline, and the
-   configured depth bounds.
-3. Computes SIFT features and applies ratio, reciprocal-best, epipolar,
-   uniqueness, and depth-range checks.
-4. Rejects disparity outliers with a median/MAD filter.
-5. Converts the median positive disparity using `Z = f_x * B / d`.
+1. Resizes each clipped YOLO bbox directly to 80x80 BGR, scales it by 1/255,
+   and runs the public seven-heatmap ReKTNet topology plus spatial soft-argmax.
+2. Uses the semantic order `top`, upper L/R, lower L/R, bottom L/R with a metric
+   7x3 cone template and the rectified left projection in OpenCV PnP.
+3. Evaluates both planar IPPE pose branches, keeps the positive-depth minimum
+   reprojection solution, applies the upstream 7-to-6 keypoint fallback, and
+   rejects poses that still exceed `rektnet_pnp_max_reprojection_error_px`.
+4. Composes object-to-left with left-to-right extrinsics, projects all seven
+   points using the rectified right projection, and creates a clipped right
+   bbox. Raw-image distortion is not reapplied to rectified pixels.
+5. Computes SIFT only in the slender left bbox and projected right bbox, then
+   applies ratio, reciprocal-best, epipolar, uniqueness, and depth-range gates.
+6. Selects the single best remaining SIFT descriptor pair, as reported most
+   accurate in the IIT evaluation, and converts its positive disparity using
+   `Z = f_x * B / d`.
 
 The stereo baseline is resolved from rectified projection matrices when
 available, then from timestamped TF, with the configured baseline as the final
-explicit fallback. An OpenCV build without SIFT, too few robust matches,
+explicit fallback. An OpenCV build without SIFT, no valid best match,
 non-positive disparity, an out-of-range depth, image-shape mismatch, or invalid
 calibration disables this estimate for the affected detection.
+
+ReKTNet and SIFT are consecutive stages, not alternatives: PnP propagates a
+right ROI and SIFT supplies the final stereo disparity. The official upstream
+checkpoint URL currently returns HTTP 403, while IIT's fine-tuned weight is not
+public. Consequently the node requires an explicit compatible checkpoint and
+fails startup rather than silently returning to bbox-only SIFT. The configured
+EUFS template places silhouette rows at one-third/two-thirds height; replace it
+with measurements of the real cone/stripe geometry before vehicle deployment.
 
 ## Time, TF, and Calibration Contract
 
@@ -149,15 +179,21 @@ timestamp, then consumes the nearer predecessor/successor sample one-to-one.
 Exact timestamp matches are safe immediately, and skipped samples from the
 faster stream are discarded. This symmetric rule prevents a stale 50 Hz bbox
 from consuming a scarce 10 Hz cloud and also handles a detector that runs more
-slowly than LiDAR. Left and right images are independently matched to the bbox
-timestamp with the tighter image tolerance.
+slowly than LiDAR. Left and right images are first paired one-to-one, preferring
+equal acquisition stamps and otherwise accepting a mature pair within the image
+tolerance. Fusion selects this joint stereo frame by bbox timestamp, so it cannot
+combine independently nearest images from different acquisition cycles.
+When the bbox/cloud pair arrives first, fusion waits for the delayed right stream
+only until it passes the target stamp or the bounded `stereo_pair_wait_sec`
+deadline. A missing camera cannot block the pipeline indefinitely.
 
 Image history is sized separately from the cloud/bbox queues. The default 64
 frames retain about 1.07 seconds at 60 Hz, covering the measured roughly
 0.53-second YOLO delay with margin. Sensor message ordering never defines a
 clock epoch: out-of-order samples are dropped without clearing other streams.
 An authoritative backward ROS clock jump clears every synchronization buffer
-and recreates the tf2 listener, flushing the volatile `/tf` subscription queue.
+and both cached `CameraInfo` messages, then recreates the tf2 listener, flushing
+the volatile `/tf` subscription queue.
 On the normal unregister path it clears and reuses the existing Galactic tf2
 buffer, which retains cached static transforms even if a one-shot `/tf_static`
 writer has already exited. If unregister fails, a fresh buffer isolates the live
@@ -171,6 +207,25 @@ rejects stamps at or beyond the old watermark. The fence is removed when ROS
 time catches up. Nested rollbacks retain each active watermark and release the
 fences in time order. Timestamp-only inputs still cannot distinguish old payloads
 whose overlapping timestamp falls within the accepted replay window.
+During a normal clock epoch, callback skew above 90 ms and up to
+`max_deferred_future_stamp_lead_sec` (300 ms by default) is stored in the bounded
+buffers and processed only after ROS time catches up. With simulated time, data
+received before the first nonzero `/clock` sample is also retained; the strict
+epoch gate is applied once the clock becomes usable.
+
+YOLO inference and fusion compute run in separate single-slot latest-only
+workers so slow CPU/GPU work cannot block the ROS executor from observing a
+clock reset. All ROS topic commits remain serialized on the
+`SingleThreadedExecutor` through a `GuardCondition`. Every job captures a clock
+generation before compute; the pre-jump callback increments that generation and
+purges pending work. A completion from an older generation is discarded before
+any bbox, cone, or debug publication. Fusion additionally checks the identity of
+the original queue entries, preventing a stale completion from consuming a new
+rosbag loop message that reuses the same numeric timestamp.
+Successful completions are also held until their acquisition timestamp trails
+the active ROS clock by `output_commit_settle_sec`. This short commit-settle
+fence lets an already queued clock rollback callback win before output is
+published even when the executor reports the worker guard condition first.
 
 The bbox acquisition time is the canonical timestamp of each output array.
 LiDAR points are transformed from cloud time into the bbox-time camera and
@@ -199,6 +254,7 @@ Covariance is selected by the source that produced the 3D estimate:
 - dense LiDAR-camera cluster: `fused_variance_x/y`
 - bbox-guided sparse LiDAR: `sparse_variance_x/y`
 - normalized-bbox mono: `monocular_variance_x/y`
+- horizontal-border mono recovery: `horizontal_clip_variance_x/y`
 - SIFT stereo: `stereo_variance_x/y`
 
 The configured range-dependent term is then added and the result is clamped by

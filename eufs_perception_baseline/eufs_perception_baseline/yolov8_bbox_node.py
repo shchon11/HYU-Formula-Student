@@ -1,8 +1,12 @@
+import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict
 
 import rclpy
 from eufs_msgs.msg import BoundingBox, BoundingBoxes
+from rclpy.clock import JumpThreshold
+from rclpy.duration import Duration
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
@@ -12,6 +16,10 @@ from eufs_perception_baseline.ros_image_utils import (
     image_message_to_numpy,
     numpy_to_image_message,
 )
+from eufs_perception_baseline.latest_only_worker import (
+    LatestOnlyWorker,
+    WorkerCompletion,
+)
 from eufs_perception_baseline.yolov8_bbox_utils import (
     detections_from_ultralytics_results,
     looks_like_coco_pretrained_yolov8_weight,
@@ -19,19 +27,25 @@ from eufs_perception_baseline.yolov8_bbox_utils import (
 )
 
 
-def _default_model_path() -> str:
-    """FSOCO weights bundled in the package source tree, when reachable.
+@dataclass(frozen=True)
+class YoloJob:
+    generation: int
+    image_msg: Image
 
-    With a symlink install, ``__file__`` resolves back into the source tree,
-    so the tracked checkpoint under ``models/`` works on any checkout without
-    machine-specific configuration. Copied installs fall back to "" and the
-    startup validation demands an explicit model_path.
-    """
-    candidate = (
-        Path(__file__).resolve().parent.parent
-        / "models" / "fsoco_yolov8n" / "weights" / "best.pt"
-    )
-    return str(candidate) if candidate.is_file() else ""
+
+@dataclass(frozen=True)
+class YoloComputation:
+    detections: object
+    debug_msg: object = None
+    debug_error: str = ""
+
+
+class YoloFrameError(RuntimeError):
+    """A categorized per-frame failure returned by the inference worker."""
+
+    def __init__(self, category: str, message: str) -> None:
+        super().__init__(message)
+        self.category = category
 
 
 class YoloV8BBoxNode(Node):
@@ -42,6 +56,7 @@ class YoloV8BBoxNode(Node):
 
         self._declare_parameters()
         self._load_parameters()
+        self._validate_parameters()
 
         self.model_path = self._validated_model_path(self.model_path)
         self._warn_if_coco_smoke_test_model()
@@ -76,6 +91,30 @@ class YoloV8BBoxNode(Node):
                 10,
             )
 
+        self._clock_generation = 0
+        self._shutting_down = False
+        self._deferred_completion = None
+        self._worker = LatestOnlyWorker(
+            self,
+            self._compute_yolo_job,
+            self._commit_yolo_completion,
+            "yolov8-inference",
+        )
+        self._completion_timer = self.create_timer(
+            0.02,
+            self._retry_deferred_completion,
+        )
+        self.clock_jump_handler = self.get_clock().create_jump_callback(
+            JumpThreshold(
+                min_forward=Duration(nanoseconds=(1 << 63) - 1),
+                min_backward=Duration(
+                    nanoseconds=-self.timestamp_reset_threshold_ns
+                ),
+                on_clock_change=True,
+            ),
+            pre_callback=self._before_clock_jump,
+        )
+
         self.get_logger().info(
             "YOLOv8 bbox detector ready: "
             f"image={self.image_topic}, bboxes={self.bbox_topic}, "
@@ -85,12 +124,17 @@ class YoloV8BBoxNode(Node):
     def _declare_parameters(self) -> None:
         self.declare_parameter("image_topic", "/zed/left/image_rect_color")
         self.declare_parameter("bbox_topic", "/yolo_bounding_boxes")
-        self.declare_parameter("model_path", _default_model_path())
+        self.declare_parameter(
+            "model_path",
+            "/home/dohyun/FS/artifacts/yolov8/fsoco_yolov8n/weights/best.pt",
+        )
         self.declare_parameter("confidence_threshold", 0.25)
         self.declare_parameter("iou_threshold", 0.45)
         self.declare_parameter("imgsz", 640)
         self.declare_parameter("device", "")
         self.declare_parameter("max_det", 100)
+        self.declare_parameter("timestamp_reset_threshold_sec", 0.1)
+        self.declare_parameter("output_commit_settle_sec", 0.1)
         self.declare_parameter(
             "class_map",
             "blue_cone:blue,yellow_cone:yellow,orange_cone:orange,"
@@ -106,11 +150,7 @@ class YoloV8BBoxNode(Node):
     def _load_parameters(self) -> None:
         self.image_topic = self.get_parameter("image_topic").value
         self.bbox_topic = self.get_parameter("bbox_topic").value
-        # An empty configured path (the portable config default) falls back to
-        # the checkpoint tracked in the package source tree.
-        self.model_path = (
-            str(self.get_parameter("model_path").value).strip() or _default_model_path()
-        )
+        self.model_path = self.get_parameter("model_path").value
         self.confidence_threshold = float(
             self.get_parameter("confidence_threshold").value
         )
@@ -118,6 +158,12 @@ class YoloV8BBoxNode(Node):
         self.imgsz = int(self.get_parameter("imgsz").value)
         self.device = str(self.get_parameter("device").value).strip()
         self.max_det = int(self.get_parameter("max_det").value)
+        self.timestamp_reset_threshold_sec = float(
+            self.get_parameter("timestamp_reset_threshold_sec").value
+        )
+        self.output_commit_settle_sec = float(
+            self.get_parameter("output_commit_settle_sec").value
+        )
         self.class_map: Dict[str, str] = parse_class_map(
             self.get_parameter("class_map").value
         )
@@ -128,6 +174,75 @@ class YoloV8BBoxNode(Node):
             self.get_parameter("publish_debug_image").value
         )
         self.debug_image_topic = self.get_parameter("debug_image_topic").value
+
+    def _validate_parameters(self) -> None:
+        for name, value in (
+            ("confidence_threshold", self.confidence_threshold),
+            ("iou_threshold", self.iou_threshold),
+        ):
+            if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be finite and in [0, 1]")
+        if self.imgsz <= 0:
+            raise ValueError("imgsz must be greater than zero")
+        if self.max_det <= 0:
+            raise ValueError("max_det must be greater than zero")
+        if (
+            not math.isfinite(self.timestamp_reset_threshold_sec)
+            or self.timestamp_reset_threshold_sec <= 0.0
+        ):
+            raise ValueError(
+                "timestamp_reset_threshold_sec must be finite and positive"
+            )
+        try:
+            self.timestamp_reset_threshold_ns = int(
+                round(self.timestamp_reset_threshold_sec * 1.0e9)
+            )
+        except (OverflowError, ValueError) as exc:
+            raise ValueError(
+                "timestamp_reset_threshold_sec must fit in an int64 "
+                "nanosecond duration"
+            ) from exc
+        if not 0 < self.timestamp_reset_threshold_ns <= (1 << 63) - 1:
+            raise ValueError(
+                "timestamp_reset_threshold_sec must fit in an int64 "
+                "nanosecond duration"
+            )
+        if (
+            not math.isfinite(self.output_commit_settle_sec)
+            or self.output_commit_settle_sec < 0.0
+        ):
+            raise ValueError(
+                "output_commit_settle_sec must be finite and nonnegative"
+            )
+        try:
+            self.output_commit_settle_ns = int(
+                round(self.output_commit_settle_sec * 1.0e9)
+            )
+        except (OverflowError, ValueError) as exc:
+            raise ValueError(
+                "output_commit_settle_sec must fit in an int64 nanosecond "
+                "duration"
+            ) from exc
+        if not 0 <= self.output_commit_settle_ns <= (1 << 63) - 1:
+            raise ValueError(
+                "output_commit_settle_sec must fit in an int64 nanosecond "
+                "duration"
+            )
+        if self.unknown_color_policy.lower() not in ("skip", "unknown"):
+            raise ValueError("unknown_color_policy must be 'skip' or 'unknown'")
+        allowed_colors = {
+            "blue",
+            "yellow",
+            "orange",
+            "big_orange",
+            "unknown",
+        }
+        invalid_colors = set(self.class_map.values()) - allowed_colors
+        if invalid_colors:
+            raise ValueError(
+                "class_map contains unsupported output colors: "
+                f"{sorted(invalid_colors)}"
+            )
 
     def _load_model(self):
         try:
@@ -216,14 +331,18 @@ class YoloV8BBoxNode(Node):
         )
 
     def _image_callback(self, msg: Image) -> None:
+        self._worker.submit(YoloJob(self._clock_generation, msg))
+
+    def _compute_yolo_job(self, job: YoloJob) -> YoloComputation:
+        msg = job.image_msg
         try:
             image = image_message_to_numpy(msg, desired_encoding="bgr8")
         except (TypeError, ValueError) as exc:
-            self.get_logger().warn(
+            raise YoloFrameError(
+                "image_conversion",
                 "YOLO image conversion failed; dropped invalid frame "
-                f"without publishing detections ({exc})"
+                f"without publishing detections ({exc})",
             )
-            return
 
         predict_kwargs = {
             "source": image,
@@ -239,11 +358,11 @@ class YoloV8BBoxNode(Node):
         try:
             results = self.model.predict(**predict_kwargs)
         except Exception as exc:  # noqa: BLE001
-            self.get_logger().warn(
+            raise YoloFrameError(
+                "inference",
                 "YOLO inference failed; dropped frame without publishing "
-                f"detections ({exc})"
+                f"detections ({exc})",
             )
-            return
 
         try:
             detections = detections_from_ultralytics_results(
@@ -254,15 +373,68 @@ class YoloV8BBoxNode(Node):
                 unknown_color_policy=self.unknown_color_policy,
             )
         except Exception as exc:  # noqa: BLE001
-            self.get_logger().warn(
+            raise YoloFrameError(
+                "result_conversion",
                 "YOLO result conversion failed; dropped frame without "
-                f"publishing detections ({exc})"
+                f"publishing detections ({exc})",
             )
-            return
-        self.bbox_pub.publish(self._to_bounding_boxes_msg(msg, detections))
-
+        debug_msg = None
+        debug_error = ""
         if self.debug_image_pub is not None and results:
-            self._publish_debug_image(msg, results[0])
+            try:
+                annotated = results[0].plot()
+                debug_msg = numpy_to_image_message(annotated, msg.header)
+            except Exception as exc:  # noqa: BLE001
+                debug_error = f"YOLO debug image skipped: render failed ({exc})"
+        return YoloComputation(detections, debug_msg, debug_error)
+
+    def _commit_yolo_completion(self, completion: WorkerCompletion) -> None:
+        job = completion.job
+        if self._shutting_down or job.generation != self._clock_generation:
+            return
+        if completion.error is not None:
+            self.get_logger().warn(str(completion.error))
+            return
+        if self._completion_needs_settle(job.image_msg.header.stamp):
+            self._deferred_completion = completion
+            return
+
+        computation = completion.result
+        self.bbox_pub.publish(
+            self._to_bounding_boxes_msg(job.image_msg, computation.detections)
+        )
+        if computation.debug_error:
+            self.get_logger().warn(computation.debug_error)
+        if self.debug_image_pub is not None and computation.debug_msg is not None:
+            self.debug_image_pub.publish(computation.debug_msg)
+
+    def _retry_deferred_completion(self) -> None:
+        completion = self._deferred_completion
+        if completion is None:
+            return
+        job = completion.job
+        if self._shutting_down or job.generation != self._clock_generation:
+            self._deferred_completion = None
+            return
+        if self._completion_needs_settle(job.image_msg.header.stamp):
+            return
+        self._deferred_completion = None
+        self._commit_yolo_completion(completion)
+
+    def _completion_needs_settle(self, stamp) -> bool:
+        settle_ns = int(getattr(self, "output_commit_settle_ns", 0))
+        if settle_ns <= 0:
+            return False
+        clock = self.get_clock()
+        if not bool(getattr(clock, "ros_time_is_active", False)):
+            return False
+        stamp_ns = int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
+        return stamp_ns > int(clock.now().nanoseconds) - settle_ns
+
+    def _before_clock_jump(self) -> None:
+        self._clock_generation += 1
+        self._deferred_completion = None
+        self._worker.clear_pending()
 
     def _to_bounding_boxes_msg(
         self,
@@ -285,16 +457,13 @@ class YoloV8BBoxNode(Node):
             msg.bounding_boxes.append(bbox)
         return msg
 
-    def _publish_debug_image(self, image_msg: Image, result) -> None:
-        try:
-            annotated = result.plot()
-            debug_msg = numpy_to_image_message(annotated, image_msg.header)
-        except Exception as exc:  # noqa: BLE001
-            self.get_logger().warn(
-                f"YOLO debug image skipped: render failed ({exc})"
-            )
-            return
-        self.debug_image_pub.publish(debug_msg)
+    def destroy_node(self):
+        self._shutting_down = True
+        self._clock_generation += 1
+        self._deferred_completion = None
+        self._worker.clear_pending()
+        self._worker.shutdown()
+        return super().destroy_node()
 
     @staticmethod
     def _as_bool(value) -> bool:

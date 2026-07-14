@@ -162,9 +162,11 @@ def classify_cone_condition(
     """
     Classify a detection as suitable (``good``) for monocular depth.
 
-    A good cone is fully inside the image and visibly upright.  Border-clipped,
-    invalid, or wide/fallen detections are explicitly routed to ``bad`` so a
-    stereo fallback can handle them.
+    A good cone is fully inside the image and visibly upright.  An upright cone
+    clipped only by the left or right image edge is returned as
+    ``horizontal_clip`` because its pixel height is still usable by the
+    monocular distance model.  Vertically clipped, invalid, or wide/fallen
+    detections are routed to ``bad`` so only stereo may recover them.
     """
     parsed_bbox = _parse_bbox(bbox)
     if parsed_bbox is None or len(image_size) < 2:
@@ -187,14 +189,14 @@ def classify_cone_condition(
     height = y2 - y1
     margin_x = image_width * float(border_margin_ratio)
     margin_y = image_height * float(border_margin_ratio)
-    fully_visible = (
-        x1 > margin_x
-        and y1 > margin_y
-        and x2 < image_width - margin_x
-        and y2 < image_height - margin_y
-    )
+    horizontally_visible = x1 > margin_x and x2 < image_width - margin_x
+    vertically_visible = y1 > margin_y and y2 < image_height - margin_y
     upright = height / width >= float(min_height_to_width)
-    return "good" if fully_visible and upright else "bad"
+    if horizontally_visible and vertically_visible and upright:
+        return "good"
+    if not horizontally_visible and vertically_visible and upright:
+        return "horizontal_clip"
+    return "bad"
 
 
 def camera_point_from_depth(
@@ -283,6 +285,7 @@ def estimate_stereo_depth(
     left_image,
     right_image,
     left_bbox: Sequence[float],
+    right_bbox: Sequence[float],
     fx: float,
     baseline_m: float,
     min_depth_m: float = 0.5,
@@ -296,10 +299,12 @@ def estimate_stereo_depth(
     """
     Estimate depth from robust SIFT matches in rectified stereo images.
 
-    Feature detection is restricted to a slender cone crop in the left image
-    and a physically valid disparity search region in the right image.  Lowe
-    ratio, reciprocal-best, epipolar, depth-range, uniqueness, and median/MAD
-    checks reject ambiguous matches before disparity is converted to depth.
+    Feature detection is restricted to slender cone crops in both images.  The
+    caller must provide the right bbox propagated by ReKTNet/PnP; this helper no
+    longer fabricates a right search window directly from the left bbox.  Lowe
+    ratio, reciprocal-best, epipolar, depth-range, and uniqueness checks reject
+    invalid candidates.  The best remaining descriptor supplies the single
+    disparity used by IIT Bombay's reported highest-accuracy configuration.
     """
     if not all(_positive_finite(value) for value in (fx, baseline_m)):
         return None
@@ -321,30 +326,26 @@ def estimate_stereo_depth(
     if left_gray is None or right_gray is None:
         return None
 
-    crop = slender_bbox(left_bbox, slender_fraction)
-    if crop is None:
+    left_crop_candidate = slender_bbox(left_bbox, slender_fraction)
+    right_crop_candidate = slender_bbox(right_bbox, slender_fraction)
+    if left_crop_candidate is None or right_crop_candidate is None:
         return None
-    left_crop = _clip_bbox(crop, left_gray.shape[1], left_gray.shape[0])
-    if left_crop is None:
+    left_crop = _clip_bbox(
+        left_crop_candidate,
+        left_gray.shape[1],
+        left_gray.shape[0],
+    )
+    right_crop = _clip_bbox(
+        right_crop_candidate,
+        right_gray.shape[1],
+        right_gray.shape[0],
+    )
+    if left_crop is None or right_crop is None:
         return None
 
     min_disparity = float(fx) * float(baseline_m) / float(max_depth_m)
     max_disparity = float(fx) * float(baseline_m) / float(min_depth_m)
-    min_raw_disparity = min_disparity + float(principal_point_offset_px)
-    max_raw_disparity = max_disparity + float(principal_point_offset_px)
     lx1, ly1, lx2, ly2 = left_crop
-    right_search = _clip_bbox(
-        (
-            math.floor(lx1 - max_raw_disparity),
-            math.floor(ly1 - epipolar_tolerance_px),
-            math.ceil(lx2 - min_raw_disparity),
-            math.ceil(ly2 + epipolar_tolerance_px),
-        ),
-        right_gray.shape[1],
-        right_gray.shape[0],
-    )
-    if right_search is None:
-        return None
 
     try:
         import cv2
@@ -361,7 +362,7 @@ def estimate_stereo_depth(
     left_mask = np.zeros(left_gray.shape, dtype=np.uint8)
     right_mask = np.zeros(right_gray.shape, dtype=np.uint8)
     left_mask[ly1:ly2, lx1:lx2] = 255
-    rx1, ry1, rx2, ry2 = right_search
+    rx1, ry1, rx2, ry2 = right_crop
     right_mask[ry1:ry2, rx1:rx2] = 255
 
     left_keypoints, left_descriptors = feature_detector.detectAndCompute(
@@ -418,28 +419,20 @@ def estimate_stereo_depth(
         if previous is None or match.distance < previous[0].distance:
             unique_by_right[match.trainIdx] = (match, disparity)
 
-    disparities = np.asarray(
-        [entry[1] for entry in unique_by_right.values()], dtype=np.float64
+    if len(unique_by_right) < int(min_matches):
+        return None
+    _, disparity = min(
+        unique_by_right.values(),
+        key=lambda entry: float(entry[0].distance),
     )
-    if disparities.size == 0:
-        return None
-
-    median_disparity = float(np.median(disparities))
-    absolute_deviations = np.abs(disparities - median_disparity)
-    mad = float(np.median(absolute_deviations))
-    robust_tolerance = max(0.5, 3.0 * 1.4826 * mad)
-    robust_disparities = disparities[absolute_deviations <= robust_tolerance]
-    if robust_disparities.size < int(min_matches):
-        return None
-
-    disparity = float(np.median(robust_disparities))
+    disparity = float(disparity)
     depth = disparity_to_depth(disparity, fx, baseline_m)
     if depth is None or depth < min_depth_m or depth > max_depth_m:
         return None
     return StereoDepthEstimate(
         depth_m=depth,
         disparity_px=disparity,
-        match_count=int(robust_disparities.size),
+        match_count=1,
     )
 
 

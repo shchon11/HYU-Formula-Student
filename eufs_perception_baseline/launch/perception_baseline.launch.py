@@ -148,6 +148,9 @@ def _launch_nodes(context):
                         "imgsz": LaunchConfiguration("yolo_imgsz"),
                         "device": LaunchConfiguration("yolo_device"),
                         "max_det": LaunchConfiguration("yolo_max_det"),
+                        "timestamp_reset_threshold_sec": LaunchConfiguration(
+                            "timestamp_reset_threshold_sec"
+                        ),
                         "class_map": LaunchConfiguration("yolo_class_map"),
                         "unknown_color_policy": LaunchConfiguration(
                             "yolo_unknown_color_policy"
@@ -191,12 +194,13 @@ def _launch_nodes(context):
                         "right_camera_frame"
                     ),
                     "projection_model": fusion_projection_model,
-                    "monocular_fallback_enabled": LaunchConfiguration(
-                        "monocular_fallback_enabled"
-                    ),
                     "stereo_fallback_enabled": (
                         fusion_stereo_fallback_enabled
                     ),
+                    "rektnet_model_path": LaunchConfiguration(
+                        "rektnet_model_path"
+                    ),
+                    "rektnet_device": LaunchConfiguration("rektnet_device"),
                     "output_cones_topic": LaunchConfiguration(
                         "output_cones_topic"
                     ),
@@ -478,26 +482,34 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument(
-                "monocular_fallback_enabled",
-                default_value=_default(
-                    "perception_baseline_node",
-                    "monocular_fallback_enabled",
-                ),
-                description=(
-                    "Enable bbox-height monocular depth for detections that "
-                    "were not assigned to LiDAR support."
-                ),
-            ),
-            DeclareLaunchArgument(
                 "stereo_fallback_enabled",
                 default_value=_default(
                     "perception_baseline_node",
                     "stereo_fallback_enabled",
                 ),
                 description=(
-                    "Enable SIFT stereo for left-image YOLO bboxes. Simulator "
-                    "right-camera bboxes always disable this tier."
+                    "Enable ReKTNet/PnP-guided SIFT stereo for left-image YOLO "
+                    "bboxes. Simulator right-camera bboxes disable this tier."
                 ),
+            ),
+            DeclareLaunchArgument(
+                "rektnet_model_path",
+                default_value=_default(
+                    "perception_baseline_node",
+                    "rektnet_model_path",
+                ),
+                description=(
+                    "Public-architecture ReKTNet .pt checkpoint. Required when "
+                    "YOLO stereo fallback is enabled."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "rektnet_device",
+                default_value=_default(
+                    "perception_baseline_node",
+                    "rektnet_device",
+                ),
+                description="Optional PyTorch device for ReKTNet inference.",
             ),
             DeclareLaunchArgument(
                 "sync_queue_size",

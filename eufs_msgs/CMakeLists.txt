@@ -33,6 +33,8 @@ set(msg_files
   "msg/ChassisState.msg"
   "msg/ConeArray.msg"
   "msg/ConeArrayWithCovariance.msg"
+  "msg/ConeKeypoints.msg"
+  "msg/ConeKeypointsArray.msg"
   "msg/ConeWithColorProbability.msg"
   "msg/ConeWithColorProbabilityArray.msg"
   "msg/ConeWithCovariance.msg"
