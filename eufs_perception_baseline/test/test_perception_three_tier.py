@@ -11,6 +11,7 @@ from eufs_msgs.msg import (
     ConeWithCovariance,
 )
 from geometry_msgs.msg import TransformStamped
+import rclpy.logging
 from rclpy.clock import ClockChange, TimeJump
 from rclpy.duration import Duration
 from rclpy.time import Time
@@ -35,6 +36,13 @@ from eufs_perception_baseline.sync_buffer import TimestampBuffer
 class ThreeTierRoutingTest(unittest.TestCase):
     def _node(self):
         node = object.__new__(PerceptionBaselineNode)
+        node.last_warning_time = {}
+        node._logger = rclpy.logging.get_logger("three_tier_test")
+        # Metric cone dimensions: the PnP template is built from these.
+        node.standard_cone_height_m = 0.450
+        node.standard_cone_radius_m = 0.135
+        node.big_cone_height_m = 0.5255
+        node.big_cone_radius_m = 0.1307
         node.monocular_fallback_enabled = True
         node.monocular_allowed_colors = {"blue", "yellow", "orange"}
         node.monocular_depth_coefficient = 0.498
@@ -183,7 +191,27 @@ class ThreeTierRoutingTest(unittest.TestCase):
 
     def test_bad_unmatched_cone_routes_to_rektnet_pnp_sift(self):
         node = self._node()
-        detection = Detection("orange", 0.8, 20.0, 40.0, 80.0, 60.0)
+        # The pose detector labels three stripe rows on a standard cone, so the
+        # stereo tier needs six keypoints; without them it fails closed.
+        detection = Detection(
+            "orange",
+            0.8,
+            20.0,
+            40.0,
+            80.0,
+            60.0,
+            keypoints=np.asarray(
+                [
+                    [35.0, 45.0],
+                    [65.0, 45.0],
+                    [32.0, 50.0],
+                    [68.0, 50.0],
+                    [28.0, 56.0],
+                    [72.0, 56.0],
+                ],
+                dtype=float,
+            ),
+        )
         stereo_context = self._stereo_context()
 
         stereo_patch = patch.object(
@@ -226,7 +254,28 @@ class ThreeTierRoutingTest(unittest.TestCase):
 
     def test_big_orange_good_bbox_avoids_standard_cone_mono_curve(self):
         node = self._node()
-        detection = Detection("big_orange", 0.8, 40.0, 20.0, 60.0, 80.0)
+        # Four stripe rows on a big orange cone => eight keypoints.
+        detection = Detection(
+            "big_orange",
+            0.8,
+            40.0,
+            20.0,
+            60.0,
+            80.0,
+            keypoints=np.asarray(
+                [
+                    [47.0, 30.0],
+                    [53.0, 30.0],
+                    [45.0, 45.0],
+                    [55.0, 45.0],
+                    [43.0, 60.0],
+                    [57.0, 60.0],
+                    [41.0, 74.0],
+                    [59.0, 74.0],
+                ],
+                dtype=float,
+            ),
+        )
         stereo_context = self._stereo_context()
 
         with patch.object(
@@ -353,6 +402,7 @@ class FusionPairSelectionTest(unittest.TestCase):
         node.image_buffer = TimestampBuffer(64)
         node.right_image_buffer = TimestampBuffer(64)
         node.stereo_buffer = TimestampBuffer(64)
+        node.keypoints_buffer = TimestampBuffer(8)
         node.bbox_buffer = TimestampBuffer(8)
         node.pointcloud_buffer = TimestampBuffer(8)
         node.sync_tolerance_sec = 0.2
@@ -1382,6 +1432,8 @@ class CalibrationAndTfTest(unittest.TestCase):
 
     def test_nonfinite_or_out_of_range_bboxes_are_rejected(self):
         node = object.__new__(PerceptionBaselineNode)
+        node.last_warning_time = {}
+        node.cone_keypoints_topic = ""
         node.min_bbox_probability = 0.25
         node.clip_bboxes_to_image = False
         info = CameraInfo()
@@ -1686,6 +1738,8 @@ class CalibrationAndTfTest(unittest.TestCase):
         node.horizontal_clip_variance_y = 1.40
         node.stereo_variance_x = 0.50
         node.stereo_variance_y = 0.60
+        node.lidar_only_variance_x = 0.20
+        node.lidar_only_variance_y = 0.30
         node.fused_variance_x = 0.04
         node.fused_variance_y = 0.05
         node.range_variance_scale = 0.02
@@ -1698,6 +1752,7 @@ class CalibrationAndTfTest(unittest.TestCase):
             "monocular": (0.40, 0.50),
             "monocular_horizontal_clip": (0.80, 1.50),
             "stereo_rektnet_pnp_sift": (0.60, 0.70),
+            "lidar_only": (0.30, 0.40),
         }
         for source, (expected_x, expected_y) in expected.items():
             with self.subTest(source=source):
@@ -1736,6 +1791,8 @@ class LidarOnlyClusterEmitTest(unittest.TestCase):
         node.monocular_variance_y = 0.3
         node.stereo_variance_x = 0.5
         node.stereo_variance_y = 0.5
+        node.horizontal_clip_variance_x = 0.7
+        node.horizontal_clip_variance_y = 0.7
         node.range_variance_scale = 0.0
         node.min_variance = 1.0e-4
         node.lidar_only_dedup_radius_m = 0.5

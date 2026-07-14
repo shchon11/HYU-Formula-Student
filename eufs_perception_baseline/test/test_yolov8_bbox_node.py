@@ -67,6 +67,7 @@ class YoloV8BBoxNodeTest(unittest.TestCase):
     def _callback_node(self):
         node = object.__new__(YoloV8BBoxNode)
         node.bbox_pub = _PublisherRecorder()
+        node.keypoints_pub = None
         node.debug_image_pub = None
         node.model = _FailingModel()
         node.confidence_threshold = 0.25

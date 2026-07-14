@@ -232,11 +232,11 @@ class YoloV8LaunchWiringTest(unittest.TestCase):
         self.assertEqual(12, self.perception_params["sync_queue_size"])
         self.assertEqual(64, self.perception_params["image_sync_queue_size"])
         self.assertEqual(
-            0.1,
+            0.5,
             self.perception_params["timestamp_reset_threshold_sec"],
         )
         self.assertEqual(
-            0.09,
+            0.4,
             self.perception_params["max_future_stamp_lead_sec"],
         )
         self.assertEqual(
@@ -261,17 +261,15 @@ class YoloV8LaunchWiringTest(unittest.TestCase):
         )
         self.assertTrue(self.perception_params["ground_ransac_enabled"])
         self.assertTrue(self.perception_params["monocular_fallback_enabled"])
-        self.assertFalse(self.perception_params["stereo_fallback_enabled"])
+        self.assertTrue(self.perception_params["stereo_fallback_enabled"])
         self.assertFalse(
             self.perception_params["horizontal_clip_fallback_enabled"]
         )
-        self.assertTrue(
-            self.perception_params["rektnet_model_path"].endswith(
-                "/artifacts/rektnet/pretrained_kpt.pt"
-            )
-        )
+        # Keypoints now arrive from the YOLO pose model over
+        # cone_keypoints_topic, so no separate RektNet checkpoint is wired.
+        self.assertEqual("", self.perception_params["rektnet_model_path"])
         self.assertEqual(
-            4.0,
+            8.0,
             self.perception_params[
                 "rektnet_pnp_max_reprojection_error_px"
             ],
@@ -328,12 +326,12 @@ class YoloV8LaunchWiringTest(unittest.TestCase):
 
     def test_fsoco_finetuned_yolov8_defaults_are_preserved(self):
         self.assertEqual(
-            "/home/dohyun/FS/artifacts/yolov8/fsoco_yolov8n/weights/best.pt",
+            "models/cone_pose_8kpt/weights/best.pt",
             self.yolo_params["model_path"],
         )
         self.assertEqual(
-            "blue_cone:blue,yellow_cone:yellow,orange_cone:orange,"
-            "large_orange_cone:big_orange,unknown_cone:unknown",
+            "blue:blue,yellow:yellow,orange:orange,"
+            "orange_big:big_orange,undefined:unknown",
             self.yolo_params["class_map"],
         )
 

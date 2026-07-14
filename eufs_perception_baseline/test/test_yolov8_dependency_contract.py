@@ -26,7 +26,7 @@ class YoloV8DependencyContractTest(unittest.TestCase):
         )
 
     def test_ultralytics_is_authoritative_python_dependency(self):
-        self.assertIn('"ultralytics==8.4.60"', self.setup_py)
+        self.assertIn('"ultralytics>=8.4.90,<9"', self.setup_py)
         self.assertIn("authoritative PyPI runtime dependency", self.readme)
 
     def test_runtime_does_not_depend_on_cv_bridge(self):
