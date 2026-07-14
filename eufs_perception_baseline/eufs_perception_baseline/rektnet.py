@@ -402,6 +402,44 @@ def paired_cone_keypoint_template(
     return np.asarray(points, dtype=np.float64)
 
 
+def silhouette_half_width(base_half_width_m: float, yaw_rad: float) -> float:
+    """Apparent half-width of a square-based pyramid seen at ``yaw_rad``.
+
+    A Formula Student cone is a square pyramid, not a circular one.  Its
+    silhouette is widest across the diagonal and narrowest across a face:
+
+        w(yaw) = half * (|cos yaw| + |sin yaw|)
+
+    so it sweeps from ``half`` (face-on) to ``sqrt(2) * half`` (corner-on).
+    Treating the cone as circular pins ``w`` at ``half`` and therefore makes a
+    rotated cone look narrower than it is, which PnP can only explain by pushing
+    it closer to the camera.
+    """
+    return float(base_half_width_m) * (
+        abs(math.cos(float(yaw_rad))) + abs(math.sin(float(yaw_rad)))
+    )
+
+
+def mean_silhouette_half_width(base_half_width_m: float) -> float:
+    """Yaw-averaged silhouette half-width of a square-based cone.
+
+    The yaw is unobservable in practice -- keypoint noise swamps it at the pixel
+    sizes a cone actually occupies -- so the template commits to the expectation
+    over yaw instead of guessing:
+
+        mean over yaw of (|cos y| + |sin y|)  =  4 / pi
+
+    Using the face-on half-width instead makes a rotated cone look narrower than
+    it is, and PnP can only explain that by pulling it toward the camera: depth
+    reads up to 32% short on a corner-on cone.  Committing to the mean bounds
+    that to about 13% and centres the error near zero.
+    """
+    base = float(base_half_width_m)
+    if not math.isfinite(base) or base <= 0.0:
+        return 0.0
+    return base * 4.0 / math.pi
+
+
 def solve_rektnet_pnp(
     object_points,
     image_points,

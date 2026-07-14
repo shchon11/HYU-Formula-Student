@@ -46,6 +46,7 @@ from eufs_perception_baseline.rektnet import (
     SIM_SMALL_CONE_RADIUS_M,
     cone_keypoint_template,
     estimate_rektnet_stereo_depth,
+    mean_silhouette_half_width,
     paired_cone_keypoint_template,
     rectified_right_from_left,
 )
@@ -3276,12 +3277,21 @@ class PerceptionBaselineNode(Node):
         if int(keypoint_count) % 2 != 0:
             return None
         pairs = int(keypoint_count) // 2
-        height, radius = (
+        height, half_width = (
             (self.big_cone_height_m, self.big_cone_radius_m)
             if is_big
             else (self.standard_cone_height_m, self.standard_cone_radius_m)
         )
-        return paired_cone_keypoint_template(height, radius, pairs)
+        # A Formula Student cone is a square pyramid, so its silhouette width
+        # depends on the yaw it is seen from -- and the yaw is unobservable at
+        # the pixel sizes a cone actually occupies.  Commit to the yaw-averaged
+        # width rather than the face-on one, which would make every rotated cone
+        # look narrow and pull its PnP depth toward the camera.
+        return paired_cone_keypoint_template(
+            height,
+            mean_silhouette_half_width(half_width),
+            pairs,
+        )
 
     @staticmethod
     def _validated_rektnet_template(values, name: str) -> np.ndarray:

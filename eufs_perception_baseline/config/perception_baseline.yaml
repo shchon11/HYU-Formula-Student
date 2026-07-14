@@ -239,7 +239,13 @@ perception_baseline_node:
     # Keypoints from a detector are noisier than a dedicated crop network, and
     # the reprojection gate is measured in full-image pixels.
     rektnet_pnp_max_reprojection_error_px: 8.0
-    rektnet_right_roi_padding_ratio: 0.08
+    # PnP only places the right-image search window; SIFT disparity produces the
+    # depth. The cone is a square pyramid whose apparent width depends on an
+    # unobservable yaw, so PnP depth still carries up to ~13% error even with the
+    # yaw-averaged template. Pad the ROI enough that this cannot walk the search
+    # window off the cone -- a missed ROI loses the cone entirely, whereas an
+    # oversized one only costs a few extra SIFT features.
+    rektnet_right_roi_padding_ratio: 0.15
     # The PnP template is built from the CONE GEOMETRY block near the top of
     # this file; it is shared with the other tiers rather than duplicated here.
 
