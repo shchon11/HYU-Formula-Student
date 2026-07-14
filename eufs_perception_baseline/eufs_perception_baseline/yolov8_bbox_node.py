@@ -4,7 +4,12 @@ from pathlib import Path
 from typing import Dict
 
 import rclpy
-from eufs_msgs.msg import BoundingBox, BoundingBoxes
+from eufs_msgs.msg import (
+    BoundingBox,
+    BoundingBoxes,
+    ConeKeypoints,
+    ConeKeypointsArray,
+)
 from rclpy.clock import JumpThreshold
 from rclpy.duration import Duration
 from rclpy.executors import SingleThreadedExecutor
@@ -83,6 +88,17 @@ class YoloV8BBoxNode(Node):
             self.bbox_topic,
             10,
         )
+        # A pose weight also carries the cone silhouette keypoints.  They ride a
+        # separate topic with the same header stamp, so fusion pairs them with
+        # the bounding boxes through its existing timestamp buffers, and a
+        # detect-only weight simply never publishes here.
+        self.keypoints_pub = None
+        if self.publish_keypoints:
+            self.keypoints_pub = self.create_publisher(
+                ConeKeypointsArray,
+                self.keypoints_topic,
+                10,
+            )
         self.debug_image_pub = None
         if self.publish_debug_image:
             self.debug_image_pub = self.create_publisher(
@@ -146,6 +162,10 @@ class YoloV8BBoxNode(Node):
             "debug_image_topic",
             "/yolo_bounding_boxes/debug_image",
         )
+        # Pose-weight keypoint output. Enabled by the pose launch path; a
+        # detect-only weight leaves this off and the stereo tier stays disabled.
+        self.declare_parameter("publish_keypoints", False)
+        self.declare_parameter("keypoints_topic", "/yolo_cone_keypoints")
 
     def _load_parameters(self) -> None:
         self.image_topic = self.get_parameter("image_topic").value
@@ -174,6 +194,10 @@ class YoloV8BBoxNode(Node):
             self.get_parameter("publish_debug_image").value
         )
         self.debug_image_topic = self.get_parameter("debug_image_topic").value
+        self.publish_keypoints = self._as_bool(
+            self.get_parameter("publish_keypoints").value
+        )
+        self.keypoints_topic = self.get_parameter("keypoints_topic").value
 
     def _validate_parameters(self) -> None:
         for name, value in (
@@ -400,9 +424,18 @@ class YoloV8BBoxNode(Node):
             return
 
         computation = completion.result
+        # Publish both views of the same detection list back to back so a
+        # consumer can never see boxes without their matching keypoints.
         self.bbox_pub.publish(
             self._to_bounding_boxes_msg(job.image_msg, computation.detections)
         )
+        if self.keypoints_pub is not None:
+            self.keypoints_pub.publish(
+                self._to_cone_keypoints_msg(
+                    job.image_msg,
+                    computation.detections,
+                )
+            )
         if computation.debug_error:
             self.get_logger().warn(computation.debug_error)
         if self.debug_image_pub is not None and computation.debug_msg is not None:
@@ -455,6 +488,31 @@ class YoloV8BBoxNode(Node):
             bbox.xmax = detection.xmax
             bbox.ymax = detection.ymax
             msg.bounding_boxes.append(bbox)
+        return msg
+
+    def _to_cone_keypoints_msg(
+        self,
+        image_msg: Image,
+        detections,
+    ) -> ConeKeypointsArray:
+        msg = ConeKeypointsArray()
+        msg.header = image_msg.header
+        msg.image_header = image_msg.header
+
+        for detection in detections:
+            entry = ConeKeypoints()
+            points = getattr(detection, "keypoints", None)
+            if points is not None:
+                entry.u = [float(value) for value in points[:, 0]]
+                entry.v = [float(value) for value in points[:, 1]]
+                scores = getattr(detection, "keypoint_confidence", None)
+                if scores is not None:
+                    entry.confidence = [float(value) for value in scores]
+                else:
+                    entry.confidence = [1.0] * len(entry.u)
+            # An entry is appended for every detection, keypoints or not, so
+            # index i always refers to bounding box i.
+            msg.cone_keypoints.append(entry)
         return msg
 
     def destroy_node(self):

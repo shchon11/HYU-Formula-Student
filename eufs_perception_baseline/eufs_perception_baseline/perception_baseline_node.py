@@ -12,6 +12,7 @@ from eufs_msgs.msg import (
     BoundingBox,
     BoundingBoxes,
     ConeArrayWithCovariance,
+    ConeKeypointsArray,
     ConeWithCovariance,
 )
 from geometry_msgs.msg import Point
@@ -37,9 +38,15 @@ from eufs_perception_baseline.latest_only_worker import (
 )
 from eufs_perception_baseline.ros_image_utils import image_message_to_numpy
 from eufs_perception_baseline.rektnet import (
+    DetectorKeypointSource,
     RektNetInference,
+    SIM_BIG_CONE_HEIGHT_M,
+    SIM_BIG_CONE_RADIUS_M,
+    SIM_SMALL_CONE_HEIGHT_M,
+    SIM_SMALL_CONE_RADIUS_M,
     cone_keypoint_template,
     estimate_rektnet_stereo_depth,
+    paired_cone_keypoint_template,
     rectified_right_from_left,
 )
 from eufs_perception_baseline.sync_buffer import TimestampBuffer
@@ -54,6 +61,10 @@ StampKey = Tuple[int, int]
 SyncKey = Tuple[StampKey, StampKey]
 INT64_MAX = (1 << 63) - 1
 INT64_MIN = -(1 << 63)
+
+# The pose detector labels the cone silhouette as left/right stripe pairs:
+# three rows on a standard cone, four on a big orange one.
+_VALID_KEYPOINT_COUNTS = (6, 8)
 
 
 def _sift_available() -> bool:
@@ -73,6 +84,11 @@ class Detection:
     ymin: float
     xmax: float
     ymax: float
+    # Cone silhouette keypoints from a pose detector, in left-image pixels:
+    # (N, 2) with N = 6 for standard cones and 8 for big orange.  None when the
+    # detector is bbox-only, which leaves the stereo tier without keypoints and
+    # therefore fails that tier closed.
+    keypoints: Optional[np.ndarray] = None
 
 
 @dataclass
@@ -177,8 +193,10 @@ class PerceptionBaselineNode(Node):
 
         self._declare_parameters()
         self._load_parameters()
+        # A pose detector already supplies the keypoints, so the separate
+        # RektNet crop-inference pass is only loaded when it is the sole source.
         self.rektnet_estimator = None
-        if self.stereo_fallback_enabled:
+        if self.stereo_fallback_enabled and not self.cone_keypoints_topic:
             self.rektnet_estimator = RektNetInference(
                 self.rektnet_model_path,
                 self.rektnet_device,
@@ -263,6 +281,17 @@ class PerceptionBaselineNode(Node):
             self._bbox_callback,
             10,
         )
+        # Keypoints ride their own topic but share the bbox header stamp, so
+        # they are keyed by stamp and attached to the detections at extract
+        # time rather than becoming another stream the pair selector must sync.
+        self.keypoints_sub = None
+        if self.cone_keypoints_topic:
+            self.keypoints_sub = self.create_subscription(
+                ConeKeypointsArray,
+                self.cone_keypoints_topic,
+                self._cone_keypoints_callback,
+                10,
+            )
         self.camera_info_sub = self.create_subscription(
             CameraInfo,
             self.camera_info_topic,
@@ -296,6 +325,7 @@ class PerceptionBaselineNode(Node):
         self.stereo_buffer = TimestampBuffer(self.image_sync_queue_size)
         self.pointcloud_buffer = TimestampBuffer(self.sync_queue_size)
         self.bbox_buffer = TimestampBuffer(self.sync_queue_size)
+        self.keypoints_buffer = TimestampBuffer(self.sync_queue_size)
         self.latest_stream_stamp_ns = {}
         self.sensor_epoch = 0
         self.epoch_start_ros_time_ns: Optional[int] = None
@@ -372,6 +402,9 @@ class PerceptionBaselineNode(Node):
         self.declare_parameter("right_image_topic", "/zed/right/image_rect_color")
         self.declare_parameter("pointcloud_topic", "/velodyne_points")
         self.declare_parameter("bbox_topic", "/noisy_bounding_boxes")
+        # Empty disables the keypoint path; the pose launch sets it, and the
+        # simulator-bbox path leaves it off because that source has no keypoints.
+        self.declare_parameter("cone_keypoints_topic", "")
         self.declare_parameter("camera_info_topic", "/custom_camera_info")
         self.declare_parameter("right_camera_info_topic", "/zed/right/camera_info")
         self.declare_parameter("camera_frame", "zed_right_camera_optical_frame")
@@ -477,6 +510,19 @@ class PerceptionBaselineNode(Node):
         self.declare_parameter("rektnet_min_heatmap_peak", 0.0)
         self.declare_parameter("rektnet_pnp_max_reprojection_error_px", 4.0)
         self.declare_parameter("rektnet_right_roi_padding_ratio", 0.08)
+        # Metric cone geometry for the pose detector's PnP template. Defaults are
+        # measured from this simulator's cone meshes, which are NOT the FS-AI
+        # competition spec: the sim's small cone is 0.450 m tall, not 0.325 m.
+        # PnP depth scales linearly with these, so a real-car deployment must
+        # override them with the competition cone's measurements.
+        self.declare_parameter(
+            "standard_cone_height_m", SIM_SMALL_CONE_HEIGHT_M
+        )
+        self.declare_parameter(
+            "standard_cone_radius_m", SIM_SMALL_CONE_RADIUS_M
+        )
+        self.declare_parameter("big_cone_height_m", SIM_BIG_CONE_HEIGHT_M)
+        self.declare_parameter("big_cone_radius_m", SIM_BIG_CONE_RADIUS_M)
         self.declare_parameter(
             "rektnet_standard_object_points",
             cone_keypoint_template(0.31, 0.11).reshape(-1).tolist(),
@@ -519,6 +565,9 @@ class PerceptionBaselineNode(Node):
         self.right_image_topic = self.get_parameter("right_image_topic").value
         self.pointcloud_topic = self.get_parameter("pointcloud_topic").value
         self.bbox_topic = self.get_parameter("bbox_topic").value
+        self.cone_keypoints_topic = str(
+            self.get_parameter("cone_keypoints_topic").value or ""
+        ).strip()
         self.camera_info_topic = self.get_parameter("camera_info_topic").value
         self.right_camera_info_topic = self.get_parameter(
             "right_camera_info_topic"
@@ -727,6 +776,18 @@ class PerceptionBaselineNode(Node):
         )
         self.rektnet_right_roi_padding_ratio = float(
             self.get_parameter("rektnet_right_roi_padding_ratio").value
+        )
+        self.standard_cone_height_m = float(
+            self.get_parameter("standard_cone_height_m").value
+        )
+        self.standard_cone_radius_m = float(
+            self.get_parameter("standard_cone_radius_m").value
+        )
+        self.big_cone_height_m = float(
+            self.get_parameter("big_cone_height_m").value
+        )
+        self.big_cone_radius_m = float(
+            self.get_parameter("big_cone_radius_m").value
         )
         self.rektnet_standard_object_points = (
             self._validated_rektnet_template(
@@ -1064,10 +1125,24 @@ class PerceptionBaselineNode(Node):
             raise ValueError("stereo_ratio_threshold must be in (0, 1)")
         if self.stereo_min_matches <= 0:
             raise ValueError("stereo_min_matches must be positive")
-        if self.stereo_fallback_enabled and not self.rektnet_model_path:
+        if (
+            self.stereo_fallback_enabled
+            and not self.cone_keypoints_topic
+            and not self.rektnet_model_path
+        ):
             raise ValueError(
-                "rektnet_model_path must be set when stereo fallback is enabled"
+                "stereo fallback needs cone keypoints: set cone_keypoints_topic "
+                "for a pose detector, or rektnet_model_path for a separate "
+                "RektNet checkpoint"
             )
+        for name, value in (
+            ("standard_cone_height_m", self.standard_cone_height_m),
+            ("standard_cone_radius_m", self.standard_cone_radius_m),
+            ("big_cone_height_m", self.big_cone_height_m),
+            ("big_cone_radius_m", self.big_cone_radius_m),
+        ):
+            if not math.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be finite and positive")
         if not 0.0 <= self.rektnet_min_heatmap_peak <= 1.0:
             raise ValueError("rektnet_min_heatmap_peak must be in [0, 1]")
         if self.rektnet_pnp_max_reprojection_error_px <= 0.0:
@@ -1384,6 +1459,16 @@ class PerceptionBaselineNode(Node):
         self.bbox_buffer.add(stamp_ns, msg)
         self._try_publish_fusion()
 
+    def _cone_keypoints_callback(self, msg: ConeKeypointsArray) -> None:
+        stamp_ns = self._prepare_sensor_message_stamp(
+            "cone_keypoints", msg.header.stamp
+        )
+        if stamp_ns is None:
+            return
+        self.keypoints_buffer.add(stamp_ns, msg)
+        # Keypoints alone cannot start a fusion cycle; they only enrich the
+        # bbox that shares their stamp.  The bbox callback drives the pipeline.
+
     def _clear_fusion_epoch(
         self,
         replay_guard_end_ros_time_ns: Optional[int] = None,
@@ -1405,6 +1490,7 @@ class PerceptionBaselineNode(Node):
         self.stereo_buffer.clear()
         self.pointcloud_buffer.clear()
         self.bbox_buffer.clear()
+        self.keypoints_buffer.clear()
         self.latest_stream_stamp_ns.clear()
         self.latest_image = None
         self.latest_right_image = None
@@ -2445,7 +2531,11 @@ class PerceptionBaselineNode(Node):
         camera_info: CameraInfo,
     ) -> List[Detection]:
         detections = []
-        for bbox in bboxes.bounding_boxes:
+        keypoints_by_index = self._keypoints_for_bboxes(bboxes)
+        # Indexing is against the source array, not the output list: invalid
+        # boxes are skipped below, so an output-relative index would silently
+        # shift every later cone onto the wrong keypoints.
+        for source_index, bbox in enumerate(bboxes.bounding_boxes):
             if int(bbox.type) not in (
                 int(BoundingBox.PIXEL),
                 int(BoundingBox.PERCENTAGE),
@@ -2475,9 +2565,65 @@ class PerceptionBaselineNode(Node):
                     ymin=ymin,
                     xmax=xmax,
                     ymax=ymax,
+                    keypoints=keypoints_by_index.get(source_index),
                 )
             )
         return detections
+
+    def _keypoints_for_bboxes(self, bboxes: BoundingBoxes) -> dict:
+        """Map bbox index -> (N, 2) keypoints from the same-stamp pose message.
+
+        The detector publishes both messages from one inference with a shared
+        header stamp, so an exact stamp match is required; a near match would
+        pair cones from a different frame.  Anything unparseable yields no
+        keypoints for that cone, which fails the stereo tier closed for it.
+        """
+        if not self.cone_keypoints_topic:
+            return {}
+        stamp_ns = self._stamp_to_ns(self._bounding_boxes_stamp(bboxes))
+        entry = self.keypoints_buffer.nearest(stamp_ns, 0)
+        if entry is None:
+            self._warn_throttled(
+                "missing_cone_keypoints",
+                "No cone keypoints matched the bbox stamp; stereo tier has "
+                f"nothing to propagate on {self.cone_keypoints_topic}",
+                period_sec=5.0,
+            )
+            return {}
+
+        message = entry.value
+        entries = list(getattr(message, "cone_keypoints", []))
+        if len(entries) != len(bboxes.bounding_boxes):
+            self._warn_throttled(
+                "cone_keypoints_length",
+                "Cone keypoint array length "
+                f"{len(entries)} does not match bbox count "
+                f"{len(bboxes.bounding_boxes)}; ignoring keypoints for this frame",
+                period_sec=5.0,
+            )
+            return {}
+
+        keypoints = {}
+        for index, cone in enumerate(entries):
+            points = self._parsed_keypoints(cone)
+            if points is not None:
+                keypoints[index] = points
+        return keypoints
+
+    @staticmethod
+    def _parsed_keypoints(cone) -> Optional[np.ndarray]:
+        u_values = np.asarray(getattr(cone, "u", []), dtype=np.float64)
+        v_values = np.asarray(getattr(cone, "v", []), dtype=np.float64)
+        if (
+            u_values.size == 0
+            or u_values.size != v_values.size
+            or u_values.size not in _VALID_KEYPOINT_COUNTS
+        ):
+            return None
+        points = np.column_stack((u_values, v_values))
+        if not np.all(np.isfinite(points)):
+            return None
+        return points
 
     def _bbox_to_pixels(
         self,
@@ -3010,10 +3156,18 @@ class PerceptionBaselineNode(Node):
                     left_image,
                     right_image,
                 )
-            if stereo_context is not None:
-                cone_template = self._rektnet_cone_template(detection.color)
+            keypoint_source = self._keypoint_source_for(detection)
+            if stereo_context is not None and keypoint_source is not None:
+                cone_template = self._rektnet_cone_template(
+                    detection.color,
+                    keypoint_count=int(detection.keypoints.shape[0])
+                    if detection.keypoints is not None
+                    else None,
+                )
+                if cone_template is None:
+                    continue
                 stereo_result = estimate_rektnet_stereo_depth(
-                    self.rektnet_estimator,
+                    keypoint_source,
                     stereo_context.left_image,
                     stereo_context.right_image,
                     bbox,
@@ -3087,10 +3241,47 @@ class PerceptionBaselineNode(Node):
                     assignments.append(assignment)
         return assignments
 
-    def _rektnet_cone_template(self, color: str) -> np.ndarray:
-        if str(color).strip().lower() == "big_orange":
-            return self.rektnet_large_object_points.copy()
-        return self.rektnet_standard_object_points.copy()
+    def _keypoint_source_for(self, detection: Detection):
+        """Wrap a detection's keypoints in the RektNet predictor contract."""
+        points = getattr(detection, "keypoints", None)
+        if points is None:
+            self._warn_throttled(
+                "stereo_without_keypoints",
+                "Stereo tier skipped: the detector supplied no keypoints for "
+                "this cone, so there is nothing to propagate into the right "
+                "image",
+                period_sec=5.0,
+            )
+            return None
+        return DetectorKeypointSource(points)
+
+    def _rektnet_cone_template(
+        self,
+        color: str,
+        keypoint_count: Optional[int] = None,
+    ) -> Optional[np.ndarray]:
+        """Metric cone template matched to the keypoint count the detector emits.
+
+        The pose model labels three stripe rows on a standard cone and four on a
+        big orange one, so the template must carry exactly as many points as the
+        detection did or PnP is fed mismatched correspondences.
+        """
+        is_big = str(color).strip().lower() == "big_orange"
+        if keypoint_count is None:
+            # Legacy 7-point RektNet weights keep using the configured template.
+            if is_big:
+                return self.rektnet_large_object_points.copy()
+            return self.rektnet_standard_object_points.copy()
+
+        if int(keypoint_count) % 2 != 0:
+            return None
+        pairs = int(keypoint_count) // 2
+        height, radius = (
+            (self.big_cone_height_m, self.big_cone_radius_m)
+            if is_big
+            else (self.standard_cone_height_m, self.standard_cone_radius_m)
+        )
+        return paired_cone_keypoint_template(height, radius, pairs)
 
     @staticmethod
     def _validated_rektnet_template(values, name: str) -> np.ndarray:

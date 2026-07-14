@@ -1,3 +1,37 @@
+# =============================================================================
+# PERCEPTION TUNING SURFACE
+# =============================================================================
+# Every physically meaningful knob lives in the TUNING block of each node below.
+# Anything outside those blocks is plumbing (topics, frames, buffer sizes, clock
+# fences) and should not need touching to change perception behaviour.
+#
+# The four things you are most likely to change:
+#
+#   1. CONE GEOMETRY      standard_/big_cone_height_m, _radius_m
+#                         Measured from THIS simulator's meshes, not the FS-AI
+#                         spec. Drives the Tier-3 PnP template. Depth scales
+#                         linearly with these: get them wrong and every stereo
+#                         cone is wrong by the same ratio.
+#
+#   2. MONO DEPTH CURVE   monocular_depth_coefficient / _exponent
+#                         D = c * (bbox_height_px / image_height_px) ^ e
+#                         Camera-specific. Re-fit whenever the camera intrinsics,
+#                         mounting, or cone size change.
+#
+#   3. DETECTION GATES    confidence_threshold, min_bbox_probability,
+#                         good_cone_* , cluster_*, sparse_*
+#
+#   4. COVARIANCES        *_variance_x/_y per depth source. These tell SLAM how
+#                         much to trust each tier; they must reflect the tier's
+#                         real error, or the graph is corrupted by a confident
+#                         wrong measurement.
+#
+# Tier routing (IIT Bombay 3-tier):
+#   LiDAR support        -> Tier 1  (most accurate)
+#   good cone, no LiDAR  -> Tier 2  monocular bbox-height curve
+#   bad cone,  no LiDAR  -> Tier 3  keypoints -> PnP -> right ROI -> SIFT
+# =============================================================================
+
 perception_baseline_node:
   ros__parameters:
     # Simulator bboxes and /custom_camera_info are right-camera based.  The
@@ -51,7 +85,31 @@ perception_baseline_node:
     oracle_cones_topic: ""
     oracle_rewrite_frame: true
 
-    # Covariance order in eufs_msgs/ConeWithCovariance is [xx, xy, yx, yy].
+    # ========================= TUNING STARTS HERE =========================
+
+    # --- CONE GEOMETRY (shared by every tier) ----------------------------
+    # MEASURED FROM THIS SIMULATOR'S MESHES, not the FS-AI competition spec.
+    # eufs_tracks/meshes/cone_blue.dae POSITION span x model.sdf <scale>, and
+    # cone_big.dae POSITION span x its DAE node <matrix> scale (0.00655834).
+    #
+    #                   this simulator      FS-AI spec
+    #   small cone      0.270 x 0.450 m     0.228 x 0.325 m   <- 38% taller!
+    #   big orange      0.261 x 0.526 m     0.285 x 0.505 m
+    #
+    # Tier-3 PnP depth scales LINEARLY with these numbers, so the spec values
+    # would under-estimate small-cone depth by ~28%. Override with the real
+    # cone's measurements when porting to the car.
+    standard_cone_height_m: 0.450
+    standard_cone_radius_m: 0.135
+    big_cone_height_m: 0.5255
+    big_cone_radius_m: 0.1307
+
+    # --- COVARIANCE PER DEPTH SOURCE -------------------------------------
+    # Order in eufs_msgs/ConeWithCovariance is [xx, xy, yx, yy].
+    # These are the trust levels handed to GraphSLAM. A tier whose covariance
+    # understates its true error will corrupt the map rather than just add
+    # noise, because the optimizer will believe it.
+    # Roughly: LiDAR (fused/sparse) << stereo < monocular.
     default_variance_x: 0.04
     default_variance_y: 0.04
     fused_variance_x: 0.04
@@ -69,6 +127,7 @@ perception_baseline_node:
     # this frame, so a cone the camera also estimated is not duplicated.
     lidar_only_dedup_radius_m: 0.5
 
+    # --- TIER 1: LiDAR-camera association --------------------------------
     roi_min_x: 0.5
     roi_max_x: 30.0
     roi_abs_y: 15.0
@@ -82,6 +141,7 @@ perception_baseline_node:
     ground_ransac_min_inliers: 20
     ground_ransac_seed: 7
 
+    # --- TIER 1: ego-vehicle self mask ------------------------------------
     self_mask_enabled: true
     self_mask_min_x: -1.5
     self_mask_max_x: 1.8
@@ -89,6 +149,7 @@ perception_baseline_node:
     self_mask_min_z: -0.4
     self_mask_max_z: 1.4
 
+    # --- TIER 1: cone clustering ------------------------------------------
     cluster_eps: 0.35
     cluster_min_points: 3
     cluster_min_height: 0.02
@@ -99,6 +160,7 @@ perception_baseline_node:
     min_projected_points: 1
     min_project_depth: 0.2
 
+    # --- TIER 1: sparse (far/few-point) LiDAR association ------------------
     sparse_association_enabled: true
     sparse_bbox_margin_px: 4.0
     sparse_bbox_margin_ratio: 0.15
@@ -116,14 +178,31 @@ perception_baseline_node:
     sparse_variance_x: 0.12
     sparse_variance_y: 0.12
 
-    # Paper Tier 2: D = 0.498 * h^-0.954, where h is normalized bbox height.
+    # --- TIER 2: monocular bbox-height depth -------------------------------
+    # Tier 2: D = c * h_n^e, h_n = bbox_height_px / image_height_px.
+    #
+    # RECALIBRATED FOR THIS CAMERA. The paper's published fit (c=0.498,
+    # e=-0.954) is an empirical curve for IIT Bombay's ZED 2i and their cone;
+    # the paper itself states the fit must be redone whenever camera placement
+    # or optics change. Applied unchanged to this simulator it overestimates
+    # depth by ~50% (a 10 m cone reads 15.1 m), and the 30 m gate then silently
+    # truncates the map at ~20 m true range instead of erroring.
+    #
+    # For a pinhole camera and a rigid cone the law is exact:
+    #   h_px = fy * H_cone / D  =>  D = (fy * H_cone / H_img) * h_n^-1
+    # With this sim's ZED (1280x720, 110 deg HFOV -> fy = 448.13 px) and the
+    # measured 0.450 m cone: c = 448.13 * 0.450 / 720 = 0.2801, e = -1.0.
+    # The exponent is -1 exactly because the simulated camera is undistorted;
+    # the paper's -0.954 absorbs their real lens and mounting.
+    # Re-run scripts/fit_mono_depth_curve.py against /ground_truth/cones after
+    # any change to the camera xacro or cone model.
     monocular_fallback_enabled: true
-    # The single paper curve is treated as a standard-cone calibration only.
-    # Large/unknown cones are routed to stereo instead of receiving a biased
+    # The curve is a standard-cone calibration. Large/unknown cones have a
+    # different height, so they route to stereo rather than take a biased
     # monocular estimate.
     monocular_allowed_colors: "blue,yellow,orange"
-    monocular_depth_coefficient: 0.498
-    monocular_depth_exponent: -0.954
+    monocular_depth_coefficient: 0.2801
+    monocular_depth_exponent: -1.0
     monocular_min_depth_m: 0.5
     monocular_max_depth_m: 30.0
     good_cone_min_height_to_width: 1.2
@@ -138,21 +217,30 @@ perception_baseline_node:
     monocular_variance_x: 0.35
     monocular_variance_y: 0.35
 
-    # Tier 3: YOLO bbox -> ReKTNet 7 keypoints -> robust PnP -> projected
-    # right ROI -> slender left/right SIFT -> disparity depth.  The public
-    # upstream GCS checkpoint is currently unavailable; place a compatible
-    # public/self-trained checkpoint at this path before enabling YOLO stereo.
-    # Keep disabled until the compatible checkpoint and measured 7x3 cone
-    # template are provisioned; enabling without them is not a reproduction.
-    stereo_fallback_enabled: false
-    rektnet_model_path: /home/dohyun/FS/artifacts/rektnet/pretrained_kpt.pt
+    # --- TIER 3: keypoints -> PnP -> right ROI -> SIFT disparity -----------
+    # Tier 3: cone keypoints -> robust PnP -> projected right ROI -> slender
+    # left/right SIFT -> disparity depth.  This is the paper's stage ordering;
+    # PnP places the right-image search window, and SIFT disparity (not the PnP
+    # translation) is the published depth source.
+    #
+    # The keypoints come from the pose detector's single forward pass rather
+    # than a separate ReKTNet crop-inference pass, so rektnet_model_path is
+    # unused whenever cone_keypoints_topic is set.  Six keypoints on a standard
+    # cone, eight on a big orange one.
+    stereo_fallback_enabled: true
+    cone_keypoints_topic: /yolo_cone_keypoints
+    rektnet_model_path: ""
     rektnet_device: ""
     rektnet_min_heatmap_peak: 0.0
-    rektnet_pnp_max_reprojection_error_px: 4.0
+    # Keypoints from a detector are noisier than a dedicated crop network, and
+    # the reprojection gate is measured in full-image pixels.
+    rektnet_pnp_max_reprojection_error_px: 8.0
     rektnet_right_roi_padding_ratio: 0.08
-    # Flattened [top, upper L/R, lower L/R, bottom L/R] metric XYZ points.
-    # These EUFS straight-sided approximations must be replaced with measured
-    # cone/stripe coordinates; IIT did not publish its 7x3 templates.
+    # The PnP template is built from the CONE GEOMETRY block near the top of
+    # this file; it is shared with the other tiers rather than duplicated here.
+
+    # Legacy 7-point ReKTNet templates. Only used when rektnet_model_path is set
+    # (i.e. no pose detector supplying keypoints).
     rektnet_standard_object_points: [
       0.0, 0.0, 0.0,
       -0.0366666667, 0.1033333333, 0.0,
@@ -186,9 +274,12 @@ yolov8_bbox_node:
   ros__parameters:
     image_topic: /zed/left/image_rect_color
     bbox_topic: /yolo_bounding_boxes
-    # FSOCO fine-tuned YOLOv8n cone detector. Keep this as an absolute path
-    # because the generated training artifact is intentionally outside git.
-    model_path: /home/dohyun/FS/artifacts/yolov8/fsoco_yolov8n/weights/best.pt
+    # YOLO26n-pose cone detector: one forward pass yields the box, the class and
+    # the cone silhouette keypoints. Shipped inside the package, so there is no
+    # dependency on a path outside the workspace. The launch file overrides this
+    # with the resolved install-share path; this default serves direct
+    # `ros2 run` from a sourced workspace.
+    model_path: models/cone_pose_8kpt/weights/best.pt
     confidence_threshold: 0.25
     iou_threshold: 0.45
     imgsz: 640
@@ -196,8 +287,11 @@ yolov8_bbox_node:
     max_det: 100
     timestamp_reset_threshold_sec: 0.1
     output_commit_settle_sec: 0.1
-    # Map FSOCO class names to the EUFS cone color contract.
-    class_map: "blue_cone:blue,yellow_cone:yellow,orange_cone:orange,large_orange_cone:big_orange,unknown_cone:unknown"
+    # Map this weight's class names to the EUFS cone color contract.
+    class_map: "blue:blue,yellow:yellow,orange:orange,orange_big:big_orange,undefined:unknown"
     unknown_color_policy: unknown
     publish_debug_image: false
     debug_image_topic: /yolo_bounding_boxes/debug_image
+    # Emit the cone keypoints that Tier-3 propagates into the right image.
+    publish_keypoints: true
+    keypoints_topic: /yolo_cone_keypoints

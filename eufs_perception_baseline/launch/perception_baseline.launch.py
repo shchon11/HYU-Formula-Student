@@ -38,6 +38,22 @@ def _default(node_name: str, parameter_name: str) -> str:
     return str(value)
 
 
+def _default_model_path(node_name: str, parameter_name: str) -> str:
+    """Resolve a package-relative weight path against the install share tree.
+
+    Weights ship inside the package, so the config carries a relative path.  It
+    only becomes loadable once anchored to the installed share directory; an
+    absolute override is passed through untouched.
+    """
+    value = _default(node_name, parameter_name).strip()
+    if not value:
+        return value
+    candidate = Path(value).expanduser()
+    if candidate.is_absolute():
+        return str(candidate)
+    return str(Path(get_package_share_directory(PACKAGE_NAME)) / candidate)
+
+
 def _default_python_executable() -> str:
     # An empty prefix lets ROS execute the installed console-script shebang.
     # Alternate interpreters must be selected explicitly through the launch
@@ -122,6 +138,14 @@ def _launch_nodes(context):
         if bbox_source == "yolov8"
         else False
     )
+    # Keypoints only exist on the pose-detector path.  The simulator bbox source
+    # publishes none, so leaving this empty there keeps the fusion node from
+    # waiting on a topic that will never arrive.
+    fusion_cone_keypoints_topic = (
+        LaunchConfiguration("cone_keypoints_topic")
+        if bbox_source == "yolov8"
+        else ""
+    )
 
     nodes = []
     if bbox_source == "yolov8":
@@ -185,6 +209,7 @@ def _launch_nodes(context):
                         "pointcloud_topic"
                     ),
                     "bbox_topic": fusion_bbox_topic,
+                    "cone_keypoints_topic": fusion_cone_keypoints_topic,
                     "camera_info_topic": fusion_camera_info_topic,
                     "right_camera_info_topic": LaunchConfiguration(
                         "right_camera_info_topic"
@@ -753,8 +778,22 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument(
+                "cone_keypoints_topic",
+                default_value=_default(
+                    "perception_baseline_node",
+                    "cone_keypoints_topic",
+                ),
+                description=(
+                    "Cone keypoints from the pose detector, consumed by the "
+                    "Tier-3 stereo stage. Only used when bbox_source=yolov8."
+                ),
+            ),
+            DeclareLaunchArgument(
                 "yolo_model_path",
-                default_value=_default("yolov8_bbox_node", "model_path"),
+                default_value=_default_model_path(
+                    "yolov8_bbox_node",
+                    "model_path",
+                ),
             ),
             DeclareLaunchArgument(
                 "yolo_confidence_threshold",

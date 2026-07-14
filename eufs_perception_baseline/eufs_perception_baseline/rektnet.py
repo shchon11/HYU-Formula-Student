@@ -155,6 +155,45 @@ class RektNetPrediction:
     heatmap_peaks: np.ndarray
 
 
+class DetectorKeypointSource:
+    """Serve keypoints a pose detector already produced, as a RektNet predictor.
+
+    IIT Bombay runs a separate RektNet pass over each cone crop to obtain the
+    keypoints that PnP propagates into the right image.  This project's detector
+    is a pose model: it emits the cone's keypoints in the same forward pass as
+    the box, so the crop-and-infer stage is redundant work.  Presenting those
+    keypoints through the same ``predict`` contract keeps the downstream
+    PnP -> right-ROI -> SIFT chain byte-for-byte identical to the paper's.
+
+    ``points`` are already full-image pixels, so no crop offset is reapplied.
+    """
+
+    def __init__(self, points, confidence=None) -> None:
+        self._points = np.asarray(points, dtype=np.float64)
+        if confidence is None:
+            peaks = np.ones(self._points.shape[0], dtype=np.float64)
+        else:
+            peaks = np.asarray(confidence, dtype=np.float64).reshape(-1)
+        self._peaks = peaks
+
+    def predict(self, image, bbox) -> Optional["RektNetPrediction"]:
+        # The detector localized these keypoints on the full frame it was given,
+        # so image and bbox are accepted only to satisfy the predictor contract.
+        del image, bbox
+        points = self._points
+        if (
+            points.ndim != 2
+            or points.shape[1] != 2
+            or points.shape[0] < _MIN_PNP_POINTS
+            or not np.all(np.isfinite(points))
+        ):
+            return None
+        peaks = self._peaks
+        if peaks.shape[0] != points.shape[0] or not np.all(np.isfinite(peaks)):
+            return None
+        return RektNetPrediction(points=points, heatmap_peaks=peaks)
+
+
 @dataclass(frozen=True)
 class PnPPose:
     """Object-to-left-camera pose selected by reprojection error."""

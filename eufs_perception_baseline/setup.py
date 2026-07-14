@@ -30,11 +30,19 @@ setup(
                 "docs/perception_baseline_usage.md",
             ],
         ),
+        # The cone pose weight ships with the package so the node has no
+        # dependency on a path outside the workspace.
+        (
+            f"share/{package_name}/models/cone_pose_8kpt/weights",
+            ["models/cone_pose_8kpt/weights/best.pt"],
+        ),
     ],
     install_requires=[
         "setuptools",
         "PyYAML>=5.0",
-        "ultralytics==8.4.60",
+        # YOLO26 pose weights need a build that knows the architecture; the old
+        # 8.4.60 pin predates it and fails to load the checkpoint.
+        "ultralytics>=8.4.90,<9",
     ],
     zip_safe=True,
     maintainer="IRCV",
