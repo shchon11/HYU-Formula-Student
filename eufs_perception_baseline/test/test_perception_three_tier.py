@@ -19,6 +19,7 @@ from tf2_ros import Buffer, TransformException
 import eufs_perception_baseline.perception_baseline_node as node_module
 from eufs_perception_baseline.fusion_core import StereoDepthEstimate
 from eufs_perception_baseline.perception_baseline_node import (
+    Assignment,
     Cluster,
     Detection,
     PerceptionBaselineNode,
@@ -803,6 +804,7 @@ class CalibrationAndTfTest(unittest.TestCase):
         node = object.__new__(PerceptionBaselineNode)
         node.output_frame = "base_footprint"
         node.camera_frame = "zed_left_camera_optical_frame"
+        node.publish_unmatched_lidar_clusters = False
         node._warn_throttled = lambda *args, **kwargs: None
         cloud = PointCloud2()
         cloud.header.stamp = TimeMsg(sec=10)
@@ -1123,6 +1125,8 @@ class CalibrationAndTfTest(unittest.TestCase):
         node.monocular_variance_y = 0.4
         node.stereo_variance_x = 0.5
         node.stereo_variance_y = 0.6
+        node.lidar_only_variance_x = 0.7
+        node.lidar_only_variance_y = 0.8
         node.fused_variance_x = 0.04
         node.fused_variance_y = 0.05
         node.range_variance_scale = 0.0
@@ -1139,6 +1143,91 @@ class CalibrationAndTfTest(unittest.TestCase):
         cone = node._cluster_to_cone(cluster)
 
         self.assertEqual(list(cone.covariance), [0.5, 0.0, 0.0, 0.6])
+
+
+class LidarOnlyClusterEmitTest(unittest.TestCase):
+    def _node(self):
+        node = object.__new__(PerceptionBaselineNode)
+        node.lidar_only_variance_x = 0.2
+        node.lidar_only_variance_y = 0.3
+        node.fused_variance_x = 0.04
+        node.fused_variance_y = 0.04
+        node.sparse_variance_x = 0.1
+        node.sparse_variance_y = 0.1
+        node.monocular_variance_x = 0.3
+        node.monocular_variance_y = 0.3
+        node.stereo_variance_x = 0.5
+        node.stereo_variance_y = 0.5
+        node.range_variance_scale = 0.0
+        node.min_variance = 1.0e-4
+        node.lidar_only_dedup_radius_m = 0.5
+        node._info_throttled = lambda *args, **kwargs: None
+        return node
+
+    def _cluster(self, x, y, indices):
+        return Cluster(
+            points_base=np.asarray([[x, y, 0.0]]),
+            points_camera=np.asarray([[0.0, 0.0, x]]),
+            centroid_base=np.asarray([x, y, 0.0]),
+            range_m=float(np.hypot(x, y)),
+            indices=np.asarray(indices, dtype=np.int64),
+            source="cluster",
+        )
+
+    def test_unmatched_cluster_becomes_unknown_cone(self):
+        node = self._node()
+        msg = ConeArrayWithCovariance()
+
+        node._append_unmatched_lidar_cluster_cones(
+            msg, [self._cluster(4.0, 2.0, [0, 1, 2])], []
+        )
+
+        self.assertEqual(len(msg.unknown_color_cones), 1)
+        self.assertEqual(list(msg.blue_cones), [])
+        cone = msg.unknown_color_cones[0]
+        self.assertAlmostEqual(cone.point.x, 4.0)
+        self.assertAlmostEqual(cone.point.y, 2.0)
+        # lidar_only source variance, with range scaling disabled.
+        self.assertEqual(list(cone.covariance), [0.2, 0.0, 0.0, 0.3])
+
+    def test_cluster_consumed_by_assignment_is_skipped(self):
+        node = self._node()
+        msg = ConeArrayWithCovariance()
+        cluster = self._cluster(4.0, 2.0, [0, 1, 2])
+        matched = Cluster(
+            points_base=cluster.points_base,
+            points_camera=cluster.points_camera,
+            centroid_base=cluster.centroid_base,
+            range_m=cluster.range_m,
+            indices=cluster.indices,
+            source="lidar",
+            consumed_indices=np.asarray([0, 1, 2], dtype=np.int64),
+        )
+        assignment = Assignment(
+            detection_index=0,
+            detection=Detection("blue", 0.9, 0.0, 0.0, 10.0, 20.0),
+            cluster=matched,
+            source="lidar",
+            support_count=3,
+        )
+
+        node._append_unmatched_lidar_cluster_cones(msg, [cluster], [assignment])
+
+        self.assertEqual(len(msg.unknown_color_cones), 0)
+
+    def test_cluster_near_existing_cone_is_deduped(self):
+        node = self._node()
+        msg = ConeArrayWithCovariance()
+        near = ConeWithCovariance()
+        near.point.x = 4.1
+        near.point.y = 2.0
+        msg.blue_cones.append(near)
+
+        node._append_unmatched_lidar_cluster_cones(
+            msg, [self._cluster(4.0, 2.0, [5, 6, 7])], []
+        )
+
+        self.assertEqual(len(msg.unknown_color_cones), 0)
 
 
 if __name__ == "__main__":

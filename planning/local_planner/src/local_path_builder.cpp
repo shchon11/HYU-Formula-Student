@@ -32,6 +32,8 @@ bool validConfig(const PlannerConfig & config)
     config.fallback_offset_m,
     config.two_sided_speed_mps,
     config.fallback_speed_mps,
+    config.unknown_absorb_lateral_m,
+    config.unknown_geom_deadband_m,
   };
   for (const double value : values) {
     if (!std::isfinite(value)) {
@@ -48,7 +50,8 @@ bool validConfig(const PlannerConfig & config)
          config.max_start_distance_m > 0.0 &&
          config.two_sided_horizon_m > 0.0 && config.fallback_horizon_m > 0.0 &&
          config.fallback_offset_m > 0.0 && config.two_sided_speed_mps > 0.0 &&
-         config.fallback_speed_mps > 0.0;
+         config.fallback_speed_mps > 0.0 && config.unknown_absorb_lateral_m >= 0.0 &&
+         config.unknown_geom_deadband_m >= 0.0;
 }
 
 std::string traversalFailureReason(internal::TraversalFailure failure)
@@ -92,6 +95,38 @@ std::vector<Point2> extendToLength(std::vector<Point2> points, double target)
   points.push_back(
     {head.x + (head.x - tail.x) / segment * extra,
       head.y + (head.y - tail.y) / segment * extra});
+  return points;
+}
+
+// Straight-corridor prior: carry `points` forward from its end, along the
+// OVERALL (first->last) heading, until the polyline spans `target` arc length.
+// Perception lag leaves the mapped cones -- and so the built centerline --
+// short of the horizon; on a track guaranteed straight we extend rather than
+// let the path collapse and the car brake. The overall heading is used (not
+// just the last segment) so a noisy final midpoint cannot swing the extension
+// off the corridor axis. A no-op once the path already reaches `target`.
+std::vector<Point2> extendStraight(std::vector<Point2> points, double target)
+{
+  if (points.size() < 2U) {
+    return points;
+  }
+  double length = 0.0;
+  for (std::size_t i = 1U; i < points.size(); ++i) {
+    length += internal::distance(points[i - 1U], points[i]);
+  }
+  if (!(length < target)) {
+    return points;
+  }
+  const Point2 & first = points.front();
+  const Point2 & last = points.back();
+  const double dir_x = last.x - first.x;
+  const double dir_y = last.y - first.y;
+  const double norm = std::hypot(dir_x, dir_y);
+  if (!std::isfinite(norm) || norm <= 0.0) {
+    return points;
+  }
+  const double extra = target - length;
+  points.push_back({last.x + dir_x / norm * extra, last.y + dir_y / norm * extra});
   return points;
 }
 
@@ -183,22 +218,31 @@ BuildResult buildLocalPath(const ConeSet & cones, const PlannerConfig & config)
     return invalid;
   }
   if (cones.input_overflow || cones.blue.size() > kMaxBoundaryCones ||
-    cones.yellow.size() > kMaxBoundaryCones)
+    cones.yellow.size() > kMaxBoundaryCones ||
+    (config.use_unknown_cones && cones.unknown.size() > kMaxBoundaryCones))
   {
     invalid.reason = "cone input exceeds bounded planner capacity";
     return invalid;
   }
 
-  const auto blue = internal::cropToRoi(cones.blue, config);
-  const auto yellow = internal::cropToRoi(cones.yellow, config);
-  const bool had_boundary_input = !cones.blue.empty() || !cones.yellow.empty();
+  auto blue = internal::cropToRoi(cones.blue, config);
+  auto yellow = internal::cropToRoi(cones.yellow, config);
+  bool had_boundary_input = !cones.blue.empty() || !cones.yellow.empty();
+  if (config.use_unknown_cones && !cones.unknown.empty()) {
+    const auto unknown = internal::cropToRoi(cones.unknown, config);
+    internal::classifyUnknownCones(blue, yellow, unknown, config);
+    had_boundary_input = had_boundary_input || !unknown.empty();
+  }
   if (had_boundary_input && blue.empty() && yellow.empty()) {
     invalid.reason = "roi_no_boundary_cones";
     return invalid;
   }
   BuildResult two_sided;
   if (blue.size() >= 2U && yellow.size() >= 2U) {
-    const auto centerline = internal::boundaryMidpoints(blue, yellow, config);
+    auto centerline = internal::boundaryMidpoints(blue, yellow, config);
+    if (config.extend_straight_to_horizon) {
+      centerline = extendStraight(std::move(centerline), config.two_sided_horizon_m);
+    }
     two_sided = internal::finishPath(
       centerline, config.two_sided_horizon_m, config.two_sided_speed_mps,
       PathKind::kTwoSided, config);
@@ -266,7 +310,10 @@ BuildResult buildLocalPath(const ConeSet & cones, const PlannerConfig & config)
     }
     return invalid;
   }
-  const auto centerline = internal::offsetBoundary(boundary, side, config.fallback_offset_m);
+  auto centerline = internal::offsetBoundary(boundary, side, config.fallback_offset_m);
+  if (config.extend_straight_to_horizon) {
+    centerline = extendStraight(std::move(centerline), config.fallback_horizon_m);
+  }
   return internal::finishPath(
     centerline, config.fallback_horizon_m, config.fallback_speed_mps,
     use_blue ? PathKind::kBlueOnly : PathKind::kYellowOnly, config);

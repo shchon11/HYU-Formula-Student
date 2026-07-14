@@ -40,13 +40,13 @@
   <arg name="pub_ground_truth" default="true"/>
 
   <!-- Simulated perception cone visibility -->
-  <arg name="perception_camera_view_distance" default="15"/>
-  <arg name="perception_lidar_view_distance" default="100"/>
-  <arg name="perception_lidar_x_view_distance" default="20"/>
-  <arg name="perception_lidar_y_view_distance" default="20"/>
+  <arg name="perception_camera_view_distance" default="12"/>
+  <arg name="perception_lidar_view_distance" default="15"/>
+  <arg name="perception_lidar_x_view_distance" default="15"/>
+  <arg name="perception_lidar_y_view_distance" default="10"/>
   <arg name="perception_lidar_min_view_distance" default="1"/>
   <arg name="perception_camera_min_view_distance" default="0.5"/>
-  <arg name="perception_camera_fov" default="2.09"/>
+  <arg name="perception_camera_fov" default="1.91986"/>
   <arg name="perception_lidar_fov" default="3.141593"/>
   <arg name="perception_lidar_on" default="true"/>
   <arg name="perception_detection_probability" default="1.0"/>

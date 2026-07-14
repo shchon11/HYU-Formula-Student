@@ -387,6 +387,17 @@ class PerceptionBaselineNode(Node):
         self.declare_parameter("fused_variance_y", 0.04)
         self.declare_parameter("range_variance_scale", 0.0005)
         self.declare_parameter("min_variance", 1.0e-4)
+        # LiDAR clusters that never matched a camera detection (out of camera
+        # FOV, occluded, or a YOLO miss) are still published as unknown-color
+        # cones so SLAM/planning can see them. They carry no color and a larger
+        # covariance because no image confirmed the detection.
+        self.declare_parameter("publish_unmatched_lidar_clusters", True)
+        self.declare_parameter("lidar_only_variance_x", 0.20)
+        self.declare_parameter("lidar_only_variance_y", 0.20)
+        # Drop a LiDAR-only cluster whose centroid lands within this radius of a
+        # cone already produced this frame, so a cone the camera also estimated
+        # (via mono/stereo) is not published twice at slightly different points.
+        self.declare_parameter("lidar_only_dedup_radius_m", 0.5)
 
     def _load_parameters(self) -> None:
         self.image_topic = self.get_parameter("image_topic").value
@@ -593,6 +604,18 @@ class PerceptionBaselineNode(Node):
         self.fused_variance_y = float(self.get_parameter("fused_variance_y").value)
         self.range_variance_scale = float(self.get_parameter("range_variance_scale").value)
         self.min_variance = float(self.get_parameter("min_variance").value)
+        self.publish_unmatched_lidar_clusters = self._as_bool(
+            self.get_parameter("publish_unmatched_lidar_clusters").value
+        )
+        self.lidar_only_variance_x = float(
+            self.get_parameter("lidar_only_variance_x").value
+        )
+        self.lidar_only_variance_y = float(
+            self.get_parameter("lidar_only_variance_y").value
+        )
+        self.lidar_only_dedup_radius_m = float(
+            self.get_parameter("lidar_only_dedup_radius_m").value
+        )
         self._validate_parameters()
 
     def _validate_parameters(self) -> None:
@@ -1444,7 +1467,7 @@ class PerceptionBaselineNode(Node):
         msg.header.stamp = bbox_stamp
         msg.header.frame_id = self.output_frame
 
-        if not detections:
+        if not detections and not self.publish_unmatched_lidar_clusters:
             self._warn_throttled(
                 "no_detections",
                 "Fusion produced no cones: no bbox detections after filtering",
@@ -1609,7 +1632,7 @@ class PerceptionBaselineNode(Node):
                 f"Vision fallback assignments: {sources}",
                 period_sec=2.0,
             )
-        if not assignments:
+        if not assignments and detections:
             detection = detections[0]
             self._warn_throttled(
                 "no_assignments",
@@ -1625,6 +1648,11 @@ class PerceptionBaselineNode(Node):
         for assignment in assignments:
             cone = self._cluster_to_cone(assignment.cluster)
             self._append_cone_by_color(msg, assignment.detection.color, cone)
+
+        if self.publish_unmatched_lidar_clusters:
+            self._append_unmatched_lidar_cluster_cones(
+                msg, clusters, lidar_assignments
+            )
 
         return msg
 
@@ -2798,7 +2826,11 @@ class PerceptionBaselineNode(Node):
             )
         return "; ".join(summaries)
 
-    def _cluster_to_cone(self, cluster: Cluster) -> ConeWithCovariance:
+    def _cluster_to_cone(
+        self,
+        cluster: Cluster,
+        source_override: Optional[str] = None,
+    ) -> ConeWithCovariance:
         cone = ConeWithCovariance()
         cone.point.x = float(cluster.centroid_base[0])
         cone.point.y = float(cluster.centroid_base[1])
@@ -2811,9 +2843,13 @@ class PerceptionBaselineNode(Node):
                 self.monocular_variance_y,
             ),
             "stereo_sift": (self.stereo_variance_x, self.stereo_variance_y),
+            "lidar_only": (
+                self.lidar_only_variance_x,
+                self.lidar_only_variance_y,
+            ),
         }
         base_var_x, base_var_y = source_variances.get(
-            cluster.source,
+            source_override or cluster.source,
             (self.fused_variance_x, self.fused_variance_y),
         )
         var_x = base_var_x + self.range_variance_scale * cluster.range_m
@@ -2842,6 +2878,76 @@ class PerceptionBaselineNode(Node):
             msg.big_orange_cones.append(cone)
         else:
             msg.unknown_color_cones.append(cone)
+
+    def _append_unmatched_lidar_cluster_cones(
+        self,
+        msg: ConeArrayWithCovariance,
+        clusters: List[Cluster],
+        lidar_assignments: List[Assignment],
+    ) -> None:
+        """Publish cone-sized LiDAR clusters no camera detection claimed.
+
+        A cluster the camera never confirmed (out of FOV, occluded, or a YOLO
+        miss) still marks a physical cone, so it is emitted as an unknown-color
+        cone with inflated covariance instead of being dropped. Clusters already
+        represented this frame are skipped two ways: by consumed LiDAR points
+        (a bbox/sparse match) and by proximity to a cone already in the message
+        (e.g. the same cone estimated by the mono/stereo tier), so one physical
+        cone is never published twice.
+        """
+        if not clusters:
+            return
+
+        consumed_indices = set()
+        for assignment in lidar_assignments:
+            indices = assignment.cluster.consumed_indices
+            if indices is None:
+                indices = assignment.cluster.indices
+            consumed_indices.update(int(index) for index in indices)
+
+        existing_xy = [
+            (cone.point.x, cone.point.y)
+            for cones in (
+                msg.blue_cones,
+                msg.yellow_cones,
+                msg.orange_cones,
+                msg.big_orange_cones,
+                msg.unknown_color_cones,
+            )
+            for cone in cones
+        ]
+        dedup_sq = self.lidar_only_dedup_radius_m * self.lidar_only_dedup_radius_m
+
+        emitted = 0
+        for cluster in clusters:
+            cluster_indices = [int(index) for index in cluster.indices]
+            if not cluster_indices:
+                continue
+            # A matched cluster contributes all of its points; skip anything at
+            # least half claimed so a sparsely re-used cluster is not duplicated.
+            overlap = sum(1 for index in cluster_indices if index in consumed_indices)
+            if overlap * 2 >= len(cluster_indices):
+                continue
+
+            centroid_x = float(cluster.centroid_base[0])
+            centroid_y = float(cluster.centroid_base[1])
+            if any(
+                (centroid_x - x) ** 2 + (centroid_y - y) ** 2 <= dedup_sq
+                for x, y in existing_xy
+            ):
+                continue
+
+            cone = self._cluster_to_cone(cluster, source_override="lidar_only")
+            msg.unknown_color_cones.append(cone)
+            existing_xy.append((centroid_x, centroid_y))
+            emitted += 1
+
+        if emitted:
+            self._info_throttled(
+                "lidar_only_cones",
+                f"Published {emitted} LiDAR-only cluster(s) as unknown-color cones",
+                period_sec=2.0,
+            )
 
     def _lookup_transform_matrix(
         self,

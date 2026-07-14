@@ -34,4 +34,13 @@
       Everything at once: FSK Perception + SLAM + Planning + HUD groups.
     </description>
   </class>
+  <class name="fsk_rviz_presets/GnssModePanel"
+         type="fsk_rviz_presets::GnssModePanel"
+         base_class_type="rviz_common::Panel">
+    <description>
+      Buttons to set the simulated SBG Ellipse-D GNSS/RTK correction
+      (rtk_fixed / rtk_float / single) and INS solution mode at runtime,
+      by publishing to the sim_ellipse_d control topics.
+    </description>
+  </class>
 </library>

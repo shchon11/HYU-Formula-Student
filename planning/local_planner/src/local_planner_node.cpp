@@ -1,8 +1,12 @@
 #include "local_planner/local_planner_node.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <stdexcept>
 #include <utility>
+
+#include "local_path_builder_internal.hpp"
 
 namespace local_planner
 {
@@ -60,6 +64,14 @@ LocalPlannerNode::LocalPlannerNode(const rclcpp::NodeOptions & options)
   planner_config_.min_speed_mps = declare_parameter<double>("min_speed_mps", 1.0);
   planner_config_.allow_partial_boundary = declare_parameter<bool>(
     "allow_partial_boundary", source_mode_ == SourceMode::kSlamMap);
+  planner_config_.use_unknown_cones = declare_parameter<bool>("use_unknown_cones", true);
+  planner_config_.unknown_absorb_lateral_m =
+    declare_parameter<double>("unknown_absorb_lateral_m", 0.75);
+  planner_config_.unknown_geom_deadband_m =
+    declare_parameter<double>("unknown_geom_deadband_m", 0.75);
+  planner_config_.extend_straight_to_horizon =
+    declare_parameter<bool>("extend_straight_to_horizon", false);
+  log_diagnostics_ = declare_parameter<bool>("log_planner_diagnostics", false);
 
   if (!std::isfinite(max_stamp_skew_sec_) || max_stamp_skew_sec_ < 0.0 ||
     !std::isfinite(max_input_age_sec_) || max_input_age_sec_ <= 0.0 ||
@@ -91,7 +103,9 @@ void LocalPlannerNode::processLivePair(const LiveInputPair & input)
     return;
   }
 
-  const auto result = buildLocalPath(liveConeSet(*input.cones), planner_config_);
+  const auto cone_set = liveConeSet(*input.cones);
+  const auto result = buildLocalPath(cone_set, planner_config_);
+  logPlannerDiagnostics(cone_set, result);
   if (!result.valid) {
     output_->retainUntilStale(result.reason);
     return;
@@ -113,7 +127,9 @@ void LocalPlannerNode::processSlamMap(const SlamMapInput & input)
     return;
   }
 
-  const auto result = buildLocalPath(slamConeSet(*input.map, odom_metadata), planner_config_);
+  const auto cone_set = slamConeSet(*input.map, odom_metadata);
+  const auto result = buildLocalPath(cone_set, planner_config_);
+  logPlannerDiagnostics(cone_set, result);
   if (result.valid) {
     output_->publishPath(result, *input.odom, input.odom->header.stamp, input.odom_receive_time);
   } else {
@@ -121,6 +137,55 @@ void LocalPlannerNode::processSlamMap(const SlamMapInput & input)
       get_logger(), *get_clock(), 2000, "SLAM local path invalid: %s", result.reason.c_str());
     output_->invalidateImmediately(result.reason);
   }
+}
+
+void LocalPlannerNode::logPlannerDiagnostics(const ConeSet & cones, const BuildResult & result)
+{
+  if (!log_diagnostics_) {
+    return;
+  }
+
+  // Recompute the ROI crop + unknown classification exactly as buildLocalPath
+  // does, so the reported counts are the ones the planner actually used.
+  auto blue = internal::cropToRoi(cones.blue, planner_config_);
+  auto yellow = internal::cropToRoi(cones.yellow, planner_config_);
+  if (planner_config_.use_unknown_cones && !cones.unknown.empty()) {
+    const auto unknown = internal::cropToRoi(cones.unknown, planner_config_);
+    internal::classifyUnknownCones(blue, yellow, unknown, planner_config_);
+  }
+
+  // Signed curvature: mean sign is the turn direction (left circle > 0, right
+  // circle < 0), |mean| is 1/radius, and the spread is the frame-to-frame
+  // jitter. An outward-bulging left circle reads as a smaller |mean| than the
+  // nominal 1/9.1 with a larger spread than the (stable) right circle.
+  double kappa_sum = 0.0;
+  double kappa_sq_sum = 0.0;
+  const std::size_t n = result.waypoints.size();
+  for (const auto & waypoint : result.waypoints) {
+    kappa_sum += waypoint.kappa;
+    kappa_sq_sum += waypoint.kappa * waypoint.kappa;
+  }
+  const double kappa_mean = n > 0U ? kappa_sum / static_cast<double>(n) : 0.0;
+  const double kappa_var =
+    n > 0U ? std::max(0.0, kappa_sq_sum / static_cast<double>(n) - kappa_mean * kappa_mean) : 0.0;
+  const double kappa_std = std::sqrt(kappa_var);
+  const double radius = std::abs(kappa_mean) > 1.0e-6 ? 1.0 / std::abs(kappa_mean) : 0.0;
+
+  const char * kind = "none";
+  switch (result.kind) {
+    case PathKind::kTwoSided: kind = "two_sided"; break;
+    case PathKind::kBlueOnly: kind = "blue_only"; break;
+    case PathKind::kYellowOnly: kind = "yellow_only"; break;
+    case PathKind::kNone: kind = "none"; break;
+  }
+  const char * turn = kappa_mean > 0.02 ? "LEFT" : (kappa_mean < -0.02 ? "RIGHT" : "straight");
+
+  RCLCPP_INFO_THROTTLE(
+    get_logger(), *get_clock(), 500,
+    "[localdiag] turn=%s kind=%s valid=%d roi_blue=%zu roi_yellow=%zu wp=%zu "
+    "kappa_mean=%.3f radius=%.2f kappa_std=%.3f reason=%s",
+    turn, kind, result.valid ? 1 : 0, blue.size(), yellow.size(), n,
+    kappa_mean, radius, kappa_std, result.reason.c_str());
 }
 
 }

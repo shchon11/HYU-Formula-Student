@@ -114,6 +114,27 @@ TEST(PurePursuitController, VxPriorityFallsBackToSpeedThenZero)
   EXPECT_DOUBLE_EQ(computeCommand(nonfinite_speed).acceleration_mps2, 1.2);
 }
 
+TEST(PurePursuitController, ConfiguredBrakeDecelerationIsUsed)
+{
+  // The hard brake honours brake_acceleration_mps2 (the acceleration mission
+  // models a 3 m/s^2 vehicle), independent of the in-path min_acceleration.
+  ControllerConfig soft_brake;
+  soft_brake.brake_acceleration_mps2 = -3.0;
+  auto invalid = readyInput(straightPath(2.0, 2.0));
+  invalid.selected_path_valid = false;
+  const auto braked = computeCommand(invalid, soft_brake);
+  EXPECT_DOUBLE_EQ(braked.speed_mps, 0.0);
+  EXPECT_DOUBLE_EQ(braked.acceleration_mps2, -3.0);
+
+  // A config whose brake value is not a real deceleration is invalid, but the
+  // car must still stop: the brake falls back to the historical -5.0 m/s^2.
+  ControllerConfig bad;
+  bad.brake_acceleration_mps2 = 1.0;
+  const auto fallback = computeCommand(invalid, bad);
+  EXPECT_DOUBLE_EQ(fallback.speed_mps, 0.0);
+  EXPECT_DOUBLE_EQ(fallback.acceleration_mps2, -5.0);
+}
+
 TEST(PurePursuitController, InvalidStaleOrStopCommandsBrake)
 {
   const ControllerConfig config;

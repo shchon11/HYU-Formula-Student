@@ -232,11 +232,16 @@ class StackHud(Node):
         # so a dead selector reads as "silent", not its last excuse.
         sel = self._kv(self.sel_debug) if self.sel_debug.fresh(2.0) else {}
         lines, statuses = self._board_lines(debug, sel)
+        # Board sits BELOW the top-centre banner (v_dist 8, height 44 -> y8..52).
+        # On a narrow viewport the centred banner slides left over this left
+        # board; clearing it vertically keeps the banner readable. GNSS HUD
+        # (sbg_odometry_bridge.py) is pinned just under this board's bottom, so
+        # keep the two in sync when moving either.
         self._publish(
             self.hud_pub, "\n".join(lines),
             width=480, height=24 + 19 * len(lines),
             h_align=OverlayText.LEFT, v_align=OverlayText.TOP,
-            h_dist=12, v_dist=12, size=12.0)
+            h_dist=12, v_dist=56, size=12.0)
 
         text, color = self._banner(debug, sel, statuses)
         self._publish(

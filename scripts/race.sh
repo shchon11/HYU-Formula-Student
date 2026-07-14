@@ -101,6 +101,15 @@ case "$TRACK" in
     MISSION_NOTE="skidpad: entry → right x2 → left x2 → exit (laps via skidpad_right/left_laps)."
     MONITOR_EXTRA="echo -n 'skidpad:     '; timeout 1 ros2 topic echo --once /skidpad/phase 2>/dev/null | grep -o 'data:.*'; "
     ;;
+  accel|acceleration*)
+    # Straight-line sprint on the 'acceleration' track (accept 'accel' shorthand).
+    # Local-only planning, no global planner; the controller brakes itself when
+    # the corridor cones end past the finish (local path goes invalid).
+    TRACK="acceleration"
+    PLAN_EXTRA=" acceleration:=true"
+    AMI_STATE=11   # AMI_ACCELERATION
+    MISSION_NOTE="acceleration: local-only straight sprint; controller brakes when the corridor cones end (finish → braking zone)."
+    ;;
 esac
 
 if [ ! -f "$WS_SETUP" ]; then

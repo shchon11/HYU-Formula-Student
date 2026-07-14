@@ -344,6 +344,72 @@ TEST(LocalPathBuilder, MixedSparseAndUnknownOnlyFailClosed)
   EXPECT_FALSE(unknown_result.valid);
 }
 
+TEST(LocalPathBuilder, UnknownConeOnBlueLineEnablesOneSidedPath)
+{
+  // Two known blue cones sit below the >=3 one-sided gate; a colour drop-out on
+  // the same boundary line is absorbed and lifts the side over the gate.
+  ConeSet cones;
+  cones.blue = {{0.0, 2.0}, {2.0, 2.0}};
+  cones.unknown = {{4.0, 2.0}};
+
+  const auto with_unknown = buildLocalPath(cones);
+  ASSERT_TRUE(with_unknown.evaluated);
+  ASSERT_TRUE(with_unknown.valid) << with_unknown.reason;
+  EXPECT_EQ(with_unknown.kind, PathKind::kBlueOnly);
+
+  PlannerConfig without_unknown;
+  without_unknown.use_unknown_cones = false;
+  const auto disabled = buildLocalPath(cones, without_unknown);
+  ASSERT_TRUE(disabled.evaluated);
+  EXPECT_FALSE(disabled.valid);
+}
+
+TEST(LocalPathBuilder, AllUnknownConesSplitByEgoSideFormTwoSidedPath)
+{
+  // A fully unclassified map (no labelled cones in reach) falls back to the
+  // ego-frame left/right split and still yields a centred two-sided path.
+  ConeSet cones;
+  for (double x : {0.0, 2.0, 4.0, 6.0, 8.0}) {
+    cones.unknown.push_back({x, 1.5});
+    cones.unknown.push_back({x, -1.5});
+  }
+
+  const auto with_unknown = buildLocalPath(cones);
+  if (!expectStrictFinitePath(with_unknown, 3.0)) {
+    return;
+  }
+  EXPECT_EQ(with_unknown.kind, PathKind::kTwoSided);
+  for (const auto & waypoint : with_unknown.waypoints) {
+    EXPECT_NEAR(waypoint.y, 0.0, 0.25);
+  }
+
+  PlannerConfig without_unknown;
+  without_unknown.use_unknown_cones = false;
+  const auto disabled = buildLocalPath(cones, without_unknown);
+  ASSERT_TRUE(disabled.evaluated);
+  EXPECT_FALSE(disabled.valid);
+}
+
+TEST(LocalPathBuilder, CentrelineUnknownConeIsDropped)
+{
+  // A cone dead-centre between the boundaries is off both boundary lines, so it
+  // must be discarded and leave the two-sided path bit-for-bit unchanged.
+  const auto baseline = buildLocalPath(straightTwoSided());
+  if (!expectStrictFinitePath(baseline, 3.0)) {
+    return;
+  }
+
+  auto with_centre = straightTwoSided();
+  with_centre.unknown = {{4.0, 0.0}};
+  const auto result = buildLocalPath(with_centre);
+  ASSERT_TRUE(result.valid) << result.reason;
+  ASSERT_EQ(baseline.waypoints.size(), result.waypoints.size());
+  for (std::size_t index = 0; index < baseline.waypoints.size(); ++index) {
+    EXPECT_DOUBLE_EQ(baseline.waypoints[index].x, result.waypoints[index].x);
+    EXPECT_DOUBLE_EQ(baseline.waypoints[index].y, result.waypoints[index].y);
+  }
+}
+
 TEST(LocalPathBuilder, PartialBoundarySinglePairBuildsSparsePath)
 {
   PlannerConfig config;

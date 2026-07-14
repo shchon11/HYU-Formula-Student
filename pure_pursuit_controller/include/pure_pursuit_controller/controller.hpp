@@ -21,6 +21,10 @@ struct ControllerConfig
   double longitudinal_kp{1.2};
   double min_acceleration_mps2{-8.0};
   double max_acceleration_mps2{2.5};
+  // Deceleration commanded by the hard brake (invalid/stale path, stop request,
+  // no reachable target). Separate from min_acceleration_mps2, which only
+  // clamps in-path deceleration. Model the vehicle's real braking limit here.
+  double brake_acceleration_mps2{-5.0};
 };
 
 struct PathPoint
@@ -72,7 +76,7 @@ struct ControllerInput
   std::optional<EgoState> ego;
 };
 
-DriveCommand brakeCommand();
+DriveCommand brakeCommand(const ControllerConfig & config = ControllerConfig{});
 
 std::chrono::nanoseconds commandPeriod(const ControllerConfig & config);
 

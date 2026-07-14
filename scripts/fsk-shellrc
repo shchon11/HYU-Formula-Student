@@ -34,7 +34,8 @@ fsb() {
 
 # --- run ----------------------------------------------------------------------
 # race [track] [sim|real] [extra args...]  — full autonomous stack in tmux.
-#   Track skidpad / skidpad_kase2026 switches to the skidpad mission profile
+#   Track skidpad / skidpad_kase2026 switches to the skidpad mission profile,
+#   and accel / acceleration to the straight-line acceleration profile,
 #   automatically. Stop: race stop | re-attach: race attach
 race()    { "$EUFS_MASTER/src/scripts/race.sh" "$@"; }
 simfull() { ros2 launch eufs_launcher simulation.launch.py perception_mode:=sim rviz:=true "$@"; }

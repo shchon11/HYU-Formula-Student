@@ -4,13 +4,13 @@
   <xacro:arg name="simulate_perception" default="false"/>
   <xacro:arg name="command_mode" default="acceleration"/>
   <xacro:arg name="pub_ground_truth" default="true"/>
-  <xacro:arg name="perception_camera_view_distance" default="15"/>
-  <xacro:arg name="perception_lidar_view_distance" default="100"/>
-  <xacro:arg name="perception_lidar_x_view_distance" default="20"/>
-  <xacro:arg name="perception_lidar_y_view_distance" default="20"/>
+  <xacro:arg name="perception_camera_view_distance" default="12"/>
+  <xacro:arg name="perception_lidar_view_distance" default="15"/>
+  <xacro:arg name="perception_lidar_x_view_distance" default="15"/>
+  <xacro:arg name="perception_lidar_y_view_distance" default="10"/>
   <xacro:arg name="perception_lidar_min_view_distance" default="1"/>
   <xacro:arg name="perception_camera_min_view_distance" default="0.5"/>
-  <xacro:arg name="perception_camera_fov" default="2.09"/>
+  <xacro:arg name="perception_camera_fov" default="1.91986"/>
   <xacro:arg name="perception_lidar_fov" default="3.141593"/>
   <xacro:arg name="perception_lidar_on" default="true"/>
   <xacro:arg name="perception_detection_probability" default="1.0"/>
@@ -52,6 +52,27 @@
       <driftYawRateBias>0.01</driftYawRateBias>
       <driftVelocityNoise>0.05</driftVelocityNoise>
       <driftYawRateNoise>0.01</driftYawRateNoise>
+      <!-- Continuous road-roughness vibration on the car body. The car bounces
+           (z) and rocks (roll/pitch) with an amplitude that scales with speed,
+           so the rigidly-attached IMU/camera/LiDAR feel it too. Set roadNoise
+           to false to keep the car perfectly flat. -->
+      <roadNoise>true</roadNoise>
+      <roadNoiseZ>0.010</roadNoiseZ><!-- vertical bounce stddev [m] at v_ref -->
+      <roadNoiseRoll>0.006</roadNoiseRoll><!-- roll stddev [rad] at v_ref -->
+      <roadNoisePitch>0.006</roadNoisePitch><!-- pitch stddev [rad] at v_ref -->
+      <roadNoiseCorrelation>0.05</roadNoiseCorrelation><!-- correlation time [s] -->
+      <roadNoiseSpeedRef>5.0</roadNoiseSpeedRef><!-- speed [m/s] for nominal amplitude -->
+      <roadNoiseMaxGain>2.0</roadNoiseMaxGain><!-- cap on speed amplitude gain -->
+      <!-- Acceleration load transfer: longitudinal accel pitches the body
+           (accel = nose up, braking = dive), lateral accel rolls it outward in
+           a corner. Gains are rad per m/s^2 (~0.006 -> ~3.4 deg at 1 g). Raise
+           for a more dramatic lean; set loadTransfer false to disable. -->
+      <loadTransfer>true</loadTransfer>
+      <loadTransferRollGain>0.010</loadTransferRollGain><!-- roll per lateral accel [rad/(m/s^2)] -->
+      <loadTransferPitchGain>0.010</loadTransferPitchGain><!-- pitch per long. accel [rad/(m/s^2)] -->
+      <loadTransferTau>0.15</loadTransferTau><!-- suspension response time [s] -->
+      <loadTransferMaxRoll>0.12</loadTransferMaxRoll><!-- clamp [rad] (~6.9 deg) -->
+      <loadTransferMaxPitch>0.12</loadTransferMaxPitch><!-- clamp [rad] -->
       <wheelSpeedsTopicName>/ros_can/wheel_speeds</wheelSpeedsTopicName>
       <groundTruthWheelSpeedsTopicName>/ground_truth/wheel_speeds</groundTruthWheelSpeedsTopicName>
       <jointStatesTopicName>/eufs/joint_states</jointStatesTopicName>

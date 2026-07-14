@@ -1,0 +1,25 @@
+# Acceleration-mission controller tuning. Dead-straight 75 m sprint, then a
+# stop in the braking zone. The trackdrive lookahead/steer limits are fine on a
+# straight; a slightly firmer forward accel gets the car to top speed sooner.
+#
+# Braking budget (design assumption: the vehicle can decelerate at 3 m/s^2 --
+# CHANGE the two decel values below together if that number changes):
+#   The corridor cones end at map x=+20 and the local path goes invalid a metre
+#   or so past that, so the hard brake begins around x~=21 at top speed V. The
+#   braking zone runs finish(x=+25) -> stop box(x=+50). Stopping distance at
+#   3 m/s^2 is V^2/6, so V^2/6 must stay under ~29 m (x21->x50) -> V <~ 13 m/s.
+#   At the 10 m/s cap here the car stops near x=+38, ~12 m inside the box.
+pure_pursuit_controller_node:
+  ros__parameters:
+    wheelbase_m: 1.58
+    lookahead_m: 6.0
+    max_steering_rad: 0.52
+    command_rate_hz: 20.0
+    input_timeout_sec: 0.5
+    max_speed_mps: 10.0
+    longitudinal_kp: 1.2
+    # 3 m/s^2 max deceleration, both in-path and on the hard brake that stops
+    # the car once the corridor ends. Forward accel stays a touch firmer.
+    min_acceleration_mps2: -3.0
+    max_acceleration_mps2: 3.0
+    brake_acceleration_mps2: -3.0

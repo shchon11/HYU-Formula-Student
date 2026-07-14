@@ -15,6 +15,7 @@ find_package(std_msgs REQUIRED)
 
 add_library(local_planner_core
   src/input_policy.cpp
+  src/local_path_classify.cpp
   src/local_path_delaunay.cpp
   src/local_path_geometry.cpp
   src/local_path_intersections.cpp

@@ -35,3 +35,9 @@ local_planner_node:
     fallback_offset_m: 1.5
     two_sided_speed_mps: 4.0
     fallback_speed_mps: 2.5
+    # Unknown-colour cone handling; see local_planner.yaml. The skidpad corridor
+    # is only 3 m wide, so the absorb band stays tight to avoid pulling a
+    # near-centreline cone onto a wall.
+    use_unknown_cones: true
+    unknown_absorb_lateral_m: 0.6
+    unknown_geom_deadband_m: 0.75

@@ -64,6 +64,11 @@ ARGUMENTS = (
     ("skidpad_left_laps", "2", "Skidpad left-circle laps before exiting."),
     ("skidpad_cone_map_topic", "/skidpad/cone_map", "Phase-gated cone map for the local planner."),
     ("skidpad_phase_topic", "/skidpad/phase", "Latched skidpad mission phase."),
+    # Acceleration mission: local-only straight-line sprint. Like skidpad the
+    # global planner stays down, but there is no phase director and no map
+    # gating -- the local planner drives the full SLAM cone map straight down
+    # the corridor and the controller brakes on its own when the cones run out.
+    ("acceleration", "false", "Acceleration mission: local-only straight-line, no global planner."),
 )
 
 PARAMETER_FILES = (
@@ -124,6 +129,19 @@ def generate_launch_description() -> LaunchDescription:
     configuration_names.extend(name for name, _, _, _ in PARAMETER_FILES)
     values = {name: LaunchConfiguration(name) for name in configuration_names}
 
+    # Local-only missions (skidpad, acceleration) keep the global planner and
+    # its Frenet/handoff group down; the state machine stays in LOCAL for the
+    # whole run. Resolves to the literal 'true'/'false' for launch conditions.
+    local_only = PythonExpression(
+        [
+            "'true' if '",
+            values["skidpad"],
+            "' == 'true' or '",
+            values["acceleration"],
+            "' == 'true' else 'false'",
+        ]
+    )
+
     graph_slam = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution(
@@ -142,7 +160,7 @@ def generate_launch_description() -> LaunchDescription:
             "publish_tf": values["graph_slam_publish_tf"],
             "localization_mode": values["graph_slam_localization_mode"],
             "auto_localization_after_lap": PythonExpression(
-                ["'false' if '", values["skidpad"], "' == 'true' else 'true'"]
+                ["'false' if '", local_only, "' == 'true' else 'true'"]
             ),
             "load_map_path": values["graph_slam_load_map_path"],
             "gui": values["graph_slam_gui"],
@@ -181,9 +199,9 @@ def generate_launch_description() -> LaunchDescription:
             ),
             global_planner_launch,
         ],
-        # Skidpad never hands off to a global path; the whole global group
-        # (planner, frenet odometry, waypoint window) stays down.
-        condition=UnlessCondition(values["skidpad"]),
+        # Local-only missions never hand off to a global path; the whole global
+        # group (planner, frenet odometry, waypoint window) stays down.
+        condition=UnlessCondition(local_only),
     )
     skidpad_director = Node(
         package="planning_bringup",
@@ -203,17 +221,22 @@ def generate_launch_description() -> LaunchDescription:
             },
         ],
     )
-    # Skidpad swaps in mission-tuned parameter files (slow speeds, short
-    # lookahead) without touching the trackdrive defaults.
+    # Each local-only mission swaps in its own tuned parameter files (skidpad:
+    # slow, short lookahead; acceleration: full-speed straight) without touching
+    # the trackdrive defaults.
     local_params_selected = PythonExpression(
         [
             "'",
             _params_file("local_planner", "local_planner_skidpad.yaml"),
             "' if '",
             values["skidpad"],
+            "' == 'true' else ('",
+            _params_file("local_planner", "local_planner_acceleration.yaml"),
+            "' if '",
+            values["acceleration"],
             "' == 'true' else '",
             values["local_params_file"],
-            "'",
+            "')",
         ]
     )
     controller_params_selected = PythonExpression(
@@ -222,9 +245,13 @@ def generate_launch_description() -> LaunchDescription:
             _params_file("pure_pursuit_controller", "pure_pursuit_controller_skidpad.yaml"),
             "' if '",
             values["skidpad"],
+            "' == 'true' else ('",
+            _params_file("pure_pursuit_controller", "pure_pursuit_controller_acceleration.yaml"),
+            "' if '",
+            values["acceleration"],
             "' == 'true' else '",
             values["controller_params_file"],
-            "'",
+            "')",
         ]
     )
     local_planner = Node(

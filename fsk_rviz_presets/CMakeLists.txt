@@ -8,12 +8,18 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rviz_common REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(std_msgs REQUIRED)
 
 set(CMAKE_AUTOMOC ON)
-qt5_wrap_cpp(MOC_FILES include/fsk_rviz_presets/stack_displays.hpp)
+qt5_wrap_cpp(MOC_FILES
+  include/fsk_rviz_presets/stack_displays.hpp
+  include/fsk_rviz_presets/gnss_mode_panel.hpp
+)
 
 add_library(${PROJECT_NAME} SHARED
   src/stack_displays.cpp
+  src/gnss_mode_panel.cpp
   ${MOC_FILES}
 )
 target_include_directories(${PROJECT_NAME} PRIVATE
@@ -22,6 +28,8 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 ament_target_dependencies(${PROJECT_NAME}
   pluginlib
   rviz_common
+  rclcpp
+  std_msgs
 )
 
 install(TARGETS ${PROJECT_NAME}

@@ -36,14 +36,21 @@ bool isValidConfig(const ControllerConfig & config)
          std::isfinite(config.longitudinal_kp) && config.longitudinal_kp >= 0.0 &&
          std::isfinite(config.min_acceleration_mps2) &&
          std::isfinite(config.max_acceleration_mps2) &&
-         config.min_acceleration_mps2 <= config.max_acceleration_mps2;
+         config.min_acceleration_mps2 <= config.max_acceleration_mps2 &&
+         std::isfinite(config.brake_acceleration_mps2) &&
+         config.brake_acceleration_mps2 < 0.0;
 }
 
 }
 
-DriveCommand brakeCommand()
+DriveCommand brakeCommand(const ControllerConfig & config)
 {
-  return DriveCommand{};
+  // Fall back to the historical -5.0 m/s^2 if the configured value is not a
+  // real deceleration, so an invalid config still brings the car to a stop.
+  const double decel =
+    (std::isfinite(config.brake_acceleration_mps2) && config.brake_acceleration_mps2 < 0.0) ?
+    config.brake_acceleration_mps2 : -5.0;
+  return DriveCommand{0.0, decel, 0.0};
 }
 
 std::chrono::nanoseconds commandPeriod(const ControllerConfig & config)
@@ -159,17 +166,17 @@ DriveCommand computeCommand(const ControllerInput & input, const ControllerConfi
     !isFresh(input.odom_age_sec, config.input_timeout_sec) || !input.ego.has_value() ||
     !isFinitePose(input.ego.value()))
   {
-    return brakeCommand();
+    return brakeCommand(config);
   }
 
   const auto target = selectTarget(input.path, input.ego.value(), config.lookahead_m);
   if (!target.has_value()) {
-    return brakeCommand();
+    return brakeCommand(config);
   }
   const double lookahead_squared =
     target->x_body_m * target->x_body_m + target->y_body_m * target->y_body_m;
   if (!std::isfinite(lookahead_squared) || lookahead_squared <= 0.0) {
-    return brakeCommand();
+    return brakeCommand(config);
   }
 
   double target_speed = 0.0;

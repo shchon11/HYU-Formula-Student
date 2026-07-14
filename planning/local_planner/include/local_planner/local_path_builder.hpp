@@ -58,6 +58,26 @@ struct PlannerConfig
   double max_lateral_accel_mps2{5.0};
   double min_speed_mps{1.0};
   bool allow_partial_boundary{false};
+  // Unknown-colour cone handling. Perception/SLAM emit colour drop-outs as
+  // unknown_color_cones; when enabled each such cone is classified onto the
+  // nearest boundary so it still informs the path. Classification is
+  // deliberately conservative: a cone is absorbed only when its side is
+  // unambiguous, and centred/off-boundary cones are dropped.
+  bool use_unknown_cones{true};
+  // Max perpendicular distance from the local boundary line (fitted from the
+  // two nearest same-colour cones) for an unknown cone to be absorbed onto it.
+  double unknown_absorb_lateral_m{0.75};
+  // Fallback when no labelled boundary lies within max_traversal_gap_m of an
+  // unknown cone: split by ego-frame side. |y| below this dead-band is too
+  // central to call, so the cone is dropped.
+  double unknown_geom_deadband_m{0.75};
+  // Straight-corridor prior (acceleration mission). When perception lags the
+  // mapped cones sit behind the car, leaving the built centerline far short of
+  // the horizon -- short enough to fail the path and stall the car. On a track
+  // that is guaranteed straight, carry the centerline forward along its own
+  // heading to the horizon instead. Only enable where the track really is
+  // straight; on any curved track this would drive the path into a wall.
+  bool extend_straight_to_horizon{false};
 };
 
 enum class PathKind

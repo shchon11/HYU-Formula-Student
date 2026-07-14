@@ -12,6 +12,11 @@
     <scene>
       <ambient>1.0 1.0 1.0 1.0</ambient>
       <shadows>false</shadows>
+      <sky>
+        <clouds>
+          <speed>12</speed>
+        </clouds>
+      </sky>
     </scene>
 
     <spherical_coordinates>

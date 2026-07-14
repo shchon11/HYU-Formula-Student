@@ -252,6 +252,31 @@ race skidpad sim             # simulated perception으로도 동일하게 동작
 
 진행 단계는 `/skidpad/phase`로 확인 (모니터 pane에 표시됨).
 
+### 🚀 Acceleration (직선 가속 미션)
+`acceleration` 트랙(또는 `accel` 약칭)이면 **자동으로 가속 프로필**로 뜹니다: global
+planner 없이 local planner만 3 m 직선 코리도를 따라 top-speed로 쭉 가속, AMI_ACCELERATION(11)로
+ARM. **별도 정지 로직 없음** — 피니시를 지나 코리도 콘이 끝나면 local 경로가 무효가 되고,
+컨트롤러가 무효 경로에 대해 `brake_acceleration_mps2`로 자동 제동해 braking zone 안에서 멈춥니다.
+```bash
+race accel           # 'acceleration' 트랙, CUDA YOLO+LiDAR perception (기본)
+race acceleration sim   # 같은 미션, Gazebo simulated /cones
+```
+**제동 예산 (감속 성능 3 m/s² 가정 — 바뀌면 아래 두 감속값을 함께 수정):** 코리도 콘은 map
+x=+20에서 끝나고 경로는 그 1 m쯤 뒤에서 무효화되므로, 하드 브레이크는 top-speed V로 x≈21에서
+시작. braking zone은 피니시(x=+25)→정지박스(x=+50). 3 m/s² 정지거리 = V²/6 이 ~29 m(x21→x50)
+미만이어야 하므로 **V ≲ 13 m/s**. 기본 10 m/s면 x≈38에서 멈춰 박스까지 ~12 m 여유.
+
+자주 만지는 튜닝 (전부 파라미터 — 코드 수정 불필요):
+
+| 항목 | 위치 | 기본값 |
+|---|---|---|
+| 스프린트 속도 | `planning/local_planner/config/local_planner_acceleration.yaml` (`two_sided_speed_mps`) | 10 m/s |
+| 감속 성능 (in-path·하드브레이크) | `pure_pursuit_controller_acceleration.yaml` (`min_acceleration_mps2`, `brake_acceleration_mps2`) | −3 m/s² |
+| 상한·전진가속 | `pure_pursuit_controller_acceleration.yaml` (`max_speed_mps`, `max_acceleration_mps2`) | 10 m/s / +3 m/s² |
+
+더 빠르게 하려면 속도 상한을 올리되(local 경로 속도 ≤ 컨트롤러 max_speed), 위 제동 예산 식으로
+정지거리가 braking zone을 넘지 않는지 확인하세요.
+
 ### 자주 쓰는 변형
 ```bash
 pbring enable_controller:=false      # 주행 없이 계획만 (수동 개입: teleop)

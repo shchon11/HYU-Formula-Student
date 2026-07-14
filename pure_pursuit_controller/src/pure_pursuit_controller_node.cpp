@@ -35,6 +35,8 @@ public:
       declare_parameter("min_acceleration_mps2", config_.min_acceleration_mps2);
     config_.max_acceleration_mps2 =
       declare_parameter("max_acceleration_mps2", config_.max_acceleration_mps2);
+    config_.brake_acceleration_mps2 =
+      declare_parameter("brake_acceleration_mps2", config_.brake_acceleration_mps2);
 
     const auto qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable().durability_volatile();
     command_publisher_ =

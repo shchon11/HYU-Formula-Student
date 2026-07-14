@@ -21,11 +21,18 @@ private:
   void processLivePair(const LiveInputPair & input);
   void processSlamMap(const SlamMapInput & input);
 
+  // Debug-only. When log_planner_diagnostics is set, emit a throttled line
+  // reporting the chosen path mode, ROI cone counts, and path curvature stats
+  // so a left/right-circle asymmetry can be diagnosed live. No effect on the
+  // planned path; the counts recompute the same crop/classify pipeline.
+  void logPlannerDiagnostics(const ConeSet & cones, const BuildResult & result);
+
   SourceMode source_mode_;
   PlannerConfig planner_config_;
   double max_stamp_skew_sec_{0.1};
   double max_input_age_sec_{0.5};
   double heartbeat_hz_{10.0};
+  bool log_diagnostics_{false};
   std::unique_ptr<LocalPlannerOutput> output_;
   std::unique_ptr<LocalPlannerInputs> inputs_;
 };

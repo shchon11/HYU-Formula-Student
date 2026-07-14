@@ -439,12 +439,13 @@ class SbgOdometryBridge(Node):
 
         ov = OverlayText()
         ov.action = OverlayText.ADD
-        # Sits below the stack HUD board (12,12,~h230 published by
-        # planning_bringup stack_hud.py). Keep positions in sync when moving.
+        # Sits just below the stack HUD board (left-aligned at x12, y56, height
+        # 24 + 19*9 = 195 -> bottom ~251, published by planning_bringup
+        # stack_hud.py). Keep positions in sync when moving either.
         ov.width = 220
         ov.height = 96
         ov.horizontal_distance = 12
-        ov.vertical_distance = 300
+        ov.vertical_distance = 256
         ov.horizontal_alignment = OverlayText.LEFT
         ov.vertical_alignment = OverlayText.TOP
         ov.bg_color = ColorRGBA(r=0.0, g=0.0, b=0.0, a=0.55)

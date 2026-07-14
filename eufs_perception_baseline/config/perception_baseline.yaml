@@ -52,6 +52,16 @@ perception_baseline_node:
     range_variance_scale: 0.0005
     min_variance: 0.0001
 
+    # LiDAR clusters that never matched a camera detection (out of camera FOV,
+    # occluded, or a YOLO miss) are still published as unknown-color cones so
+    # SLAM/planning can see them. Set false to restore camera-gated output.
+    publish_unmatched_lidar_clusters: true
+    lidar_only_variance_x: 0.20
+    lidar_only_variance_y: 0.20
+    # Drop a LiDAR-only cluster within this radius (m) of a cone already made
+    # this frame, so a cone the camera also estimated is not duplicated.
+    lidar_only_dedup_radius_m: 0.5
+
     roi_min_x: 0.5
     roi_max_x: 30.0
     roi_abs_y: 15.0

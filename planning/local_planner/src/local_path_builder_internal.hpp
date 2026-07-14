@@ -36,6 +36,9 @@ std::vector<Point2> deduplicate(
 std::vector<Point2> boundaryMidpoints(
   const std::vector<Point2> & blue, const std::vector<Point2> & yellow,
   const PlannerConfig & config);
+void classifyUnknownCones(
+  std::vector<Point2> & blue, std::vector<Point2> & yellow,
+  const std::vector<Point2> & unknown, const PlannerConfig & config);
 TraversalResult forwardTraversalWithReason(
   const std::vector<Point2> & points, const PlannerConfig & config);
 std::vector<Point2> forwardTraversal(const std::vector<Point2> & points, const PlannerConfig & config);

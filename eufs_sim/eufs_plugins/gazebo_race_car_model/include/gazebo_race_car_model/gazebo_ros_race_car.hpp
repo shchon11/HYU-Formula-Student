@@ -89,12 +89,14 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
                             std::shared_ptr<std_srvs::srv::Trigger::Response> response);
   void returnCommandMode(std::shared_ptr<std_srvs::srv::Trigger::Request>,
                          std::shared_ptr<std_srvs::srv::Trigger::Response> response);
-  void setModelState();
+  void setModelState(double dt);
 
   void initVehicleModel(const sdf::ElementPtr &sdf);
   void initParams(const sdf::ElementPtr &sdf);
   void initModel(const sdf::ElementPtr &sdf);
   void initNoise(const sdf::ElementPtr &sdf);
+  void initRoadNoise(const sdf::ElementPtr &sdf);
+  void initLoadTransfer(const sdf::ElementPtr &sdf);
 
   eufs_msgs::msg::CarState stateToCarStateMsg(const eufs::models::State &state);
 
@@ -136,6 +138,31 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
   gazebo::common::Time _drift_last_time;
   std::mt19937 _drift_rng;
   std::normal_distribution<double> _drift_normal{0.0, 1.0};
+
+  // Continuous road-roughness vibration injected into the body pose so the car
+  // and every rigidly-attached sensor (IMU, camera, LiDAR) shake as if driving
+  // over a rough surface. Each axis is a speed-scaled first-order (AR(1))
+  // colored-noise process. Disabled unless <roadNoise> is set true in the SDF.
+  bool _road_noise_enabled{false};
+  double _road_sigma_z, _road_sigma_roll, _road_sigma_pitch;  // stddev at ref speed
+  double _road_tau;         // correlation time [s]
+  double _road_speed_ref;   // speed [m/s] at which amplitude reaches nominal
+  double _road_max_gain;    // cap on the speed-amplitude gain
+  double _road_max_z_rate;  // clamp [m/s] on the z velocity fed to the IMU
+  double _road_max_ang_rate;  // clamp [rad/s] on roll/pitch rate fed to the IMU
+  std::mt19937 _road_rng;
+  std::normal_distribution<double> _road_normal{0.0, 1.0};
+  double _road_z{0.0}, _road_roll{0.0}, _road_pitch{0.0};  // current applied offsets
+
+  // Load transfer: the ego's longitudinal acceleration pitches the body (accel
+  // = nose up, braking = dive) and its lateral acceleration rolls it outward in
+  // a corner. A first-order lag mimics suspension response. This adds to the
+  // road-roughness roll/pitch. Disabled unless <loadTransfer> is set true.
+  bool _load_transfer_enabled{false};
+  double _lt_roll_gain, _lt_pitch_gain;  // rad per (m/s^2)
+  double _lt_tau;                        // suspension response time [s]
+  double _lt_max_roll, _lt_max_pitch;    // clamps [rad]
+  double _lt_roll{0.0}, _lt_pitch{0.0};  // current lagged attitudes
 
   // Gazebo
   gazebo::physics::WorldPtr _world;

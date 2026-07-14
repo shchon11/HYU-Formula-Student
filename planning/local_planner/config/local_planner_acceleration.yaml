@@ -1,0 +1,52 @@
+# Acceleration-mission local planner tuning. Same structure as
+# local_planner.yaml; the track is a dead-straight 3 m corridor (blue/yellow at
+# y=+/-1.5, 5 m spacing) so there are no corners to slow for. The path speed is
+# pushed to the controller's top end for the sprint; the car brakes on its own
+# when the corridor cones run out past the finish (the local path goes invalid,
+# and the controller brakes on an invalid selected path).
+local_planner_node:
+  ros__parameters:
+    source_mode: slam_map
+    cones_topic: /cones
+    slam_map_topic: /localization/cone_map
+    odom_topic: /localization/ego_odom
+    slam_status_topic: /graph_slam/status
+    waypoints_topic: /planning/local_waypoints
+    path_topic: /planning/local_waypoints/path
+    validity_topic: /planning/local_path_valid
+    reason_topic: /planning/local_path_reason
+    max_stamp_skew_sec: 0.1
+    max_input_age_sec: 0.5
+    heartbeat_hz: 10.0
+    roi_min_x: -1.0
+    roi_max_x: 20.0
+    roi_abs_y: 8.0
+    endpoint_match_tolerance_m: 0.05
+    min_track_width_m: 2.0
+    max_track_width_m: 6.0
+    duplicate_tolerance_m: 0.05
+    min_forward_projection_m: 0.10
+    max_traversal_gap_m: 6.0
+    centerline_max_link_gap_m: 6.0
+    max_heading_change_rad: 1.047
+    max_u_turn_heading_change_rad: 2.618
+    waypoint_spacing_m: 0.5
+    max_start_distance_m: 4.0
+    two_sided_horizon_m: 20.0
+    fallback_horizon_m: 8.0
+    fallback_offset_m: 1.5
+    # Sprint speed. two_sided_speed_mps is the straight-line cap and sits at the
+    # controller ceiling (pure_pursuit_controller_acceleration.yaml max_speed);
+    # raise both together for a faster run. The one-sided fallback stays slower
+    # because it means a boundary side dropped out.
+    two_sided_speed_mps: 10.0
+    fallback_speed_mps: 4.0
+    # Unknown-colour cone handling; see local_planner.yaml.
+    use_unknown_cones: true
+    unknown_absorb_lateral_m: 0.75
+    unknown_geom_deadband_m: 0.75
+    # Straight-corridor prior. Perception lag leaves the mapped cones behind the
+    # car, shortening the centerline until the path fails and the car brakes.
+    # The acceleration track is dead straight, so carry the centerline forward
+    # to the horizon and hold speed. SAFE ONLY because this track is straight.
+    extend_straight_to_horizon: true

@@ -34,3 +34,10 @@ local_planner_node:
     fallback_offset_m: 1.5
     two_sided_speed_mps: 4.5
     fallback_speed_mps: 3.0
+    # Unknown-colour cone handling. Absorb perception/SLAM colour drop-outs
+    # (unknown_color_cones) onto the nearest boundary. Conservative: a cone is
+    # taken only within unknown_absorb_lateral_m of one boundary's local line;
+    # with no boundary in reach it is split by ego side beyond the dead-band.
+    use_unknown_cones: true
+    unknown_absorb_lateral_m: 0.75
+    unknown_geom_deadband_m: 0.75

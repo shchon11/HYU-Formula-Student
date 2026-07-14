@@ -23,7 +23,7 @@ def _default_python_executable():
 PERCEPTION_LAUNCH_ARGUMENTS = [
     (
         'perception_camera_view_distance',
-        '13',
+        '12',
         'Camera range used by the /cones simulated perception plugin.',
     ),
     (
@@ -33,12 +33,12 @@ PERCEPTION_LAUNCH_ARGUMENTS = [
     ),
     (
         'perception_lidar_x_view_distance',
-        '20',
+        '15',
         'Forward/back lidar clipping range used by simulated perception.',
     ),
     (
         'perception_lidar_y_view_distance',
-        '20',
+        '10',
         'Lateral lidar clipping range used by simulated perception.',
     ),
     (
@@ -53,7 +53,7 @@ PERCEPTION_LAUNCH_ARGUMENTS = [
     ),
     (
         'perception_camera_fov',
-        '2.8',
+        '1.91986',
         'Camera FOV in radians used by the /cones simulated perception plugin.',
     ),
     (

@@ -67,6 +67,12 @@ void RaceCarModelPlugin::Load(gazebo::physics::ModelPtr model, sdf::ElementPtr s
   // Initialize noise object
   initNoise(sdf);
 
+  // Initialize continuous road-roughness vibration
+  initRoadNoise(sdf);
+
+  // Initialize acceleration-driven load transfer (roll/pitch)
+  initLoadTransfer(sdf);
+
   // ROS Publishers
   _pub_ground_truth_car_state =
       _rosnode->create_publisher<eufs_msgs::msg::CarState>(_ground_truth_car_state_topic, 1);
@@ -325,6 +331,58 @@ void RaceCarModelPlugin::initNoise(const sdf::ElementPtr &sdf) {
   _noise = std::make_unique<eufs::models::Noise>(yaml_name);
 }
 
+void RaceCarModelPlugin::initRoadNoise(const sdf::ElementPtr &sdf) {
+  auto get_double = [&](const char *name, double def) {
+    return sdf->HasElement(name) ? sdf->GetElement(name)->Get<double>() : def;
+  };
+
+  _road_noise_enabled = sdf->HasElement("roadNoise") && sdf->GetElement("roadNoise")->Get<bool>();
+  _road_sigma_z = get_double("roadNoiseZ", 0.010);          // 1 cm vertical bounce
+  _road_sigma_roll = get_double("roadNoiseRoll", 0.006);    // ~0.34 deg
+  _road_sigma_pitch = get_double("roadNoisePitch", 0.006);  // ~0.34 deg
+  _road_tau = std::max(get_double("roadNoiseCorrelation", 0.05), 1.0e-3);
+  _road_speed_ref = std::max(get_double("roadNoiseSpeedRef", 5.0), 1.0e-3);
+  _road_max_gain = std::max(get_double("roadNoiseMaxGain", 2.0), 0.0);
+  _road_max_z_rate = std::max(get_double("roadNoiseMaxZRate", 0.5), 0.0);
+  _road_max_ang_rate = std::max(get_double("roadNoiseMaxAngRate", 1.0), 0.0);
+  _road_rng.seed(sdf->HasElement("roadNoiseSeed") ? sdf->GetElement("roadNoiseSeed")->Get<unsigned int>()
+                                                  : 7u);
+  _road_z = 0.0;
+  _road_roll = 0.0;
+  _road_pitch = 0.0;
+
+  if (_road_noise_enabled) {
+    RCLCPP_INFO(_rosnode->get_logger(),
+                "Road-roughness vibration enabled (sigma_z=%.3f m, roll=%.4f, pitch=%.4f rad, "
+                "tau=%.3f s, v_ref=%.2f m/s)",
+                _road_sigma_z, _road_sigma_roll, _road_sigma_pitch, _road_tau, _road_speed_ref);
+  }
+}
+
+void RaceCarModelPlugin::initLoadTransfer(const sdf::ElementPtr &sdf) {
+  auto get_double = [&](const char *name, double def) {
+    return sdf->HasElement(name) ? sdf->GetElement(name)->Get<double>() : def;
+  };
+
+  _load_transfer_enabled =
+      sdf->HasElement("loadTransfer") && sdf->GetElement("loadTransfer")->Get<bool>();
+  // ~0.006 rad per m/s^2 -> about 3.4 deg lean at 1 g.
+  _lt_roll_gain = get_double("loadTransferRollGain", 0.006);
+  _lt_pitch_gain = get_double("loadTransferPitchGain", 0.006);
+  _lt_tau = std::max(get_double("loadTransferTau", 0.15), 1.0e-3);
+  _lt_max_roll = std::max(get_double("loadTransferMaxRoll", 0.10), 0.0);
+  _lt_max_pitch = std::max(get_double("loadTransferMaxPitch", 0.10), 0.0);
+  _lt_roll = 0.0;
+  _lt_pitch = 0.0;
+
+  if (_load_transfer_enabled) {
+    RCLCPP_INFO(_rosnode->get_logger(),
+                "Acceleration load transfer enabled (roll_gain=%.4f, pitch_gain=%.4f rad/(m/s^2), "
+                "tau=%.3f s)",
+                _lt_roll_gain, _lt_pitch_gain, _lt_tau);
+  }
+}
+
 void RaceCarModelPlugin::setPositionFromWorld() {
   _offset = _model->WorldPose();
 
@@ -366,6 +424,14 @@ bool RaceCarModelPlugin::resetVehiclePosition(
   const ignition::math::Vector3d vel(0.0, 0.0, 0.0);
   const ignition::math::Vector3d angular(0.0, 0.0, 0.0);
 
+  // Clear the road-roughness and load-transfer accumulators so the vehicle
+  // resets flat.
+  _road_z = 0.0;
+  _road_roll = 0.0;
+  _road_pitch = 0.0;
+  _lt_roll = 0.0;
+  _lt_pitch = 0.0;
+
   _model->SetWorldPose(_offset);
   _model->SetAngularVel(angular);
   _model->SetLinearVel(vel);
@@ -389,7 +455,7 @@ void RaceCarModelPlugin::returnCommandMode(
   response->message = command_mode_str;
 }
 
-void RaceCarModelPlugin::setModelState() {
+void RaceCarModelPlugin::setModelState(double dt) {
   double yaw = _state.yaw + _offset.Rot().Yaw();
 
   double x =
@@ -398,12 +464,73 @@ void RaceCarModelPlugin::setModelState() {
       _offset.Pos().Y() + _state.x * sin(_offset.Rot().Yaw()) + _state.y * cos(_offset.Rot().Yaw());
   double z = _state.z;
 
+  // Body attitude perturbations added to the otherwise-flat pose: an
+  // acceleration-driven load transfer plus continuous road roughness. The
+  // matching (clamped) body rates are fed to Gazebo so the rigidly-attached
+  // IMU also senses the motion.
+  double roll = 0.0, pitch = 0.0;
+  double roll_rate = 0.0, pitch_rate = 0.0, z_rate = 0.0;
+  const double road_z_prev = _road_z;
+
+  // Load transfer: longitudinal accel pitches the body (accel = nose up,
+  // braking = dive), lateral accel rolls it outward in a corner. Uses the
+  // body-frame specific forces (with the convective yaw-rate terms) so a steady
+  // corner still leans the car. A first-order lag mimics suspension response.
+  if (_load_transfer_enabled && dt > 0.0) {
+    const double a_long = _state.a_x - _state.v_y * _state.r_z;
+    const double a_lat = _state.a_y + _state.v_x * _state.r_z;
+    const double pitch_target =
+        std::clamp(-_lt_pitch_gain * a_long, -_lt_max_pitch, _lt_max_pitch);
+    const double roll_target = std::clamp(_lt_roll_gain * a_lat, -_lt_max_roll, _lt_max_roll);
+    const double alpha = 1.0 - std::exp(-dt / _lt_tau);
+    const double lt_roll_prev = _lt_roll, lt_pitch_prev = _lt_pitch;
+
+    _lt_roll += (roll_target - _lt_roll) * alpha;
+    _lt_pitch += (pitch_target - _lt_pitch) * alpha;
+
+    roll += _lt_roll;
+    pitch += _lt_pitch;
+    roll_rate += (_lt_roll - lt_roll_prev) / dt;
+    pitch_rate += (_lt_pitch - lt_pitch_prev) / dt;
+  }
+
+  // Continuous road roughness: speed-scaled AR(1) colored noise on z/roll/pitch.
+  // Because _state.z is read back from the world each step, the previously
+  // applied z offset is removed before reapplying the new one so the vertical
+  // offset cannot random-walk away.
+  if (_road_noise_enabled && dt > 0.0) {
+    const double speed = std::hypot(_state.v_x, _state.v_y);
+    const double gain = std::min(speed / _road_speed_ref, _road_max_gain);
+    const double a = std::exp(-dt / _road_tau);
+    const double b = std::sqrt(std::max(1.0 - a * a, 0.0));
+    const double prev_roll = _road_roll, prev_pitch = _road_pitch;
+
+    _road_z = a * _road_z + b * _road_sigma_z * gain * _road_normal(_road_rng);
+    _road_roll = a * _road_roll + b * _road_sigma_roll * gain * _road_normal(_road_rng);
+    _road_pitch = a * _road_pitch + b * _road_sigma_pitch * gain * _road_normal(_road_rng);
+
+    roll += _road_roll;
+    pitch += _road_pitch;
+    z_rate += (_road_z - road_z_prev) / dt;
+    roll_rate += (_road_roll - prev_roll) / dt;
+    pitch_rate += (_road_pitch - prev_pitch) / dt;
+  }
+
+  // Clamp the total body rates fed to the IMU.
+  z_rate = std::clamp(z_rate, -_road_max_z_rate, _road_max_z_rate);
+  roll_rate = std::clamp(roll_rate, -_road_max_ang_rate, _road_max_ang_rate);
+  pitch_rate = std::clamp(pitch_rate, -_road_max_ang_rate, _road_max_ang_rate);
+
+  // Remove last step's applied z offset (already in _state.z via world read-back)
+  // before adding the new one.
+  z = z - road_z_prev + _road_z;
+
   double vx = _state.v_x * cos(yaw) - _state.v_y * sin(yaw);
   double vy = _state.v_x * sin(yaw) + _state.v_y * cos(yaw);
 
-  const ignition::math::Pose3d pose(x, y, z, 0, 0.0, yaw);
-  const ignition::math::Vector3d vel(vx, vy, 0.0);
-  const ignition::math::Vector3d angular(0.0, 0.0, _state.r_z);
+  const ignition::math::Pose3d pose(x, y, z, roll, pitch, yaw);
+  const ignition::math::Vector3d vel(vx, vy, z_rate);
+  const ignition::math::Vector3d angular(roll_rate, pitch_rate, _state.r_z);
 
   _model->SetWorldPose(pose);
   _model->SetAngularVel(angular);
@@ -747,7 +874,7 @@ void RaceCarModelPlugin::updateState(const double dt) {
 
   _left_steering_joint->SetPosition(0, _act_input.delta);
   _right_steering_joint->SetPosition(0, _act_input.delta);
-  setModelState();
+  setModelState(dt);
 
   double time_since_last_published = (_last_sim_time - _time_last_published).Double();
   if (time_since_last_published < (1 / _publish_rate)) {
