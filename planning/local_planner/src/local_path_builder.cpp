@@ -62,6 +62,8 @@ std::string traversalFailureReason(internal::TraversalFailure failure)
       return "local_heading_jump";
     case internal::TraversalFailure::kUTurnBranchAmbiguous:
       return "u_turn_branch_ambiguous";
+    case internal::TraversalFailure::kFoldBack:
+      return "local_fold_back";
   }
   return "local_topology_gap";
 }

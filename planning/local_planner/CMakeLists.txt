@@ -69,6 +69,11 @@ if(BUILD_TESTING)
   ament_add_gtest(local_planner_robustness_test test/local_planner_robustness_test.cpp)
   target_link_libraries(local_planner_robustness_test local_planner_core)
 
+  ament_add_gtest(local_planner_chicane_fold_test test/chicane_fold_test.cpp)
+  target_link_libraries(local_planner_chicane_fold_test local_planner_core)
+  target_compile_definitions(local_planner_chicane_fold_test PRIVATE
+    BOA_TRACK_CSV="${CMAKE_CURRENT_SOURCE_DIR}/../../eufs_sim/eufs_tracks/csv/boa_constrictor.csv")
+
   ament_add_gtest(local_planner_validity_test
     test/local_planner_validity_test.cpp
     src/local_planner_node.cpp

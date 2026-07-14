@@ -19,6 +19,7 @@ enum class TraversalFailure
   kTopologyGap,
   kHeadingJump,
   kUTurnBranchAmbiguous,
+  kFoldBack,
 };
 
 struct TraversalResult

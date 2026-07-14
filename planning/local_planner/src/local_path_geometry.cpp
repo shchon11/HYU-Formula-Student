@@ -149,6 +149,13 @@ TraversalResult forwardTraversalWithReason(
   used[*seed] = true;
   std::vector<Point2> ordered{points[*seed]};
   Point2 tangent{1.0, 0.0};
+  // Fold-back guard state: a hairpin rounds with CONSECUTIVE sharp turns of
+  // the SAME sign, while a chicane fold (the Z that bridges onto an adjacent
+  // corridor leg and doubles back) needs two OPPOSITE-sign sharp turns within
+  // a short arc. Track the last sharp turn's sign and the arc driven since.
+  double last_sharp_sign = 0.0;
+  double arc_since_sharp = -1.0;
+  const double fold_guard_arc_m = 2.0 * config.max_traversal_gap_m;
   while (ordered.size() < points.size()) {
     std::optional<TraversalCandidate> normal;
     std::optional<TraversalCandidate> u_turn;
@@ -224,15 +231,29 @@ TraversalResult forwardTraversalWithReason(
       used[normal->index] = true;
       ordered.push_back(points[normal->index]);
       tangent = normal->unit;
+      if (arc_since_sharp >= 0.0) {
+        arc_since_sharp += normal->gap;
+      }
       continue;
     }
     if (u_turn_ambiguous) {
       return {ordered, TraversalFailure::kUTurnBranchAmbiguous};
     }
     if (u_turn.has_value()) {
+      const double turn_sign = tangent.x * u_turn->unit.y - tangent.y * u_turn->unit.x;
+      if (last_sharp_sign != 0.0 && turn_sign * last_sharp_sign < 0.0 &&
+        arc_since_sharp >= 0.0 && arc_since_sharp <= fold_guard_arc_m)
+      {
+        // Opposite-sign sharp turn right after a sharp turn: this link folds
+        // back across the corridor instead of rounding a hairpin. End the
+        // chain here; the path simply stops where corridor knowledge ends.
+        return {ordered, TraversalFailure::kFoldBack};
+      }
       used[u_turn->index] = true;
       ordered.push_back(points[u_turn->index]);
       tangent = u_turn->unit;
+      last_sharp_sign = turn_sign;
+      arc_since_sharp = 0.0;
       continue;
     }
     return {
