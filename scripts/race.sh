@@ -153,13 +153,16 @@ if [ "$EVAL_MODE" -eq 1 ]; then
   tmux send-keys -t "$P_TELE" \
     "$SRC echo '[③ TELEOP — drive a lap. arms AMI_MANUAL itself]'; $WAIT_CAR; sleep 3; ros2 run eufs_teleop teleop" C-m
 
+  # --duration 0 collects until Ctrl-C, so it can start now and be stopped when
+  # the lap is done; the report prints on Ctrl-C. A fixed --duration would force
+  # guessing the lap time before the car has even moved.
   P_EVAL=$(tmux split-window -v -t "$P_TELE" -P -F '#{pane_id}')
   tmux send-keys -t "$P_EVAL" \
-    "$SRC echo '[④ EVALUATOR] drive a lap first, then press Enter to score 60 s:'; echo '  ros2 run eufs_perception_baseline evaluate_perception_tiers.py --duration 60'" C-m
+    "$SRC echo '[④ EVALUATOR] collecting… drive a lap in pane ③, then Ctrl-C HERE for the per-tier report.'; until ros2 topic list 2>/dev/null | grep -q /cones; do sleep 2; done; ros2 run eufs_perception_baseline evaluate_perception_tiers.py --duration 0" C-m
 
   P_MON=$(tmux split-window -v -t "$P_SLAM" -P -F '#{pane_id}')
   tmux send-keys -t "$P_MON" \
-    "$SRC echo '[⑤ MONITOR] waiting for cones…'; until ros2 topic list 2>/dev/null | grep -q /cones; do sleep 2; done; while true; do printf '\\n== %s ==\\n' \"\$(date +%H:%M:%S)\"; for t in /yolo_bounding_boxes /yolo_cone_keypoints /cones /fusion/debug/cone_tiers /ground_truth/cones /graph_slam/map; do printf '%-28s ' \"\$t\"; timeout 2 ros2 topic hz \"\$t\" 2>/dev/null | grep -m1 -o 'average rate: [0-9.]*' || echo '(silent)'; done; sleep 3; done" C-m
+    "$SRC echo '[⑤ MONITOR] waiting for cones…'; until ros2 topic list 2>/dev/null | grep -q /cones; do sleep 2; done; while true; do printf '\\n== %s ==\\n' \"\$(date +%H:%M:%S)\"; for t in /yolo_bounding_boxes /yolo_cone_keypoints /cones /fusion/debug/cone_tiers /ground_truth/cones /graph_slam/map; do printf '%-28s ' \"\$t\"; r=\$(timeout 6 env PYTHONUNBUFFERED=1 ros2 topic hz \"\$t\" 2>/dev/null | grep -m1 -o 'average rate: [0-9.]*'); if [ -n \"\$r\" ]; then echo \"\$r\"; elif timeout 3 ros2 topic echo --once \"\$t\" >/dev/null 2>&1; then echo 'alive (slow)'; else echo '(silent)'; fi; done; sleep 3; done" C-m
 
   tmux select-layout -t "$SESSION" tiled
   tmux select-pane   -t "$P_TELE"
