@@ -682,10 +682,31 @@ Two things measured along the way, both worth knowing:
   data quality. Rejected — and stacking the arc cut on top of `gpu_ray` buys
   nothing anyway (13.9/12.1: no gain, and the pair splits again).
 
-  **30 Hz is not reachable.** Even with the LiDAR at 16 rays the pair caps
-  at 23/17, so the remaining wall is the two 1280×720 readbacks themselves. The
-  only lever left is pixels, and that moves `fx`, the mono curve's `c`/`e` and
-  the px gate, and makes Step 4's far-cone problem worse — so it is not free.
+  **Pixels are not the lever either, and that was worth checking.** The
+  reasoning that they were — GPU idle, one thread stalling not computing —
+  points at the per-frame GPU→CPU readback, which Gazebo Classic does
+  synchronously. If that were the wall, quartering the bytes would walk through
+  it. It does not:
+
+  | | left | right | GPU |
+  |---|---|---|---|
+  | 1280×720, LiDAR at 16 rays | **23.0** | 17.2 | — |
+  | 640×360, LiDAR arc-cut | 12.4 | 11.8 | 17 % |
+
+  A quarter of the pixels does not even reach the **15 Hz that was asked for**,
+  while full-resolution cameras with the LiDAR gone reach 23. So the camera rate
+  is gated by the **world/physics update loop** — which the CPU LiDAR's
+  collision queries stall — and not by rendering, readback, or resolution.
+  Cutting resolution would cost `fx`, the curve and the px gate for nothing.
+
+  **So 30 Hz is not reachable, and the LiDAR win is already taken.** The arc cut
+  is the part of the raycasting cost that could be removed without degrading the
+  cloud; `gpu_ray` removes the rest and degrades it. What is left needs a
+  cheaper collision world (simpler cone collision geometry is the untried
+  candidate) or a different simulator.
+
+  Three hypotheses died here — shared render thread, `gpu_ray`, readback — and
+  each looked obvious. **Measure before believing any of them again.**
 
   **`update_rate` is not a cap and does not behave monotonically.** Measured
   request → achieved (left): 10 → 7.4, 15 → 8.8, 20 → 8.2, 30 → 21.7. Asking
