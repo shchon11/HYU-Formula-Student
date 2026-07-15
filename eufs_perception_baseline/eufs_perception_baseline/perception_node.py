@@ -283,6 +283,7 @@ class PerceptionNode(Node):
         self.declare_parameter("sparse_enabled", True)
         self.declare_parameter("sparse_near_range_m", 8.0)
         self.declare_parameter("sparse_far_range_m", 15.0)
+        self.declare_parameter("sparse_max_range_m", 0.0)
         self.declare_parameter("sparse_near_min_points", 3)
         self.declare_parameter("sparse_mid_min_points", 2)
         self.declare_parameter("sparse_far_min_points", 2)
@@ -328,6 +329,7 @@ class PerceptionNode(Node):
         self.declare_parameter("lidar_only_variance_x", 0.20)
         self.declare_parameter("lidar_only_variance_y", 0.20)
         # Bearing-aligned, not isotropic. See _sparse_covariance.
+        self.declare_parameter("cluster_range_bias_m", 0.0)
         self.declare_parameter("sparse_sigma_lat_m", 0.10)
         self.declare_parameter("sparse_sigma_lon_m", 0.25)
         self.declare_parameter("range_variance_scale", 0.0005)
@@ -370,7 +372,8 @@ class PerceptionNode(Node):
             "self_mask_max_x", "self_mask_abs_y", "self_mask_min_z",
             "self_mask_max_z", "cluster_eps", "cluster_min_height",
             "cluster_max_height", "cluster_max_width", "bbox_match_margin_px",
-            "bbox_match_margin_ratio", "sparse_near_range_m",
+            "bbox_match_margin_ratio", "sparse_max_range_m",
+            "sparse_near_range_m",
             "sparse_far_range_m", "sparse_max_width_m",
             "sparse_max_depth_span_m", "sparse_max_depth_span_ratio",
             "sparse_far_min_probability", "sparse_far_min_bbox_width_px",
@@ -381,7 +384,8 @@ class PerceptionNode(Node):
             "vision_dedup_radius_m", "stereo_baseline_m", "zncc_min_score",
             "zncc_search_low_ratio", "zncc_search_high_ratio", "sigma_d_px",
             "lidar_variance_x", "lidar_variance_y", "lidar_only_variance_x",
-            "lidar_only_variance_y", "sparse_sigma_lat_m", "sparse_sigma_lon_m",
+            "lidar_only_variance_y", "cluster_range_bias_m",
+            "sparse_sigma_lat_m", "sparse_sigma_lon_m",
             "range_variance_scale", "min_variance", "monocular_sigma_u_px",
             "sigma_h_px", "vision_lateral_floor_m",
         ):
@@ -837,11 +841,20 @@ class PerceptionNode(Node):
                 detection = matched.get(index)
                 if detection is not None:
                     claimed.add(detection)
+                cx, cy = float(centroid[0]), float(centroid[1])
+                rng = float(np.hypot(cx, cy))
+                # The LiDAR samples only the near face, so the centroid sits
+                # short of the cone axis along the bearing (measured lon mean
+                # -0.046 m, lat -0.002: pure range bias). Push it forward.
+                if self.cluster_range_bias_m and rng > 1e-6:
+                    scale = (rng + self.cluster_range_bias_m) / rng
+                    cx, cy = cx * scale, cy * scale
+                    rng += self.cluster_range_bias_m
                 cones.append(Cone(
-                    x=float(centroid[0]), y=float(centroid[1]),
+                    x=cx, y=cy,
                     color=detection.color if detection else "unknown",
                     provenance=PROV_CLUSTER if detection else PROV_CLUSTER_ONLY,
-                    range_m=float(np.hypot(centroid[0], centroid[1])),
+                    range_m=rng,
                 ))
 
         if self.sparse_enabled and scene is not None:
@@ -947,6 +960,11 @@ class PerceptionNode(Node):
         range_m = float(np.hypot(centroid[0], centroid[1]))
         if not math.isfinite(range_m) or range_m <= 0.0:
             return None
+        # Robust-inside-10-m scope: past the cap, far-and-thin is where a
+        # false positive is cheapest, and the map does not need the reach.
+        # Clusters are NOT capped -- a far cluster is accurate when it exists.
+        if 0.0 < self.sparse_max_range_m < range_m:
+            return None
         if support.size < self._sparse_min_points(range_m):
             return None
         span = points[:, :2].max(axis=0) - points[:, :2].min(axis=0)
@@ -966,7 +984,14 @@ class PerceptionNode(Node):
                     or detection.width_px < self.sparse_far_min_bbox_width_px
                     or detection.height_px < self.sparse_far_min_bbox_height_px):
                 return None
-        return Cone(x=float(centroid[0]), y=float(centroid[1]),
+        x, y = float(centroid[0]), float(centroid[1])
+        # Same front-face centroid bias as a cluster: these are raw LiDAR
+        # returns off the cone's near surface (measured lon mean -0.054).
+        if self.cluster_range_bias_m and range_m > 1e-6:
+            scale = (range_m + self.cluster_range_bias_m) / range_m
+            x, y = x * scale, y * scale
+            range_m += self.cluster_range_bias_m
+        return Cone(x=x, y=y,
                     color=detection.color, provenance=PROV_SPARSE,
                     range_m=range_m)
 
