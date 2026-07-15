@@ -1040,10 +1040,14 @@ class PerceptionNode(Node):
         msg.header.stamp = stamp
         msg.header.frame_id = self.output_frame
         buckets: Dict[str, list] = {color: [] for color in CONE_COLORS}
-        for cone in cones:
+        # Compute each covariance once and hand the same one to the message and
+        # to RViz, so what is drawn is what SLAM was told rather than a
+        # re-derivation that could drift from it.
+        covariances = [self._covariance(cone) for cone in cones]
+        for cone, covariance in zip(cones, covariances):
             out = ConeWithCovariance()
             out.point.x, out.point.y, out.point.z = cone.x, cone.y, 0.0
-            out.covariance = self._covariance(cone)
+            out.covariance = covariance
             buckets.get(cone.color, buckets["unknown"]).append(out)
         msg.blue_cones = buckets["blue"]
         msg.yellow_cones = buckets["yellow"]
@@ -1052,7 +1056,8 @@ class PerceptionNode(Node):
         msg.unknown_color_cones = buckets["unknown"]
         self._record_latency(stamp)
         self.cones_pub.publish(msg)
-        self.cones_viz_pub.publish(self._cone_markers(cones, stamp))
+        self.cones_viz_pub.publish(
+            self._cone_markers(cones, covariances, stamp))
 
     def _record_latency(self, stamp) -> None:
         """Age of the data in /cones: now - header.stamp.
@@ -1095,13 +1100,14 @@ class PerceptionNode(Node):
             f"max {1000 * samples[-1]:.0f} ms  over {len(samples)} msgs / "
             f"{elapsed:.1f} s ({len(samples) / elapsed:.1f} Hz){zncc}")
 
-    def _cone_markers(self, cones: List[Cone], stamp) -> MarkerArray:
+    def _cone_markers(self, cones: List[Cone], covariances: List[List[float]],
+                      stamp) -> MarkerArray:
         rgb = {"blue": (0.0, 0.0, 1.0), "yellow": (1.0, 1.0, 0.0),
                "orange": (1.0, 0.5, 0.0), "big_orange": (1.0, 0.3, 0.0),
                "unknown": (0.6, 0.6, 0.6)}
         array = MarkerArray()
         array.markers.append(self._delete_all(stamp))
-        for index, cone in enumerate(cones):
+        for index, (cone, covariance) in enumerate(zip(cones, covariances)):
             marker = self._marker(stamp, cone.color, index, cone)
             marker.type = Marker.SPHERE
             marker.scale.x = marker.scale.y = marker.scale.z = 0.3
@@ -1109,7 +1115,64 @@ class PerceptionNode(Node):
             marker.color.r, marker.color.g, marker.color.b = red, green, blue
             marker.color.a = 0.9
             array.markers.append(marker)
+            ellipse = self._covariance_marker(cone, covariance, index, stamp)
+            if ellipse is not None:
+                array.markers.append(ellipse)
         return array
+
+    def _covariance_marker(self, cone: Cone, covariance: List[float],
+                           index: int, stamp) -> Optional[Marker]:
+        """The 1-sigma error ellipse, drawn flat on the ground.
+
+        Worth looking at rather than trusting: this is the number SLAM weights
+        the cone by, and it is the whole point of the vision tiers reporting an
+        ellipse instead of a circle. A vision cone should look like a sliver
+        pointing back at the car -- precise across the track, vague along the
+        ray. A LiDAR cone should look like a small disc. If a far vision cone
+        renders as a tight disc, its covariance is lying and the map will be
+        corrupted rather than merely noisy.
+        """
+        axes = self._covariance_axes(covariance)
+        if axes is None:
+            return None
+        major, minor, yaw = axes
+        marker = self._marker(stamp, f"{cone.provenance}_covariance", index, cone)
+        marker.type = Marker.CYLINDER
+        # Flat on the ground: this is a 2D covariance and drawing it as a
+        # sphere would imply a vertical extent that was never measured.
+        marker.scale.x = 2.0 * major        # full width = 2 sigma across
+        marker.scale.y = 2.0 * minor
+        marker.scale.z = 0.01
+        marker.pose.orientation.z = math.sin(0.5 * yaw)
+        marker.pose.orientation.w = math.cos(0.5 * yaw)
+        red, green, blue = ((1.0, 0.2, 0.2) if cone.provenance
+                            in (PROV_MONOCULAR, PROV_MONO_ZNCC)
+                            else (0.2, 1.0, 0.4))
+        marker.color.r, marker.color.g, marker.color.b = red, green, blue
+        marker.color.a = 0.35
+        return marker
+
+    @staticmethod
+    def _covariance_axes(
+        covariance: List[float],
+    ) -> Optional[Tuple[float, float, float]]:
+        """(major sigma, minor sigma, yaw of the major axis) from [xx,xy,yx,yy].
+
+        Eigen-decomposed rather than read off the diagonal, because the whole
+        reason this covariance exists is that it is NOT axis-aligned.
+        """
+        xx, xy, _yx, yy = (float(v) for v in covariance)
+        if not all(math.isfinite(v) for v in (xx, xy, yy)):
+            return None
+        trace, det = xx + yy, xx * yy - xy * xy
+        spread = math.sqrt(max(0.0, 0.25 * trace * trace - det))
+        major_var, minor_var = 0.5 * trace + spread, 0.5 * trace - spread
+        if major_var <= 0.0 or minor_var <= 0.0:
+            return None
+        # Eigenvector of the LARGER eigenvalue. atan2(0, 0) when the matrix is
+        # already isotropic, which is correct: any axis will do.
+        yaw = 0.5 * math.atan2(2.0 * xy, xx - yy)
+        return math.sqrt(major_var), math.sqrt(minor_var), yaw
 
     def _provenance_markers(self, cones: List[Cone], stamp) -> MarkerArray:
         """One label per published cone, at the position that was published.
