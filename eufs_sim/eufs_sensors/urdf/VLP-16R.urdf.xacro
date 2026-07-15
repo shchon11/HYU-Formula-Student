@@ -36,7 +36,29 @@
        stereo rate split. There was no split. The "right camera at half rate"
        came from probes that subscribed to both image streams from one Python
        process, which cannot deserialise 2x 2.7 MB at 30 Hz; each camera reads
-       29.41 Hz when measured one topic per process. Measure that way. -->
+       29.41 Hz when measured one topic per process. Measure that way.
+
+       GPU vs CPU ray (measured 2026-07-16, sensors-only, skidpad_kase2026):
+       `gpu` switches the sensor type, default true. CPU `ray` casts 288k
+       rays/s against every collision trimesh WHILE HOLDING THE PHYSICS MUTEX:
+       RTF 0.350. The same scan as gpu_ray on the FSK-patched Gazebo
+       (tools/gazebo-patches, activated by scripts/fsk-shellrc when
+       ~/opt/gazebo11-fsk exists) ran RTF 0.973 with the grazing-ring
+       staircase at the sensor's own noise floor through -7 deg and cone
+       centroids within 6 mm of the CPU reference. The published scan is the
+       same real Puck either way — the patch only changes internal render
+       resolution (GAZEBO_GPU_LASER_TEX_MIN).
+
+       Do NOT run gpu_ray on stock gazebo11 and trust the cloud: SkyX's cloud
+       dome is real geometry to the laser depth pass, so all ~12k sky beams
+       per scan returned phantoms at 17-21 m and cones beyond ~18 m vanished
+       behind them. That, not texel resolution, was the bulk of the "gpu_ray
+       quality is terrible" symptom; the staircase was the rest. Known
+       residuals vs CPU ray, measured and accepted: ground reads ~2 cm low
+       (constant height offset, root cause not yet found; cones unaffected at
+       +4 mm radial), car-body self-returns differ (visual vs collision
+       geometry — crop them like on the real car), and the -3 deg ring keeps
+       a ~2x-noise staircase (grazing-incidence limit of the method). -->
   <xacro:macro
     name="VLP-16R"
     params="*origin parent:=base_footprint
@@ -49,7 +71,8 @@
             max_range:=100.0
             noise:=0.008
             min_angle:=-3.14159265
-            max_angle:=3.14159265">
+            max_angle:=3.14159265
+            gpu:=true">
 
     <!-- samples=0 means "be a real Puck at this rate". A non-zero value is an
          explicit, knowing departure from the datasheet, not a default. -->
@@ -113,7 +136,7 @@
     <xacro:unless value="${active}">
       <!-- Gazebo requires the velodyne_gazebo_plugins package -->
       <gazebo reference="${name}">
-        <sensor type="ray" name="${name}-VLP16">
+        <sensor type="${'gpu_ray' if str(gpu).lower() in ('true', '1') else 'ray'}" name="${name}-VLP16">
           <always_on>true</always_on>
           <pose>0 0 0 0 0 0</pose>
           <visualize>false</visualize>
