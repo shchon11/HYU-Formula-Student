@@ -7,7 +7,7 @@
 ![ROS 2](https://img.shields.io/badge/ROS_2-Humble-22314E?logo=ros&logoColor=white)
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-22.04-E95420?logo=ubuntu&logoColor=white)
 ![Gazebo](https://img.shields.io/badge/Gazebo-11-FF6C00?logo=gazebo&logoColor=white)
-![YOLOv8](https://img.shields.io/badge/YOLOv8-FSOCO-00FFAA)
+![YOLO](https://img.shields.io/badge/YOLO26n--pose-cone_keypoints-00FFAA)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 </div>
@@ -19,10 +19,13 @@
 ```bash
 race            # 이거 하나. YOLO+LiDAR perception + SLAM + planning 전체가 뜨고 차가 스스로 달림
 race sim        # Gazebo simulated /cones로만 돌릴 때
+race perception # 인지 평가 모드 — planner 없이 teleop 주행 + provenance별 채점
 race stop       # 전부 종료   |   race attach — 재접속
 ```
 
-tmux 창 하나에 4개 pane이 뜹니다: ①sim+perception ②planning(SLAM+global/local+상태기계+selector+controller) ③미션 자동 ARM ④라이브 모니터(path_source/state/lap/CTE). **teleop 불필요** — 컨트롤러가 유일한 `/cmd` writer로 직접 주행합니다.
+tmux 창 하나에 5개 pane이 뜹니다: ①sim+perception ②planning(SLAM+global/local+상태기계+selector+controller) ③미션 자동 ARM ④GNSS HUD(`ins_pipeline slam:=false`) ⑤라이브 모니터(path_source/state/lap/CTE). **teleop 불필요** — 컨트롤러가 유일한 `/cmd` writer로 직접 주행합니다.
+
+> 처음이라면 [패치 Gazebo 빌드](#15-패치-gazebo-빌드--gpu-lidar)부터 — LiDAR가 기본 `gpu_ray`라서, stock gazebo로 뜨면 하늘이 점군에 찍힙니다.
 
 <details>
 <summary><b>모듈별로 따로 띄우려면</b></summary>
@@ -53,8 +56,8 @@ flowchart LR
 
     subgraph PERC["👁 PERCEPTION"]
         direction TB
-        YOLO["YOLOv8 · FSOCO<br/>(CUDA)"]
-        FUSE["LiDAR×카메라<br/>3-tier fusion"]
+        YOLO["YOLO26n-pose · 콘 키포인트<br/>(CUDA)"]
+        FUSE["LiDAR 백본 + 비전 확장<br/>provenance별 융합"]
         YOLO -->|bbox| FUSE
     end
 
@@ -107,7 +110,7 @@ flowchart LR
     class PP,CAR ctrl
 ```
 
-- **PERCEPTION**은 카메라·LiDAR만 소비해 `/cones`(색·위치·공분산) 하나로 요약합니다. sim 모드에선 Gazebo 플러그인이 이 토픽을 직접 냅니다.
+- **PERCEPTION**은 카메라·LiDAR만 소비해 `/cones`(색·위치·공분산) 하나로 요약합니다. 콘마다 provenance(`cluster_camera`/`cluster_only`/`sparse`/`monocular_zncc`)가 붙고, 운용 범위는 **robust-inside-10 m** — 비전 계열(sparse·ZNCC)은 12 m에서 캡(10 m 존 진입 전 2 m 온램프), LiDAR 클러스터는 캡 없음. LiDAR는 콘 앞면만 보므로 전방 range bias(+0.046 m)를 보정합니다. 수치와 근거는 전부 `eufs_perception_baseline/config/perception.yaml` 주석에 있습니다. sim 모드에선 Gazebo 플러그인이 이 토픽을 직접 냅니다.
 - **SLAM**은 `/cones` + 휠 odometry + (RTK일 때만) GNSS prior로 콘 랜드마크 포즈그래프를 풀어 **cone_map과 ego_odom**을 만들고, 루프 클로저가 확정되면 localization으로 전환합니다.
 - **PLANNING**에서 state_machine이 랩·상태 기반으로 `path_source`를 정하고, selector가 local/global 중 하나를 `/path_waypoints`로 확정 — **컨트롤러는 항상 이 토픽 하나만** 봅니다. skidpad 미션에선 director가 cone_map을 phase별로 걸러 local planner에 공급합니다.
 
@@ -143,7 +146,7 @@ git clone <repo-url> src        # 이 저장소가 워크스페이스의 src/가
 
 ```bash
 sudo apt update && sudo apt install -y \
-  python3-colcon-common-extensions python3-rosdep python3-vcstool python3-venv \
+  python3-colcon-common-extensions python3-rosdep python3-vcstool \
   gazebo ros-humble-gazebo-dev ros-humble-gazebo-ros ros-humble-gazebo-plugins \
   ros-humble-sbg-driver ros-humble-libg2o ros-humble-rviz-2d-overlay-plugins \
   python3-pandas python3-opencv \
@@ -161,6 +164,24 @@ sudo rosdep init 2>/dev/null; rosdep update   # 최초 1회
 | `eigen / boost / spdlog / omp` | frenet_conversion (CLCS) |
 | `pandas / opencv` | eufs_launcher·eufs_tracks (pandas), trajectory_generator·perception (opencv) |
 
+### 1.5 패치 Gazebo 빌드 — GPU LiDAR
+
+```bash
+bash src/tools/gazebo-patches/build-patched-gazebo.sh   # clone→patch→build→install, sudo 불필요
+```
+
+VLP-16이 기본 `gpu_ray`(xacro `gpu:=true`)로 뜨는데, **stock gazebo11은 SkyX 하늘 돔을
+레이저 depth pass에 실제 지오메트리로 렌더**합니다 — 스캔당 ~12,000개의 17-21 m 팬텀
+포인트가 생기고 그 반경 뒤 콘이 가려집니다. 패치 빌드는 `~/opt/gazebo11-fsk`에 설치되고
+(RTF: CPU ray 0.350 → 패치 GPU 0.973, 점군은 -7° 링까지 CPU ray의 노이즈 바닥 수준 —
+잔여 한계는 킷 README의 Known residuals), `simulation.launch.py`가 **자동 활성화**합니다. 확인은 sim 시작 로그의
+`[simulation.launch.py] patched gazebo active: ...` 한 줄. 빌드가 없으면 큰 경고와 함께
+stock으로 뜨니, 그 상태로 써야 하면 VLP-16R 매크로에 `gpu:=false`(CPU ray, RTF 희생)를
+주세요. 퍼블리시되는 스캔 스펙(샘플 수·각도·레이트·노이즈)은 어느 쪽이든 동일한 실제 Puck —
+패치는 내부 렌더 해상도만 바꿉니다(`GAZEBO_GPU_LASER_TEX_MIN` — 패치 자체 기본은
+2048=순정 지오메트리, launch/shellrc가 8192를 설정). 측정치·패치
+내용은 [tools/gazebo-patches/README.md](tools/gazebo-patches/README.md).
+
 ### 2. 외부 소스 & 파이썬 환경
 
 ```bash
@@ -171,20 +192,17 @@ export COMMONROAD_CLCS_DIR="$HOME/commonroad-clcs"
 # (b) trajectory_generator용 (시스템 파이썬)
 python3 -m pip install --user quadprog
 
-# (c) race 기본 perception pipeline에 필요한 YOLO 격리 venv
-#     반드시 시스템 파이썬(3.10)으로 만드세요 — conda 활성 상태면 rclpy가 깨집니다.
-/usr/bin/python3 -m venv --system-site-packages ~/fsk/.venv-yolo
-source ~/fsk/.venv-yolo/bin/activate
-pip install -U pip
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124  # GPU
-pip install ultralytics "numpy<2"          # numpy<2 = ROS/cv_bridge ABI 호환
-pip uninstall -y opencv-python              # 시스템 cv2 사용
-deactivate
+# (c) race 기본 perception의 YOLO — 시스템 파이썬(3.10)에 설치
+#     race.sh가 pane PATH에서 conda/.venv를 걷어내므로 YOLO 노드는 시스템
+#     인터프리터로 뜹니다. ultralytics가 거기서 import 가능해야 합니다.
+/usr/bin/python3 -m pip install --user torch torchvision --index-url https://download.pytorch.org/whl/cu124  # GPU
+/usr/bin/python3 -m pip install --user ultralytics "numpy<2"   # numpy<2 = ROS/cv_bridge ABI 호환
+/usr/bin/python3 -m pip uninstall -y opencv-python              # 시스템 cv2 사용
 ```
 
-> 기본 `race`는 CUDA YOLO+LiDAR perception을 실행합니다. GraphSLAM이 `map` TF를 소유하므로 real perception의 cross-time 보정 프레임은 기본 `odom`이고, SLAM 맵 오염을 막기 위해 LiDAR support 없는 visual-only fallback은 기본으로 끕니다. Gazebo simulated `/cones`만 쓰려면 `race sim` 또는 `perception_mode:=sim`을 명시합니다.
+> 기본 `race`는 CUDA YOLO+LiDAR perception을 실행합니다. GraphSLAM이 `map` TF를 소유하므로 real perception의 cross-time 보정 프레임은 기본 `odom`입니다. Gazebo simulated `/cones`만 쓰려면 `race sim` 또는 `perception_mode:=sim`을 명시합니다.
 >
-> **YOLO 체크포인트는 저장소에 포함**되어 있습니다 (`eufs_perception_baseline/models/fsoco_yolov8n/weights/best.pt`) — 노드가 소스 트리에서 자동으로 찾으므로 별도 배치가 필요 없고, 다른 모델을 쓸 때만 `yolo_model_path:=<file>`을 넘깁니다. venv는 launch가 `$EUFS_MASTER/.venv-yolo` → 시스템 파이썬 순으로 자동 감지합니다.
+> **검출기는 YOLO26n-pose 콘 검출기로 저장소에 포함**되어 있습니다 (`eufs_perception_baseline/models/cone_pose_8kpt/weights/best.pt` — bbox+클래스+콘 키포인트 동시 출력; `fsoco_yolov8n`은 비교용 레거시). race/simfull 경유로 모델을 바꾸는 방법은 **가중치 파일 교체 또는 `perception.launch.py`의 기본값 수정** 두 가지뿐입니다 — `yolo_model_path:=<file>`은 simulation.launch.py가 선언하지 않는 인자라 조용히 무시되고, `perception.yaml`의 `model_path`는 launch가 항상 덮어써서(bare `ros2 run` 전용) 역시 조용히 무시됩니다.
 
 ### 3. 빌드
 
@@ -203,11 +221,14 @@ source ~/fsk/src/scripts/fsk-shellrc
 ```
 
 이 파일이 자기 위치에서 워크스페이스를 찾아 `EUFS_MASTER`·`COMMONROAD_CLCS_DIR`·
-`ROS_LOCALHOST_ONLY`를 설정하고 ROS/워크스페이스를 소싱한 뒤, 아래 함수들을 등록합니다:
+`ROS_LOCALHOST_ONLY`를 설정하고 ROS/워크스페이스를 소싱하고, **패치 Gazebo가 있으면
+자동 활성화**(`~/opt/gazebo11-fsk` + `GAZEBO_GPU_LASER_TEX_MIN=8192`)한 뒤, 아래
+함수들을 등록합니다:
 
 | 명령 | 역할 |
 |---|---|
 | `race [track] [sim\|real] [args...]` | 자율주행 전체 스택 (tmux). `race stop` / `race attach` |
+| `race perception [track]` | 인지 평가 모드 — planner 없이 sim+perception+SLAM+teleop, provenance별 채점 |
 | `fsb` | 빌드 + 소싱 · `fsk` — 워크스페이스로 cd |
 | `simfull` / `pbring` / `teleop` | sim+perception / planning 전체 / 키보드 주행 |
 | `mission [ami]` / `resetcar` / `slamreset` / `rv` | 미션 ARM(기본 14) / 차 원위치 / 매핑 재시작 / RViz |
@@ -280,6 +301,21 @@ x=+20에서 끝나고 경로는 그 1 m쯤 뒤에서 무효화되므로, 하드 
 더 빠르게 하려면 속도 상한을 올리되(local 경로 속도 ≤ 컨트롤러 max_speed), 위 제동 예산 식으로
 정지거리가 braking zone을 넘지 않는지 확인하세요.
 
+### 🔬 Perception 평가 (per-provenance 채점)
+
+```bash
+race perception [track]     # planner/controller 없음 — pane ③ teleop으로 직접 주행
+```
+
+pane 5개: ①sim+perception(provenance 마커 on) ②graph_slam ③teleop(AMI_MANUAL 자동 ARM)
+④evaluator ⑤레이트 모니터. **한 바퀴 돌고 pane ④에서 Ctrl-C** 하면 provenance별
+(cluster_camera/cluster_only/sparse/monocular_zncc) recall·위치오차·공분산 정합(z²)
+리포트가 나옵니다. 채점 기준은 `/ground_truth/track`(월드 전체 콘) — `/ground_truth/cones`는
+sim 플러그인이 이미 FOV/거리 필터링을 해서, 그걸 기준 삼으면 파이프라인이 아니라 계측기의
+한계를 재게 됩니다. sim-time 레이트 확인은
+`ros2 run eufs_perception_baseline measure_sim_rates.py 25` (메시지 stamp 간격 기준이라
+RTF 보정 불필요).
+
 ### 🪨 노면 (bump) · 차체 자세
 
 기본 바닥은 완전한 평면입니다. `terrain:=true`를 주면 **실제 지오메트리인 범프**가 월드에
@@ -321,9 +357,10 @@ race small_track sim road_noise:=false                 # 노면 진동 노이즈
 pbring enable_controller:=false      # 주행 없이 계획만 (수동 개입: teleop)
 pbring local_source_mode:=live_cones # local 경로 live perception 진단 override
 pbring planner_source:=csv           # global을 오프라인 raceline CSV로
-# 저장맵으로 localization 바로 시작 (랩1 탐험 생략):
+# 저장맵으로 localization 바로 시작 (랩1 탐험 생략) — 맵은 /graph_slam/save_map이
+# map_<날짜>_<시각>.csv로 저장하므로 최신 파일을 지정:
 pbring graph_slam_localization_mode:=true \
-       graph_slam_load_map_path:=$EUFS_MASTER/src/eufs_graph_slam/map/small_track_slam.csv
+       graph_slam_load_map_path:=$(ls -t $EUFS_MASTER/src/eufs_graph_slam/map/map_*.csv | head -1)
 ```
 
 ### 진행 확인
@@ -402,11 +439,13 @@ ros2 service call /graph_slam/save_map       std_srvs/srv/Trigger               
 eufs_sim/                 시뮬레이터 (Gazebo, 차량 URDF, 센서, 플러그인, 런처)
 eufs_msgs/                EUFS 메시지/서비스
 eufs_graph_slam/          graph SLAM + INS/SBG 브리지 + CTE 모니터
-eufs_perception_baseline/ YOLOv8 + LiDAR-camera fusion → /cones
+eufs_perception_baseline/ YOLO26n-pose + LiDAR 융합 → /cones (provenance별)
 eufs_teleop/              키보드 주행
 fsk_rviz_presets/         RViz 원클릭 디스플레이 그룹
 pure_pursuit_controller/  경로 추종 제어 → /cmd (planning과 분리된 control 계층)
-scripts/                  race.sh (자율 전체 스택 tmux 런처)
+sbg_ros2_driver/          SBG INS/GNSS ROS 드라이버 (vendored v3.3.2 — apt 버전은 overlay에 가려짐)
+scripts/                  race.sh (자율 전체 스택 tmux 런처) + fsk-shellrc
+tools/gazebo-patches/     GPU LiDAR용 패치 Gazebo 11.10.2 빌드 킷 (SkyX 돔 제거 · 해상도 노브 → ~/opt/gazebo11-fsk)
 planning/
   ├─ planning_bringup/    ★ planning 전체 조립 launch (아래 전부 + graph_slam + controller)
   ├─ local_planner/       라이브 콘 → 즉석 로컬 경로 (랩 1)
@@ -440,6 +479,16 @@ GPU가 죽으면(과거 Xid 폴트) YOLO가 CPU 폴백으로 돌며 CPU를 포�
 </details>
 
 <details>
+<summary><b>포인트클라우드에 17~21 m 유령 점 돔 / 18 m 밖 콘이 안 보임</b></summary>
+
+stock gzserver로 `gpu_ray`를 돌리면 SkyX 하늘 돔이 레이저 depth pass에 실제 지오메트리로
+잡혀 스캔당 ~12k개의 유령 점(17-21 m)이 생기고 그 뒤 콘이 가려집니다. sim 시작 로그에
+`[simulation.launch.py] patched gazebo active: ...` 줄이 있는지 확인 — 없으면
+`bash src/tools/gazebo-patches/build-patched-gazebo.sh` 후 재실행. 임시 우회는 VLP-16R에
+`gpu:=false`(CPU ray, RTF 0.35로 하락).
+</details>
+
+<details>
 <summary><b>CTE HUD가 계속 "waiting"</b></summary>
 
 정상일 수 있음 — CTE는 **전역 레이스라인 기준**이라 global 단계 전(랩 1 local 주행)엔 데이터가 없습니다. global 전환 후에도 waiting이면 `/planning/global_path_valid` 확인.
@@ -449,6 +498,10 @@ GPU가 죽으면(과거 Xid 폴트) YOLO가 CPU 폴백으로 돌며 CPU를 포�
 <summary><b><code>ros2 topic hz</code>가 이상하게 낮음</b></summary>
 
 `hz`는 벽시계 기준 → Gazebo RTF만큼 낮게 보입니다. 알고리즘은 sim-time 기반이라 무관.
+sim-time 실제 레이트는 `ros2 run eufs_perception_baseline measure_sim_rates.py 25`로
+재세요(메시지 stamp 간격 기준). 패치 Gazebo + GPU LiDAR의 정상 RTF는 ~0.97입니다(CPU ray
+시절 0.35) — 눈에 띄게 낮으면 패치 미활성(`patched gazebo active` 로그 확인)이나 YOLO
+CPU 폴백(`nvidia-smi`)을 의심하세요.
 </details>
 
 <details>
