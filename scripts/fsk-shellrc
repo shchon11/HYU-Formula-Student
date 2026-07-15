@@ -25,6 +25,21 @@ export ROS_LOCALHOST_ONLY="${ROS_LOCALHOST_ONLY:-1}"
 [ -f "/opt/ros/humble/setup.$_fsk_ext" ] && source "/opt/ros/humble/setup.$_fsk_ext"
 [ -f "$EUFS_MASTER/install/setup.$_fsk_ext" ] && source "$EUFS_MASTER/install/setup.$_fsk_ext"
 
+# --- patched gazebo (src/tools/gazebo-patches) --------------------------------
+# GPU lidar path: hides SkyX from the laser depth pass (stock gpu_ray returns
+# the cloud dome as ~12k phantom points at 17-21 m per scan) and exposes the
+# first-pass texture floor. Build once per machine:
+#   bash "$EUFS_MASTER/src/tools/gazebo-patches/build-patched-gazebo.sh"
+# No-op when the prefix is absent — but then keep the VLP-16R macro's gpu
+# param false, or you get the stock artifacts back.
+if [ -f "$HOME/opt/gazebo11-fsk/share/gazebo/setup.sh" ]; then
+  source "$HOME/opt/gazebo11-fsk/share/gazebo/setup.sh"
+  export PATH="$HOME/opt/gazebo11-fsk/bin:$PATH"
+  export LD_LIBRARY_PATH="$HOME/opt/gazebo11-fsk/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  # 8192: grazing-ring staircase at the sensor noise floor, ~750 MB VRAM.
+  export GAZEBO_GPU_LASER_TEX_MIN="${GAZEBO_GPU_LASER_TEX_MIN:-8192}"
+fi
+
 # --- workspace ----------------------------------------------------------------
 fsk() { cd "$EUFS_MASTER"; }
 fsb() {

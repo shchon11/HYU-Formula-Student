@@ -120,6 +120,45 @@ TERRAIN_LAUNCH_ARGUMENTS = [
 ]
 
 
+def _activate_patched_gazebo(context):
+    """Point the gzserver child at the FSK-patched Gazebo when it exists.
+
+    tools/gazebo-patches builds a Gazebo 11.10.2 whose gpu_ray lidar is
+    usable: it hides SkyX during the laser depth pass (stock returns the
+    cloud dome as ~12k phantom points at 17-21 m per scan and occludes far
+    cones behind it) and exposes GAZEBO_GPU_LASER_TEX_MIN. Activating here,
+    not in shell rc files, because gzserver inherits THIS process's
+    environment no matter which shell/tmux/CI path launched the sim.
+    No-op (with a loud log) when the per-machine build is absent — but the
+    VLP-16R macro defaults to gpu_ray, so a stock gzserver will show the
+    dome. See tools/gazebo-patches/README.md.
+    """
+    import os
+    prefix = os.path.expanduser('~/opt/gazebo11-fsk')
+    if not os.path.isfile(os.path.join(prefix, 'share', 'gazebo', 'setup.sh')):
+        return [LogInfo(msg=(
+            '[simulation.launch.py] WARNING: patched gazebo not found at '
+            f'{prefix} — stock gzserver will run, and gpu_ray shows sky-dome '
+            'phantoms. Build it: bash tools/gazebo-patches/build-patched-gazebo.sh'))]
+    env = os.environ
+
+    def prepend(name, value):
+        env[name] = value + (os.pathsep + env[name] if env.get(name) else '')
+
+    prepend('PATH', os.path.join(prefix, 'bin'))
+    prepend('LD_LIBRARY_PATH', os.path.join(prefix, 'lib'))
+    prepend('GAZEBO_RESOURCE_PATH', os.path.join(prefix, 'share', 'gazebo-11'))
+    prepend('GAZEBO_PLUGIN_PATH',
+            os.path.join(prefix, 'lib', 'gazebo-11', 'plugins'))
+    prepend('GAZEBO_MODEL_PATH',
+            os.path.join(prefix, 'share', 'gazebo-11', 'models'))
+    # 8192 -> grazing-ring staircase at the sensor noise floor, ~750 MB VRAM.
+    env.setdefault('GAZEBO_GPU_LASER_TEX_MIN', '8192')
+    return [LogInfo(msg=(
+        f'[simulation.launch.py] patched gazebo active: {prefix} '
+        f"(GAZEBO_GPU_LASER_TEX_MIN={env['GAZEBO_GPU_LASER_TEX_MIN']})"))]
+
+
 def _resolve_perception_mode(context):
     """Map the single `perception_mode` knob onto launch_group + perception.
 
@@ -304,6 +343,7 @@ def generate_launch_description():
 
         # Resolve perception_mode -> launch_group/perception FIRST, then
         # validate the (possibly resolved) combination.
+        OpaqueFunction(function=_activate_patched_gazebo),
         OpaqueFunction(function=_resolve_perception_mode),
         OpaqueFunction(function=_validate_perception_wiring),
 
