@@ -1,6 +1,27 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="VLP-16">
   <xacro:property name="M_PI" value="3.1415926535897931" />
+  <!-- Real VLP-16 spec, not a cheaper approximation of one.
+       360 deg horizontal at 0.2 deg (the Puck's resolution at its 10 Hz
+       rotation) is 1800 samples per laser, 16 lasers, 28800 rays per rev,
+       288k points/s against the datasheet's ~300k.
+
+       This used to be 350 samples over 229 deg = 0.655 deg/ray, which is 3.3x
+       coarser than the real sensor and 19 % of its rays. That made the sim
+       PESSIMISTIC about far cones in a way the car will not be: a 15 m cone
+       gets 5.4 rays from a real Puck and got 1.7 here.
+
+       It costs real time factor, and that is the right trade. Measured: RTF
+       0.406, and every sensor still hits its configured rate IN SIM TIME, which
+       is the only clock perception, SLAM and planning read: cameras 30.30 and
+       29.85 Hz, velodyne 10.00, /cones 29.41. Wall clock is 2.5x slower and
+       nothing downstream can tell. Use scripts/measure_sim_rates.py, not
+       `ros2 topic hz`, which reports wall clock and will make this look broken.
+
+       Giving the LiDAR MORE rays also fixed the camera pair: at 0.655 deg/ray
+       the right camera sat at 20.00 Hz against the left's 29.41, and at spec
+       they run 30.30 / 29.85 together. More wall time per sim tick means both
+       renders finish. -->
   <xacro:macro
     name="VLP-16R"
     params="*origin parent:=base_footprint
@@ -8,12 +29,12 @@
             topic:=/velodyne_points
             hz:=10
             lasers:=40
-            samples:=350
+            samples:=1800
             min_range:=0.2
             max_range:=100.0
             noise:=0.008
-            min_angle:=-2
-            max_angle:=2">
+            min_angle:=-3.14159265
+            max_angle:=3.14159265">
 
     <joint name="${name}_base_mount_joint" type="fixed">
       <xacro:insert_block name="origin" />
