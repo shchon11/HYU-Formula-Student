@@ -4,26 +4,15 @@ import unittest
 import numpy as np
 
 from eufs_perception_baseline.fusion_core import (
-    baseline_from_projection,
+    bbox_height_disparity_prior,
     bearing_aligned_covariance,
     camera_point_from_depth,
-    classify_cone_condition,
-    disparity_to_depth,
-    estimate_stereo_depth,
     monocular_depth_from_bbox,
     monocular_relative_depth_sigma,
     remove_ground_ransac,
-    slender_bbox,
     stereo_relative_depth_sigma,
+    zncc_disparity,
 )
-
-
-def _sift_available():
-    try:
-        import cv2
-    except ImportError:
-        return False
-    return callable(getattr(cv2, "SIFT_create", None))
 
 
 class GroundPlaneTest(unittest.TestCase):
@@ -121,24 +110,6 @@ class MonocularDepthTest(unittest.TestCase):
         )
         np.testing.assert_allclose(point, [0.5, -0.25, 5.0])
 
-    def test_good_horizontal_clip_bad_policy_is_explicit(self):
-        self.assertEqual(
-            classify_cone_condition((40, 20, 60, 80), (100, 100)),
-            "good",
-        )
-        self.assertEqual(
-            classify_cone_condition((20, 40, 80, 60), (100, 100)),
-            "bad",
-        )
-        self.assertEqual(
-            classify_cone_condition((0, 20, 20, 80), (100, 100)),
-            "horizontal_clip",
-        )
-        self.assertEqual(
-            classify_cone_condition((40, 0, 60, 60), (100, 100)),
-            "bad",
-        )
-
 
 class VisionCovarianceTest(unittest.TestCase):
     """The error model behind the tiers' reported covariance.
@@ -224,78 +195,86 @@ class VisionCovarianceTest(unittest.TestCase):
         self.assertAlmostEqual(xy, 0.0, places=12)
 
 
-class StereoDepthTest(unittest.TestCase):
-    def test_disparity_to_depth(self):
-        self.assertAlmostEqual(disparity_to_depth(8.0, 400.0, 0.12), 6.0)
-        self.assertIsNone(disparity_to_depth(0.0, 400.0, 0.12))
+class ZnccDisparityTest(unittest.TestCase):
+    """The stereo cross-check that replaced per-crop SIFT.
 
-    def test_baseline_is_derived_from_projection_matrices(self):
-        left = [400.0, 0.0, 320.0, 0.0, 0.0, 400.0, 240.0, 0.0, 0.0, 0.0, 1.0, 0.0]
-        right = [400.0, 0.0, 320.0, -48.0, 0.0, 400.0, 240.0, 0.0, 0.0, 0.0, 1.0, 0.0]
-        self.assertAlmostEqual(baseline_from_projection(left, right), 0.12)
+    Its job is not precision for its own sake. Monocular depth depends on the
+    cone's assumed size and ZNCC depends on matching, so they fail differently:
+    a correlation peak near the disparity the box implies is physical evidence
+    that something geometrically consistent is there, and background texture
+    cannot produce it. These check both halves -- that it finds a real cone, and
+    that it refuses when there is nothing to find.
+    """
 
-    def test_slender_bbox_excludes_outer_edges(self):
-        self.assertEqual(slender_bbox((10, 20, 90, 100), 0.5), (30, 20, 70, 100))
+    @staticmethod
+    def _pair(disparity, width=400, height=200, x=200, y=80, box_h=40, seed=0):
+        """A textured patch on textured background, shifted by `disparity`."""
+        rng = np.random.default_rng(seed)
+        box_w = int(box_h / 2.5)
+        patch = rng.normal(200, 30, (box_h, box_w))
+        left = rng.normal(120, 12, (height, width))
+        left[y:y + box_h, x:x + box_w] = patch
+        right = rng.normal(120, 12, (height, width))
+        shifted = x - int(round(disparity))
+        right[y:y + box_h, shifted:shifted + box_w] = patch
+        return left, right, (x, y, x + box_w, y + box_h)
 
-    @unittest.skipUnless(_sift_available(), "OpenCV build does not provide SIFT")
-    def test_feature_stereo_recovers_known_horizontal_shift(self):
-        import cv2
+    def test_recovers_a_known_disparity(self):
+        for truth in (2, 3, 6, 10, 15):
+            with self.subTest(disparity=truth):
+                left, right, bbox = self._pair(truth)
+                match = zncc_disparity(left, right, bbox, max(0, truth - 4),
+                                       truth + 4)
+                self.assertIsNotNone(match)
+                # Sub-pixel matters more than it looks: at 15 m the whole
+                # disparity is ~2.5 px, so the parabola IS the measurement.
+                self.assertAlmostEqual(match.disparity_px, truth, delta=0.1)
 
-        rng = np.random.default_rng(21)
-        patch = rng.integers(0, 256, size=(100, 80), dtype=np.uint8)
-        patch = cv2.GaussianBlur(patch, (3, 3), 0)
-        left = np.zeros((180, 300), dtype=np.uint8)
-        right = np.zeros_like(left)
-        left[40:140, 150:230] = patch
-        right[40:140, 142:222] = patch
+    def test_the_prior_needs_no_distance_model(self):
+        # h_px = fy*H/D and d = fx*B/D share the D, so it cancels: the prior is
+        # similar triangles, independent of the fitted curve it checks.
+        fx = fy = 448.13
+        baseline, cone_height = 0.12, 0.450
+        for depth in (5.0, 10.0, 15.0):
+            with self.subTest(depth=depth):
+                height_px = fy * cone_height / depth
+                self.assertAlmostEqual(
+                    bbox_height_disparity_prior(height_px, baseline, cone_height),
+                    fx * baseline / depth,
+                    places=9,
+                )
 
-        estimate = estimate_stereo_depth(
-            left,
-            right,
-            (150, 40, 230, 140),
-            (142, 40, 222, 140),
-            fx=400.0,
-            baseline_m=0.12,
-            min_depth_m=2.0,
-            max_depth_m=15.0,
-            epipolar_tolerance_px=1.0,
-        )
+    def test_prior_is_the_baseline_over_the_cone(self):
+        # 0.12/0.450 = 0.267 per pixel of box height for THIS car. A 325 mm
+        # competition cone would give 0.369, which is 40 % wrong here.
+        self.assertAlmostEqual(
+            bbox_height_disparity_prior(100.0, 0.12, 0.450), 26.667, places=3)
 
-        self.assertIsNotNone(estimate)
-        self.assertAlmostEqual(estimate.depth_m, 6.0, delta=0.35)
-        self.assertGreaterEqual(estimate.match_count, 1)
+    def test_a_flat_patch_has_nothing_to_match_and_is_refused(self):
+        # It would correlate with everything equally; returning the argmax of
+        # numerical noise would be worse than returning nothing.
+        flat = np.full((200, 400), 128.0)
+        self.assertIsNone(zncc_disparity(flat, flat.copy(), (100, 80, 120, 120),
+                                         0, 12))
 
-    @unittest.skipUnless(_sift_available(), "OpenCV build does not provide SIFT")
-    def test_feature_stereo_corrects_principal_point_offset(self):
-        import cv2
+    def test_background_texture_cannot_fake_a_cone(self):
+        # This is the false-positive guard: nothing geometrically consistent
+        # exists at any disparity in the window, so there must be no peak.
+        rng = np.random.default_rng(3)
+        left = rng.normal(120, 12, (200, 400))
+        right = rng.normal(120, 12, (200, 400))
+        self.assertIsNone(zncc_disparity(left, right, (180, 80, 200, 120),
+                                         0, 12, min_score=0.5))
 
-        rng = np.random.default_rng(22)
-        patch = rng.integers(0, 256, size=(100, 80), dtype=np.uint8)
-        patch = cv2.GaussianBlur(patch, (3, 3), 0)
-        left = np.zeros((180, 300), dtype=np.uint8)
-        right = np.zeros_like(left)
-        # Raw shift is 10 px, but cx_left - cx_right is 2 px.  The corrected
-        # disparity is therefore 8 px and the optical depth is 6 m.
-        left[40:140, 150:230] = patch
-        right[40:140, 140:220] = patch
+    def test_a_window_off_the_image_is_refused_not_wrapped(self):
+        left, right, _bbox = self._pair(2)
+        # A box at the left edge cannot be shifted further left.
+        self.assertIsNone(
+            zncc_disparity(left, right, (1, 80, 9, 120), 20, 40))
 
-        estimate = estimate_stereo_depth(
-            left,
-            right,
-            (150, 40, 230, 140),
-            (140, 40, 220, 140),
-            fx=400.0,
-            baseline_m=0.12,
-            min_depth_m=2.0,
-            max_depth_m=15.0,
-            epipolar_tolerance_px=1.0,
-            principal_point_offset_px=2.0,
-        )
-
-        self.assertIsNotNone(estimate)
-        self.assertAlmostEqual(estimate.disparity_px, 8.0, delta=0.4)
-        self.assertAlmostEqual(estimate.depth_m, 6.0, delta=0.35)
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_invalid_inputs_return_none(self):
+        left, right, bbox = self._pair(4)
+        self.assertIsNone(zncc_disparity(left[:, :10], right, bbox, 0, 8))
+        self.assertIsNone(zncc_disparity(left, right, bbox, -1.0, 8.0))
+        self.assertIsNone(zncc_disparity(left, right, bbox, 8.0, 2.0))
+        self.assertIsNone(zncc_disparity(left, right, (5, 5, 5, 5), 0, 8))

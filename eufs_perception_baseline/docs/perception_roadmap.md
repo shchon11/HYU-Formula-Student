@@ -601,13 +601,42 @@ Two things measured along the way, both worth knowing:
   So one thread does dominate — consistent with Gazebo Classic rendering all
   image sensors on a single Ogre context — but it is **not pinned at 100 %**.
   It is stalling, not computing, which points at GPU sync/readback per frame
-  rather than a CPU wall. That matters for what would fix it: **more cores will
-  not help, and neither will a faster GPU**; fewer or cheaper render jobs will.
-  Untried levers, cheapest first: the VLP-16's ray count (16 × 350 shares that
-  same thread), and camera resolution — though cutting resolution moves `fx`,
-  the mono curve's `c`/`e` and the px gate, and makes Step 4's far-cone problem
-  worse, so it is not free. **None of this is measured**; the one-thread claim
-  above is inference from the CPU split, not from a profile.
+  rather than a CPU wall. **More cores will not help, and neither will a faster
+  GPU**; only fewer or cheaper render jobs will.
+
+  **The LiDAR was the cost, and it is now measured.** The VLP-16 is a GPU *ray*
+  sensor, so it shares the cameras' render thread: 350 samples × 16 lasers =
+  **5600 rays** over `min_angle:=-2, max_angle:=2` rad (±114.6°). Cutting it and
+  asking the cameras for 30 Hz:
+
+  | LiDAR rays | left | right | velodyne |
+  |---|---|---|---|
+  | 5600 (shipped) | 8.9 Hz | 17.2 Hz | 8.4 Hz |
+  | 2928 (±60°, same angular resolution) | **21.7 Hz** | 15.8 Hz | 9.0 Hz |
+  | 16 (token — the ceiling) | **23.0 Hz** | 17.2 Hz | 9.9 Hz |
+
+  **Halving the LiDAR's arc takes the left camera from 8.9 to 21.7 Hz** — 2.4×,
+  and within 6 % of the lidar-off ceiling, so almost nothing is left to reclaim
+  there. The arc is the free half: the LiDAR sweeps ±114.6° while the camera
+  sees ±55°, and outside the camera's view a cone can only ever publish as
+  `unknown_color`. Cutting the arc keeps the angular resolution (0.655°/ray), so
+  a 15 m cone still gets its 1.7 rays — no far-cone loss. **Untested for recall
+  cost**, which is why it is not shipped.
+
+  **30 Hz is still not reachable.** Even with the LiDAR at 16 rays the pair caps
+  at 23/17, so the remaining wall is the two 1280×720 readbacks themselves. The
+  only lever left is pixels, and that moves `fx`, the mono curve's `c`/`e` and
+  the px gate, and makes Step 4's far-cone problem worse — so it is not free.
+
+  **`update_rate` is not a cap and does not behave monotonically.** Measured
+  request → achieved (left): 10 → 7.4, 15 → 8.8, 20 → 8.2, 30 → 21.7. Asking
+  for *more* gets more, up to a point, and the xacro comment calling higher
+  rates "an aspiration" is wrong about the mechanism. But the pair **diverges**
+  as the request rises (30 Hz gives 21.7/15.8), and a split pair is §2.3's
+  stereo starvation. Any rate change has to be judged on left/right *together*.
+
+  Every rate number here needs the **LiDAR's achieved rate as a control** — the
+  host drifts by 30 % between runs, which silently reverses conclusions.
 - **The ZED's `depth` sensor was rendering for nobody.** A second full 1280×720
   pass plus a point cloud, with `/zed/depth/image_raw`, `/zed/points` and
   `/zed/image_raw` all measured at **0 subscribers** while the real perception

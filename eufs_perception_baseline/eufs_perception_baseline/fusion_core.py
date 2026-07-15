@@ -1,9 +1,11 @@
-"""
-Pure geometry helpers for the IIT Bombay-inspired perception pipeline.
+"""Pure geometry for cone perception.
 
-The functions in this module intentionally have no ROS dependencies.  Keeping
-the numerical operations here makes their failure behaviour explicit and lets
-the ROS node decide which perception tier to use next.
+No ROS dependencies, on purpose: what is here is measurement and can be checked
+against arithmetic, while the node above it owns the plumbing and the policy.
+Everything fails by returning None rather than raising or guessing, so the node
+decides what a missing measurement means -- which in practice is always "publish
+the cone with a wider covariance" or "do not publish it", never "publish it with
+a number nobody stands behind".
 """
 
 from dataclasses import dataclass
@@ -26,15 +28,6 @@ class GroundRemovalResult:
     plane: Optional[np.ndarray]
     ground_mask: np.ndarray
     non_ground_mask: np.ndarray
-
-
-@dataclass(frozen=True)
-class StereoDepthEstimate:
-    """Robust depth estimate from rectified stereo feature matches."""
-
-    depth_m: float
-    disparity_px: float
-    match_count: int
 
 
 def remove_ground_ransac(
@@ -375,52 +368,6 @@ def zncc_disparity(
     )
 
 
-def classify_cone_condition(
-    bbox: Sequence[float],
-    image_size: Sequence[int],
-    min_height_to_width: float = 1.2,
-    border_margin_ratio: float = 0.01,
-) -> str:
-    """
-    Classify a detection as suitable (``good``) for monocular depth.
-
-    A good cone is fully inside the image and visibly upright.  An upright cone
-    clipped only by the left or right image edge is returned as
-    ``horizontal_clip`` because its pixel height is still usable by the
-    monocular distance model.  Vertically clipped, invalid, or wide/fallen
-    detections are routed to ``bad`` so only stereo may recover them.
-    """
-    parsed_bbox = _parse_bbox(bbox)
-    if parsed_bbox is None or len(image_size) < 2:
-        return "bad"
-    try:
-        image_width = float(image_size[0])
-        image_height = float(image_size[1])
-    except (TypeError, ValueError):
-        return "bad"
-
-    if not _positive_finite(image_width) or not _positive_finite(image_height):
-        return "bad"
-    if not _positive_finite(min_height_to_width):
-        return "bad"
-    if not _finite(border_margin_ratio) or border_margin_ratio < 0.0:
-        return "bad"
-
-    x1, y1, x2, y2 = parsed_bbox
-    width = x2 - x1
-    height = y2 - y1
-    margin_x = image_width * float(border_margin_ratio)
-    margin_y = image_height * float(border_margin_ratio)
-    horizontally_visible = x1 > margin_x and x2 < image_width - margin_x
-    vertically_visible = y1 > margin_y and y2 < image_height - margin_y
-    upright = height / width >= float(min_height_to_width)
-    if horizontally_visible and vertically_visible and upright:
-        return "good"
-    if not horizontally_visible and vertically_visible and upright:
-        return "horizontal_clip"
-    return "bad"
-
-
 def camera_point_from_depth(
     u_px: float,
     v_px: float,
@@ -452,210 +399,6 @@ def camera_point_from_depth(
 
     point = ray * (float(optical_depth_m) / float(ray[2]))
     return point if np.all(np.isfinite(point)) else None
-
-
-def baseline_from_projection(left_projection, right_projection) -> Optional[float]:
-    """Derive the positive stereo baseline from rectified 3x4 projections."""
-    left = _projection_matrix(left_projection)
-    right = _projection_matrix(right_projection)
-    if left is None or right is None:
-        return None
-    if abs(float(left[0, 0])) <= 1e-12 or abs(float(right[0, 0])) <= 1e-12:
-        return None
-
-    left_center_x = -float(left[0, 3]) / float(left[0, 0])
-    right_center_x = -float(right[0, 3]) / float(right[0, 0])
-    baseline = abs(right_center_x - left_center_x)
-    return baseline if _positive_finite(baseline) else None
-
-
-def disparity_to_depth(
-    disparity_px: float,
-    fx_px: float,
-    baseline_m: float,
-) -> Optional[float]:
-    """Convert positive rectified disparity to optical depth."""
-    if not all(_positive_finite(value) for value in (disparity_px, fx_px, baseline_m)):
-        return None
-    depth = float(fx_px) * float(baseline_m) / float(disparity_px)
-    return depth if _positive_finite(depth) else None
-
-
-def slender_bbox(
-    bbox: Sequence[float],
-    width_fraction: float = 0.5,
-) -> Optional[Tuple[int, int, int, int]]:
-    """Return the central, slender horizontal crop of a pixel bbox."""
-    parsed = _parse_bbox(bbox)
-    if parsed is None or not _finite(width_fraction):
-        return None
-    if width_fraction <= 0.0 or width_fraction > 1.0:
-        return None
-
-    x1, y1, x2, y2 = parsed
-    center_x = 0.5 * (x1 + x2)
-    half_width = 0.5 * (x2 - x1) * float(width_fraction)
-    return (
-        int(math.floor(center_x - half_width)),
-        int(math.floor(y1)),
-        int(math.ceil(center_x + half_width)),
-        int(math.ceil(y2)),
-    )
-
-
-def estimate_stereo_depth(
-    left_image,
-    right_image,
-    left_bbox: Sequence[float],
-    right_bbox: Sequence[float],
-    fx: float,
-    baseline_m: float,
-    min_depth_m: float = 0.5,
-    max_depth_m: float = 30.0,
-    epipolar_tolerance_px: float = 2.0,
-    slender_fraction: float = 0.5,
-    ratio_threshold: float = 0.75,
-    min_matches: int = 1,
-    principal_point_offset_px: float = 0.0,
-) -> Optional[StereoDepthEstimate]:
-    """
-    Estimate depth from robust SIFT matches in rectified stereo images.
-
-    Feature detection is restricted to slender cone crops in both images.  The
-    caller must provide the right bbox propagated by ReKTNet/PnP; this helper no
-    longer fabricates a right search window directly from the left bbox.  Lowe
-    ratio, reciprocal-best, epipolar, depth-range, and uniqueness checks reject
-    invalid candidates.  The best remaining descriptor supplies the single
-    disparity used by IIT Bombay's reported highest-accuracy configuration.
-    """
-    if not all(_positive_finite(value) for value in (fx, baseline_m)):
-        return None
-    if not all(_positive_finite(value) for value in (min_depth_m, max_depth_m)):
-        return None
-    if min_depth_m > max_depth_m:
-        return None
-    if not _finite(epipolar_tolerance_px) or epipolar_tolerance_px < 0.0:
-        return None
-    if not _finite(ratio_threshold) or not 0.0 < ratio_threshold < 1.0:
-        return None
-    if int(min_matches) < 1:
-        return None
-    if not _finite(principal_point_offset_px):
-        return None
-
-    left_gray = _as_gray_uint8(left_image)
-    right_gray = _as_gray_uint8(right_image)
-    if left_gray is None or right_gray is None:
-        return None
-
-    left_crop_candidate = slender_bbox(left_bbox, slender_fraction)
-    right_crop_candidate = slender_bbox(right_bbox, slender_fraction)
-    if left_crop_candidate is None or right_crop_candidate is None:
-        return None
-    left_crop = _clip_bbox(
-        left_crop_candidate,
-        left_gray.shape[1],
-        left_gray.shape[0],
-    )
-    right_crop = _clip_bbox(
-        right_crop_candidate,
-        right_gray.shape[1],
-        right_gray.shape[0],
-    )
-    if left_crop is None or right_crop is None:
-        return None
-
-    min_disparity = float(fx) * float(baseline_m) / float(max_depth_m)
-    max_disparity = float(fx) * float(baseline_m) / float(min_depth_m)
-    lx1, ly1, lx2, ly2 = left_crop
-
-    try:
-        import cv2
-    except ImportError:
-        return None
-    sift_factory = getattr(cv2, "SIFT_create", None)
-    if sift_factory is None:
-        # Do not silently change the paper's descriptor contract.  Runtimes
-        # without SIFT must disable this tier or install a SIFT-capable OpenCV.
-        return None
-    feature_detector = sift_factory()
-    descriptor_norm = cv2.NORM_L2
-
-    left_mask = np.zeros(left_gray.shape, dtype=np.uint8)
-    right_mask = np.zeros(right_gray.shape, dtype=np.uint8)
-    left_mask[ly1:ly2, lx1:lx2] = 255
-    rx1, ry1, rx2, ry2 = right_crop
-    right_mask[ry1:ry2, rx1:rx2] = 255
-
-    left_keypoints, left_descriptors = feature_detector.detectAndCompute(
-        left_gray, left_mask
-    )
-    right_keypoints, right_descriptors = feature_detector.detectAndCompute(
-        right_gray, right_mask
-    )
-    if (
-        left_descriptors is None
-        or right_descriptors is None
-        or len(left_keypoints) == 0
-        or len(right_keypoints) == 0
-    ):
-        return None
-
-    matcher = cv2.BFMatcher(descriptor_norm)
-    forward_knn = matcher.knnMatch(left_descriptors, right_descriptors, k=2)
-    reverse_best = matcher.match(right_descriptors, left_descriptors)
-    reverse_by_query = {match.queryIdx: match.trainIdx for match in reverse_best}
-
-    valid_matches = []
-    for neighbours in forward_knn:
-        if len(neighbours) < 2:
-            continue
-        best, second = neighbours
-        if second.distance <= 0.0 or best.distance >= ratio_threshold * second.distance:
-            continue
-        if reverse_by_query.get(best.trainIdx) != best.queryIdx:
-            continue
-
-        left_point = left_keypoints[best.queryIdx].pt
-        right_point = right_keypoints[best.trainIdx].pt
-        disparity = float(
-            left_point[0]
-            - right_point[0]
-            - float(principal_point_offset_px)
-        )
-        vertical_error = abs(float(left_point[1] - right_point[1]))
-        if vertical_error > float(epipolar_tolerance_px):
-            continue
-        if disparity < min_disparity or disparity > max_disparity:
-            continue
-        valid_matches.append((best, disparity))
-
-    if not valid_matches:
-        return None
-
-    # Enforce one-to-one right features, retaining the strongest descriptor
-    # match when multiple left features target the same right feature.
-    unique_by_right = {}
-    for match, disparity in valid_matches:
-        previous = unique_by_right.get(match.trainIdx)
-        if previous is None or match.distance < previous[0].distance:
-            unique_by_right[match.trainIdx] = (match, disparity)
-
-    if len(unique_by_right) < int(min_matches):
-        return None
-    _, disparity = min(
-        unique_by_right.values(),
-        key=lambda entry: float(entry[0].distance),
-    )
-    disparity = float(disparity)
-    depth = disparity_to_depth(disparity, fx, baseline_m)
-    if depth is None or depth < min_depth_m or depth > max_depth_m:
-        return None
-    return StereoDepthEstimate(
-        depth_m=depth,
-        disparity_px=disparity,
-        match_count=1,
-    )
 
 
 def _failed_ground_result(count: int) -> GroundRemovalResult:
@@ -704,71 +447,6 @@ def _fit_plane_svd(points: np.ndarray) -> Optional[np.ndarray]:
         [normal[0], normal[1], normal[2], -float(np.dot(normal, centroid))]
     )
     return plane if np.all(np.isfinite(plane)) else None
-
-
-def _projection_matrix(value) -> Optional[np.ndarray]:
-    matrix = np.asarray(value, dtype=np.float64)
-    if matrix.size != 12:
-        return None
-    matrix = matrix.reshape(3, 4)
-    return matrix if np.all(np.isfinite(matrix)) else None
-
-
-def _parse_bbox(bbox: Sequence[float]) -> Optional[Tuple[float, float, float, float]]:
-    try:
-        if len(bbox) < 4:
-            return None
-        values = tuple(float(value) for value in bbox[:4])
-    except (TypeError, ValueError):
-        return None
-    if not all(_finite(value) for value in values):
-        return None
-    x1, y1, x2, y2 = values
-    if x2 <= x1 or y2 <= y1:
-        return None
-    return x1, y1, x2, y2
-
-
-def _clip_bbox(bbox, image_width: int, image_height: int):
-    parsed = _parse_bbox(bbox)
-    if parsed is None or image_width <= 0 or image_height <= 0:
-        return None
-    x1, y1, x2, y2 = parsed
-    clipped = (
-        max(0, min(int(math.floor(x1)), image_width)),
-        max(0, min(int(math.floor(y1)), image_height)),
-        max(0, min(int(math.ceil(x2)), image_width)),
-        max(0, min(int(math.ceil(y2)), image_height)),
-    )
-    if clipped[2] <= clipped[0] or clipped[3] <= clipped[1]:
-        return None
-    return clipped
-
-
-def _as_gray_uint8(image) -> Optional[np.ndarray]:
-    array = np.asarray(image)
-    if array.ndim == 3 and array.shape[2] in (3, 4):
-        try:
-            import cv2
-        except ImportError:
-            return None
-        conversion = cv2.COLOR_BGRA2GRAY if array.shape[2] == 4 else cv2.COLOR_BGR2GRAY
-        try:
-            array = cv2.cvtColor(array, conversion)
-        except cv2.error:
-            return None
-    elif array.ndim != 2:
-        return None
-    if array.size == 0 or not np.all(np.isfinite(array)):
-        return None
-    if array.dtype == np.uint8:
-        return np.ascontiguousarray(array)
-    minimum = float(np.min(array))
-    maximum = float(np.max(array))
-    if maximum <= minimum:
-        return np.zeros(array.shape, dtype=np.uint8)
-    scaled = (array.astype(np.float64) - minimum) * (255.0 / (maximum - minimum))
-    return np.ascontiguousarray(np.clip(scaled, 0.0, 255.0).astype(np.uint8))
 
 
 def _finite(value) -> bool:

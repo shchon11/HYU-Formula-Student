@@ -17,14 +17,11 @@ setup(
         ),
         (
             f"share/{package_name}/config",
-            ["config/perception.yaml", "config/perception_baseline.yaml"],
+            ["config/perception.yaml"],
         ),
         (
             f"share/{package_name}/launch",
-            [
-                "launch/perception.launch.py",
-                "launch/perception_baseline.launch.py",
-            ],
+            ["launch/perception.launch.py"],
         ),
         (
             f"share/{package_name}/docs",
@@ -73,10 +70,6 @@ setup(
             (
                 "perception_node = "
                 "eufs_perception_baseline.perception_node:main"
-            ),
-            (
-                "perception_baseline_node = "
-                "eufs_perception_baseline.perception_baseline_node:main"
             ),
             (
                 "yolov8_bbox_node = "
