@@ -620,8 +620,25 @@ Two things measured along the way, both worth knowing:
   there. The arc is the free half: the LiDAR sweeps ±114.6° while the camera
   sees ±55°, and outside the camera's view a cone can only ever publish as
   `unknown_color`. Cutting the arc keeps the angular resolution (0.655°/ray), so
-  a 15 m cone still gets its 1.7 rays — no far-cone loss. **Untested for recall
-  cost**, which is why it is not shipped.
+  a 15 m cone still gets its 1.7 rays — no far-cone loss.
+
+  **Shipped**, because the recall cost measured as zero, which is what the
+  geometry predicts: the evaluator's gate is ±55° and the trimmed LiDAR still
+  covers ±60°.
+
+  | band | 5–7.5 | 7.5–10 | 10–12.5 | 12.5–15 | FP |
+  |---|---|---|---|---|---|
+  | full arc | 97.8 % | 96.6 % | 76.5 % | 33.9 % | 10.0 % |
+  | ±60° | 97.7 % | 93.6 % | 73.6 % | 28.8 % | 7.8 % |
+
+  Every difference sits inside the run-to-run spread of the *same* config
+  (12.5–15 m has read 27.9 / 33.4 / 33.9 % across repeats).
+
+  At the shipped 15 Hz request the arc cut gives left **8.8 → 11.5 Hz**, and
+  left/right split (11.5 / 9.1). **That split is now harmless**, and it is worth
+  saying why: §2.3's starvation came from a hard bbox/LiDAR pairing gate. The
+  new node has none — the ZNCC cross-check fails open on `max_image_age_sec`, so
+  a diverged pair means fewer cross-checks, not a stalled output.
 
   **30 Hz is still not reachable.** Even with the LiDAR at 16 rays the pair caps
   at 23/17, so the remaining wall is the two 1280×720 readbacks themselves. The

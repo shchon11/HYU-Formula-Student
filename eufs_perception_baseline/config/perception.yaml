@@ -207,12 +207,33 @@ perception_node:
     # boundary it already defines; the lateral error is what bends it. SLAM
     # carries a full 2x2 landmark covariance and consumes what it is told, so
     # tell it the truth and let it weight them apart.
-    lidar_variance_x: 0.04
-    lidar_variance_y: 0.04
-    lidar_only_variance_x: 0.20
-    lidar_only_variance_y: 0.20
-    sparse_variance_x: 0.12
-    sparse_variance_y: 0.12
+    # MEASURED and corrected. These were 0.04 / 0.20 / 0.12, which is 25x,
+    # 347x and 50x the error actually observed (lat/lon rms 0.032 / 0.024 /
+    # 0.044 m, i.e. z^2 of 0.04 / 0.00 / 0.02). SLAM weights by the inverse, so
+    # over-stating them threw away the most accurate source in the stack.
+    #
+    # Set to ~4x the measured mean-square error, not to z^2 = 1: this is one
+    # track and one run, and a MIS-ASSOCIATED LiDAR cone is worse than a noisy
+    # one, so the headroom buys tolerance for the failure the number cannot see.
+    lidar_variance_x: 0.008
+    lidar_variance_y: 0.008
+    # This was set equal to a confirmed cluster on the argument that a cluster
+    # the camera never confirmed has an IDENTICAL position measurement -- the
+    # same centroid of the same returns -- and that its doubt is about
+    # existence, which is SLAM's M-of-N to hold, not perception's covariance.
+    #
+    # The argument was too clean and the measurement refused it: at 0.008 this
+    # read lat z^2 = 4.20. A cluster the camera did not confirm really is worse
+    # POSITIONALLY, because the reasons it went unconfirmed -- a partial cone, a
+    # cone clipped by the image edge, or something that is not a cone -- are the
+    # same reasons its centroid is off. 0.03 is what that measures, and it is
+    # still 6x tighter than the 0.20 it replaced.
+    #
+    # PROVISIONAL: n=14. Re-measure before trusting the exact value.
+    lidar_only_variance_x: 0.03
+    lidar_only_variance_y: 0.03
+    sparse_variance_x: 0.012
+    sparse_variance_y: 0.012
     range_variance_scale: 0.0005
     min_variance: 0.0001
     # Bbox centre noise for the monocular tier, in px. MEASURED: lat z^2 was
