@@ -744,11 +744,32 @@ Two things measured along the way, both worth knowing:
   LiDAR carries the position.** Past this point the honest options are a
   different simulator or accepting ~11.5 Hz.
 
-  Four hypotheses died in this section — shared render thread, `gpu_ray`,
-  readback, cheap collision — and every one of them looked obvious. Two were
-  asserted before being checked. **Measure before believing any of them again**,
-  and measure *recall*, not only rate: three of the four looked like clean wins
-  on rate alone.
+  **A ray that stops early is a cheap ray, and that reverses the last idea.**
+  The car's chassis `<collision>` is its full visual mesh — **143,873
+  triangles**, ten times the entire cone field, and the LiDAR raycasts it every
+  scan (which is why perception carries a `self_mask` at all). Deleting it looks
+  like the biggest win available, and the car would still stand on its wheels'
+  cylinder collisions and simply pass through cones, with the cones' geometry
+  untouched so the LiDAR still sees real cones.
+
+  It makes it **three times worse**:
+
+  | | left | right | velodyne |
+  |---|---|---|---|
+  | chassis mesh collision | 11.5 | 9.1 | 6.6 |
+  | chassis collision removed | **3.9** | 8.9 | 7.7 |
+
+  Because the rays that used to terminate on the car now fly on and hit more of
+  the world. The `self_mask` is evidence that a good share of the scan ends on
+  the chassis — and ending there was **saving** work, not costing it. The
+  triangle count of a mesh you hit early is not what it costs you.
+
+  Five hypotheses died in this section — shared render thread, `gpu_ray`,
+  readback, cheap cone collision, no chassis collision — and every one looked
+  obvious. Two were asserted before being checked. Three looked like clean wins
+  on **rate alone** and were refused by recall; the last was refused by rate
+  itself, in the opposite direction from the prediction. **Measure before
+  believing any of them again, and measure recall, not only rate.**
 
   **`update_rate` is not a cap and does not behave monotonically.** Measured
   request → achieved (left): 10 → 7.4, 15 → 8.8, 20 → 8.2, 30 → 21.7. Asking
@@ -779,9 +800,17 @@ Two things measured along the way, both worth knowing:
 - **`/cones` is at 4 Hz against a 10 Hz backbone, with ~0.8 s of latency**, and
   the cause is measured: Tier 3 SIFT at 200–235 % CPU (§6b). This is the largest
   open item and it is Step 5.
-- **The monocular tier has a −0.88 m range bias.** `sigma_h_px: 4.0` currently
-  covers it with noise. Re-fit `c`/`e` and drop `sigma_h_px` back to the
-  residual scatter (~1.5).
+- **The monocular tier's −0.5 m range bias survived the curve re-fit**, so the
+  curve was not its only source. `fit_mono_depth_curve.py --live` is now
+  implemented (it was a stub) and fitted **c=0.2913, e=-0.9814** on n=1571,
+  which lands almost exactly on the ANALYTIC pinhole curve (0.2801, −1.0) and
+  refutes §2.1's premise: this detector's box does not run short enough to bend
+  the exponent. The old hand fit (0.5575, −0.7555) read a 10 m cone at 8.3 m and
+  a 15 m cone at 11.3 m, and that error grew with range — which is what the bias
+  looked like. Re-fitting cut the tier's `lon z²` from 3.09 to 0.45 and its
+  NEES/2 from 1.78 to 0.38, and left `lon mean` at −0.516 m. **Something else is
+  biasing it.** `sigma_h_px` is down 8.0 → 5.5 but is still covering that
+  remainder with noise.
 - **`monocular_sigma_u_px: 10.0` is a symptom, not a property.** It is large
   because the 16 px gate (10.2 m) reaches into the detector's cliff, which
   starts at ~8.8 m. Step 4 moves the cliff; then both numbers move.

@@ -127,13 +127,28 @@ perception_node:
     monocular_min_bbox_height_px: 16.0
     monocular_min_depth_m: 0.5
     monocular_max_depth_m: 30.0
-    # D = c * h_n^e. FITTED to this detector against ground truth (n=2745), not
-    # the analytic pinhole curve (c=0.2801, e=-1.0): the detector's box runs
-    # ~17 % short past 6 m, so the analytic curve read those cones as further
-    # away and over-estimated depth by 20-25 %. Measured: analytic 17.60 % mean
-    # / 50.06 % p90, this fit 7.00 % / 19.71 %.
-    monocular_depth_coefficient: 0.5575
-    monocular_depth_exponent: -0.7555
+    # D = c * h_n^e, RE-FITTED against ground truth with
+    # `fit_mono_depth_curve.py --live` (n=1571): residual 8.20 % mean, 4.69 %
+    # median.
+    #
+    # This replaces c=0.5575, e=-0.7555, which was fitted by hand and is wrong.
+    # It read a 10 m cone at 8.3 m and a 15 m cone at 11.3 m -- too close, by
+    # more the further out, which is precisely the -0.42 to -0.88 m monocular
+    # bias the evaluator kept measuring and that sigma_h had to be inflated to
+    # 8.0 px to cover with noise.
+    #
+    # The re-fit lands almost exactly on the ANALYTIC pinhole curve for this
+    # camera (c = fy*H_cone/H_img = 0.2801, e = -1 exactly, because a simulated
+    # lens has no distortion). That is a result worth stating plainly: the
+    # earlier fit's premise -- that the detector's box runs ~17 % short past 6 m
+    # and bends the exponent -- does not hold for this detector weight. Where
+    # the box IS short, it is short at the top, and the curve reads the height
+    # it is given.
+    #
+    # Re-fit per camera AND per detector weight. On the real car there is no
+    # ground truth: use Tier-1 LiDAR depth as the reference.
+    monocular_depth_coefficient: 0.2913
+    monocular_depth_exponent: -0.9814
     # Cone-derived constants, and identical between sim and the real car: our
     # cone is 450 mm, NOT the 325 mm FS-AI spec. Do not "correct" these.
     standard_cone_height_m: 0.450
@@ -240,15 +255,16 @@ perception_node:
     # 10.71 at sigma_u 3.0 (n=75), implying ~10 px. Large because the 16 px gate
     # (10.2 m) reaches into the cliff's shoulder, which starts at ~8.8 m.
     monocular_sigma_u_px: 10.0
-    # Bbox HEIGHT noise, in px, driving sigma_D/D = |e|*sigma_h/h. 8.0, not the
-    # ~1.5 the residual scatter implies, because the tier carries a MEASURED
-    # range bias (lon mean -0.47 m, rms 0.85, n=339) that noise has to cover:
-    # at 4.0 this measured lon z^2 = 4.39, so 8.0 is what the population says.
-    # This inflates noise to cover a BIAS, which is a patch, not a fix -- the
-    # fix is re-fitting c/e, and then this drops back toward the scatter.
-    # Until then, covering the real error is the safe direction; understating it
-    # corrupts the map rather than just adding noise.
-    sigma_h_px: 8.0
+    # Bbox HEIGHT noise, in px, driving sigma_D/D = |e|*sigma_h/h.
+    #
+    # Was 8.0 to cover the curve's bias with noise. Re-fitting c/e (above) cut
+    # lon z^2 from 3.09 to 0.45 at that value, so 5.5 is what the population now
+    # says. Still well above the ~1.5 the residual scatter alone implies,
+    # because the tier STILL carries a measured -0.5 m range bias: re-fitting
+    # the curve did NOT remove it, so the curve was not its only source. That is
+    # open. Until it is found, covering the real error is the safe direction --
+    # understating it corrupts the map rather than merely adding noise.
+    sigma_h_px: 5.5
 yolov8_bbox_node:
   ros__parameters:
     image_topic: /zed/left/image_rect_color
