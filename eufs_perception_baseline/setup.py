@@ -17,11 +17,14 @@ setup(
         ),
         (
             f"share/{package_name}/config",
-            ["config/perception_baseline.yaml"],
+            ["config/perception.yaml", "config/perception_baseline.yaml"],
         ),
         (
             f"share/{package_name}/launch",
-            ["launch/perception_baseline.launch.py"],
+            [
+                "launch/perception.launch.py",
+                "launch/perception_baseline.launch.py",
+            ],
         ),
         (
             f"share/{package_name}/docs",
