@@ -55,6 +55,7 @@ GraphSlamNode::GraphSlamNode()
   map_trust_info_scale_(3.0),
   min_observation_range_(0.2),
   max_observation_range_(30.0),
+  landmark_creation_max_range_(0.0),
   default_observation_sigma_(0.25),
   min_observation_variance_(0.01),
   odom_translation_sigma_(0.05),
@@ -164,6 +165,9 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<double>("association_max_inflation", association_max_inflation_);
   landmark_merge_distance_ =
     declare_parameter<double>("landmark_merge_distance", landmark_merge_distance_);
+  landmark_creation_max_range_ =
+    declare_parameter<double>(
+    "landmark_creation_max_range", landmark_creation_max_range_);
   min_observation_range_ =
     declare_parameter<double>("min_observation_range", min_observation_range_);
   max_observation_range_ =
@@ -1202,6 +1206,17 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
         ++updated_landmarks;
       }
     } else if (add_edges) {
+      // A landmark's first observation SETS its position, and the pose's
+      // heading error leverages with range: 1 deg of unoptimized heading at
+      // 15 m bakes 26 cm into the map that later edges must fight. Far
+      // measurements still serve as UPDATES to existing landmarks (the
+      // association above has no such gate); they just cannot found one.
+      // 0 disables the gate.
+      if (landmark_creation_max_range_ > 0.0 &&
+        observation.measurement.norm() > landmark_creation_max_range_)
+      {
+        continue;
+      }
       landmark = addLandmark(map_point, map_covariance, observation.color);
       if (landmark != nullptr) {
         observed_index = landmarks_.size() - 1U;

@@ -303,6 +303,7 @@ private:
   double map_trust_info_scale_;
   double min_observation_range_;
   double max_observation_range_;
+  double landmark_creation_max_range_;
   double default_observation_sigma_;
   double min_observation_variance_;
   double odom_translation_sigma_;
