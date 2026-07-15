@@ -80,22 +80,40 @@
       <child link="${prefix}_depth_camera_optical_frame"/>
     </joint>
 
-    <!-- Rates are what the GPU can actually sustain, not an aspiration. At 60 Hz
-         the left and right cameras each fell behind by a different amount (measured
-         15.2 and 10.6 Hz), so they free-ran on separate schedules and their stamps
-         drifted apart. Fusion needs the pair within image_sync_tolerance_sec (50 ms)
-         or it drops the stereo tier for that frame, which starved Tier 3. Equal,
-         sustainable rates keep both sensors on the same update tick.
-         MEASURED AGAIN, and the ceiling is lower than it looks: at a 30 Hz request
-         the left camera achieved 8.9 Hz while the right achieved 17.2 Hz: they
-         diverged, which is the same starvation, so 30 is not available here. At 15
-         both settle at ~8.8 Hz together, which is why 15 stays. The GPU is not the
-         limit (gzserver renders on the RTX 4070 at ~150% CPU); Gazebo Classic
-         serialises every sensor on one render thread, so the two cameras and the
-         12800-ray VLP-16 share it. To go faster, cut that work, not the request.
-         The depth camera is not subscribed by anything in this workspace, so it
-         only competed for the render thread; it is now off by default (depth false)
-         rather than kept alive at a token rate. -->
+    <!-- 15 Hz. What that costs and why it is the number, measured.
+
+         This comment used to say 30 Hz was beyond the GPU. Wrong twice: the GPU
+         sits at 11 % while gzserver renders on the RTX 4070, and the render
+         thread is not GL-blocked at all. Sampled through /proc it is 88-92 %
+         RUNNING, i.e. CPU-bound.
+
+         What gated the cameras was the LIDAR HOLDING A LOCK. The VLP-16 is
+         `type="ray"`, a CPU ray sensor, so it queries ODE's collision world
+         under its mutex and the render thread waits on it. The proof is in the
+         render thread's block reasons: at 2928 rays it showed 11 futex_wait
+         samples; at 64 rays, zero. And the cameras then delivered what they
+         asked for: 14.87 at a 15 Hz request, 29.8 at a 30 Hz request.
+
+         So 30 IS available once the VLP-16's arc is trimmed (see
+         VLP-16R.urdf.xacro): measured 27.6 / 26.6 Hz, pair within 4 %,
+         velodyne still 9.2. 15 is chosen anyway, deliberately:
+
+         At a 30 Hz request the render thread runs at ~92 % and the rate stops
+         being a setting: it becomes whatever budget is left, which is how the
+         untrimmed config used to swing between 3.4 and 11.8 Hz across identical
+         runs. 15 leaves headroom, so the rate is a number rather than a race.
+         Raise it to 30 only with the arc trim in place and the pair re-measured.
+
+         The pair must stay together: fusion has no hard bbox/LiDAR gate any
+         more, but the ZNCC cross-check needs both images within
+         max_image_age_sec or it silently does not run.
+
+         MEASURING THIS IS HARDER THAN IT LOOKS. Subscribing to a 720p topic
+         costs the simulator tens of MB/s of serialisation, so `ros2 topic hz`
+         on left then right gives a different answer than both at once, and the
+         second one measured inherits the first one's load. Measure them
+         concurrently, three runs, 40 s settle, and print the host load with
+         every number. -->
     <!-- Simulate raw perception sensors only if we're not using the abstracted perception simulation -->
     <xacro:unless value="${active}">
       <gazebo reference="${prefix}_left_camera_frame">
