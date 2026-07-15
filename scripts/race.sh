@@ -43,11 +43,7 @@ TRACK="small_track"
 TRACK_SET=0
 PMODE="real"
 FILTERED=""
-HAS_YOLO_MODEL_ARG=0
-HAS_YOLO_DEVICE_ARG=0
 HAS_MOTION_COMP_ARG=0
-HAS_MONOCULAR_FALLBACK_ARG=0
-HAS_STEREO_FALLBACK_ARG=0
 EVAL_MODE=0
 for tok in "$@"; do
   case "$tok" in
@@ -55,14 +51,8 @@ for tok in "$@"; do
     sim|real) PMODE="$tok" ;;
     *)
       case "$tok" in
-        yolo_model_path:=*) HAS_YOLO_MODEL_ARG=1 ;;
-        yolo_device:=*) HAS_YOLO_DEVICE_ARG=1 ;;
         perception_motion_compensation_frame:=*) HAS_MOTION_COMP_ARG=1 ;;
         motion_compensation_frame:=*) HAS_MOTION_COMP_ARG=1 ;;
-        perception_monocular_fallback_enabled:=*) HAS_MONOCULAR_FALLBACK_ARG=1 ;;
-        monocular_fallback_enabled:=*) HAS_MONOCULAR_FALLBACK_ARG=1 ;;
-        perception_stereo_fallback_enabled:=*) HAS_STEREO_FALLBACK_ARG=1 ;;
-        stereo_fallback_enabled:=*) HAS_STEREO_FALLBACK_ARG=1 ;;
       esac
       if [ "$TRACK_SET" -eq 0 ] && [[ "$tok" != *":="* ]]; then
         TRACK="$tok"
@@ -74,27 +64,28 @@ for tok in "$@"; do
   esac
 done
 
-# Tier evaluation needs the package's own (pose) weight and ALL tiers on, so the
-# legacy-model pin and the tier disables below are skipped in perception mode.
-LOCAL_YOLO_MODEL="$SRC_DIR/eufs_perception_baseline/models/fsoco_yolov8n/weights/best.pt"
-if [ "$EVAL_MODE" -eq 0 ] && [ "$PMODE" = "real" ] && [ "$HAS_YOLO_MODEL_ARG" -eq 0 ] && [ -f "$LOCAL_YOLO_MODEL" ]; then
-  FILTERED="$FILTERED yolo_model_path:=$LOCAL_YOLO_MODEL"
-fi
-if [ "$PMODE" = "real" ] && [ "$HAS_YOLO_DEVICE_ARG" -eq 0 ]; then
-  FILTERED="$FILTERED yolo_device:=cuda"
-fi
+# Only what simulation.launch.py actually declares may be passed. ros2 launch
+# does NOT reject an undeclared argument -- it accepts it silently and the value
+# goes nowhere -- so a name that has gone away reads as "configured" forever.
+# Removed here for exactly that reason, each verified silently ignored:
+#
+#   yolo_model_path / yolo_device  never wrapped by simulation.launch.py. Both
+#       modes always ran the declared default (cone_pose_8kpt), so the "legacy
+#       model pin" this script claimed to apply never applied. yolo_device is
+#       not needed either: the node omits `device` when it is empty and
+#       ultralytics selects the GPU itself (measured 29.4 Hz on a 4070).
+#   perception_monocular_fallback_enabled / perception_stereo_fallback_enabled
+#       tier-era knobs, deleted with the tiers. The node now picks a provenance
+#       per cone from what the sensors support, so there is nothing to switch.
 if [ "$PMODE" = "real" ] && [ "$HAS_MOTION_COMP_ARG" -eq 0 ]; then
   FILTERED="$FILTERED perception_motion_compensation_frame:=odom"
 fi
-if [ "$EVAL_MODE" -eq 0 ] && [ "$PMODE" = "real" ] && [ "$HAS_MONOCULAR_FALLBACK_ARG" -eq 0 ]; then
-  FILTERED="$FILTERED perception_monocular_fallback_enabled:=false"
-fi
-if [ "$EVAL_MODE" -eq 0 ] && [ "$PMODE" = "real" ] && [ "$HAS_STEREO_FALLBACK_ARG" -eq 0 ]; then
-  FILTERED="$FILTERED perception_stereo_fallback_enabled:=false"
-fi
 if [ "$EVAL_MODE" -eq 1 ]; then
-  # cone_tiers labels every published cone with its tier; GT cones are the ruler.
-  FILTERED="$FILTERED perception_publish_fusion_debug:=true pub_ground_truth:=true"
+  # cone_provenance labels every published cone with what produced it; the full
+  # GT track is the ruler. The flag is perception_publish_debug -- this script
+  # asked for perception_publish_fusion_debug, which is not a declared name, so
+  # the markers only ever appeared because the real flag defaults to true.
+  FILTERED="$FILTERED perception_publish_debug:=true pub_ground_truth:=true"
 fi
 EXTRA="perception_mode:=$PMODE$FILTERED"
 
@@ -128,21 +119,31 @@ if [ ! -f "$WS_SETUP" ]; then
 fi
 tmux has-session -t "$SESSION" 2>/dev/null && { echo "race: already running — 'race stop' first, or 'race attach'."; exit 1; }
 
-SRC="source $ROS_SETUP; source $WS_SETUP; export EUFS_MASTER=$EUFS_MASTER ROS_LOCALHOST_ONLY=1;"
+# ROS's own tools resolve their interpreter through `#!/usr/bin/env python3`, so
+# whatever python3 sits earliest on PATH BECOMES ROS's python. A conda/anaconda
+# env on PATH therefore replaces python3.10 with an interpreter that has none of
+# ROS's dependencies, and the failure is not where you would look for it:
+# spawn_entity.py dies on `ModuleNotFoundError: lxml`, no car is ever spawned,
+# and every other pane sits forever on `until ros2 node list | grep -q race_car`
+# with no error of its own. Strip it here rather than asking the shell profile to
+# stay clean -- these panes exist to run ROS, not the user's python.
+SANE_PATH='export PATH="$(echo "$PATH" | tr ":" "\n" | grep -vE "conda|/\.venv" | paste -sd:)";'
+SRC="$SANE_PATH source $ROS_SETUP; source $WS_SETUP; export EUFS_MASTER=$EUFS_MASTER ROS_LOCALHOST_ONLY=1;"
 WAIT_CAR="until ros2 node list 2>/dev/null | grep -q race_car; do sleep 2; done"
 WAIT_GT="until ros2 topic list 2>/dev/null | grep -q /ground_truth/state; do sleep 2; done"
 WAIT_STATE="until ros2 topic list 2>/dev/null | grep -q /planning/state; do sleep 2; done"
 
-# Perception evaluation: sim + real 3-tier perception + SLAM + teleop. No
-# planner, no controller — you drive, and the evaluator scores each tier's range
-# error against the simulator's ground-truth cones.
+# Perception evaluation: sim + real perception + SLAM + teleop. No planner, no
+# controller — you drive, and the evaluator scores each PROVENANCE (what
+# produced the cone: cluster_camera / cluster_only / sparse / monocular /
+# monocular_zncc) against the full ground-truth track.
 if [ "$EVAL_MODE" -eq 1 ]; then
   echo "race: launching PERCEPTION+SLAM (teleop, no planner/controller) on track '$TRACK'…"
   tmux new-session -d -s "$SESSION" -n FSK
 
   P_SIM=$(tmux list-panes -t "$SESSION" -F '#{pane_id}' | head -1)
   tmux send-keys -t "$P_SIM" \
-    "$SRC echo '[① SIM + PERCEPTION (real 3-tier, fusion debug on)]'; ros2 launch eufs_launcher simulation.launch.py track:=$TRACK gazebo_gui:=false rviz:=true show_rqt_gui:=false $EXTRA" C-m
+    "$SRC echo '[① SIM + PERCEPTION (LiDAR backbone + camera, provenance markers on)]'; ros2 launch eufs_launcher simulation.launch.py track:=$TRACK gazebo_gui:=false rviz:=true show_rqt_gui:=false $EXTRA" C-m
 
   P_SLAM=$(tmux split-window -h -t "$P_SIM" -P -F '#{pane_id}')
   tmux send-keys -t "$P_SLAM" \
@@ -162,7 +163,7 @@ if [ "$EVAL_MODE" -eq 1 ]; then
 
   P_MON=$(tmux split-window -v -t "$P_SLAM" -P -F '#{pane_id}')
   tmux send-keys -t "$P_MON" \
-    "$SRC echo '[⑤ MONITOR] waiting for cones…'; until ros2 topic list 2>/dev/null | grep -q /cones; do sleep 2; done; while true; do printf '\\n== %s ==\\n' \"\$(date +%H:%M:%S)\"; for t in /yolo_bounding_boxes /yolo_cone_keypoints /cones /fusion/debug/cone_tiers /ground_truth/cones /graph_slam/map; do printf '%-28s ' \"\$t\"; r=\$(timeout 6 env PYTHONUNBUFFERED=1 ros2 topic hz \"\$t\" 2>/dev/null | grep -m1 -o 'average rate: [0-9.]*'); if [ -n \"\$r\" ]; then echo \"\$r\"; elif timeout 3 ros2 topic echo --once \"\$t\" >/dev/null 2>&1; then echo 'alive (slow)'; else echo '(silent)'; fi; done; sleep 3; done" C-m
+    "$SRC echo '[⑤ MONITOR] rates are WALL clock: ros2 topic hz cannot read sim time.'; echo '   At RTF ~0.35 a 10 Hz sim topic reads ~3.5 here. That is CORRECT, not slow.'; echo '   Divide by RTF, or use: ros2 run eufs_perception_baseline measure_sim_rates.py 25'; until ros2 topic list 2>/dev/null | grep -q /cones; do sleep 2; done; while true; do printf '\\n== %s (wall Hz) ==\\n' \"\$(date +%H:%M:%S)\"; for t in /yolo_bounding_boxes /yolo_cone_keypoints /cones /fusion/debug/cone_provenance /ground_truth/cones /ground_truth/track /graph_slam/map; do printf '%-32s ' \"\$t\"; r=\$(timeout 6 env PYTHONUNBUFFERED=1 ros2 topic hz \"\$t\" 2>/dev/null | grep -m1 -o 'average rate: [0-9.]*'); if [ -n \"\$r\" ]; then echo \"\$r\"; elif timeout 3 ros2 topic echo --once \"\$t\" >/dev/null 2>&1; then echo 'alive (slow)'; else echo '(silent)'; fi; done; sleep 3; done" C-m
 
   tmux select-layout -t "$SESSION" tiled
   tmux select-pane   -t "$P_TELE"
@@ -170,9 +171,12 @@ if [ "$EVAL_MODE" -eq 1 ]; then
 
   cat <<EOF
 race: perception+SLAM up on '$TRACK'.  attach → 'race attach'   |   stop → 'race stop'
-  panes: ①sim+perception(3-tier, debug on)  ②graph_slam  ③teleop  ④evaluator  ⑤monitor
+  panes: ①sim+perception(provenance markers on)  ②graph_slam  ③teleop  ④evaluator  ⑤monitor
   NO planner/controller — drive with teleop (pane ③), then run the evaluator (pane ④).
-  Per-tier range error vs /ground_truth/cones comes from /fusion/debug/cone_tiers.
+  Per-provenance error comes from /fusion/debug/cone_provenance, measured against
+  /ground_truth/track — the FULL track. Not /ground_truth/cones: that one is itself
+  FOV/range-filtered by the sim plugin, so recall against it plots the instrument's
+  limit rather than the pipeline's.
 EOF
   exit 0
 fi
