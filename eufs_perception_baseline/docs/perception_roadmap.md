@@ -578,220 +578,60 @@ LiDAR backbone already covers them.
 
 Two things measured along the way, both worth knowing:
 
-- **The cameras miss their requested rate**: 15 Hz asked, ~8.8 Hz achieved, while
-  the LiDAR hits its requested 10 Hz exactly. That mismatched drift is what
-  fails the "one-to-one bbox/LiDAR pair within 0.150 s" gate — the same
-  pathology §2.3 fixed for the ZED left/right pair, one level up.
-  **The request is not the lever, in either direction.** Asking for 10 Hz made
-  it *worse* (8.8 → 7.4 Hz). Asking for **30 Hz split the pair**: left 8.9 Hz,
-  right 17.2 Hz — §2.3's exact failure, re-armed, which would starve Tier 3
-  again. Both reverted; 15 stays because at 15 the two cameras at least land on
-  ~8.8 Hz *together*.
-  The GPU is not the constraint: gzserver renders on the RTX 4070 (confirmed via
-  `nvidia-smi`, 214 MiB, NVIDIA GL renderer) at ~150 % CPU with the GPU ~11 %
-  busy. Per-thread CPU inside gzserver, over 10 s:
+- **Everything this section used to say about camera rate was measured wrong,
+  and the cause was me.** Over the session 17 processes leaked — old gzservers,
+  a stale `spawn_entity`, orphaned `ros2 topic pub` — and drove the host to load
+  7.36. Every rate number was taken on top of that, and it got worse as the
+  session went on, so **later experiments measured the leak, not the change**.
+  The velodyne was used as a control and did not catch it: it sat at 7.7–7.9 Hz
+  while the camera collapsed from 8.8 to 3.
 
-  | thread | CPU |
-  |---|---|
-  | hottest | **79.8 %** |
-  | main | 38.4 % |
-  | third | 17.3 % |
-  | other 72 | < 5 % each |
+  Six conclusions were drawn from single runs on that host and **all six are
+  void**: the arc cut's size, `gpu_ray`'s speed-up, the readback/resolution
+  test, the cone-cylinder speed-up, "removing the chassis collision is 3× worse",
+  and "`max_range: 35` is 3× worse". The last two were filed here as
+  *unexplained anomalies*. They are explained: they were measured last, when the
+  leak was worst.
 
-  So one thread does dominate — consistent with Gazebo Classic rendering all
-  image sensors on a single Ogre context — but it is **not pinned at 100 %**.
-  It is stalling, not computing, which points at GPU sync/readback per frame
-  rather than a CPU wall. **More cores will not help, and neither will a faster
-  GPU**; only fewer or cheaper render jobs will.
+  What survives is the **recall** evidence — `gpu_ray` and the cone cylinder
+  each degraded returns, measured twice each, and host load does not move recall
+  that way. Those rejections stand. The rate claims do not.
 
-  **The LiDAR was the cost — but not by sharing the render thread.** That claim
-  was made here first and it is wrong. The VLP-16 is `<sensor type="ray">`,
-  which is a **CPU** ray sensor: Gazebo Classic puts `IMAGE` sensors (cameras,
-  `gpu_ray`, depth) on the render thread because an Ogre GL context belongs to
-  one thread, and puts `RAY` sensors in a container thread of their own. **The
-  LiDAR is already on a different thread from the cameras.**
+### What the rates actually are
 
-  What it contends for is the physics world. CPU raycasting queries the
-  collision world under its mutex, and 350 × 16 = **5600 rays** at 10 Hz against
-  a track full of cone meshes is ~56k collision queries a second. That stalls
-  the world update, and the render tick with it. The 17.3 % third thread in the
-  table above is plausibly the ray container; the 38.4 % main thread was waiting
-  on it.
+Re-measured on an idle host (load 0.03 before launch), three runs per config,
+40 s settle, `perception:=false`:
 
-  Cutting the rays and asking the cameras for 30 Hz:
+| | left camera | velodyne | **host load** |
+|---|---|---|---|
+| full arc (350 samples, ±114.6°) | 8.2 / 11.8 / **3.4** | 8.3 / 8.5 / 8.5 | 2.6 – 3.9 |
+| **±60° arc (183 samples)** | **12.0 / 13.7 / 13.9** | 9.1 / 9.1 / 9.2 | **1.0 – 1.4** |
 
-  | LiDAR rays | left | right | velodyne |
-  |---|---|---|---|
-  | 5600 (shipped) | 8.9 Hz | 17.2 Hz | 8.4 Hz |
-  | 2928 (±60°, same angular resolution) | **21.7 Hz** | 15.8 Hz | 9.0 Hz |
-  | 16 (token — the ceiling) | **23.0 Hz** | 17.2 Hz | 9.9 Hz |
+**The run-to-run noise floor is ±8 %, not 3×** — that was the leak. And three
+independent signals agree that the arc cut is real: it cuts the host load
+**2.6×**, lifts the velodyne's own achieved rate, and lifts the camera.
 
-  **Halving the LiDAR's arc takes the left camera from 8.9 to 21.7 Hz** — 2.4×,
-  and within 6 % of the lidar-off ceiling, so almost nothing is left to reclaim
-  there. The arc is the free half: the LiDAR sweeps ±114.6° while the camera
-  sees ±55°, and outside the camera's view a cone can only ever publish as
-  `unknown_color`. Cutting the arc keeps the angular resolution (0.655°/ray), so
-  a 15 m cone still gets its 1.7 rays — no far-cone loss.
+The unexpected part is the **stability**. The full arc does not merely run
+slower, it runs *erratically*: 3.4 to 11.8 Hz across three identical runs
+minutes apart. It pushes the machine to a load where scheduling jitter decides
+the answer. The arc cut holds ±8 %. So the shipped config is not only faster on
+average, it is the reason a rate measurement means anything at all — **the
+original config was itself a second source of the variance I spent the session
+blaming on my changes.**
 
-  **Shipped**, because the recall cost measured as zero, which is what the
-  geometry predicts: the evaluator's gate is ±55° and the trimmed LiDAR still
-  covers ±60°.
+### What is still open
 
-  | band | 5–7.5 | 7.5–10 | 10–12.5 | 12.5–15 | FP |
-  |---|---|---|---|---|---|
-  | full arc | 97.8 % | 96.6 % | 76.5 % | 33.9 % | 10.0 % |
-  | ±60° | 97.7 % | 93.6 % | 73.6 % | 28.8 % | 7.8 % |
-
-  Every difference sits inside the run-to-run spread of the *same* config
-  (12.5–15 m has read 27.9 / 33.4 / 33.9 % across repeats).
-
-  At the shipped 15 Hz request the arc cut gives left **8.8 → 11.5 Hz**, and
-  left/right split (11.5 / 9.1). **That split is now harmless**, and it is worth
-  saying why: §2.3's starvation came from a hard bbox/LiDAR pairing gate. The
-  new node has none — the ZNCC cross-check fails open on `max_image_age_sec`, so
-  a diverged pair means fewer cross-checks, not a stalled output.
-
-  **`gpu_ray` looks like the right answer and is not. Do not retry it without
-  reading this.** Moving the raycasting to the GPU takes it off the physics
-  mutex, and on rate alone it beats the arc cut outright — *with the full arc
-  kept and the camera pair still together*:
-
-  | | left | right | paired | arc |
-  |---|---|---|---|---|
-  | CPU ray, full arc | 8.8 | 8.8 | yes | ±114.6° |
-  | CPU ray, ±60° | 11.5 | 9.1 | **no** | ±60° |
-  | `gpu_ray`, full arc | **13.8** | **13.7** | **yes** | **±114.6°** |
-
-  Then the recall check refused it, because **`gpu_ray` changes the data, not
-  just the rate**: it raycasts against a depth texture rather than the exact
-  collision geometry, so the returns come back sparser and noisier.
-
-  | | CPU ray | `gpu_ray` |
-  |---|---|---|
-  | recall 2.5–5 m | 91.9 % | **78.7 %** |
-  | recall 5–7.5 m | 97.7 % | **90.8 %** |
-  | recall 7.5–10 m | 93.6 % | **88.1 %** |
-  | sparse cones | 22–61 | **212** |
-  | sparse z² | 0.02 | **10.2 / 12.2** |
-
-  The sparse row is the tell: DBSCAN fails on the thinner returns, cones fall
-  through to the sparse path, and their positions are 10× worse than the
-  covariance claims. **Degrading the backbone to speed up the camera is
-  backwards for a pipeline whose whole design is that LiDAR carries the
-  position.** The arc cut gives up coverage nothing uses; `gpu_ray` gives up
-  data quality. Rejected — and stacking the arc cut on top of `gpu_ray` buys
-  nothing anyway (13.9/12.1: no gain, and the pair splits again).
-
-  **Pixels are not the lever either, and that was worth checking.** The
-  reasoning that they were — GPU idle, one thread stalling not computing —
-  points at the per-frame GPU→CPU readback, which Gazebo Classic does
-  synchronously. If that were the wall, quartering the bytes would walk through
-  it. It does not:
-
-  | | left | right | GPU |
-  |---|---|---|---|
-  | 1280×720, LiDAR at 16 rays | **23.0** | 17.2 | — |
-  | 640×360, LiDAR arc-cut | 12.4 | 11.8 | 17 % |
-
-  A quarter of the pixels does not even reach the **15 Hz that was asked for**,
-  while full-resolution cameras with the LiDAR gone reach 23. So the camera rate
-  is gated by the **world/physics update loop** — which the CPU LiDAR's
-  collision queries stall — and not by rendering, readback, or resolution.
-  Cutting resolution would cost `fx`, the curve and the px gate for nothing.
-
-  **The last candidate was a cheaper collision world, and it closes the
-  question by explaining it.** The cones' `<collision>` was the full visual
-  mesh: 104 triangles each, ~142 per track, so ~15k triangles for the LiDAR's
-  rays to traverse. Replacing it with a bounding cylinder (measured from the
-  mesh: radius 0.135, length 0.45, and **no pose offset — the DAE's origin is
-  the cone's centre, not its base**) is a large, real speed-up:
-
-  | | left | right | velodyne |
-  |---|---|---|---|
-  | mesh collision, full arc | 8.8 | 8.8 | ~10 |
-  | mesh collision, ±60° arc | 11.5 | 9.1 | 6.6 |
-  | **cylinder collision, ±60° arc** | **14.1** | **13.3** | **9.4** |
-
-  1.6× the original with the velodyne control healthy at 9.4, and the camera
-  pair much better matched (94 % vs 79 %). And it must be rejected, because
-  **for a CPU ray sensor the collision geometry IS the world**: `type="ray"`
-  queries ODE's collision world, not the visual scene. Making the collision a
-  cylinder does not make the LiDAR cheaper to simulate — **it makes the LiDAR
-  see cylinders**. Measured twice:
-
-  | recall | mesh | cylinder run 1 | run 2 |
-  |---|---|---|---|
-  | 5–7.5 m | 97.7 % | 85.3 % | **84.8 %** |
-  | 7.5–10 m | 93.6 % | 85.6 % | **81.8 %** |
-
-  (The sparse count spiking to 200 in run 1 *was* noise — run 2 gave 62. The
-  recall loss is not.) The likely mechanism: the LiDAR sits at 0.54 m, above the
-  0.45 m cones, so it looks **down** onto them — and a cylinder has a flat top
-  cap that a cone does not, which a grazing ray crosses at a wildly varying
-  range.
-
-  **That is the whole answer, and it is a closed one.** For CPU raycasting, the
-  LiDAR's cost and the LiDAR's data are the same geometry — you cannot buy one
-  without selling the other. The only split that would decouple them is
-  `gpu_ray`, which raycasts the *visual* scene and would allow a cheap collision
-  cylinder underneath a real cone — but `gpu_ray` degrades the returns on its
-  own, for its own reason (depth-texture precision), so the split is not
-  available either.
-
-  So the arc cut stands as the only lever that costs nothing: it removes
-  coverage nothing consumes, rather than fidelity. **Everything else here is a
-  trade of LiDAR quality for camera rate, in a pipeline whose design is that
-  LiDAR carries the position.** Past this point the honest options are a
-  different simulator or accepting ~11.5 Hz.
-
-  **A ray that stops early is a cheap ray, and that reverses the last idea.**
-  The car's chassis `<collision>` is its full visual mesh — **143,873
-  triangles**, ten times the entire cone field, and the LiDAR raycasts it every
-  scan (which is why perception carries a `self_mask` at all). Deleting it looks
-  like the biggest win available, and the car would still stand on its wheels'
-  cylinder collisions and simply pass through cones, with the cones' geometry
-  untouched so the LiDAR still sees real cones.
-
-  It makes it **three times worse**:
-
-  | | left | right | velodyne |
-  |---|---|---|---|
-  | chassis mesh collision | 11.5 | 9.1 | 6.6 |
-  | chassis collision removed | **3.9** | 8.9 | 7.7 |
-
-  Because the rays that used to terminate on the car now fly on and hit more of
-  the world. The `self_mask` is evidence that a good share of the scan ends on
-  the chassis — and ending there was **saving** work, not costing it. The
-  triangle count of a mesh you hit early is not what it costs you.
-
-  Five hypotheses died in this section — shared render thread, `gpu_ray`,
-  readback, cheap cone collision, no chassis collision — and every one looked
-  obvious. Two were asserted before being checked. Three looked like clean wins
-  on **rate alone** and were refused by recall; the last was refused by rate
-  itself, in the opposite direction from the prediction. **Measure before
-  believing any of them again, and measure recall, not only rate.**
-
-  **`update_rate` is not a cap and does not behave monotonically.** Measured
-  request → achieved (left): 10 → 7.4, 15 → 8.8, 20 → 8.2, 30 → 21.7. Asking
-  for *more* gets more, up to a point, and the xacro comment calling higher
-  rates "an aspiration" is wrong about the mechanism. But the pair **diverges**
-  as the request rises (30 Hz gives 21.7/15.8), and a split pair is §2.3's
-  stereo starvation. Any rate change has to be judged on left/right *together*.
-
-  Every rate number here needs the **LiDAR's achieved rate as a control** — the
-  host drifts by 30 % between runs, which silently reverses conclusions.
-- **The ZED's `depth` sensor was rendering for nobody.** A second full 1280×720
-  pass plus a point cloud, with `/zed/depth/image_raw`, `/zed/points` and
-  `/zed/image_raw` all measured at **0 subscribers** while the real perception
-  stack ran. Now behind `depth:=false` in `zed.urdf.xacro`; confirmed to remove
-  the sensor and its six topics, with the stack unaffected.
-  **Its effect on the camera rate is UNMEASURED.** By the time it landed the host
-  no longer matched the baseline: the LiDAR, which none of this touches, was
-  reading 6.6 Hz against its own 10 Hz request (baseline: 10.0), so the camera
-  numbers were not comparable to the table above. The change stands on "nothing
-  consumes it", not on a measured speed-up. Re-measure on a quiet host, and
-  **use the LiDAR's achieved rate as the control** — if it is not at 10.0 Hz,
-  the run says nothing about the cameras.
+- **30 Hz is still unproven either way.** The 23/17 ceiling that "closed" it was
+  measured on the polluted host. It has not been re-run.
+- **The mechanism is still unprofiled.** `ptrace_scope=1` and
+  `perf_event_paranoid=4` blocked both gdb and perf, so every mechanism in this
+  section — render thread, physics mutex, readback — was inference. The
+  measurements that killed `gpu_ray` and the cone cylinder were recall, which
+  needs no mechanism; the rate story needs one and does not have it.
+- **Method, for whoever measures next.** Three runs minimum, 40 s settle, print
+  the host load with every number, and verify the process table is empty first —
+  `pgrep -f <pattern>` matches your own shell and will tell you it is clean when
+  it is not.
 
 ## 7. Open
 
