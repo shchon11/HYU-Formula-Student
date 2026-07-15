@@ -604,10 +604,21 @@ Two things measured along the way, both worth knowing:
   rather than a CPU wall. **More cores will not help, and neither will a faster
   GPU**; only fewer or cheaper render jobs will.
 
-  **The LiDAR was the cost, and it is now measured.** The VLP-16 is a GPU *ray*
-  sensor, so it shares the cameras' render thread: 350 samples × 16 lasers =
-  **5600 rays** over `min_angle:=-2, max_angle:=2` rad (±114.6°). Cutting it and
-  asking the cameras for 30 Hz:
+  **The LiDAR was the cost — but not by sharing the render thread.** That claim
+  was made here first and it is wrong. The VLP-16 is `<sensor type="ray">`,
+  which is a **CPU** ray sensor: Gazebo Classic puts `IMAGE` sensors (cameras,
+  `gpu_ray`, depth) on the render thread because an Ogre GL context belongs to
+  one thread, and puts `RAY` sensors in a container thread of their own. **The
+  LiDAR is already on a different thread from the cameras.**
+
+  What it contends for is the physics world. CPU raycasting queries the
+  collision world under its mutex, and 350 × 16 = **5600 rays** at 10 Hz against
+  a track full of cone meshes is ~56k collision queries a second. That stalls
+  the world update, and the render tick with it. The 17.3 % third thread in the
+  table above is plausibly the ray container; the 38.4 % main thread was waiting
+  on it.
+
+  Cutting the rays and asking the cameras for 30 Hz:
 
   | LiDAR rays | left | right | velodyne |
   |---|---|---|---|
@@ -640,7 +651,38 @@ Two things measured along the way, both worth knowing:
   new node has none — the ZNCC cross-check fails open on `max_image_age_sec`, so
   a diverged pair means fewer cross-checks, not a stalled output.
 
-  **30 Hz is still not reachable.** Even with the LiDAR at 16 rays the pair caps
+  **`gpu_ray` looks like the right answer and is not. Do not retry it without
+  reading this.** Moving the raycasting to the GPU takes it off the physics
+  mutex, and on rate alone it beats the arc cut outright — *with the full arc
+  kept and the camera pair still together*:
+
+  | | left | right | paired | arc |
+  |---|---|---|---|---|
+  | CPU ray, full arc | 8.8 | 8.8 | yes | ±114.6° |
+  | CPU ray, ±60° | 11.5 | 9.1 | **no** | ±60° |
+  | `gpu_ray`, full arc | **13.8** | **13.7** | **yes** | **±114.6°** |
+
+  Then the recall check refused it, because **`gpu_ray` changes the data, not
+  just the rate**: it raycasts against a depth texture rather than the exact
+  collision geometry, so the returns come back sparser and noisier.
+
+  | | CPU ray | `gpu_ray` |
+  |---|---|---|
+  | recall 2.5–5 m | 91.9 % | **78.7 %** |
+  | recall 5–7.5 m | 97.7 % | **90.8 %** |
+  | recall 7.5–10 m | 93.6 % | **88.1 %** |
+  | sparse cones | 22–61 | **212** |
+  | sparse z² | 0.02 | **10.2 / 12.2** |
+
+  The sparse row is the tell: DBSCAN fails on the thinner returns, cones fall
+  through to the sparse path, and their positions are 10× worse than the
+  covariance claims. **Degrading the backbone to speed up the camera is
+  backwards for a pipeline whose whole design is that LiDAR carries the
+  position.** The arc cut gives up coverage nothing uses; `gpu_ray` gives up
+  data quality. Rejected — and stacking the arc cut on top of `gpu_ray` buys
+  nothing anyway (13.9/12.1: no gain, and the pair splits again).
+
+  **30 Hz is not reachable.** Even with the LiDAR at 16 rays the pair caps
   at 23/17, so the remaining wall is the two 1280×720 readbacks themselves. The
   only lever left is pixels, and that moves `fx`, the mono curve's `c`/`e` and
   the px gate, and makes Step 4's far-cone problem worse — so it is not free.
