@@ -1,0 +1,210 @@
+perception_node:
+  ros__parameters:
+    # ======================================================================
+    # A LiDAR backbone, extended by bounded, cross-checked vision.
+    #
+    #   cluster + detection   -> coloured cone, LiDAR position
+    #   cluster alone         -> unknown_color cone, still published
+    #   detection + raw LiDAR -> coloured cone, LiDAR position   (sparse)
+    #   detection alone       -> monocular, inside the bound, ZNCC cross-checked
+    #
+    # A LiDAR position always beats a vision position. Nothing waits for
+    # anything: every bbox frame publishes.
+    # ======================================================================
+
+    pointcloud_topic: /velodyne_points
+    bbox_topic: /yolo_bounding_boxes
+    camera_info_topic: /zed/left/camera_info
+    left_image_topic: /zed/left/image_rect_color
+    right_image_topic: /zed/right/image_rect_color
+    output_cones_topic: /cones
+    output_frame: base_footprint
+    camera_frame: zed_left_camera_optical_frame
+    debug_prefix: /fusion/debug
+    publish_debug: true
+    sync_queue_size: 10
+    # Periodic "now - header.stamp" for /cones. The header carries the bbox
+    # capture time, so this is the whole pipeline's age as the planner sees it.
+    # 0 disables.
+    latency_log_period_sec: 5.0
+
+    # The cloud is stale by up to this much when a bbox frame uses it; past it
+    # the clusters are dropped rather than compensated forward on faith.
+    max_cluster_age_sec: 0.20
+    # Stereo images this far from the bbox stamp are not worth cross-checking
+    # against; the check is skipped and the monocular estimate stands.
+    max_image_age_sec: 0.10
+    # Fixed frame the cloud-stamp -> bbox-stamp compensation goes through. Use
+    # odom when GraphSLAM owns the map->base TF.
+    motion_compensation_frame: map
+    # TF callbacks share this node's executor; never block waiting on data only
+    # that executor can deliver.
+    tf_timeout_sec: 0.0
+
+    # `pinhole` is the identity: camera x right, y down, z forward, which is
+    # what a real ZED optical frame and its CameraInfo already are. Only the
+    # SIMULATOR's synthetic /noisy_bounding_boxes path speaks the `eufs_bbox`
+    # contract, which is an axis permutation applied in BOTH directions (and the
+    # two directions must stay inverses of each other).
+    #
+    # Getting this wrong does not fail loudly: every vision cone lands in a
+    # plausible-looking but wrong place. Measured with eufs_bbox on the YOLO
+    # path: 74.6 % false positives and ~0 recall, while the few cones that
+    # happened to land right still read 0.64 % range error -- which is exactly
+    # what a frame error looks like from the outside.
+    projection_model: pinhole
+    bbox_coordinates: PIXELS
+    min_bbox_probability: 0.0
+    min_project_depth: 0.1
+
+    # --- LiDAR backbone ---------------------------------------------------
+    roi_min_x: 0.5
+    roi_max_x: 30.0
+    roi_abs_y: 15.0
+    roi_min_z: -0.2
+    roi_max_z: 1.5
+    ground_min_z: 0.05
+    ground_ransac_enabled: true
+    ground_ransac_distance_threshold: 0.03
+    ground_ransac_max_iterations: 200
+    # Candidate normals are held near vertical so a wall cannot win the vote.
+    ground_ransac_max_tilt_degrees: 20.0
+    ground_ransac_min_inliers: 20
+    ground_ransac_seed: 7
+    self_mask_enabled: true
+    self_mask_min_x: -1.5
+    self_mask_max_x: 1.8
+    self_mask_abs_y: 0.8
+    self_mask_min_z: -0.4
+    self_mask_max_z: 1.4
+    cluster_eps: 0.35
+    cluster_min_points: 3
+    cluster_min_height: 0.02
+    cluster_max_height: 0.80
+    cluster_max_width: 0.90
+
+    # --- colouring --------------------------------------------------------
+    bbox_match_margin_px: 4.0
+    bbox_match_margin_ratio: 0.10
+    min_cluster_support_px: 1
+
+    # --- sparse: LiDAR support too thin to cluster ------------------------
+    # A far cone gets 1-2 returns: real support, not a DBSCAN cluster. This was
+    # measured as the most accurate source in the stack (0.59 % range error),
+    # so it keeps a LiDAR position rather than dropping to vision. The gates
+    # below are what stop a box from fusing whatever lies behind it.
+    sparse_enabled: true
+    sparse_near_range_m: 8.0
+    sparse_far_range_m: 15.0
+    sparse_near_min_points: 3
+    sparse_mid_min_points: 2
+    sparse_far_min_points: 2
+    sparse_max_width_m: 0.90
+    # One cone is at one depth; a spread of ranges means a wall, or a cone and
+    # the ground behind it.
+    sparse_max_depth_span_m: 1.0
+    sparse_max_depth_span_ratio: 0.35
+    # Far and thin is where a false positive is cheapest to make.
+    sparse_far_min_probability: 0.5
+    sparse_far_min_bbox_width_px: 4.0
+    sparse_far_min_bbox_height_px: 4.0
+
+    # --- monocular: the bounded extension ---------------------------------
+    monocular_enabled: true
+    # THE bound, and it is measured, not tuned. Past ~9 m this detector's bbox
+    # CENTRE degrades from 1-2.6 px of error to 17-32 px, because that is where
+    # a cone crosses ~9 px at the network's imgsz:640 input:
+    #
+    #   <= 8.8 m     implied sigma_u   1.0 - 2.6 px    <- the model holds
+    #   8.8 - 10 m   implied sigma_u   13.6 px
+    #   10 - 20 m    implied sigma_u   17 - 32 px      <- 15-30x worse
+    #
+    # Stereo cannot rescue this: it fixes depth, not bearing. Past the bound a
+    # cone's true lateral error is 0.3-1.0 m while its ellipse would claim
+    # ~5 cm, which corrupts the map rather than just adding noise. So it is
+    # dropped. To reach further, raise the DETECTOR's input resolution and
+    # re-measure the cliff. Re-derive per camera AND per detector weight.
+    monocular_min_bbox_height_px: 16.0
+    monocular_min_depth_m: 0.5
+    monocular_max_depth_m: 30.0
+    # D = c * h_n^e. FITTED to this detector against ground truth (n=2745), not
+    # the analytic pinhole curve (c=0.2801, e=-1.0): the detector's box runs
+    # ~17 % short past 6 m, so the analytic curve read those cones as further
+    # away and over-estimated depth by 20-25 %. Measured: analytic 17.60 % mean
+    # / 50.06 % p90, this fit 7.00 % / 19.71 %.
+    monocular_depth_coefficient: 0.5575
+    monocular_depth_exponent: -0.7555
+    # Cone-derived constants, and identical between sim and the real car: our
+    # cone is 450 mm, NOT the 325 mm FS-AI spec. Do not "correct" these.
+    standard_cone_height_m: 0.450
+    big_cone_height_m: 0.5255
+    vision_dedup_radius_m: 0.5
+
+    # --- ZNCC stereo cross-check ------------------------------------------
+    # Monocular depends on the cone's assumed size; stereo depends on matching.
+    # They fail DIFFERENTLY, which is the whole point: a correlation peak at the
+    # disparity the box implies is physical evidence that something
+    # geometrically consistent exists there, and background texture cannot
+    # produce it.
+    #
+    # This replaces per-crop SIFT, which cost 150-300 ms and 200-235 % CPU
+    # (85-90 % of the node) to solve a problem that does not exist: on a
+    # rectified pair the scale differs ~1 %, the rotation is 0, and the match is
+    # on the same row. It is a 1D search with a known prior.
+    #
+    # Fails OPEN: no images, stale images, or no peak -> the monocular estimate
+    # stands. A cross-check must never become a blocking dependency.
+    zncc_enabled: true
+    stereo_baseline_m: 0.12
+    zncc_min_score: 0.5
+    # Window around the prior. The prior is centred on the fitted curve's depth
+    # (d = fx*B/D), NOT on the box height: a box-derived prior (d = h*B/H) is
+    # 8 % low at 6 m and 46 % low at 15 m because of the box bias above, so the
+    # roadmap's [0.75, 1.45] window misses the truth outright at 15 m. Only the
+    # window comes from the curve; the MEASUREMENT is still the correlation
+    # peak, so the check stays independent.
+    zncc_search_low_ratio: 0.70
+    zncc_search_high_ratio: 1.45
+    # Take the ZNCC depth as the measurement. The monocular curve carries a
+    # MEASURED -0.88 m bias; disparity does not use the cone-size assumption at
+    # all, so it has no such bias.
+    zncc_replaces_depth: true
+    # Drop a monocular cone the check could not confirm. OFF until the
+    # confirmation rate is measured: a low-texture cone is a plausible ZNCC
+    # miss, and this would delete it. Turn on once the rate says it is safe --
+    # the payoff is the 6.3 % false-positive rate.
+    zncc_reject_unconfirmed: false
+    # Effective per-cone disparity sigma. 0.25 was shipped as an admitted guess
+    # and measured lon z^2 = 0.96 against a target of 1.0, so it was right.
+    sigma_d_px: 0.25
+
+    # --- covariance: the trust handed to SLAM ------------------------------
+    # Order in eufs_msgs/ConeWithCovariance is [xx, xy, yx, yy].
+    #
+    # LiDAR ranges directly to ~1 %, so its error really is the near-circle
+    # these constants describe. VISION does not: at 15 m the bearing is good to
+    # ~5 cm while the depth is good to ~2 m, and the ellipse's major axis lies
+    # on the RAY, not on x or y. One isotropic number was simultaneously ~160x
+    # too pessimistic across the corridor and ~7x too optimistic along it.
+    # Cones lie ALONG the boundary, so a longitudinal error slides a cone on the
+    # boundary it already defines; the lateral error is what bends it. SLAM
+    # carries a full 2x2 landmark covariance and consumes what it is told, so
+    # tell it the truth and let it weight them apart.
+    lidar_variance_x: 0.04
+    lidar_variance_y: 0.04
+    lidar_only_variance_x: 0.20
+    lidar_only_variance_y: 0.20
+    sparse_variance_x: 0.12
+    sparse_variance_y: 0.12
+    range_variance_scale: 0.0005
+    min_variance: 0.0001
+    # Bbox centre noise for the monocular tier, in px. MEASURED: lat z^2 was
+    # 10.71 at sigma_u 3.0 (n=75), implying ~10 px. Large because the 16 px gate
+    # (10.2 m) reaches into the cliff's shoulder, which starts at ~8.8 m.
+    monocular_sigma_u_px: 10.0
+    # Bbox HEIGHT noise, in px, driving sigma_D/D = |e|*sigma_h/h. 4.0, not the
+    # ~1.5 the residual scatter implies, because the tier has a MEASURED
+    # -0.88 m range bias (lon mean -0.880, rms 1.216, n=75). This inflates noise
+    # to cover a bias, which is a patch, not a fix -- the fix is re-fitting c/e.
+    # Until then, covering the real error is the safe direction.
+    sigma_h_px: 4.0

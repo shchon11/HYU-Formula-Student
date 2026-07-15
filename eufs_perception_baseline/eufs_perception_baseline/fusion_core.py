@@ -233,6 +233,148 @@ def bearing_aligned_covariance(
     return (xx, xy, xy, yy)
 
 
+@dataclass(frozen=True)
+class ZnccMatch:
+    """A disparity found by 1D correlation against a bbox-height prior."""
+
+    disparity_px: float
+    score: float                 # ZNCC peak in [-1, 1]
+    prior_px: float
+    #: peak / prior. Physical evidence lives here: a real cone's disparity sits
+    #: near the distance its pixel height implies; background texture does not.
+    ratio: float
+
+
+def bbox_height_disparity_prior(
+    bbox_height_px: float,
+    baseline_m: float,
+    cone_height_m: float,
+) -> Optional[float]:
+    """Disparity a cone of this pixel height must have, from geometry alone.
+
+    ``h_px = fy*H/D`` and ``d = fx*B/D`` share the ``D``, so it cancels:
+
+        d / h_px = (fx*B) / (fy*H) = B / H     (fx == fy on a rectified pair)
+
+    **No distance model is involved** -- not the fitted curve, not its
+    coefficient, not its exponent. The prior is pure similar triangles, which is
+    what makes it an independent check on a curve fitted to this detector.
+
+    For this car: 0.12 / 0.450 = 0.267 per pixel of box height. (A 325 mm
+    competition cone would give 0.369; using that here is 40 % wrong and misses
+    the search window outright.)
+    """
+    values = (bbox_height_px, baseline_m, cone_height_m)
+    if not all(_finite(value) for value in values):
+        return None
+    if bbox_height_px <= 0.0 or baseline_m <= 0.0 or cone_height_m <= 0.0:
+        return None
+    return float(bbox_height_px) * float(baseline_m) / float(cone_height_m)
+
+
+def zncc_disparity(
+    left_gray: np.ndarray,
+    right_gray: np.ndarray,
+    bbox: Sequence[float],
+    disparity_min: float,
+    disparity_max: float,
+    min_score: float = 0.5,
+) -> Optional[ZnccMatch]:
+    """Match a left-image patch along its own row in the right image.
+
+    On a **rectified** pair this is all the problem is: the scale differs by
+    ~1 %, the rotation is zero, and the correspondence is on the same row. A
+    descriptor's invariances solve a problem that does not exist here, which is
+    why this replaces the per-crop SIFT that cost 150-300 ms and 200 % CPU.
+
+    The search is bounded by a prior from the bbox height (see
+    ``bbox_height_disparity_prior``), so it is a handful of integer shifts plus
+    a parabola, not a search.
+
+    ``left_gray``/``right_gray`` are 2D arrays. Returns None when the patch has
+    no contrast to match on, the window falls outside the image, or the peak is
+    weaker than ``min_score``.
+    """
+    if left_gray.ndim != 2 or right_gray.ndim != 2:
+        return None
+    if left_gray.shape != right_gray.shape:
+        return None
+    if not all(_finite(value) for value in (disparity_min, disparity_max)):
+        return None
+    if disparity_min < 0.0 or disparity_max < disparity_min:
+        return None
+
+    height, width = left_gray.shape
+    x0 = int(math.floor(bbox[0]))
+    y0 = int(math.floor(bbox[1]))
+    x1 = int(math.ceil(bbox[2]))
+    y1 = int(math.ceil(bbox[3]))
+    if x1 <= x0 or y1 <= y0:
+        return None
+    x0, y0 = max(0, x0), max(0, y0)
+    x1, y1 = min(width, x1), min(height, y1)
+    if x1 - x0 < 2 or y1 - y0 < 2:
+        return None
+
+    template = left_gray[y0:y1, x0:x1].astype(np.float64)
+    template_centered = template - template.mean()
+    template_norm = float(np.sqrt(np.sum(template_centered ** 2)))
+    # A flat patch correlates with everything equally; refuse rather than
+    # return the arbitrary argmax of numerical noise.
+    if template_norm <= 1.0e-6:
+        return None
+
+    low = int(math.floor(disparity_min))
+    high = int(math.ceil(disparity_max))
+    scores = {}
+    for disparity in range(low, high + 1):
+        # A rectified right image sees the same point shifted LEFT by d.
+        left_edge = x0 - disparity
+        if left_edge < 0 or left_edge + (x1 - x0) > width:
+            continue
+        candidate = right_gray[y0:y1, left_edge:left_edge + (x1 - x0)]
+        candidate = candidate.astype(np.float64)
+        candidate_centered = candidate - candidate.mean()
+        candidate_norm = float(np.sqrt(np.sum(candidate_centered ** 2)))
+        if candidate_norm <= 1.0e-6:
+            continue
+        scores[disparity] = float(
+            np.sum(template_centered * candidate_centered)
+            / (template_norm * candidate_norm))
+    if not scores:
+        return None
+
+    best = max(scores, key=scores.get)
+    peak = scores[best]
+    if peak < min_score:
+        return None
+
+    # Sub-pixel by fitting a parabola to the peak and its neighbours. At 15 m
+    # the whole disparity is only ~2.5 px, so the sub-pixel term is not a
+    # refinement here -- it is most of the measurement.
+    offset = 0.0
+    if best - 1 in scores and best + 1 in scores:
+        before, after = scores[best - 1], scores[best + 1]
+        denominator = before - 2.0 * peak + after
+        if abs(denominator) > 1.0e-12:
+            offset = 0.5 * (before - after) / denominator
+            # A parabola through a true peak cannot put the vertex outside the
+            # neighbouring samples; if it does, the peak is not one.
+            if abs(offset) > 1.0:
+                offset = 0.0
+
+    disparity = float(best) + offset
+    if disparity <= 0.0:
+        return None
+    prior = 0.5 * (float(disparity_min) + float(disparity_max))
+    return ZnccMatch(
+        disparity_px=disparity,
+        score=peak,
+        prior_px=prior,
+        ratio=disparity / prior if prior > 0.0 else float("nan"),
+    )
+
+
 def classify_cone_condition(
     bbox: Sequence[float],
     image_size: Sequence[int],

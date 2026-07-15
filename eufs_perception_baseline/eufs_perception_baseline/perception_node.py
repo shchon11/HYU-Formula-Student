@@ -1,0 +1,1354 @@
+"""Cone perception: a LiDAR backbone, extended by bounded, cross-checked vision.
+
+The design, in one paragraph
+---------------------------
+LiDAR carries the **position**. A camera detection that lands on LiDAR gives it a
+**colour**; LiDAR the camera never confirmed still publishes, as
+``unknown_color``. A detection with **no** LiDAR support falls back to a
+monocular bbox-height estimate, but **only inside the range where that estimate
+is trustworthy**, and it is cross-checked against stereo before it is believed.
+Everything else is dropped. What this buys is latency and robustness, and both
+come from the structure rather than from tuning.
+
+Three decisions carry it
+------------------------
+**The camera drives the output.** Every bbox frame publishes ``/cones``. There is
+no one-to-one bbox/LiDAR pairing: that tied the output rate to the *worse* of the
+two sensors, and was measured to hold ``/cones`` at ~0.6x the LiDAR rate even
+with the node otherwise idle at 28% CPU. Nothing here waits.
+
+**Heavy work runs at the rate of the thing it depends on.** Clustering is a
+property of the cloud, so it happens once per cloud (~10 Hz) and is cached; the
+bbox callback motion-compensates that cache to its own stamp. Doing it per output
+frame would re-cluster the same points at the camera's rate for no new
+information.
+
+**Vision is bounded, and the bound is measured.** ``monocular_min_bbox_height_px``
+is not a tuning knob: past ~9 m this detector's bbox *centre* collapses from
+1-2.6 px of error to 17-32 px, because that is where a cone crosses ~9 px at the
+network's ``imgsz:640`` input. Stereo cannot rescue that -- it fixes depth, not
+bearing -- so past the bound the cone is dropped.
+
+The priority order is the design
+--------------------------------
+LiDAR position always beats a vision position::
+
+    cluster + detection   -> coloured cone, LiDAR position   (the good case)
+    cluster alone         -> unknown_color cone              (still published)
+    detection + raw LiDAR -> coloured cone, LiDAR position    (sparse: the cone
+                             was there but too thin to cluster)
+    detection alone       -> monocular, inside the bound, cross-checked by ZNCC
+
+Provenance is published because ``/cones`` cannot carry it, and error measured
+against ground truth is meaningless if it cannot be attributed to the thing that
+produced it.
+"""
+
+import math
+import threading
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
+from sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from visualization_msgs.msg import Marker, MarkerArray
+
+from eufs_msgs.msg import (
+    BoundingBoxes,
+    ConeArrayWithCovariance,
+    ConeWithCovariance,
+)
+
+try:
+    from sensor_msgs_py import point_cloud2
+except ImportError:  # pragma: no cover - exercised only on older distros
+    from eufs_perception_baseline import point_cloud2_compat as point_cloud2
+
+import tf2_ros
+
+from eufs_perception_baseline.fusion_core import (
+    bearing_aligned_covariance,
+    camera_point_from_depth,
+    monocular_depth_from_bbox,
+    monocular_relative_depth_sigma,
+    remove_ground_ransac,
+    stereo_relative_depth_sigma,
+    zncc_disparity,
+)
+from eufs_perception_baseline.ros_image_utils import image_message_to_numpy
+
+CONE_COLORS = ("blue", "yellow", "orange", "big_orange", "unknown")
+
+# What produced a cone. Published on the provenance stream; also the key for the
+# covariance model, since only the vision provenances carry an error ellipse.
+PROV_CLUSTER = "cluster_camera"      # LiDAR cluster + a detection's colour
+PROV_CLUSTER_ONLY = "cluster_only"   # LiDAR cluster the camera never confirmed
+PROV_SPARSE = "sparse"               # raw LiDAR inside a box, too thin to cluster
+PROV_MONOCULAR = "monocular"         # bbox height only
+PROV_MONO_ZNCC = "monocular_zncc"    # bbox bearing, stereo disparity depth
+
+
+@dataclass(frozen=True)
+class Detection:
+    color: str
+    probability: float
+    xmin: float
+    ymin: float
+    xmax: float
+    ymax: float
+
+    @property
+    def height_px(self) -> float:
+        return self.ymax - self.ymin
+
+    @property
+    def width_px(self) -> float:
+        return self.xmax - self.xmin
+
+    @property
+    def center(self) -> Tuple[float, float]:
+        return (0.5 * (self.xmin + self.xmax), 0.5 * (self.ymin + self.ymax))
+
+
+@dataclass
+class ClusterFrame:
+    """Everything the bbox callback needs from one LiDAR cloud.
+
+    Points are kept in the **LiDAR frame**, not base: the bbox callback carries
+    them to its own stamp, and doing that from the original frame is exact,
+    where doing it from an already-transformed copy is a correction on top of a
+    correction. ``cluster_indices`` indexes into ``points_lidar`` so the raw
+    points, the clusters and the sparse leftovers all share one array.
+    """
+
+    stamp: object
+    frame_id: str
+    points_lidar: np.ndarray = field(
+        default_factory=lambda: np.empty((0, 3), dtype=np.float64))
+    cluster_indices: List[np.ndarray] = field(default_factory=list)
+
+
+@dataclass
+class Scene:
+    """The cloud, resolved into this bbox frame's instant."""
+
+    points_base: np.ndarray
+    pixels: np.ndarray           # (N, 2); NaN where the point is behind the camera
+    cluster_indices: List[np.ndarray]
+
+
+@dataclass
+class Cone:
+    x: float
+    y: float
+    color: str
+    provenance: str
+    range_m: float
+    # Set only by the vision provenances. LiDAR measures range directly and its
+    # error is near-isotropic at cone ranges, so it uses a measured constant.
+    relative_depth_sigma: Optional[float] = None
+    sigma_u_px: Optional[float] = None
+    fx_px: Optional[float] = None
+
+
+class PerceptionNode(Node):
+    def __init__(self):
+        super().__init__("perception_node")
+        self._declare_parameters()
+        self._load_parameters()
+        self._validate_parameters()
+
+        self._lock = threading.Lock()
+        self._cluster_frame: Optional[ClusterFrame] = None
+        self._camera_info: Optional[CameraInfo] = None
+        self._left_image: Optional[Image] = None
+        self._right_image: Optional[Image] = None
+        self._latencies: List[float] = []
+        self._last_latency_log_ns: Optional[int] = None
+        self._warned: Dict[str, float] = {}
+        self._zncc_stats = [0, 0]            # [attempted, confirmed]
+
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+
+        qos = QoSProfile(history=HistoryPolicy.KEEP_LAST,
+                         depth=self.sync_queue_size,
+                         reliability=ReliabilityPolicy.RELIABLE)
+        self.cones_pub = self.create_publisher(
+            ConeArrayWithCovariance, self.output_cones_topic, 10)
+        self.cones_viz_pub = self.create_publisher(
+            MarkerArray, self.output_cones_topic.rstrip("/") + "/viz", 10)
+        self.provenance_pub = self.create_publisher(
+            MarkerArray, self.debug_prefix + "/cone_provenance", 10)
+
+        self.create_subscription(
+            PointCloud2, self.pointcloud_topic, self._cloud_callback, qos)
+        self.create_subscription(
+            CameraInfo, self.camera_info_topic, self._camera_info_callback, qos)
+        if self.zncc_enabled:
+            self.create_subscription(
+                Image, self.left_image_topic, self._left_image_callback, qos)
+            self.create_subscription(
+                Image, self.right_image_topic, self._right_image_callback, qos)
+        # Last: give the first bbox frame a chance of finding a cloud.
+        self.create_subscription(
+            BoundingBoxes, self.bbox_topic, self._bbox_callback, qos)
+
+        self.get_logger().info(
+            f"Perception: LiDAR backbone {self.pointcloud_topic}, colour and "
+            f"vision fallback {self.bbox_topic}, ZNCC cross-check "
+            f"{'on' if self.zncc_enabled else 'off'}; publishing "
+            f"{self.output_cones_topic} on every bbox frame")
+
+    # ---------------------------------------------------------------- params
+
+    def _declare_parameters(self) -> None:
+        self.declare_parameter("pointcloud_topic", "/velodyne_points")
+        self.declare_parameter("bbox_topic", "/yolo_bounding_boxes")
+        self.declare_parameter("camera_info_topic", "/zed/left/camera_info")
+        self.declare_parameter("left_image_topic", "/zed/left/image_rect_color")
+        self.declare_parameter("right_image_topic", "/zed/right/image_rect_color")
+        self.declare_parameter("output_cones_topic", "/cones")
+        self.declare_parameter("output_frame", "base_footprint")
+        self.declare_parameter("camera_frame", "zed_left_camera_optical_frame")
+        self.declare_parameter("debug_prefix", "/fusion/debug")
+        self.declare_parameter("publish_debug", True)
+        self.declare_parameter("sync_queue_size", 10)
+        self.declare_parameter("latency_log_period_sec", 5.0)
+
+        self.declare_parameter("max_cluster_age_sec", 0.20)
+        self.declare_parameter("max_image_age_sec", 0.10)
+        self.declare_parameter("motion_compensation_frame", "map")
+        self.declare_parameter("tf_timeout_sec", 0.0)
+
+        self.declare_parameter("projection_model", "eufs_bbox")
+        self.declare_parameter("bbox_coordinates", "PIXELS")
+        self.declare_parameter("min_bbox_probability", 0.0)
+        self.declare_parameter("min_project_depth", 0.1)
+
+        # --- LiDAR backbone -------------------------------------------------
+        self.declare_parameter("roi_min_x", 0.5)
+        self.declare_parameter("roi_max_x", 30.0)
+        self.declare_parameter("roi_abs_y", 15.0)
+        self.declare_parameter("roi_min_z", -0.2)
+        self.declare_parameter("roi_max_z", 1.5)
+        self.declare_parameter("ground_min_z", 0.05)
+        self.declare_parameter("ground_ransac_enabled", True)
+        self.declare_parameter("ground_ransac_distance_threshold", 0.03)
+        self.declare_parameter("ground_ransac_max_iterations", 200)
+        self.declare_parameter("ground_ransac_max_tilt_degrees", 20.0)
+        self.declare_parameter("ground_ransac_min_inliers", 20)
+        self.declare_parameter("ground_ransac_seed", 7)
+        self.declare_parameter("self_mask_enabled", True)
+        self.declare_parameter("self_mask_min_x", -1.5)
+        self.declare_parameter("self_mask_max_x", 1.8)
+        self.declare_parameter("self_mask_abs_y", 0.8)
+        self.declare_parameter("self_mask_min_z", -0.4)
+        self.declare_parameter("self_mask_max_z", 1.4)
+        self.declare_parameter("cluster_eps", 0.35)
+        self.declare_parameter("cluster_min_points", 3)
+        self.declare_parameter("cluster_min_height", 0.02)
+        self.declare_parameter("cluster_max_height", 0.80)
+        self.declare_parameter("cluster_max_width", 0.90)
+
+        # --- colouring ------------------------------------------------------
+        self.declare_parameter("bbox_match_margin_px", 4.0)
+        self.declare_parameter("bbox_match_margin_ratio", 0.10)
+        self.declare_parameter("min_cluster_support_px", 1)
+
+        # --- sparse: LiDAR that never clustered -----------------------------
+        # A far cone gets 1-2 LiDAR returns: real support, too thin for DBSCAN.
+        # This was measured as the MOST accurate source in the stack (0.59 %
+        # range error), so it is worth recovering rather than dropping to
+        # vision. The checks below are what stop it from fusing a fence post.
+        self.declare_parameter("sparse_enabled", True)
+        self.declare_parameter("sparse_near_range_m", 8.0)
+        self.declare_parameter("sparse_far_range_m", 15.0)
+        self.declare_parameter("sparse_near_min_points", 3)
+        self.declare_parameter("sparse_mid_min_points", 2)
+        self.declare_parameter("sparse_far_min_points", 2)
+        self.declare_parameter("sparse_max_width_m", 0.90)
+        self.declare_parameter("sparse_max_depth_span_m", 1.0)
+        self.declare_parameter("sparse_max_depth_span_ratio", 0.35)
+        self.declare_parameter("sparse_far_min_probability", 0.5)
+        self.declare_parameter("sparse_far_min_bbox_width_px", 4.0)
+        self.declare_parameter("sparse_far_min_bbox_height_px", 4.0)
+
+        # --- monocular ------------------------------------------------------
+        self.declare_parameter("monocular_enabled", True)
+        self.declare_parameter("monocular_min_bbox_height_px", 16.0)
+        self.declare_parameter("monocular_min_depth_m", 0.5)
+        self.declare_parameter("monocular_max_depth_m", 30.0)
+        self.declare_parameter("monocular_depth_coefficient", 0.5575)
+        self.declare_parameter("monocular_depth_exponent", -0.7555)
+        self.declare_parameter("standard_cone_height_m", 0.450)
+        self.declare_parameter("big_cone_height_m", 0.5255)
+        self.declare_parameter("vision_dedup_radius_m", 0.5)
+
+        # --- ZNCC stereo cross-check ----------------------------------------
+        # Replaces per-crop SIFT, which cost 150-300 ms and 200 % CPU to solve a
+        # problem that does not exist: on a rectified pair the scale differs by
+        # ~1 %, the rotation is zero, and the match is on the same row.
+        self.declare_parameter("zncc_enabled", True)
+        self.declare_parameter("stereo_baseline_m", 0.12)
+        self.declare_parameter("zncc_min_score", 0.5)
+        # Window around the prior. Asymmetric because the detector's box runs
+        # short past 6 m, so the true disparity sits ABOVE a box-derived prior.
+        self.declare_parameter("zncc_search_low_ratio", 0.70)
+        self.declare_parameter("zncc_search_high_ratio", 1.45)
+        # Accept the ZNCC depth as the measurement, not just as a check. The
+        # monocular curve carries a measured -0.88 m bias; disparity does not
+        # depend on the cone-size assumption at all, so it has no such bias.
+        self.declare_parameter("zncc_replaces_depth", True)
+        # Drop a monocular cone the cross-check could not confirm. OFF by
+        # default: a confirmation rate has to be measured before it is trusted
+        # to delete real cones -- a low-texture cone is a plausible ZNCC miss.
+        self.declare_parameter("zncc_reject_unconfirmed", False)
+        self.declare_parameter("sigma_d_px", 0.25)
+
+        # --- covariance ------------------------------------------------------
+        self.declare_parameter("lidar_variance_x", 0.04)
+        self.declare_parameter("lidar_variance_y", 0.04)
+        self.declare_parameter("lidar_only_variance_x", 0.20)
+        self.declare_parameter("lidar_only_variance_y", 0.20)
+        self.declare_parameter("sparse_variance_x", 0.12)
+        self.declare_parameter("sparse_variance_y", 0.12)
+        self.declare_parameter("range_variance_scale", 0.0005)
+        self.declare_parameter("min_variance", 1.0e-4)
+        self.declare_parameter("monocular_sigma_u_px", 10.0)
+        self.declare_parameter("sigma_h_px", 4.0)
+
+    def _load_parameters(self) -> None:
+        g = lambda name: self.get_parameter(name).value  # noqa: E731
+        for name in (
+            "pointcloud_topic", "bbox_topic", "camera_info_topic",
+            "left_image_topic", "right_image_topic", "output_cones_topic",
+            "output_frame", "camera_frame",
+        ):
+            setattr(self, name, str(g(name)))
+        self.debug_prefix = str(g("debug_prefix")).rstrip("/")
+        self.motion_compensation_frame = str(g("motion_compensation_frame")).strip()
+        self.projection_model = str(g("projection_model"))
+        self.bbox_coordinates = str(g("bbox_coordinates")).upper()
+        for name in ("publish_debug", "ground_ransac_enabled", "self_mask_enabled",
+                     "sparse_enabled", "monocular_enabled", "zncc_enabled",
+                     "zncc_replaces_depth", "zncc_reject_unconfirmed"):
+            setattr(self, name, bool(g(name)))
+        for name in ("sync_queue_size", "ground_ransac_max_iterations",
+                     "ground_ransac_min_inliers", "ground_ransac_seed",
+                     "cluster_min_points", "min_cluster_support_px",
+                     "sparse_near_min_points", "sparse_mid_min_points",
+                     "sparse_far_min_points"):
+            setattr(self, name, int(g(name)))
+        for name in (
+            "latency_log_period_sec", "max_cluster_age_sec", "max_image_age_sec",
+            "tf_timeout_sec", "min_bbox_probability", "min_project_depth",
+            "roi_min_x", "roi_max_x", "roi_abs_y", "roi_min_z", "roi_max_z",
+            "ground_min_z", "ground_ransac_distance_threshold",
+            "ground_ransac_max_tilt_degrees", "self_mask_min_x",
+            "self_mask_max_x", "self_mask_abs_y", "self_mask_min_z",
+            "self_mask_max_z", "cluster_eps", "cluster_min_height",
+            "cluster_max_height", "cluster_max_width", "bbox_match_margin_px",
+            "bbox_match_margin_ratio", "sparse_near_range_m",
+            "sparse_far_range_m", "sparse_max_width_m",
+            "sparse_max_depth_span_m", "sparse_max_depth_span_ratio",
+            "sparse_far_min_probability", "sparse_far_min_bbox_width_px",
+            "sparse_far_min_bbox_height_px", "monocular_min_bbox_height_px",
+            "monocular_min_depth_m", "monocular_max_depth_m",
+            "monocular_depth_coefficient", "monocular_depth_exponent",
+            "standard_cone_height_m", "big_cone_height_m",
+            "vision_dedup_radius_m", "stereo_baseline_m", "zncc_min_score",
+            "zncc_search_low_ratio", "zncc_search_high_ratio", "sigma_d_px",
+            "lidar_variance_x", "lidar_variance_y", "lidar_only_variance_x",
+            "lidar_only_variance_y", "sparse_variance_x", "sparse_variance_y",
+            "range_variance_scale", "min_variance", "monocular_sigma_u_px",
+            "sigma_h_px",
+        ):
+            setattr(self, name, float(g(name)))
+
+    def _validate_parameters(self) -> None:
+        if self.projection_model not in ("eufs_bbox", "pinhole"):
+            raise ValueError(
+                "projection_model must be 'eufs_bbox' or 'pinhole'; they differ "
+                "by an axis permutation applied in both directions")
+        if self.bbox_coordinates not in ("PIXELS", "PERCENTAGE"):
+            raise ValueError("bbox_coordinates must be PIXELS or PERCENTAGE")
+        if self.roi_min_x >= self.roi_max_x or self.roi_min_z >= self.roi_max_z:
+            raise ValueError("roi bounds must be ordered min < max")
+        if not 0.0 <= self.cluster_min_height < self.cluster_max_height:
+            raise ValueError("cluster height bounds must satisfy 0 <= min < max")
+        if self.cluster_max_width <= 0.0 or self.cluster_eps <= 0.0:
+            raise ValueError("cluster_max_width and cluster_eps must be positive")
+        if self.cluster_min_points < 1:
+            raise ValueError("cluster_min_points must be at least 1")
+        if self.monocular_min_bbox_height_px < 0.0:
+            raise ValueError("monocular_min_bbox_height_px must not be negative")
+        if not 0.0 < self.monocular_min_depth_m < self.monocular_max_depth_m:
+            raise ValueError("monocular depth bounds must satisfy 0 < min < max")
+        if self.monocular_depth_coefficient <= 0.0:
+            raise ValueError("monocular_depth_coefficient must be positive")
+        if self.monocular_depth_exponent >= 0.0:
+            raise ValueError(
+                "monocular_depth_exponent must be negative: depth falls as the "
+                "box grows")
+        if not 0.0 < self.zncc_search_low_ratio < self.zncc_search_high_ratio:
+            raise ValueError(
+                "zncc search ratios must satisfy 0 < low < high")
+        if self.sparse_near_range_m >= self.sparse_far_range_m:
+            raise ValueError("sparse_near_range_m must be below sparse_far_range_m")
+        # A zero pixel sigma claims a perfect measurement, which would hand SLAM
+        # an infinitely trusted cone. Reject it here rather than let
+        # min_variance quietly paper over it once per cone.
+        for name in ("monocular_sigma_u_px", "sigma_h_px", "sigma_d_px",
+                     "stereo_baseline_m", "lidar_variance_x", "lidar_variance_y",
+                     "lidar_only_variance_x", "lidar_only_variance_y",
+                     "sparse_variance_x", "sparse_variance_y", "min_variance",
+                     "standard_cone_height_m", "big_cone_height_m",
+                     "max_cluster_age_sec"):
+            if getattr(self, name) <= 0.0:
+                raise ValueError(f"{name} must be positive")
+        if self.range_variance_scale < 0.0:
+            raise ValueError("range_variance_scale must not be negative")
+
+    # ------------------------------------------------------------- callbacks
+
+    def _camera_info_callback(self, msg: CameraInfo) -> None:
+        with self._lock:
+            self._camera_info = msg
+
+    def _left_image_callback(self, msg: Image) -> None:
+        with self._lock:
+            self._left_image = msg
+
+    def _right_image_callback(self, msg: Image) -> None:
+        with self._lock:
+            self._right_image = msg
+
+    def _cloud_callback(self, msg: PointCloud2) -> None:
+        """Rebuild the backbone. Once per cloud, never once per output."""
+        if not msg.header.frame_id:
+            self._warn_throttled(
+                "cloud_frame", "LiDAR cloud has an empty frame_id; it cannot be "
+                "transformed into the output frame")
+            return
+        points = self._pointcloud_to_xyz(msg)
+        frame = ClusterFrame(stamp=msg.header.stamp, frame_id=msg.header.frame_id)
+        if points.shape[0]:
+            # ROI and ground removal want a level ground plane, so they run in
+            # the output frame; the points are kept in the LiDAR frame so the
+            # bbox callback can compensate them from their true origin.
+            lidar_to_base = self._lookup_transform(
+                self.output_frame, msg.header.frame_id, msg.header.stamp)
+            if lidar_to_base is None:
+                self._warn_throttled(
+                    "cloud_tf", f"No TF {msg.header.frame_id} -> "
+                    f"{self.output_frame} at the cloud stamp; skipping cloud")
+                return
+            points_base = self._transform_points(points, lidar_to_base)
+            keep = self._roi_mask(points_base) & self._non_ground_mask(points_base)
+            frame.points_lidar = points[keep]
+            frame.cluster_indices = self._cluster(points_base[keep])
+        with self._lock:
+            self._cluster_frame = frame
+
+    def _bbox_callback(self, msg: BoundingBoxes) -> None:
+        """The output path. Publishes on every bbox frame; waits for nothing."""
+        stamp = self._bbox_stamp(msg)
+        with self._lock:
+            camera_info = self._camera_info
+            cluster_frame = self._cluster_frame
+            left, right = self._left_image, self._right_image
+        if camera_info is None:
+            self._warn_throttled(
+                "no_camera_info", f"Waiting for {self.camera_info_topic}; "
+                f"cannot project without intrinsics")
+            return
+
+        camera_matrix = self._camera_matrix(camera_info)
+        if not np.all(np.isfinite(camera_matrix)):
+            self._warn_throttled(
+                "bad_camera_info",
+                f"{self.camera_info_topic} carries no usable K or P")
+            return
+        detections = self._extract_detections(msg, camera_info)
+        scene = self._scene_at(cluster_frame, stamp, camera_matrix)
+        cones = self._build_cones(detections, scene, camera_info, camera_matrix,
+                                  stamp, left, right)
+        # Provenance goes out FIRST. A consumer keys it by the /cones stamp, so
+        # publishing it afterwards leaves that consumer holding cones it cannot
+        # attribute for one frame -- which reads as "no provenance" rather than
+        # as a race.
+        if self.publish_debug:
+            self.provenance_pub.publish(self._provenance_markers(cones, stamp))
+        self._publish(cones, stamp)
+
+    # -------------------------------------------------------------- backbone
+
+    def _pointcloud_to_xyz(self, msg: PointCloud2) -> np.ndarray:
+        """Decode xyz, vectorised. This used to be a per-point Python loop,
+        which is affordable at the cloud's rate and at nothing faster."""
+        try:
+            structured = point_cloud2.read_points(
+                msg, field_names=("x", "y", "z"), skip_nans=True)
+        except Exception:  # pragma: no cover - malformed cloud
+            return np.empty((0, 3), dtype=np.float64)
+        array = np.asarray(structured)
+        if array.size == 0:
+            return np.empty((0, 3), dtype=np.float64)
+        if array.dtype.names:
+            return np.column_stack(
+                [array["x"], array["y"], array["z"]]).astype(np.float64)
+        return np.asarray(array, dtype=np.float64).reshape(-1, 3)
+
+    def _roi_mask(self, points_base: np.ndarray) -> np.ndarray:
+        x, y, z = points_base[:, 0], points_base[:, 1], points_base[:, 2]
+        mask = (
+            np.isfinite(points_base).all(axis=1)
+            & (x >= self.roi_min_x) & (x <= self.roi_max_x)
+            & (np.abs(y) <= self.roi_abs_y)
+            & (z >= self.roi_min_z) & (z <= self.roi_max_z)
+        )
+        if self.self_mask_enabled:
+            on_self = (
+                (x >= self.self_mask_min_x) & (x <= self.self_mask_max_x)
+                & (np.abs(y) <= self.self_mask_abs_y)
+                & (z >= self.self_mask_min_z) & (z <= self.self_mask_max_z)
+            )
+            mask &= ~on_self
+        return mask
+
+    def _non_ground_mask(self, points_base: np.ndarray) -> np.ndarray:
+        """Drop the ground, failing SAFE to a flat cut.
+
+        A missed plane must not delete the cones, so an unusable RANSAC result
+        falls back to a height cut rather than rejecting everything.
+        """
+        if not self.ground_ransac_enabled or points_base.shape[0] == 0:
+            return points_base[:, 2] >= self.ground_min_z
+        result = remove_ground_ransac(
+            points_base,
+            distance_threshold=self.ground_ransac_distance_threshold,
+            max_iterations=self.ground_ransac_max_iterations,
+            max_tilt_degrees=self.ground_ransac_max_tilt_degrees,
+            min_inliers=self.ground_ransac_min_inliers,
+            seed=self.ground_ransac_seed,
+        )
+        if result.plane is None:
+            self._warn_throttled(
+                "ground_plane", "No near-horizontal ground plane found; falling "
+                f"back to a flat z >= {self.ground_min_z} cut")
+            return points_base[:, 2] >= self.ground_min_z
+        return result.non_ground_mask
+
+    def _cluster(self, points_base: np.ndarray) -> List[np.ndarray]:
+        """DBSCAN in the ground plane, then a cone-shaped-blob filter."""
+        labels = self._dbscan_xy(points_base[:, :2])
+        clusters = []
+        for label in range(int(labels.max()) + 1 if labels.size else 0):
+            indices = np.flatnonzero(labels == label)
+            if indices.size < self.cluster_min_points:
+                continue
+            member = points_base[indices]
+            height = float(member[:, 2].max() - member[:, 2].min())
+            if not self.cluster_min_height <= height <= self.cluster_max_height:
+                continue
+            span = member[:, :2].max(axis=0) - member[:, :2].min(axis=0)
+            if float(np.hypot(*span)) > self.cluster_max_width:
+                continue
+            clusters.append(indices)
+        return clusters
+
+    def _dbscan_xy(self, xy: np.ndarray) -> np.ndarray:
+        """DBSCAN over a uniform grid. No sklearn dependency."""
+        count = xy.shape[0]
+        labels = np.full(count, -1, dtype=np.int64)
+        if count == 0:
+            return labels
+        eps = self.cluster_eps
+        cells: Dict[Tuple[int, int], List[int]] = {}
+        for index in range(count):
+            key = (int(math.floor(xy[index, 0] / eps)),
+                   int(math.floor(xy[index, 1] / eps)))
+            cells.setdefault(key, []).append(index)
+
+        def neighbours(index: int) -> List[int]:
+            cx = int(math.floor(xy[index, 0] / eps))
+            cy = int(math.floor(xy[index, 1] / eps))
+            found = []
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for other in cells.get((cx + dx, cy + dy), ()):
+                        if np.sum((xy[other] - xy[index]) ** 2) <= eps * eps:
+                            found.append(other)
+            return found
+
+        visited = np.zeros(count, dtype=bool)
+        cluster_id = 0
+        for index in range(count):
+            if visited[index]:
+                continue
+            visited[index] = True
+            seeds = neighbours(index)
+            if len(seeds) < self.cluster_min_points:
+                continue                        # noise, for now
+            labels[index] = cluster_id
+            queue = list(seeds)
+            while queue:
+                current = queue.pop()
+                if not visited[current]:
+                    visited[current] = True
+                    grown = neighbours(current)
+                    if len(grown) >= self.cluster_min_points:
+                        queue.extend(grown)
+                # A border point joins whichever cluster claims it first.
+                if labels[current] < 0:
+                    labels[current] = cluster_id
+            cluster_id += 1
+        return labels
+
+    def _scene_at(
+        self,
+        frame: Optional[ClusterFrame],
+        stamp,
+        camera_matrix: np.ndarray,
+    ) -> Optional[Scene]:
+        """Carry the cached cloud into this bbox's instant, once.
+
+        The cloud is up to ``max_cluster_age_sec`` old and the car is moving, so
+        its points are transformed from their own stamp to the bbox stamp
+        through a fixed frame. Every cone in the output then belongs to the one
+        header timestamp, which is what lets a consumer trust it. Transform and
+        projection happen once for the whole cloud; clusters and sparse support
+        are both just index sets into it.
+        """
+        if frame is None or frame.points_lidar.shape[0] == 0:
+            return None
+        age = abs(self._stamp_sec(stamp) - self._stamp_sec(frame.stamp))
+        if age > self.max_cluster_age_sec:
+            self._warn_throttled(
+                "cluster_age",
+                f"Newest LiDAR cloud is {age:.2f}s from the bbox stamp (limit "
+                f"{self.max_cluster_age_sec}s); publishing vision-only cones")
+            return None
+        to_base = self._lookup_transform_between(
+            self.output_frame, stamp, frame.frame_id, frame.stamp)
+        to_camera = self._lookup_transform_between(
+            self.camera_frame, stamp, frame.frame_id, frame.stamp)
+        if to_base is None or to_camera is None:
+            self._warn_throttled(
+                "cluster_tf", "No TF to carry the LiDAR points to the bbox "
+                "stamp; publishing vision-only cones")
+            return None
+        return Scene(
+            points_base=self._transform_points(frame.points_lidar, to_base),
+            pixels=self._project(
+                self._transform_points(frame.points_lidar, to_camera),
+                camera_matrix),
+            cluster_indices=frame.cluster_indices,
+        )
+
+    # ----------------------------------------------------------------- cones
+
+    def _build_cones(
+        self,
+        detections: List[Detection],
+        scene: Optional[Scene],
+        camera_info: CameraInfo,
+        camera_matrix: np.ndarray,
+        stamp,
+        left: Optional[Image],
+        right: Optional[Image],
+    ) -> List[Cone]:
+        """Backbone, then colour, then sparse, then vision. In that order.
+
+        The order IS the design: a LiDAR position always beats a vision one, and
+        a cluster publishes whether or not the camera confirmed it.
+        """
+        cones: List[Cone] = []
+        claimed: set = set()
+
+        matched = self._match(detections, scene)
+        if scene is not None:
+            for index, indices in enumerate(scene.cluster_indices):
+                centroid = scene.points_base[indices].mean(axis=0)
+                if not np.all(np.isfinite(centroid[:2])):
+                    continue
+                detection = matched.get(index)
+                if detection is not None:
+                    claimed.add(detection)
+                cones.append(Cone(
+                    x=float(centroid[0]), y=float(centroid[1]),
+                    color=detection.color if detection else "unknown",
+                    provenance=PROV_CLUSTER if detection else PROV_CLUSTER_ONLY,
+                    range_m=float(np.hypot(centroid[0], centroid[1])),
+                ))
+
+        if self.sparse_enabled and scene is not None:
+            clustered = (np.concatenate(scene.cluster_indices)
+                         if scene.cluster_indices
+                         else np.empty((0,), dtype=np.int64))
+            for detection in detections:
+                if detection in claimed:
+                    continue
+                cone = self._sparse_cone(detection, scene, clustered)
+                if cone is None:
+                    continue
+                claimed.add(detection)
+                cones.append(cone)
+
+        if self.monocular_enabled:
+            for detection in detections:
+                if detection in claimed:
+                    continue
+                cone = self._monocular_cone(detection, camera_info,
+                                            camera_matrix, stamp)
+                if cone is None:
+                    continue
+                cone = self._cross_check(cone, detection, camera_matrix, left,
+                                         right, stamp)
+                if cone is None:
+                    continue
+                # A cluster we failed to match plus a monocular estimate of the
+                # same cone is exactly the duplicate this guards.
+                if any(math.hypot(cone.x - c.x, cone.y - c.y)
+                       <= self.vision_dedup_radius_m for c in cones):
+                    continue
+                cones.append(cone)
+        return cones
+
+    def _match(
+        self,
+        detections: List[Detection],
+        scene: Optional[Scene],
+    ) -> Dict[int, Detection]:
+        """Greedy one-to-one cluster<->detection matching by pixel support.
+
+        Scored by how many of a cluster's points land inside the box, weighted
+        by confidence: a cone filling the box beats one clipping its corner, and
+        a confident box beats a marginal one.
+        """
+        if scene is None or not detections or not scene.cluster_indices:
+            return {}
+        scores = []
+        for d_index, detection in enumerate(detections):
+            box = self._expanded_box(detection)
+            for c_index, indices in enumerate(scene.cluster_indices):
+                inside = self._inside_count(scene.pixels[indices], box)
+                if inside < self.min_cluster_support_px:
+                    continue
+                scores.append((inside * detection.probability, c_index, d_index))
+        matched: Dict[int, Detection] = {}
+        used = set()
+        for _score, c_index, d_index in sorted(scores, reverse=True):
+            if c_index in matched or d_index in used:
+                continue
+            matched[c_index] = detections[d_index]
+            used.add(d_index)
+        return matched
+
+    @staticmethod
+    def _inside_count(pixels: np.ndarray, box) -> int:
+        if pixels.shape[0] == 0:
+            return 0
+        return int(np.count_nonzero(
+            (pixels[:, 0] >= box[0]) & (pixels[:, 0] <= box[2])
+            & (pixels[:, 1] >= box[1]) & (pixels[:, 1] <= box[3])))
+
+    def _sparse_cone(
+        self,
+        detection: Detection,
+        scene: Scene,
+        clustered: np.ndarray,
+    ) -> Optional[Cone]:
+        """A cone with LiDAR returns too thin to have clustered.
+
+        Real support, so it keeps a LiDAR position and a LiDAR covariance. The
+        checks are what stop a box from fusing whatever happens to lie behind
+        it: the points must be cone-sized, at one depth, and enough of them for
+        the range they claim.
+        """
+        box = self._expanded_box(detection)
+        pixels = scene.pixels
+        inside = np.flatnonzero(
+            (pixels[:, 0] >= box[0]) & (pixels[:, 0] <= box[2])
+            & (pixels[:, 1] >= box[1]) & (pixels[:, 1] <= box[3]))
+        if inside.size == 0:
+            return None
+        # Points already spoken for by a cluster cannot also make a sparse cone.
+        support = np.setdiff1d(inside, clustered, assume_unique=False)
+        if support.size == 0:
+            return None
+        points = scene.points_base[support]
+        centroid = points.mean(axis=0)
+        range_m = float(np.hypot(centroid[0], centroid[1]))
+        if not math.isfinite(range_m) or range_m <= 0.0:
+            return None
+        if support.size < self._sparse_min_points(range_m):
+            return None
+        span = points[:, :2].max(axis=0) - points[:, :2].min(axis=0)
+        if float(np.hypot(*span)) > self.sparse_max_width_m:
+            return None
+        # One cone is at one depth. A spread of ranges means the box caught a
+        # wall, or a cone and the ground behind it.
+        ranges = np.hypot(points[:, 0], points[:, 1])
+        allowed = max(self.sparse_max_depth_span_m,
+                      range_m * self.sparse_max_depth_span_ratio)
+        if float(ranges.max() - ranges.min()) > allowed:
+            return None
+        if range_m >= self.sparse_far_range_m:
+            # Far and thin is where a false positive is cheapest to make, so
+            # ask the detector to be sure and the box to be a real box.
+            if (detection.probability < self.sparse_far_min_probability
+                    or detection.width_px < self.sparse_far_min_bbox_width_px
+                    or detection.height_px < self.sparse_far_min_bbox_height_px):
+                return None
+        return Cone(x=float(centroid[0]), y=float(centroid[1]),
+                    color=detection.color, provenance=PROV_SPARSE,
+                    range_m=range_m)
+
+    def _sparse_min_points(self, range_m: float) -> int:
+        if range_m < self.sparse_near_range_m:
+            return self.sparse_near_min_points
+        if range_m < self.sparse_far_range_m:
+            return self.sparse_mid_min_points
+        return self.sparse_far_min_points
+
+    def _monocular_cone(
+        self,
+        detection: Detection,
+        camera_info: CameraInfo,
+        camera_matrix: np.ndarray,
+        stamp,
+    ) -> Optional[Cone]:
+        """A camera-only cone, only where the estimate can be trusted."""
+        if detection.height_px < self.monocular_min_bbox_height_px:
+            return None                       # past the detector's cliff
+        cone_height = self._cone_height_m(detection.color)
+        if cone_height is None:
+            return None                       # unknown class: no scale to use
+        depth = self._monocular_depth(detection, camera_info, cone_height)
+        if depth is None:
+            return None
+        base = self._back_project(detection, depth, camera_matrix, stamp)
+        if base is None:
+            return None
+        return Cone(
+            x=float(base[0]), y=float(base[1]), color=detection.color,
+            provenance=PROV_MONOCULAR,
+            range_m=float(np.hypot(base[0], base[1])),
+            relative_depth_sigma=monocular_relative_depth_sigma(
+                detection.height_px, self.monocular_depth_exponent,
+                self.sigma_h_px),
+            sigma_u_px=self.monocular_sigma_u_px,
+            fx_px=float(camera_matrix[0, 0]),
+        )
+
+    def _monocular_depth(
+        self,
+        detection: Detection,
+        camera_info: CameraInfo,
+        cone_height_m: float,
+    ) -> Optional[float]:
+        """``D = c*h_n^e``, with ``c`` rescaled for a non-standard cone.
+
+        ``c`` is the only part of the curve carrying the cone's size, so a big
+        orange cone rescales it and keeps the exponent, which is a property of
+        the detector rather than of the cone.
+        """
+        coefficient = self.monocular_depth_coefficient * (
+            cone_height_m / self.standard_cone_height_m)
+        depth = monocular_depth_from_bbox(
+            detection.height_px, float(camera_info.height),
+            coefficient=coefficient, exponent=self.monocular_depth_exponent)
+        if depth is None or not (
+                self.monocular_min_depth_m <= depth <= self.monocular_max_depth_m):
+            return None
+        return depth
+
+    def _back_project(
+        self,
+        detection: Detection,
+        depth: float,
+        camera_matrix: np.ndarray,
+        stamp,
+    ) -> Optional[np.ndarray]:
+        center_u, center_v = detection.center
+        point = camera_point_from_depth(center_u, center_v, depth, camera_matrix)
+        if point is None:
+            return None
+        camera_to_base = self._lookup_transform(
+            self.output_frame, self.camera_frame, stamp)
+        if camera_to_base is None:
+            return None
+        base = self._transform_points(
+            self._to_camera_axes(point).reshape(1, 3), camera_to_base)[0]
+        return base if np.all(np.isfinite(base[:2])) else None
+
+    def _cone_height_m(self, color: str) -> Optional[float]:
+        if color == "big_orange":
+            return self.big_cone_height_m
+        if color in ("blue", "yellow", "orange"):
+            return self.standard_cone_height_m
+        return None
+
+    # ------------------------------------------------------------ ZNCC check
+
+    def _cross_check(
+        self,
+        cone: Cone,
+        detection: Detection,
+        camera_matrix: np.ndarray,
+        left: Optional[Image],
+        right: Optional[Image],
+        stamp,
+    ) -> Optional[Cone]:
+        """Confirm a monocular cone against stereo disparity, and use its depth.
+
+        The two measurements fail differently -- monocular depends on the cone's
+        assumed size, stereo on matching -- which is the whole point. A ZNCC peak
+        near the disparity the box implies is physical evidence that something
+        geometrically consistent exists there, and background texture cannot
+        produce it.
+
+        Fails OPEN: if the images are missing or stale the check simply does not
+        run, and the monocular cone stands. A cross-check must never be a
+        blocking dependency, or it becomes the latency it was meant to avoid.
+        """
+        if not self.zncc_enabled or left is None or right is None:
+            return cone
+        for image in (left, right):
+            if abs(self._stamp_sec(stamp)
+                   - self._stamp_sec(image.header.stamp)) > self.max_image_age_sec:
+                self._warn_throttled(
+                    "image_age", "Stereo images are too far from the bbox stamp "
+                    "for the ZNCC cross-check; keeping the monocular estimate")
+                return cone
+        left_gray = self._to_gray(left)
+        right_gray = self._to_gray(right)
+        if left_gray is None or right_gray is None:
+            return cone
+
+        fx = float(camera_matrix[0, 0])
+        # Centre the window on the curve's own depth rather than on the box
+        # height: the fitted curve already absorbs the detector's box bias,
+        # where a box-derived prior is 8 % low at 6 m and 46 % low at 15 m. The
+        # prior only chooses where to look -- the MEASUREMENT is still the
+        # correlation peak, so the check stays independent of the curve.
+        prior = fx * self.stereo_baseline_m / max(cone.range_m, 1.0e-3)
+        match = zncc_disparity(
+            left_gray, right_gray,
+            (detection.xmin, detection.ymin, detection.xmax, detection.ymax),
+            prior * self.zncc_search_low_ratio,
+            prior * self.zncc_search_high_ratio,
+            min_score=self.zncc_min_score,
+        )
+        self._zncc_stats[0] += 1
+        if match is None:
+            if self.zncc_reject_unconfirmed:
+                return None
+            return cone
+        self._zncc_stats[1] += 1
+        if not self.zncc_replaces_depth:
+            return cone
+
+        depth = fx * self.stereo_baseline_m / match.disparity_px
+        if not (self.monocular_min_depth_m <= depth <= self.monocular_max_depth_m):
+            return cone
+        base = self._back_project(detection, depth, camera_matrix, stamp)
+        if base is None:
+            return cone
+        return Cone(
+            x=float(base[0]), y=float(base[1]), color=cone.color,
+            provenance=PROV_MONO_ZNCC,
+            range_m=float(np.hypot(base[0], base[1])),
+            relative_depth_sigma=stereo_relative_depth_sigma(
+                depth, fx, self.stereo_baseline_m, self.sigma_d_px),
+            # The bearing still comes from the same bbox centre, so it keeps the
+            # monocular tier's measured sigma_u. Stereo fixes depth, not bearing.
+            sigma_u_px=self.monocular_sigma_u_px,
+            fx_px=fx,
+        )
+
+    def _to_gray(self, image: Image) -> Optional[np.ndarray]:
+        try:
+            array = image_message_to_numpy(image)
+        except Exception:
+            return None
+        if array is None or array.size == 0:
+            return None
+        if array.ndim == 2:
+            return array.astype(np.float64)
+        if array.ndim == 3 and array.shape[2] >= 3:
+            # Luma only; ZNCC is normalised so the exact weights do not matter.
+            return array[:, :, :3].astype(np.float64).mean(axis=2)
+        return None
+
+    # ------------------------------------------------------------ covariance
+
+    def _covariance(self, cone: Cone) -> List[float]:
+        """The trust handed to SLAM. Two models, split by what was measured.
+
+        A vision cone's error is an ellipse along the line of sight: weak in
+        depth, strong in bearing, its major axis on the ray rather than on x or
+        y. A LiDAR cone's is not -- it ranges directly to ~1 %, so the
+        near-circle a constant describes is roughly the truth.
+        """
+        ellipse = self._vision_covariance(cone)
+        if ellipse is not None:
+            return ellipse
+        base_x, base_y = {
+            PROV_CLUSTER: (self.lidar_variance_x, self.lidar_variance_y),
+            PROV_SPARSE: (self.sparse_variance_x, self.sparse_variance_y),
+        }.get(cone.provenance,
+              (self.lidar_only_variance_x, self.lidar_only_variance_y))
+        return [
+            max(base_x + self.range_variance_scale * cone.range_m,
+                self.min_variance),
+            0.0, 0.0,
+            max(base_y + self.range_variance_scale * cone.range_m,
+                self.min_variance),
+        ]
+
+    def _vision_covariance(self, cone: Cone) -> Optional[List[float]]:
+        if (cone.relative_depth_sigma is None or cone.sigma_u_px is None
+                or cone.fx_px is None or not math.isfinite(cone.range_m)
+                or cone.range_m <= 0.0):
+            return None
+        # Both sigmas scale with range: the bearing one because a pixel subtends
+        # a widening arc, the depth one because the measurement bounds the
+        # FRACTION sigma_D/D -- which is why it survives the projection above.
+        sigma_lon = cone.range_m * cone.relative_depth_sigma
+        sigma_lat = cone.range_m * cone.sigma_u_px / cone.fx_px
+        covariance = bearing_aligned_covariance(cone.x, cone.y, sigma_lon,
+                                                sigma_lat)
+        if covariance is None:
+            return None
+        xx, xy, yx, yy = covariance
+        # Clamp the diagonal only. Scaling the off-diagonal to match would
+        # rotate the ellipse off the bearing; letting the floor lift the axes
+        # can only make it rounder, which is the safe direction for an optimizer
+        # that believes what it is told.
+        return [max(xx, self.min_variance), xy, yx, max(yy, self.min_variance)]
+
+    # ---------------------------------------------------------------- output
+
+    def _publish(self, cones: List[Cone], stamp) -> None:
+        msg = ConeArrayWithCovariance()
+        msg.header.stamp = stamp
+        msg.header.frame_id = self.output_frame
+        buckets: Dict[str, list] = {color: [] for color in CONE_COLORS}
+        for cone in cones:
+            out = ConeWithCovariance()
+            out.point.x, out.point.y, out.point.z = cone.x, cone.y, 0.0
+            out.covariance = self._covariance(cone)
+            buckets.get(cone.color, buckets["unknown"]).append(out)
+        msg.blue_cones = buckets["blue"]
+        msg.yellow_cones = buckets["yellow"]
+        msg.orange_cones = buckets["orange"]
+        msg.big_orange_cones = buckets["big_orange"]
+        msg.unknown_color_cones = buckets["unknown"]
+        self._record_latency(stamp)
+        self.cones_pub.publish(msg)
+        self.cones_viz_pub.publish(self._cone_markers(cones, stamp))
+
+    def _record_latency(self, stamp) -> None:
+        """Age of the data in /cones: now - header.stamp.
+
+        The header carries the bbox capture time, so this is the whole
+        pipeline's latency as the planner experiences it -- detector, transport
+        and this node -- not this node's compute time.
+        """
+        if self.latency_log_period_sec <= 0.0:
+            return
+        now_ns = int(self.get_clock().now().nanoseconds)
+        if now_ns <= 0:                        # before the first /clock
+            return
+        self._latencies.append((now_ns - self._stamp_ns(stamp)) / 1e9)
+        if self._last_latency_log_ns is None:
+            self._last_latency_log_ns = now_ns
+            return
+        elapsed = (now_ns - self._last_latency_log_ns) / 1e9
+        # A clock jump backwards (bag loop, sim reset) would otherwise park this
+        # until sim time caught back up.
+        if elapsed < 0.0:
+            self._last_latency_log_ns = now_ns
+            self._latencies.clear()
+            return
+        if elapsed < self.latency_log_period_sec:
+            return
+        samples = sorted(self._latencies)
+        self._latencies.clear()
+        self._last_latency_log_ns = now_ns
+        if not samples:
+            return
+        attempted, confirmed = self._zncc_stats
+        zncc = (f"  zncc {confirmed}/{attempted} confirmed"
+                if attempted else "")
+        self._zncc_stats = [0, 0]
+        self.get_logger().info(
+            f"{self.output_cones_topic} latency (now - bbox stamp): "
+            f"mean {1000 * sum(samples) / len(samples):.0f} ms  "
+            f"p90 {1000 * samples[min(len(samples) - 1, int(0.9 * len(samples)))]:.0f} ms  "
+            f"max {1000 * samples[-1]:.0f} ms  over {len(samples)} msgs / "
+            f"{elapsed:.1f} s ({len(samples) / elapsed:.1f} Hz){zncc}")
+
+    def _cone_markers(self, cones: List[Cone], stamp) -> MarkerArray:
+        rgb = {"blue": (0.0, 0.0, 1.0), "yellow": (1.0, 1.0, 0.0),
+               "orange": (1.0, 0.5, 0.0), "big_orange": (1.0, 0.3, 0.0),
+               "unknown": (0.6, 0.6, 0.6)}
+        array = MarkerArray()
+        array.markers.append(self._delete_all(stamp))
+        for index, cone in enumerate(cones):
+            marker = self._marker(stamp, cone.color, index, cone)
+            marker.type = Marker.SPHERE
+            marker.scale.x = marker.scale.y = marker.scale.z = 0.3
+            red, green, blue = rgb.get(cone.color, rgb["unknown"])
+            marker.color.r, marker.color.g, marker.color.b = red, green, blue
+            marker.color.a = 0.9
+            array.markers.append(marker)
+        return array
+
+    def _provenance_markers(self, cones: List[Cone], stamp) -> MarkerArray:
+        """One label per published cone, at the position that was published.
+
+        /cones carries no provenance, so error measured against ground truth
+        cannot otherwise be attributed to the thing that produced it.
+        """
+        array = MarkerArray()
+        array.markers.append(self._delete_all(stamp))
+        for index, cone in enumerate(cones):
+            marker = self._marker(stamp, cone.provenance, index, cone)
+            marker.type = Marker.TEXT_VIEW_FACING
+            marker.pose.position.z = 0.4
+            marker.scale.z = 0.2
+            marker.color.r = marker.color.g = marker.color.b = 1.0
+            marker.color.a = 0.9
+            marker.text = cone.provenance
+            array.markers.append(marker)
+        return array
+
+    def _marker(self, stamp, namespace: str, index: int, cone: Cone) -> Marker:
+        marker = Marker()
+        marker.header.stamp = stamp
+        marker.header.frame_id = self.output_frame
+        marker.ns = namespace
+        marker.id = index
+        marker.action = Marker.ADD
+        marker.pose.position.x = cone.x
+        marker.pose.position.y = cone.y
+        marker.pose.orientation.w = 1.0
+        return marker
+
+    def _delete_all(self, stamp) -> Marker:
+        # Required: the marker count varies per frame, so stale ids would linger.
+        marker = Marker()
+        marker.header.stamp = stamp
+        marker.header.frame_id = self.output_frame
+        marker.action = Marker.DELETEALL
+        return marker
+
+    # --------------------------------------------------------------- helpers
+
+    def _extract_detections(
+        self,
+        msg: BoundingBoxes,
+        camera_info: CameraInfo,
+    ) -> List[Detection]:
+        detections = []
+        for box in getattr(msg, "bounding_boxes", []):
+            probability = float(getattr(box, "probability", 1.0))
+            if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
+                continue
+            if probability < self.min_bbox_probability:
+                continue
+            corners = self._box_to_pixels(box, camera_info)
+            if corners is None or corners[2] <= corners[0] or corners[3] <= corners[1]:
+                continue
+            detections.append(Detection(
+                color=self._normalize_color(getattr(box, "color", "")),
+                probability=probability,
+                xmin=corners[0], ymin=corners[1],
+                xmax=corners[2], ymax=corners[3]))
+        return detections
+
+    def _box_to_pixels(self, box, camera_info) -> Optional[Tuple[float, ...]]:
+        values = [float(box.xmin), float(box.ymin), float(box.xmax),
+                  float(box.ymax)]
+        if not all(math.isfinite(v) for v in values):
+            return None
+        if self.bbox_coordinates == "PERCENTAGE":
+            width, height = float(camera_info.width), float(camera_info.height)
+            values = [values[0] * width, values[1] * height,
+                      values[2] * width, values[3] * height]
+        xmin, xmax = sorted((values[0], values[2]))
+        ymin, ymax = sorted((values[1], values[3]))
+        return (xmin, ymin, xmax, ymax)
+
+    def _expanded_box(self, detection: Detection) -> Tuple[float, ...]:
+        margin_x = max(self.bbox_match_margin_px,
+                       detection.width_px * self.bbox_match_margin_ratio)
+        margin_y = max(self.bbox_match_margin_px,
+                       detection.height_px * self.bbox_match_margin_ratio)
+        return (detection.xmin - margin_x, detection.ymin - margin_y,
+                detection.xmax + margin_x, detection.ymax + margin_y)
+
+    @staticmethod
+    def _normalize_color(raw: str) -> str:
+        text = str(raw).strip().lower()
+        if "big" in text and "orange" in text:
+            return "big_orange"
+        for color in ("blue", "yellow", "orange"):
+            if color in text:
+                return color
+        return "unknown"
+
+    @staticmethod
+    def _camera_matrix(camera_info: CameraInfo) -> np.ndarray:
+        """Prefer P over K: P is the rectified projection the images match."""
+        projection = np.asarray(camera_info.p, dtype=np.float64)
+        if projection.size == 12:
+            candidate = projection.reshape(3, 4)[:, :3]
+            if (np.all(np.isfinite(candidate)) and candidate[0, 0] > 0.0
+                    and candidate[1, 1] > 0.0
+                    and abs(float(np.linalg.det(candidate))) > 1.0e-12):
+                return candidate.copy()
+        intrinsic = np.asarray(camera_info.k, dtype=np.float64)
+        if intrinsic.size != 9:
+            return np.full((3, 3), np.nan, dtype=np.float64)
+        return intrinsic.reshape(3, 3).copy()
+
+    def _to_camera_axes(self, projection_point: np.ndarray) -> np.ndarray:
+        """Pinhole (x right, y down, z forward) -> the model's camera axes.
+
+        The inverse of the permutation in _project. The two MUST stay inverses.
+        """
+        if self.projection_model == "eufs_bbox":
+            return np.asarray([projection_point[2], -projection_point[0],
+                               -projection_point[1]], dtype=np.float64)
+        return np.asarray(projection_point, dtype=np.float64)
+
+    def _project(self, points_camera: np.ndarray,
+                 camera_matrix: np.ndarray) -> np.ndarray:
+        """Camera-frame points -> pixels, NaN where behind the camera.
+
+        NaN rather than a filtered array so the result stays index-aligned with
+        the points: every consumer here addresses points by index.
+        """
+        count = points_camera.shape[0]
+        pixels = np.full((count, 2), np.nan, dtype=np.float64)
+        if count == 0:
+            return pixels
+        if self.projection_model == "eufs_bbox":
+            projection = np.column_stack((-points_camera[:, 1],
+                                          -points_camera[:, 2],
+                                          points_camera[:, 0]))
+        else:
+            projection = points_camera
+        valid = projection[:, 2] > self.min_project_depth
+        if not np.any(valid):
+            return pixels
+        points = projection[valid]
+        fx, fy = float(camera_matrix[0, 0]), float(camera_matrix[1, 1])
+        cx, cy = float(camera_matrix[0, 2]), float(camera_matrix[1, 2])
+        pixels[valid, 0] = fx * points[:, 0] / points[:, 2] + cx
+        pixels[valid, 1] = fy * points[:, 1] / points[:, 2] + cy
+        return pixels
+
+    def _lookup_transform(self, target: str, source: str,
+                          stamp) -> Optional[np.ndarray]:
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                target, source, stamp,
+                timeout=rclpy.duration.Duration(seconds=self.tf_timeout_sec))
+        except tf2_ros.TransformException:
+            return None
+        return self._transform_to_matrix(transform)
+
+    def _lookup_transform_between(self, target: str, target_stamp, source: str,
+                                  source_stamp) -> Optional[np.ndarray]:
+        """Transform across BOTH frames and time, through a fixed frame.
+
+        This is the motion compensation: the cloud was captured while the car
+        was somewhere else, so its points must be carried to where the car is at
+        the bbox stamp, or every LiDAR cone lags by the cloud's age.
+        """
+        if (self._stamp_ns(target_stamp) == self._stamp_ns(source_stamp)
+                or not self.motion_compensation_frame):
+            return self._lookup_transform(target, source, source_stamp)
+        try:
+            transform = self.tf_buffer.lookup_transform_full(
+                target, target_stamp, source, source_stamp,
+                self.motion_compensation_frame,
+                timeout=rclpy.duration.Duration(seconds=self.tf_timeout_sec))
+        except tf2_ros.TransformException:
+            return None
+        return self._transform_to_matrix(transform)
+
+    @staticmethod
+    def _transform_to_matrix(transform) -> np.ndarray:
+        t = transform.transform.translation
+        q = transform.transform.rotation
+        x, y, z, w = float(q.x), float(q.y), float(q.z), float(q.w)
+        norm = math.sqrt(x * x + y * y + z * z + w * w)
+        matrix = np.eye(4, dtype=np.float64)
+        if norm > 0.0:
+            x, y, z, w = x / norm, y / norm, z / norm, w / norm
+            matrix[:3, :3] = np.asarray([
+                [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+            ], dtype=np.float64)
+        matrix[:3, 3] = [float(t.x), float(t.y), float(t.z)]
+        return matrix
+
+    @staticmethod
+    def _transform_points(points: np.ndarray, matrix: np.ndarray) -> np.ndarray:
+        if points.size == 0:
+            return np.empty((0, 3), dtype=np.float64)
+        return points.dot(matrix[:3, :3].T) + matrix[:3, 3]
+
+    @staticmethod
+    def _bbox_stamp(msg: BoundingBoxes):
+        """The image capture time, which every cone in the output belongs to."""
+        image_header = getattr(msg, "image_header", None)
+        if image_header is not None and (image_header.stamp.sec
+                                         or image_header.stamp.nanosec):
+            return image_header.stamp
+        return msg.header.stamp
+
+    @staticmethod
+    def _stamp_ns(stamp) -> int:
+        return int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
+
+    @classmethod
+    def _stamp_sec(cls, stamp) -> float:
+        return cls._stamp_ns(stamp) / 1e9
+
+    def _warn_throttled(self, key: str, message: str,
+                        period_sec: float = 5.0) -> None:
+        now = self.get_clock().now().nanoseconds / 1e9
+        if now - self._warned.get(key, -math.inf) < period_sec:
+            return
+        self._warned[key] = now
+        self.get_logger().warning(message)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = None
+    try:
+        node = PerceptionNode()
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if node is not None:
+            node.destroy_node()
+        rclpy.try_shutdown()
+
+
+if __name__ == "__main__":
+    main()

@@ -68,6 +68,10 @@ setup(
     entry_points={
         "console_scripts": [
             (
+                "perception_node = "
+                "eufs_perception_baseline.perception_node:main"
+            ),
+            (
                 "perception_baseline_node = "
                 "eufs_perception_baseline.perception_baseline_node:main"
             ),
