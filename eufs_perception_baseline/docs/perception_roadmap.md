@@ -699,14 +699,56 @@ Two things measured along the way, both worth knowing:
   collision queries stall — and not by rendering, readback, or resolution.
   Cutting resolution would cost `fx`, the curve and the px gate for nothing.
 
-  **So 30 Hz is not reachable, and the LiDAR win is already taken.** The arc cut
-  is the part of the raycasting cost that could be removed without degrading the
-  cloud; `gpu_ray` removes the rest and degrades it. What is left needs a
-  cheaper collision world (simpler cone collision geometry is the untried
-  candidate) or a different simulator.
+  **The last candidate was a cheaper collision world, and it closes the
+  question by explaining it.** The cones' `<collision>` was the full visual
+  mesh: 104 triangles each, ~142 per track, so ~15k triangles for the LiDAR's
+  rays to traverse. Replacing it with a bounding cylinder (measured from the
+  mesh: radius 0.135, length 0.45, and **no pose offset — the DAE's origin is
+  the cone's centre, not its base**) is a large, real speed-up:
 
-  Three hypotheses died here — shared render thread, `gpu_ray`, readback — and
-  each looked obvious. **Measure before believing any of them again.**
+  | | left | right | velodyne |
+  |---|---|---|---|
+  | mesh collision, full arc | 8.8 | 8.8 | ~10 |
+  | mesh collision, ±60° arc | 11.5 | 9.1 | 6.6 |
+  | **cylinder collision, ±60° arc** | **14.1** | **13.3** | **9.4** |
+
+  1.6× the original with the velodyne control healthy at 9.4, and the camera
+  pair much better matched (94 % vs 79 %). And it must be rejected, because
+  **for a CPU ray sensor the collision geometry IS the world**: `type="ray"`
+  queries ODE's collision world, not the visual scene. Making the collision a
+  cylinder does not make the LiDAR cheaper to simulate — **it makes the LiDAR
+  see cylinders**. Measured twice:
+
+  | recall | mesh | cylinder run 1 | run 2 |
+  |---|---|---|---|
+  | 5–7.5 m | 97.7 % | 85.3 % | **84.8 %** |
+  | 7.5–10 m | 93.6 % | 85.6 % | **81.8 %** |
+
+  (The sparse count spiking to 200 in run 1 *was* noise — run 2 gave 62. The
+  recall loss is not.) The likely mechanism: the LiDAR sits at 0.54 m, above the
+  0.45 m cones, so it looks **down** onto them — and a cylinder has a flat top
+  cap that a cone does not, which a grazing ray crosses at a wildly varying
+  range.
+
+  **That is the whole answer, and it is a closed one.** For CPU raycasting, the
+  LiDAR's cost and the LiDAR's data are the same geometry — you cannot buy one
+  without selling the other. The only split that would decouple them is
+  `gpu_ray`, which raycasts the *visual* scene and would allow a cheap collision
+  cylinder underneath a real cone — but `gpu_ray` degrades the returns on its
+  own, for its own reason (depth-texture precision), so the split is not
+  available either.
+
+  So the arc cut stands as the only lever that costs nothing: it removes
+  coverage nothing consumes, rather than fidelity. **Everything else here is a
+  trade of LiDAR quality for camera rate, in a pipeline whose design is that
+  LiDAR carries the position.** Past this point the honest options are a
+  different simulator or accepting ~11.5 Hz.
+
+  Four hypotheses died in this section — shared render thread, `gpu_ray`,
+  readback, cheap collision — and every one of them looked obvious. Two were
+  asserted before being checked. **Measure before believing any of them again**,
+  and measure *recall*, not only rate: three of the four looked like clean wins
+  on rate alone.
 
   **`update_rate` is not a cap and does not behave monotonically.** Measured
   request → achieved (left): 10 → 7.4, 15 → 8.8, 20 → 8.2, 30 → 21.7. Asking
