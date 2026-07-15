@@ -27,10 +27,13 @@ from tf2_ros import Buffer, TransformException, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
 from eufs_perception_baseline.fusion_core import (
+    bearing_aligned_covariance,
     camera_point_from_depth,
     classify_cone_condition,
     monocular_depth_from_bbox,
+    monocular_relative_depth_sigma,
     remove_ground_ransac,
+    stereo_relative_depth_sigma,
 )
 from eufs_perception_baseline.latest_only_worker import (
     LatestOnlyWorker,
@@ -92,6 +95,25 @@ class Detection:
     keypoints: Optional[np.ndarray] = None
 
 
+@dataclass(frozen=True)
+class VisionMeasurement:
+    """What a vision tier measured, kept so covariance can be derived from it.
+
+    A vision cone's error is an ellipse along the line of sight, and its size
+    follows from the measurement itself -- the bbox height for the monocular
+    curve, the disparity geometry for stereo.  Carrying these here lets
+    ``_cluster_to_cone`` build that ellipse instead of looking up a hand-tuned
+    constant that cannot know the range it is being applied at.
+
+    ``relative_depth_sigma`` is ``sigma_D / D``: dimensionless, so it applies
+    unchanged to the ground range after the projection and TF.
+    """
+
+    relative_depth_sigma: float
+    sigma_u_px: float
+    fx_px: float
+
+
 @dataclass
 class Cluster:
     points_base: np.ndarray
@@ -102,6 +124,10 @@ class Cluster:
     source: str = "cluster"
     support_count: int = 0
     consumed_indices: Optional[np.ndarray] = None
+    # Set only by the vision tiers.  LiDAR measures range directly and its
+    # error is near-isotropic at cone ranges, so those tiers keep their
+    # measured per-tier variance instead.
+    vision_measurement: Optional[VisionMeasurement] = None
 
 
 @dataclass
@@ -337,6 +363,8 @@ class PerceptionBaselineNode(Node):
         self.bbox_buffer = TimestampBuffer(self.sync_queue_size)
         self.keypoints_buffer = TimestampBuffer(self.sync_queue_size)
         self.latest_stream_stamp_ns = {}
+        self._output_latencies: List[float] = []
+        self._last_latency_log_ns: Optional[int] = None
         self.sensor_epoch = 0
         self.epoch_start_ros_time_ns: Optional[int] = None
         self.replay_guard_end_ros_time_ns: Optional[int] = None
@@ -424,6 +452,10 @@ class PerceptionBaselineNode(Node):
         self.declare_parameter("clip_projected_points_to_image", False)
         self.declare_parameter("output_cones_topic", "/cones")
         self.declare_parameter("output_frame", "base_footprint")
+        # Seconds between end-to-end latency summaries for the output topic;
+        # 0 disables. Cheap enough to leave on: it is one subtraction per
+        # publish and one log line per period.
+        self.declare_parameter("latency_log_period_sec", 5.0)
         self.declare_parameter("motion_compensation_frame", "map")
         self.declare_parameter("marker_scale", 0.35)
         self.declare_parameter("sync_tolerance_sec", 0.15)
@@ -559,6 +591,18 @@ class PerceptionBaselineNode(Node):
         self.declare_parameter("fused_variance_y", 0.04)
         self.declare_parameter("range_variance_scale", 0.0005)
         self.declare_parameter("min_variance", 1.0e-4)
+        # A vision cone's error is an ellipse along the line of sight, not the
+        # circle the per-tier variances above describe.  These three pixel
+        # sigmas generate that ellipse at whatever range the cone is actually
+        # at, replacing the constants for the tiers that can derive it.
+        self.declare_parameter("honest_vision_covariance", True)
+        self.declare_parameter("sigma_u_px", 3.0)
+        self.declare_parameter("sigma_h_px", 4.0)
+        self.declare_parameter("sigma_d_px", 0.25)
+        # The monocular tier runs on the smallest boxes the detector emits, and
+        # its bbox centre is measurably worse there than the stereo tier's.
+        self.declare_parameter("monocular_sigma_u_px", 10.0)
+        self.declare_parameter("horizontal_clip_sigma_u_px", 30.0)
         # LiDAR clusters that never matched a camera detection (out of camera
         # FOV, occluded, or a YOLO miss) are still published as unknown-color
         # cones so SLAM/planning can see them. They carry no color and a larger
@@ -594,6 +638,9 @@ class PerceptionBaselineNode(Node):
         )
         self.output_cones_topic = self.get_parameter("output_cones_topic").value
         self.output_frame = self.get_parameter("output_frame").value
+        self.latency_log_period_sec = float(
+            self.get_parameter("latency_log_period_sec").value
+        )
         self.motion_compensation_frame = str(
             self.get_parameter("motion_compensation_frame").value
         ).strip()
@@ -850,6 +897,18 @@ class PerceptionBaselineNode(Node):
         self.fused_variance_y = float(self.get_parameter("fused_variance_y").value)
         self.range_variance_scale = float(self.get_parameter("range_variance_scale").value)
         self.min_variance = float(self.get_parameter("min_variance").value)
+        self.honest_vision_covariance = self._as_bool(
+            self.get_parameter("honest_vision_covariance").value
+        )
+        self.sigma_u_px = float(self.get_parameter("sigma_u_px").value)
+        self.sigma_h_px = float(self.get_parameter("sigma_h_px").value)
+        self.sigma_d_px = float(self.get_parameter("sigma_d_px").value)
+        self.monocular_sigma_u_px = float(
+            self.get_parameter("monocular_sigma_u_px").value
+        )
+        self.horizontal_clip_sigma_u_px = float(
+            self.get_parameter("horizontal_clip_sigma_u_px").value
+        )
         self.publish_unmatched_lidar_clusters = self._as_bool(
             self.get_parameter("publish_unmatched_lidar_clusters").value
         )
@@ -973,6 +1032,11 @@ class PerceptionBaselineNode(Node):
             ("fused_variance_y", self.fused_variance_y),
             ("range_variance_scale", self.range_variance_scale),
             ("min_variance", self.min_variance),
+            ("sigma_u_px", self.sigma_u_px),
+            ("sigma_h_px", self.sigma_h_px),
+            ("sigma_d_px", self.sigma_d_px),
+            ("monocular_sigma_u_px", self.monocular_sigma_u_px),
+            ("horizontal_clip_sigma_u_px", self.horizontal_clip_sigma_u_px),
         )
         for name, value in finite_parameters:
             if not math.isfinite(value):
@@ -1202,6 +1266,18 @@ class PerceptionBaselineNode(Node):
                 raise ValueError(f"{name} must be positive")
         if self.range_variance_scale < 0.0:
             raise ValueError("range_variance_scale must not be negative")
+        # A zero pixel sigma claims a perfect measurement, which would hand
+        # SLAM an infinitely trusted cone.  Reject it at startup rather than
+        # let min_variance quietly paper over it per cone.
+        for name, value in (
+            ("sigma_u_px", self.sigma_u_px),
+            ("sigma_h_px", self.sigma_h_px),
+            ("sigma_d_px", self.sigma_d_px),
+            ("monocular_sigma_u_px", self.monocular_sigma_u_px),
+            ("horizontal_clip_sigma_u_px", self.horizontal_clip_sigma_u_px),
+        ):
+            if value <= 0.0:
+                raise ValueError(f"{name} must be positive")
 
     def _validate_time_parameters(self) -> None:
         if (
@@ -3241,6 +3317,16 @@ class PerceptionBaselineNode(Node):
                         camera_to_base,
                         source="stereo_rektnet_pnp_sift",
                         support_count=estimate.match_count,
+                        vision_measurement=self._vision_measurement(
+                            relative_depth_sigma=stereo_relative_depth_sigma(
+                                estimate.depth_m,
+                                float(camera_matrix[0, 0]),
+                                stereo_context.baseline_m,
+                                self.sigma_d_px,
+                            ),
+                            sigma_u_px=self.sigma_u_px,
+                            camera_matrix=camera_matrix,
+                        ),
                     )
                     if cluster is not None:
                         assignments.append(
@@ -3355,8 +3441,9 @@ class PerceptionBaselineNode(Node):
         camera_to_base: np.ndarray,
         source: str,
     ) -> Optional[Assignment]:
+        bbox_height_px = detection.ymax - detection.ymin
         depth = monocular_depth_from_bbox(
-            detection.ymax - detection.ymin,
+            bbox_height_px,
             float(camera_info.height),
             coefficient=self.monocular_depth_coefficient,
             exponent=self.monocular_depth_exponent,
@@ -3367,6 +3454,15 @@ class PerceptionBaselineNode(Node):
             or depth > self.monocular_max_depth_m
         ):
             return None
+        # A side-clipped cone keeps its full pixel height, so its depth is as
+        # good as any other monocular cone -- but the bbox centre is pulled
+        # inward by the missing side, which biases the bearing and nothing
+        # else.  That is a wider sigma_u, not a wider ellipse everywhere.
+        sigma_u_px = (
+            self.horizontal_clip_sigma_u_px
+            if source == "monocular_horizontal_clip"
+            else self.monocular_sigma_u_px
+        )
         cluster = self._visual_cluster(
             detection,
             depth,
@@ -3374,6 +3470,15 @@ class PerceptionBaselineNode(Node):
             camera_to_base,
             source=source,
             support_count=1,
+            vision_measurement=self._vision_measurement(
+                relative_depth_sigma=monocular_relative_depth_sigma(
+                    bbox_height_px,
+                    self.monocular_depth_exponent,
+                    self.sigma_h_px,
+                ),
+                sigma_u_px=sigma_u_px,
+                camera_matrix=camera_matrix,
+            ),
         )
         if cluster is None:
             return None
@@ -3518,6 +3623,7 @@ class PerceptionBaselineNode(Node):
         camera_to_base: np.ndarray,
         source: str,
         support_count: int,
+        vision_measurement: Optional[VisionMeasurement] = None,
     ) -> Optional[Cluster]:
         center_u = 0.5 * (detection.xmin + detection.xmax)
         center_v = 0.5 * (detection.ymin + detection.ymax)
@@ -3557,6 +3663,7 @@ class PerceptionBaselineNode(Node):
             indices=np.empty((0,), dtype=np.int64),
             source=source,
             support_count=int(support_count),
+            vision_measurement=vision_measurement,
         )
 
     def _project_points(self, points_camera: np.ndarray, camera_info: CameraInfo) -> np.ndarray:
@@ -4026,6 +4133,14 @@ class PerceptionBaselineNode(Node):
         cone.point.y = float(cluster.centroid_base[1])
         cone.point.z = 0.0
 
+        # A vision tier derives its covariance from what it measured, so the
+        # per-tier constants below are only for the LiDAR tiers and for the
+        # honest_vision_covariance:=false escape hatch.
+        ellipse = self._vision_covariance(cluster)
+        if ellipse is not None:
+            cone.covariance = ellipse
+            return cone
+
         source_variances = {
             "sparse": (self.sparse_variance_x, self.sparse_variance_y),
             "monocular": (
@@ -4058,6 +4173,66 @@ class PerceptionBaselineNode(Node):
             max(var_y, self.min_variance),
         ]
         return cone
+
+    def _vision_measurement(
+        self,
+        relative_depth_sigma: Optional[float],
+        sigma_u_px: float,
+        camera_matrix: np.ndarray,
+    ) -> Optional[VisionMeasurement]:
+        """Bundle a vision tier's error model, or None if it is unusable.
+
+        Failing closed here costs only the honest ellipse: the cone still
+        publishes, with the tier's legacy isotropic variance.
+        """
+        if relative_depth_sigma is None or not math.isfinite(relative_depth_sigma):
+            return None
+        fx_px = float(camera_matrix[0, 0])
+        if not math.isfinite(fx_px) or fx_px <= 0.0:
+            return None
+        return VisionMeasurement(
+            relative_depth_sigma=float(relative_depth_sigma),
+            sigma_u_px=float(sigma_u_px),
+            fx_px=fx_px,
+        )
+
+    def _vision_covariance(self, cluster: Cluster) -> Optional[List[float]]:
+        """Line-of-sight error ellipse for a vision cone.
+
+        Both sigmas are proportional to range: the bearing one because a pixel
+        subtends a widening arc, the depth one because the fractional error is
+        what the measurement bounds.  Working in the fraction keeps this valid
+        after the optical-depth -> ground-range projection, which the tiers have
+        already applied by the time the cluster arrives.
+        """
+        measurement = cluster.vision_measurement
+        if measurement is None or not self.honest_vision_covariance:
+            return None
+        range_m = float(cluster.range_m)
+        if not math.isfinite(range_m) or range_m <= 0.0:
+            return None
+
+        sigma_lon = range_m * measurement.relative_depth_sigma
+        sigma_lat = range_m * measurement.sigma_u_px / measurement.fx_px
+        covariance = bearing_aligned_covariance(
+            float(cluster.centroid_base[0]),
+            float(cluster.centroid_base[1]),
+            sigma_lon,
+            sigma_lat,
+        )
+        if covariance is None:
+            return None
+        xx, xy, yx, yy = covariance
+        # Clamp the diagonal only.  Scaling the off-diagonal to match would
+        # rotate the ellipse; leaving it and letting the floor lift the axes
+        # keeps the orientation and can only make the matrix rounder, which is
+        # the safe direction for an optimizer that believes what it is told.
+        return [
+            max(xx, self.min_variance),
+            xy,
+            yx,
+            max(yy, self.min_variance),
+        ]
 
     def _append_cone_by_color(
         self,
@@ -4278,8 +4453,57 @@ class PerceptionBaselineNode(Node):
         self._publish_cones(normalized)
 
     def _publish_cones(self, msg: ConeArrayWithCovariance) -> None:
+        self._record_output_latency(msg.header.stamp)
         self.cones_pub.publish(msg)
         self.cones_viz_pub.publish(self._cones_to_markers(msg, self.marker_scale))
+
+    def _record_output_latency(self, stamp) -> None:
+        """Log end-to-end age of the data in /cones: now - header.stamp.
+
+        The header carries the BBOX CAPTURE time, so this is the whole
+        pipeline's latency -- detector, sync, fusion -- as the planner
+        experiences it, not this node's compute time.  Latency is a stated
+        priority for this stack and nothing else measures it.
+        """
+        if self.latency_log_period_sec <= 0.0:
+            return
+        clock = self.get_clock()
+        now_ns = int(clock.now().nanoseconds)
+        # Before the first /clock message sim time is 0, which would report the
+        # stamp itself as the latency.
+        if now_ns <= 0:
+            return
+        stamp_ns = int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
+        latency_sec = (now_ns - stamp_ns) / 1e9
+        self._output_latencies.append(latency_sec)
+
+        if self._last_latency_log_ns is None:
+            self._last_latency_log_ns = now_ns
+            return
+        elapsed_sec = (now_ns - self._last_latency_log_ns) / 1e9
+        # A clock jump backwards (bag loop, sim reset) would otherwise park this
+        # until sim time caught back up.
+        if elapsed_sec < 0.0:
+            self._last_latency_log_ns = now_ns
+            self._output_latencies.clear()
+            return
+        if elapsed_sec < self.latency_log_period_sec:
+            return
+
+        samples = sorted(self._output_latencies)
+        self._last_latency_log_ns = now_ns
+        self._output_latencies.clear()
+        if not samples:
+            return
+        mean = sum(samples) / len(samples)
+        p90 = samples[min(len(samples) - 1, int(0.9 * len(samples)))]
+        self.get_logger().info(
+            f"{self.output_cones_topic} latency (now - bbox stamp): "
+            f"mean {1000.0 * mean:.0f} ms  p90 {1000.0 * p90:.0f} ms  "
+            f"max {1000.0 * samples[-1]:.0f} ms  "
+            f"over {len(samples)} msgs / {elapsed_sec:.1f} s "
+            f"({len(samples) / elapsed_sec:.1f} Hz)"
+        )
 
     @staticmethod
     def _viz_topic_for(topic: str) -> str:

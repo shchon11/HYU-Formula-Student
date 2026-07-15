@@ -153,6 +153,86 @@ def monocular_depth_from_bbox(
     return depth if _positive_finite(depth) else None
 
 
+def monocular_relative_depth_sigma(
+    bbox_height_px: float,
+    exponent: float,
+    sigma_h_px: float,
+) -> Optional[float]:
+    """
+    Fractional depth uncertainty of the bbox-height curve, ``sigma_D / D``.
+
+    Differentiating ``D = c * h_n^e`` gives ``sigma_D/D = |e| * sigma_h/h``
+    directly, so no distance model is needed: the pixel height is itself the
+    measurement.  ``c`` cancels, which is why this survives a re-fit of the
+    coefficient -- only the exponent matters.
+    """
+    if not all(_finite(value) for value in (bbox_height_px, exponent, sigma_h_px)):
+        return None
+    if bbox_height_px <= 0.0 or sigma_h_px < 0.0:
+        return None
+    return abs(float(exponent)) * float(sigma_h_px) / float(bbox_height_px)
+
+
+def stereo_relative_depth_sigma(
+    depth_m: float,
+    fx_px: float,
+    baseline_m: float,
+    sigma_d_px: float,
+) -> Optional[float]:
+    """
+    Fractional depth uncertainty of a disparity measurement, ``sigma_D / D``.
+
+    ``D = fx*B/d`` gives ``sigma_D = D^2 * sigma_d / (fx*B)``, so the fraction
+    is ``D * sigma_d / (fx*B)`` -- linear in depth, because disparity shrinks
+    as the cone recedes and a fixed pixel error is then a larger share of it.
+    """
+    values = (depth_m, fx_px, baseline_m, sigma_d_px)
+    if not all(_finite(value) for value in values):
+        return None
+    if depth_m <= 0.0 or fx_px <= 0.0 or baseline_m <= 0.0 or sigma_d_px < 0.0:
+        return None
+    return float(depth_m) * float(sigma_d_px) / (float(fx_px) * float(baseline_m))
+
+
+def bearing_aligned_covariance(
+    x_m: float,
+    y_m: float,
+    sigma_lon_m: float,
+    sigma_lat_m: float,
+) -> Optional[Tuple[float, float, float, float]]:
+    """
+    Build a 2x2 covariance whose axes follow the line of sight to ``(x, y)``.
+
+    A vision tier's error is not axis-aligned: it is weak *along* the ray
+    (depth) and strong *across* it (bearing).  Rotating ``diag(lon^2, lat^2)``
+    by the bearing states that honestly, which an axis-aligned matrix cannot do
+    for a cone off the camera's centreline.
+
+    Returns ``(xx, xy, yx, yy)`` in eufs_msgs/ConeWithCovariance order.
+    """
+    values = (x_m, y_m, sigma_lon_m, sigma_lat_m)
+    if not all(_finite(value) for value in values):
+        return None
+    if sigma_lon_m < 0.0 or sigma_lat_m < 0.0:
+        return None
+    # A cone at the origin has no defined bearing; fall back to an isotropic
+    # matrix rather than letting atan2(0, 0) pick an arbitrary axis.
+    if math.hypot(float(x_m), float(y_m)) <= 0.0:
+        isotropic = max(float(sigma_lon_m), float(sigma_lat_m)) ** 2
+        return (isotropic, 0.0, 0.0, isotropic)
+
+    theta = math.atan2(float(y_m), float(x_m))
+    cos_t, sin_t = math.cos(theta), math.sin(theta)
+    var_lon = float(sigma_lon_m) ** 2
+    var_lat = float(sigma_lat_m) ** 2
+    xx = var_lon * cos_t * cos_t + var_lat * sin_t * sin_t
+    yy = var_lon * sin_t * sin_t + var_lat * cos_t * cos_t
+    xy = (var_lon - var_lat) * sin_t * cos_t
+    if not all(_finite(value) for value in (xx, xy, yy)):
+        return None
+    return (xx, xy, xy, yy)
+
+
 def classify_cone_condition(
     bbox: Sequence[float],
     image_size: Sequence[int],

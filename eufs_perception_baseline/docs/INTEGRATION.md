@@ -90,11 +90,16 @@ arrays — note the *normals* array is unit vectors and will mislead you — wit
 | small cone | 0.270 × **0.450** m | 0.228 × 0.325 m |
 | big orange | 0.261 × **0.5255** m | 0.285 × 0.505 m |
 
-The simulator's small cone is **38 % taller** than the competition spec. PnP
-depth scales linearly with the template, so using spec values here would
-under-read small-cone depth by ~28 % — and small cones are 94 % of instances.
-**If you port this to the real car, you must swap these** for the competition
-cone (`standard_cone_*`, `big_cone_*` in the config).
+The simulator's small cone is **38 % taller** than the FS-AI spec. PnP depth
+scales linearly with the template, so using spec values here would under-read
+small-cone depth by ~28 % — and small cones are 94 % of instances.
+
+> **Do NOT "correct" these to the 0.325 m spec cone when porting to the real
+> car.** An earlier version of this document said to. **This team's real cone
+> is 450 mm**, the same as the simulator's, so every cone-derived constant
+> (`standard_cone_*`, `big_cone_*`, the mono curve, the stereo disparity prior)
+> transfers unchanged — a rare piece of luck. Swapping in 0.325 would break the
+> pipeline, not fix it. Confirm your own cone before trusting either number.
 
 ### The cone is a square pyramid
 
@@ -129,19 +134,38 @@ On this simulator's ZED it **overestimates depth by ~50 %** (a 10 m cone reads
 15.1 m), and the 30 m gate then silently truncates the map at ~20 m true range
 instead of raising an error.
 
-For a pinhole camera and a rigid cone the law is exact:
+For a pinhole camera and a rigid cone the law looks exact:
 
 ```
 h_px = fy · H_cone / D    ⇒    D = (fy · H_cone / H_img) · h_n^-1
 ```
 
-With `fy = 448.13 px` (1280×720, 110° HFOV) and the measured 0.450 m cone:
-**c = 0.2801, e = −1.0**. The exponent is −1 exactly because the simulated camera
-is undistorted; the paper's −0.954 absorbs their real lens and mounting.
+With `fy = 448.13 px` (1280×720, 110° HFOV) and the measured 0.450 m cone that
+gives **c = 0.2801, e = −1.0** (`fit_mono_depth_curve.py --analytic
+--cone-height 0.450`), and −1 exactly, because the simulated camera is
+undistorted.
 
-Reproduce with `scripts/fit_mono_depth_curve.py --analytic --cone-height 0.450`.
-On real hardware, re-fit empirically against `/ground_truth/cones` (the `--bag`
-path in that script is a **stub** — it is not implemented).
+**That argument is sound about the lens and wrong about the pipeline**: it
+assumes the detector's box is exact, and it is not. Pairing projected
+ground-truth cones with the detector's own boxes (n=2745, small_track) shows
+the box tracks the cone up close but falls **~17–20 % short past 6 m**. A short
+box reads as a distant cone, so depth is over-estimated:
+
+| curve | mean | median | p90 |
+|---|---|---|---|
+| analytic `0.2801 / −1.0` | 17.60 % | 11.44 % | 50.06 % |
+| **fitted `0.5575 / −0.7555`** (shipped) | **7.00 %** | 4.42 % | 19.71 % |
+
+So it is the **detector's range-dependent box bias**, not the lens, that bends
+the exponent off −1 — the same reason the paper carries −0.954.
+
+> These two constants are specific to this camera **and** this detector weight.
+> Re-fit on either change. This is the single most fragile thing in the
+> pipeline: one fit, from one run, on one track.
+
+On real hardware there is no ground truth — re-fit against **Tier-1 LiDAR depth**
+instead (0.85–1 % is a good enough reference). The `--bag` path in that script
+is a **stub** — it is not implemented; the shipped fit was done by hand.
 
 ### Bugs fixed along the way
 
@@ -248,13 +272,28 @@ Nothing here has run in the simulator. In priority order:
    ```bash
    ros2 run eufs_perception_baseline evaluate_perception_tiers.py --duration 60
    ```
-   This reproduces the paper's Table 1 metric (range error vs `/ground_truth/cones`)
-   and breaks it down by distance band, so you can see which tier is failing.
-   Compare against: LiDAR 0.85 %, mono 4.49 %, stereo 6.39 %.
+   This measures against `/ground_truth/track` — the *unfiltered* full track —
+   rather than `/ground_truth/cones`, which is itself FOV/range-filtered by the
+   simulated-perception plugin and would make a recall curve plot the
+   instrument's limit instead of the pipeline's. It reports range-binned
+   recall, FP rate, the lateral/longitudinal error split, time-to-confirm, and
+   the paper's Table 1 range error (LiDAR 0.85 %, mono 4.49 %, stereo 6.39 %).
 
-5. **Sanity-check the recalibrated mono curve on real data.** The `c = 0.2801,
-   e = −1.0` values are derived analytically, not fitted. If the >10 m band in
-   step 4 shows a systematic bias, re-fit.
+   Read the **covariance consistency** table first: `lat z^2` and `lon z^2`
+   should each average 1.0. Above 1.0 the tier is over-confident and will
+   corrupt the map, because the optimizer believes what it is told. Scale
+   `sigma_u_px` (lateral), `sigma_h_px` (mono depth) or `sigma_d_px` (stereo
+   depth) by the square root of the offending column.
+
+   The node also logs `/cones` end-to-end latency (`now - header.stamp`, i.e.
+   detector + sync + fusion) every `latency_log_period_sec`.
+
+5. **Sanity-check the recalibrated mono curve on real data.** `c = 0.5575,
+   e = -0.7555` are fitted to *this camera and this detector weight* on one
+   track, from one run — the single most fragile thing in the pipeline. Re-fit
+   on either change. If the >10 m band in step 4 shows a systematic bias,
+   re-fit. Only the exponent enters the covariance model, so a re-fit of `c`
+   alone leaves `sigma_h_px` valid.
 
 6. **Verify Tier-1 did not regress.** It was deliberately left untouched — it
    works because you launch with `bbox_source:=yolov8`, where the launch file

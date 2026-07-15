@@ -249,19 +249,40 @@ must describe the same physical setup.
 
 ## Covariance Policy
 
-Covariance is selected by the source that produced the 3D estimate:
+Two models, split by what the tier actually measured.
+
+**LiDAR tiers** report a near-isotropic constant, selected by source:
 
 - dense LiDAR-camera cluster: `fused_variance_x/y`
 - bbox-guided sparse LiDAR: `sparse_variance_x/y`
-- normalized-bbox mono: `monocular_variance_x/y`
-- horizontal-border mono recovery: `horizontal_clip_variance_x/y`
-- SIFT stereo: `stereo_variance_x/y`
+- LiDAR cluster the camera never confirmed: `lidar_only_variance_x/y`
 
-The configured range-dependent term is then added and the result is clamped by
-`min_variance`. Defaults intentionally assign more uncertainty to vision-only
-estimates than to LiDAR-supported estimates. They are initial variances in
-square metres, not measured sensor-noise guarantees, and must be tuned from
-recorded data before relying on them for competition SLAM.
+The configured range-dependent term (`range_variance_scale`) is then added and
+the result is clamped by `min_variance`. LiDAR ranges directly to ~1 %, so the
+circle these describe is roughly the truth.
+
+**Vision tiers** (mono, horizontal-clip mono, SIFT stereo) derive a
+bearing-aligned ellipse from the measurement instead, because their error is
+not isotropic and not axis-aligned:
+
+    sigma_lat = D * sigma_u_px / fx                  bearing; ~5 cm at 15 m
+    sigma_lon = |e| * sigma_h_px / h_px * D          mono; ~1.8 m at 15 m
+    sigma_lon = D^2 * sigma_d_px / (fx * B)          stereo
+    Sigma     = R(atan2(y, x)) @ diag(lon^2, lat^2) @ R(...).T
+
+The two axes differ by ~35x in sigma at 15 m, so a single number was
+simultaneously ~160x too pessimistic across the corridor and ~7x too optimistic
+along it. Cones lie *along* the track boundary, so the longitudinal error
+slides a cone on the boundary it already defines while the lateral error is
+what bends it -- reporting them separately is what lets SLAM
+(`use_cone_covariance`, full 2x2 landmark covariance) weight them apart, and is
+why the monocular tier no longer needs a bbox-height cut to hide its far cones.
+
+Three pixel sigmas (`sigma_u_px`, `sigma_h_px`, `sigma_d_px`) generate all of
+it, and are tuned against the per-tier `lat z^2` / `lon z^2` columns that
+`evaluate_perception_tiers.py` reports -- each should average 1.0. Set
+`honest_vision_covariance: false` to fall back to the retired per-tier
+constants for an A/B.
 
 ## Failure and Evidence Boundary
 

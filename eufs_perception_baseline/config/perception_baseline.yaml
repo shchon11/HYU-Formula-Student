@@ -48,6 +48,10 @@ perception_baseline_node:
     clip_bboxes_to_image: false
     clip_projected_points_to_image: false
     output_cones_topic: /cones
+    # Periodic "now - header.stamp" summary for /cones. The header carries the
+    # bbox capture time, so this is the whole pipeline's age as the planner
+    # sees it -- detector, sync and fusion included. 0 disables.
+    latency_log_period_sec: 5.0
     output_frame: base_footprint
     # Canonicalize cloud-time LiDAR points into bbox-time base_footprint.
     motion_compensation_frame: map
@@ -122,12 +126,83 @@ perception_baseline_node:
     # understates its true error will corrupt the map rather than just add
     # noise, because the optimizer will believe it.
     # Roughly: LiDAR (fused/sparse) << stereo < monocular.
+    #
+    # The variances below now apply to the LIDAR tiers only (fused, sparse,
+    # lidar_only, default). LiDAR measures range directly to ~1%, so its error
+    # really is the near-circle they describe. The VISION tiers derive their
+    # covariance from the measurement instead -- see honest_vision_covariance.
     default_variance_x: 0.04
     default_variance_y: 0.04
     fused_variance_x: 0.04
     fused_variance_y: 0.04
     range_variance_scale: 0.0005
     min_variance: 0.0001
+
+    # --- VISION COVARIANCE: report the ellipse, not a circle ---------------
+    # A vision cone's error splits into lateral (across the corridor) and
+    # longitudinal (along the line of sight), and they differ by ~1000x:
+    #
+    #   sigma_lat = D * sigma_u / fx                 bearing; 5 cm at 15 m
+    #   sigma_lon = |e| * sigma_h / h * D            mono; ~1.6 m at 15 m
+    #   sigma_lon = D^2 * sigma_d / (fx * B)         stereo
+    #
+    # Cones lie ALONG the track boundary, so a longitudinal error slides a cone
+    # back and forth on the boundary it already defines -- the boundary's shape
+    # barely moves. Reporting one isotropic number threw the good lateral
+    # information away to hide the bad longitudinal information; SLAM's
+    # use_cone_covariance + full 2x2 landmark covariance can weight them
+    # separately, so tell it the truth and let it do that.
+    #
+    # The ellipse is rotated to the bearing (its major axis is the ray, not x
+    # or y), which matters for any cone off the camera centreline.
+    #
+    # Set false to fall back to the per-tier constants below, which is the only
+    # way to A/B this against the old behaviour.
+    honest_vision_covariance: true
+    # Detector bbox centre noise, in px. Drives the lateral term of every
+    # vision tier. MEASURED on small_track: the stereo tier's lateral error
+    # implies 2.9 px (lat z^2 was 3.80 at the old 1.5, n=70, and stereo's
+    # errors are far inside the match radius so that number is not truncated).
+    # The monocular tier's near field independently implies 1.0-2.6 px. 3.0
+    # makes stereo land on 1.0 and leaves near-field mono slightly cautious,
+    # which is the safe direction.
+    # Valid only INSIDE monocular_min_bbox_height_px -- past that cliff the
+    # detector's bbox centre goes to 17-32 px, which is why the cut exists.
+    sigma_u_px: 3.0
+    # Detector bbox HEIGHT noise, in px. Drives the monocular depth term:
+    # sigma_D/D = |e|*sigma_h/h falls straight out of D = c*h_n^e, so this
+    # needs no distance model and does not move if c is re-fit -- only the
+    # exponent enters.
+    #
+    # 4.0, not the 1.5 the residual scatter alone implies, because the tier has
+    # a MEASURED -0.88 m range bias (mono lon mean -0.880, rms 1.216, n=75 on
+    # small_track): cones read systematically too close, so lon z^2 was 6.96 at
+    # sigma_h 1.5. This value inflates the noise to cover a bias, which is a
+    # patch, not a fix -- the fix is re-fitting c/e, which §7 of the roadmap
+    # already flags as one fit from one run on one track. Until then, covering
+    # the real error is the safe direction; understating it corrupts the map.
+    sigma_h_px: 4.0
+    # Disparity noise, in px, AFTER averaging the SIFT matches -- so it is an
+    # effective per-cone sigma, not a single-match one. Shipped as a guess and
+    # then MEASURED on small_track: lon z^2 came out 0.96 (n=70) against a
+    # target of 1.0, so the guess was right. Left alone.
+    sigma_d_px: 0.25
+    # The monocular tier runs on the smallest boxes the detector emits, right
+    # up against the cliff described at monocular_min_bbox_height_px, so its
+    # bbox centre is measurably worse than the stereo tier's: lat z^2 was 10.71
+    # at sigma_u 3.0 (n=75), implying ~10 px. That agrees with the by-band
+    # probe, which put the 8.8-10 m band at 13.6 px -- the 16 px gate is 10.2 m,
+    # so the top of the tier's range already sits in the cliff's shoulder.
+    # Tightening the gate to ~19 px would move it out, at the cost of the
+    # 8.7-10.2 m band where recall is still 85%. Reporting the wider sigma is
+    # the cheaper trade.
+    monocular_sigma_u_px: 10.0
+    # A side-clipped cone keeps its full pixel height, so its DEPTH is normal;
+    # only the bbox centre is pulled inward by the missing side. That is a
+    # biased bearing and nothing else, so it widens sigma_u alone rather than
+    # the whole ellipse. ~30 px at 448 px fx is ~0.7 m of lateral slop at 10 m,
+    # which is what the retired horizontal_clip_variance_x encoded.
+    horizontal_clip_sigma_u_px: 30.0
 
     # LiDAR clusters that never matched a camera detection (out of camera FOV,
     # occluded, or a YOLO miss) are still published as unknown-color cones so
@@ -214,11 +289,33 @@ perception_baseline_node:
     # monocular estimate.
     monocular_allowed_colors: "blue,yellow,orange"
     # Tier-2 range cut, expressed in the only quantity available before the
-    # curve runs. 16 px is 10 m ON THE CURVE BELOW -- re-derive it if c/e change
-    # (h = 720*(D/c)^(1/e)), because the px<->m mapping moves with them.
-    # A cone past the cut is DROPPED, not demoted to stereo: stereo costs a SIFT
-    # pass per cone, and routing every far cone there was measured to burn 287%
-    # CPU in this node and collapse /cones to ~1 Hz.
+    # curve runs (h = 720*(D/c)^(1/e) maps px to m, and moves with c/e).
+    #
+    # KEPT AT 16 px, and it is NOT the heuristic it looks like. The plan was to
+    # delete it once cones carried an honest ellipse -- the argument being that
+    # the cut threw away a far cone's GOOD lateral bearing (~5 cm at 15 m) to
+    # avoid its BAD longitudinal depth. Measured on small_track, that argument
+    # is false FOR THIS DETECTOR. Lateral error vs range, by band:
+    #
+    #   <= 8.8 m     implied sigma_u   1.0 - 2.6 px    <- the model holds
+    #   8.8 - 10 m   implied sigma_u   13.6 px
+    #   10 - 20 m    implied sigma_u   17 - 32 px      <- 15-30x worse
+    #
+    # The bearing does not stay good. It collapses at ~9 m, in one 1.25 m band,
+    # and 9 m is where the cone is ~18 px tall at 720p -- i.e. ~9 px at the
+    # detector's imgsz:640 input, about one stride-8 cell. The cut sits on a
+    # real cliff in the detector, not on an arbitrary number.
+    #
+    # Past the cut a cone's true lateral error is 0.3-1.0 m while the ellipse
+    # would claim ~5 cm: 60x+ over-confident, which corrupts the map rather
+    # than just adding noise. So the cone is DROPPED, and dropped rather than
+    # demoted to stereo, because stereo costs a SIFT pass per cone and routing
+    # every far cone there was measured to burn 287% CPU and collapse /cones to
+    # ~1 Hz.
+    #
+    # To actually reach past 10 m, raise the DETECTOR's input resolution
+    # (imgsz 640 -> 960/1280) and re-measure the cliff -- then re-derive this.
+    # Re-derive per camera AND per detector weight regardless.
     monocular_min_bbox_height_px: 16.0
     # Fitted against ground truth on small_track (n=2745 bbox/cone pairs), NOT
     # the analytic pinhole curve. The analytic c=0.2801, e=-1.0 is exact only if
@@ -239,6 +336,11 @@ perception_baseline_node:
     horizontal_clip_fallback_enabled: false
     horizontal_clip_min_probability: 0.70
     horizontal_clip_min_bbox_height_px: 20.0
+    # Only used when honest_vision_covariance is false. Kept so the old
+    # behaviour stays reachable for an A/B, not because these numbers are
+    # right: a 14 m monocular cone's true error is ~4.7 cm lateral by ~1.6 m
+    # longitudinal, so 0.35 is 160x over-pessimistic across the corridor and 7x
+    # over-optimistic along it, at the same time.
     horizontal_clip_variance_x: 0.70
     horizontal_clip_variance_y: 1.40
     monocular_variance_x: 0.35
@@ -300,6 +402,7 @@ perception_baseline_node:
     stereo_ratio_threshold: 0.75
     # The IIT evaluation found the single best SIFT pair most accurate.
     stereo_min_matches: 1
+    # Only used when honest_vision_covariance is false; see sigma_d_px.
     stereo_variance_x: 0.50
     stereo_variance_y: 0.50
 

@@ -12,6 +12,29 @@ several of those turned out to be wrong for this car.
 
 ---
 
+## 0. What the pipeline is actually for
+
+Stated by the team, and worth writing down because this document twice argued
+against it without noticing:
+
+> LiDAR clusters are the **backbone**. Fused with a camera detection they carry a
+> colour; unfused they still publish as `unknown_color`. A cone the **camera sees
+> but LiDAR does not cluster** gets a position estimate **only at a range where
+> that estimate is trustworthy**. The trade being bought is **latency and
+> robustness**.
+
+So the vision tiers are a *bounded extension* of a LiDAR backbone, not a second
+opinion that should reach as far as the camera can see. Two consequences that
+§4 got wrong until it was measured:
+
+- **`monocular_min_bbox_height_px` IS the "trustworthy range" boundary.** It is
+  the design, not a heuristic to be optimised away. §4 Step 3 proposed deleting
+  it; measurement put it back (see there).
+- **`/cones` is paced by the LiDAR, by construction.** Its information rate
+  cannot exceed the LiDAR's 10 Hz, because the backbone updates at 10 Hz.
+  Publishing faster would republish the same clusters with only the vision cones
+  moving. See §6b.
+
 ## 1. The problem, restated
 
 Not *"estimate far cones precisely"* but:
@@ -35,10 +58,10 @@ barely moves. "The track turns left up ahead" is therefore already accurate at
 15–20 m, with the depth we have today. There is much less to fix than the raw
 range RMSE suggests.
 
-This is why the current `monocular_min_bbox_height_px: 16.0` hard cut is the
-wrong shape of answer: it throws away the good lateral information to avoid the
-bad longitudinal information. The right answer is to **report both honestly and
-let SLAM weight them** — see §3.
+This is why the `monocular_min_bbox_height_px: 16.0` hard cut was the wrong
+shape of answer: it threw away the good lateral information to avoid the bad
+longitudinal information. The right answer is to **report both honestly and let
+SLAM weight them** — see §3. Both landed; see §4 Steps 2–3.
 
 ---
 
@@ -126,11 +149,16 @@ ground truth. Adding stamp matching moved every tier:
 Monocular barely moved, which is what identified it as a real error rather than
 a timing artefact — and led to §2.1.
 
-**Still open:** `/ground_truth/cones` is itself FOV/range-filtered by the
-simulated-perception plugin (`cameraFOV`, `lidar*ViewDistance`), which this
-session narrowed to 12 m camera / 15 m lidar. So false positives and misses
-against it are not trustworthy, and **a recall curve measured against it would
-plot the instrument's limit, not the pipeline's**. See §4 Step 1.
+**Fixed (§4 Step 1), unmeasured:** `/ground_truth/cones` is itself
+FOV/range-filtered by the simulated-perception plugin (`cameraFOV`,
+`lidar*ViewDistance`), which this session narrowed to 12 m camera / 15 m lidar.
+So false positives and misses against it are not trustworthy, and **a recall
+curve measured against it would plot the instrument's limit, not the
+pipeline's**. The evaluator now measures against `/ground_truth/track` under a
+gate we control.
+
+The tier numbers in the table above therefore predate the new instrument and
+are **not** directly comparable to what it will print.
 
 ---
 
@@ -188,69 +216,209 @@ anisotropic axis-aligned covariance would be wrong.
 **Therefore:** the proposal's "lateral strong, longitudinal weak" EKF needs *no
 new code*. It needs perception to stop lying. SLAM already does the rest.
 
+> Implemented in §4 Step 2. One caveat on the numbers above: **1160:1 is a
+> variance ratio**; the σ ratio is √1280 ≈ 36:1, which is what the shipped
+> defaults reproduce (σ_lat 5.0 cm, σ_lon 1.84 m at 15 m).
+
 ---
 
 ## 4. Plan
 
 Ordered by (robustness gained) / (cost), and by dependency.
 
-### Step 1 — fix the instrument (½ day)
+### Step 1 — fix the instrument — **IMPLEMENTED, NOT YET RUN**
 
 Nothing below can be judged without this.
 
-- **Truth source**: `/ground_truth/cones` → `/ground_truth/track`. The latter is
-  the unfiltered full track (`getConeArraysMessage()`, no `processCones()`).
-  It publishes in `map` (`<trackFrame>map</trackFrame>`); the plugin also
-  supports `base_footprint`, but **nothing else in the workspace subscribes to
-  `/ground_truth/track`**, so either changing the xacro or transforming in the
-  evaluator via ego odom is safe. Transforming in the evaluator is preferred —
-  no shared-config side effects.
-- **Metrics**: range RMSE → **range-binned recall**, **FP rate**,
-  **lateral/longitudinal split**, **time-to-confirm**.
-- **Latency probe**: log `now − header.stamp` at `/cones` publish. There is
-  **no end-to-end latency instrumentation at all today**, which is untenable
-  when latency is a stated priority.
+- **Truth source**: `/ground_truth/cones` → `/ground_truth/track`, the
+  unfiltered full track (`getConeArraysMessage()`, no `processCones()`).
+  Transformed in the evaluator rather than by flipping `<trackFrame>`, so no
+  other consumer's semantics change.
+- **Metrics**: range-binned recall, FP rate, lateral/longitudinal split,
+  time-to-confirm — plus **covariance consistency**, which was not in the
+  original plan and turned out to be the acceptance test Steps 2–3 needed.
+- **Latency probe**: `_record_output_latency` in the node logs
+  `now − header.stamp` at `/cones` publish every `latency_log_period_sec`.
+
+What the implementation had to add beyond the plan:
+
+- **A visibility gate is mandatory, not optional.** The full track includes
+  every cone on the lap, so without one, recall is ~5 %. The gate
+  (`--fov-deg 110 --max-range 20`) is now *ours*: explicit, printed with the
+  results, and tunable. That is the actual fix — §2.4's complaint was never
+  "cones is filtered", it was "filtered by something we don't control".
+- **Truth outside the gate is excluded, not counted as an FP.** An estimate
+  that lands on a real cone at 21 m is not a false positive; it is a real cone
+  we did not require. Without this, widening the gate manufactures FPs.
+- **Time-to-confirm needs a stable cone identity, and it cannot be a position.**
+  Cones are physics objects: the car knocks them and they move, and the plugin
+  reports each cone's live `link->WorldPose()`, so the truth correctly follows a
+  displaced cone. That means a position hash mints a new identity every time a
+  cone is nudged, and a rolling cone becomes a new "cone" every frame. The key
+  is the cone's **index** in the plugin's fixed link ordering instead, which
+  survives the motion. The evaluator warns if the track's cone count ever
+  changes, since that is the one thing that would break the index.
+  Identity is unavailable against a base_footprint truth topic either way, and
+  the evaluator says so rather than reporting nonsense.
+- The truth frame is read from `header.frame_id`, so `--truth-topic
+  /ground_truth/cones` still works for comparison against the old numbers.
+
+`/ground_truth/odom` (200 Hz, `map`→`base_footprint`) supplies the transform.
+Not `/odometry_integration/car_state`, which is deliberately drifted
+(`driftOdometry: true`). Matched by stamp, since `/cones` is stamped at bbox
+capture and trails sim time.
 
 Note the sim camera's far clip is **20 m** — that is a hard ceiling on any
-recall curve measured in sim.
+recall curve measured in sim, and it is the evaluator's default `--max-range`.
 
-### Step 2 — honest covariance (~40 lines, ½ day) — best value
+### Step 2 — honest covariance — **IMPLEMENTED, NOT YET RUN**
 
-```python
-sigma_lat = D * sigma_u_px / fx                  # bearing, linear in D
-sigma_lon = abs(e) * sigma_h_px * D / h_px       # mono: h is already known
-sigma_lon = D**2 * sigma_d_px / (fx * B)         # stereo
-theta = atan2(y, x)
-Sigma = R(theta) @ diag(sigma_lon**2, sigma_lat**2) @ R(theta).T
-```
+Geometry in `fusion_core` (`monocular_relative_depth_sigma`,
+`stereo_relative_depth_sigma`, `bearing_aligned_covariance` — pure, no ROS);
+`_cluster_to_cone` in the node stays the single covariance site.
 
-Note the monocular form needs **no distance model** — `h_px` is the measurement
-itself, so `σ_D/D = |e|·σ_h/h` falls straight out of the curve. Three
-constants (`sigma_u_px`, `sigma_h_px`, `sigma_d_px`) replace six hand-tuned
-per-tier variance pairs, which is more robust, not less.
+Both tiers work in the **fraction** `σ_D/D`, not in absolute σ_D. That is what
+makes the model survive the optical-depth → ground-range projection the tiers
+have already applied by the time `_cluster_to_cone` sees the cluster: a
+fraction is dimensionless, so `σ_lon = range_m · (σ_D/D)` is valid in
+`base_footprint` without re-deriving anything.
+
+Deviations from the plan as written, and why:
+
+- **Vision tiers only.** The plan said three constants replace *six* per-tier
+  pairs. They replace three (mono, horizontal-clip, stereo). LiDAR keeps its
+  constants: it ranges directly to ~1 % (§2.4), so its error genuinely is a
+  near-circle, and forcing it into a bearing model would need a fourth constant
+  to say the same thing.
+- **`horizontal_clip` widens `sigma_u_px` only** (30 px), not the whole
+  ellipse. A side-clipped cone keeps its full pixel height, so its *depth* is a
+  normal monocular estimate; only the bbox centre is pulled inward. That is a
+  biased bearing and nothing else. 30 px ≈ 0.7 m at 10 m, which is what the
+  retired `horizontal_clip_variance_x: 0.70` encoded.
+- **`min_variance` clamps the diagonal only.** Scaling the off-diagonal to
+  match would rotate the ellipse off the bearing; letting the floor lift the
+  axes can only make it rounder, which is the safe direction.
+- **Fails closed to the legacy constant, never drops the cone** — an all-NaN
+  camera matrix (what `_camera_matrix` returns for malformed `CameraInfo`)
+  costs the ellipse, not the detection.
+- **`honest_vision_covariance: false`** restores the old behaviour, because
+  without it there is no way to A/B this.
+
+`sigma_d_px: 0.25` is a **placeholder** — the one number here with no
+measurement behind it. It predicts 7.0 % depth error at 15 m and 2.8 % at 6 m,
+against a measured stereo mean of 1.39 %, so it is likely over-pessimistic; but
+the measured figure is aggregated over n≈24 cones at unknown ranges, which is
+not enough to fit against. Step 1's `lon z^2` column for
+`stereo_rektnet_pnp_sift` is exactly the missing measurement.
 
 `min_observation_variance: 0.01` in SLAM is a sanity floor and will clamp the
 lateral term at short range. That is fine and intended.
 
-Verify with `evaluate_slam.py` map RMSE.
+**Acceptance:** `lat z^2` and `lon z^2` ≈ 1.0 per tier, then `evaluate_slam.py`
+map RMSE.
 
-### Step 3 — remove the 16 px cut
+### Step 3 — remove the 16 px cut — **ATTEMPTED, THEN REVERTED BY MEASUREMENT**
 
-Once Step 2 lands, the hard cut is redundant: far cones can be published with
-an honest ellipse and SLAM will use the lateral component and ignore the
-longitudinal one.
+The cut stays at 16 px. Step 1 falsified the premise this step rests on.
 
-**Acceptance:** 15 m recall goes up **and** SLAM map RMSE does not get worse. If
-it gets worse, the covariance is still lying.
+§1 argues a far cone's bearing is good (`σ_lat = Z·σ_u/fx` = 4.7 cm at 15 m) and
+only its depth is bad, so the cut throws away good information. That is true of
+an *ideal detector*. Measured on small_track, it is false of **this** detector —
+monocular lateral error, binned by range, implied `σ_u`:
 
-### Step 4 — detection ceiling (1 day)
+| band | implied σ_u |
+|---|---|
+| ≤ 8.8 m | **1.0 – 2.6 px** ← the model holds exactly |
+| 8.8 – 10 m | 13.6 px |
+| 10 – 20 m | **17 – 32 px** ← 15–30× worse |
+
+The bearing does not stay good. It **collapses at ~9 m**, inside one 1.25 m
+band, and the cliff survives both a 1.0 m and a 2.0 m match radius, so it is not
+an association artefact. 9 m is where the cone is ~18 px tall at 720p — about
+**9 px at the detector's `imgsz: 640` input, roughly one stride-8 cell**.
+
+So the 16 px cut was never the arbitrary heuristic this document called it: it
+sits on a real cliff in the detector. Removing it publishes cones whose true
+lateral error is 0.3–1.0 m carrying a covariance claiming ~5 cm — 60×+
+over-confident, which is precisely the "corrupt the map rather than just add
+noise" failure §2.4's config comment warns about.
+
+Direct evidence that the cut is doing this job: restoring it dropped the
+monocular tier's `lat z^2` from **260 → 10.7** with no other change. It removes
+exactly the population whose bearing has collapsed.
+
+**Step 4 is the prerequisite for Step 3, not the other way round.** Raise the
+detector's input resolution, re-measure the cliff, then re-derive the cut.
+
+### Step 2/3 — what the numbers came out at
+
+`evaluate_perception_tiers.py --duration 60`, small_track, driving ~6 m/s.
+Covariance consistency (1.0 = honest, >1 over-confident, <1 wasteful):
+
+| tier | n | lat z² | lon z² | NEES/2 |
+|---|---|---|---|---|
+| monocular *(before: σ_u 1.5, σ_h 1.5, no cut)* | 159 | 260.23 | 4.47 | **138.58** |
+| **monocular** *(after)* | 178 | 2.00 | 0.84 | **1.43** |
+| **stereo_rektnet_pnp_sift** | 130 | 1.83 | 0.53 | **1.11** |
+| lidar | 227 | 0.07 | 0.09 | 0.08 |
+| sparse | 66 | 0.08 | 0.10 | 0.09 |
+
+Both vision tiers now sit within ~2× of honest, and conservative in depth. What
+the constants cost to get there:
+
+- **`sigma_d_px: 0.25`** — shipped as an admitted guess, measured `lon z² 0.96`
+  first time out. It was right. Untouched.
+- **`sigma_u_px: 1.5 → 3.0`** — from the stereo tier, whose errors sit far
+  inside the match radius and so are not truncated by it.
+- **`monocular_sigma_u_px: 10.0`** — a *fourth* constant, against this plan's
+  "three constants replace six". The monocular tier works the smallest boxes
+  the detector emits, right against the cliff, and measures ~10 px where stereo
+  measures ~3. One constant cannot span that; pretending otherwise is the same
+  mistake as the isotropic circle, one level up.
+- **`sigma_h_px: 1.5 → 4.0`** — **this one is a patch, not a fix.** The tier has
+  a measured **−0.88 m range bias** (`lon mean −0.880`, rms 1.216): cones read
+  systematically too close. 4.0 inflates noise to cover a bias. The real fix is
+  re-fitting `c`/`e` (§7 already flags the fit as one run, one track). Until
+  then, covering the true error is the safe direction.
+
+Recall inside the gate (110°, 0.5–20 m), FP 6.3 % of published cones:
+
+| band | 2.5–5 | 5–7.5 | 7.5–10 | 10–12.5 | 12.5–15 | 15–17.5 |
+|---|---|---|---|---|---|---|
+| recall | 95.4 % | 87.3 % | 85.3 % | 62.1 % | 14.4 % | 2.4 % |
+
+Recall falls off a cliff at the same ~10 m as the bearing does. **The detector,
+not depth, is the far-cone ceiling** — Step 4's hypothesis, now measured.
+
+**Still not run:** `evaluate_slam.py` map RMSE.
+
+### Step 4 — detection ceiling (1 day) — **NOW THE TOP PRIORITY, AND CONFIRMED**
+
+This was ranked fourth on a guess. Step 1 measured it and it is the binding
+constraint: it gates Step 3, and it caps recall past 10 m at ≤14 %.
 
 `imgsz: 640` on 720p halves the image: a 14 m cone is **~6 px** at the network's
-input. The ceiling on far cones may be the **detector's input resolution, not
-depth**. Compare 640 / 960 / 1280 (and a horizon-band 2-pass) on Step 1's recall
-curve. Sim has GPU headroom (12–18 %).
+input. The ceiling on far cones is the **detector's input resolution, not
+depth** — confirmed by two independent signatures landing at the same ~9–10 m:
+the bearing cliff (§Step 3) and the recall cliff (§Step 2/3), both where the
+cone crosses ~8–9 px at the network input, i.e. one stride-8 cell.
 
-### Step 5 — ZNCC cross-check replaces SIFT (2–3 days)
+Note the cliff hits **bearing**, not just depth — which is what breaks §1's
+argument. This was not anticipated anywhere in this document.
+
+Compare 640 / 960 / 1280 (and a horizon-band 2-pass) on Step 1's recall curve
+**and** on the `implied σ_u` by-band table. Sim has GPU headroom (12–18 %).
+Then re-derive `monocular_min_bbox_height_px` and `monocular_sigma_u_px`, both
+of which are detector properties and both of which will move.
+
+### Step 5 — ZNCC cross-check replaces SIFT (2–3 days) — **NOW A THROUGHPUT FIX**
+
+Filed here as a robustness/cross-check improvement. Measured (§6b), it is what
+stands between `/cones` and the sensor rate: the fusion node burns **200–235 %
+CPU** and publishes at **4.0 Hz against an 8.8 Hz input, with ~0.8 s of
+latency**, because n=130 cones/run now reach Tier 3's per-crop SIFT. §2.2 called
+this a latency bomb; it has gone off under normal driving.
+
 
 Swap the SIFT block inside `estimate_rektnet_stereo_depth`. On a rectified pair
 SIFT's invariances solve a problem that does not exist: scale differs ~1 %,
@@ -303,7 +471,8 @@ piece of luck.
 
 Because cone height matches, `INTEGRATION.md`'s warning to *"replace with the
 0.325 competition cone before running on the real car"* **does not apply to this
-team** and will break the pipeline if followed. It should be corrected.
+team** and will break the pipeline if followed. **Corrected** — that section now
+says the opposite, and says why.
 
 LiDAR's geometric limit, recomputed with our 0.54 m mount and 0.45 m cone (VLP-16,
 2° vertical spacing): 2.6° elevation span at 10 m (1–2 channels), 1.7° at 15 m
@@ -324,9 +493,16 @@ measured tier distribution, where the 10–15 m band is monocular-dominated.
 | far clip | 20 m | n/a |
 
 Only two things must be redone on the car: **re-fit the mono curve** and
-**re-derive the px gate** (if it still exists after Step 3). The §2.1 procedure
-transfers, except there is no ground truth on the car — use **Tier-1 LiDAR
-depth as the reference** instead (0.85–1 % is a good enough baseline).
+**re-derive the px gate** (Step 3 set it to 0 but kept the parameter for
+exactly this). The §2.1 procedure transfers, except there is no ground truth on
+the car — use **Tier-1 LiDAR depth as the reference** instead (0.85–1 % is a
+good enough baseline).
+
+The covariance model transfers better than the curve does: only the **exponent**
+enters it, so re-fitting `c` alone leaves `sigma_h_px` valid. `sigma_u_px` and
+`sigma_d_px` are detector/matcher properties, not camera ones, but `fx` and `B`
+are read from `camera_info` and the TF at runtime, so the ellipse rescales to
+the real camera on its own.
 
 On Orin: the proposal's resource split (GPU for YOLO, depth on CPU) is right,
 with one caveat — perception here is **Python/rclpy**, so intra-process
@@ -339,8 +515,88 @@ before committing. ZNCC is the safe default until then.
 
 ---
 
+## 6b. Rate and latency — measured, and it is not where §2.2/§2.3 looked
+
+Goal: **`/cones` should publish at the sensor input rate.** Per §0 that means
+the **LiDAR's 10 Hz**, not the camera's: LiDAR clusters are the backbone, so the
+backbone's rate is the pipeline's rate. Fusion requires a one-to-one bbox/LiDAR
+pair, so `/cones` cannot structurally exceed 10 Hz today. A 30 Hz `/cones` would
+need the vision tiers decoupled from the LiDAR frame — which is a different
+pipeline from the one §0 describes, and would republish identical clusters
+between LiDAR frames.
+
+Measured by tagging
+each hop with the image-capture stamp it carries, so `now − stamp` at each hop
+is that hop's cumulative age (`--duration 30`, driving):
+
+| hop | rate | age | stamps passed on |
+|---|---|---|---|
+| `/zed/left/image_rect_color` | 8.8 Hz | −30 ms | — |
+| `/yolo_bounding_boxes` | **8.8 Hz** | **−28 ms** | 84 % of images |
+| `/velodyne_points` | 10.0 Hz | −94 ms | — |
+| **`/cones`** | **4.0 Hz** | **785 ms** | **44 % of boxes** |
+
+(Ages are negative because sim `/clock` ticks at 7.9 Hz, so a subscriber's clock
+lags the stamps by up to one 126 ms tick. It biases every row equally.)
+
+**YOLO is not the bottleneck** — it tracks the camera at ~0 added latency. The
+fusion node is: it halves the rate and adds ~0.8 s, and it does so at **200–235 %
+CPU**. That is §2.2's bomb going off. That section said Tier 3's SIFT cost was
+"masked: in normal routing only n≈24 cones/run reach Tier 3… a latency bomb
+waiting for conditions that send more cones there." A 60 s driving run puts
+**n=130** through the stereo tier. The conditions arrived.
+
+So **`/cones` cannot reach the sensor rate until Step 5 lands** (ZNCC is 1–3 ms
+where SIFT is 150–300 ms). Step 5 is a throughput fix, not the accuracy fix this
+document files it as.
+
+Two things measured along the way, both worth knowing:
+
+- **The cameras miss their requested rate**: 15 Hz asked, ~8.8 Hz achieved, while
+  the LiDAR hits its requested 10 Hz exactly. That mismatched drift is what
+  fails the "one-to-one bbox/LiDAR pair within 0.150 s" gate — the same
+  pathology §2.3 fixed for the ZED left/right pair, one level up.
+  **The request is not the lever, in either direction.** Asking for 10 Hz made
+  it *worse* (8.8 → 7.4 Hz). Asking for **30 Hz split the pair**: left 8.9 Hz,
+  right 17.2 Hz — §2.3's exact failure, re-armed, which would starve Tier 3
+  again. Both reverted; 15 stays because at 15 the two cameras at least land on
+  ~8.8 Hz *together*.
+  The GPU is not the constraint: gzserver renders on the RTX 4070 (confirmed via
+  `nvidia-smi`, 214 MiB, NVIDIA GL renderer) at ~150 % CPU with the GPU nearly
+  idle. **Gazebo Classic serialises every sensor on one render thread**, so the
+  two 1280×720 cameras and the 12 800-ray VLP-16 share it. Going faster means
+  removing work from that thread — camera resolution, LiDAR `samples`, or the
+  sensor count — not raising the number in the xacro. Note that cutting camera
+  resolution moves `fx`, the mono curve's `c`/`e`, and the px gate, and makes the
+  Step-4 far-cone problem worse, so it is not free.
+- **The ZED's `depth` sensor was rendering for nobody.** A second full 1280×720
+  pass plus a point cloud, with `/zed/depth/image_raw`, `/zed/points` and
+  `/zed/image_raw` all measured at **0 subscribers** while the real perception
+  stack ran. Now behind `depth:=false` in `zed.urdf.xacro`; confirmed to remove
+  the sensor and its six topics, with the stack unaffected.
+  **Its effect on the camera rate is UNMEASURED.** By the time it landed the host
+  no longer matched the baseline: the LiDAR, which none of this touches, was
+  reading 6.6 Hz against its own 10 Hz request (baseline: 10.0), so the camera
+  numbers were not comparable to the table above. The change stands on "nothing
+  consumes it", not on a measured speed-up. Re-measure on a quiet host, and
+  **use the LiDAR's achieved rate as the control** — if it is not at 10.0 Hz,
+  the run says nothing about the cameras.
+
 ## 7. Open
 
+- **`evaluate_slam.py` map RMSE has not been run.** The covariance is honest per
+  §4; whether the map got better is still unverified.
+- **`/cones` is at 4 Hz against a 10 Hz backbone, with ~0.8 s of latency**, and
+  the cause is measured: Tier 3 SIFT at 200–235 % CPU (§6b). This is the largest
+  open item and it is Step 5.
+- **The monocular tier has a −0.88 m range bias.** `sigma_h_px: 4.0` currently
+  covers it with noise. Re-fit `c`/`e` and drop `sigma_h_px` back to the
+  residual scatter (~1.5).
+- **`monocular_sigma_u_px: 10.0` is a symptom, not a property.** It is large
+  because the 16 px gate (10.2 m) reaches into the detector's cliff, which
+  starts at ~8.8 m. Step 4 moves the cliff; then both numbers move.
+- Everything measured here is **small_track, one host, driving ~6 m/s**. The
+  §2.1 warning applies to the whole §4 table, not just the curve.
 - `/cones` under-curves the skidpad left circle (`log_planner_diagnostics: true`
   is temporarily on in `local_planner_skidpad.yaml` for this; remove when done).
 - Colour-correct varies 54–95 % run to run. SLAM's `voteLandmarkColor` should

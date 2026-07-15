@@ -1,36 +1,59 @@
 #!/usr/bin/env python3
-"""Measure per-tier depth error against simulator ground truth.
+"""Measure what the perception pipeline puts on the map, against the full track.
 
-Reproduces the IIT Bombay paper's Table 1 with this stack's own numbers, so the
-tiers can be compared on the same footing the paper used:
+This answers the question the stack actually cares about:
 
-    LiDAR-camera fusion       0.85 %   (paper)
-    Monocular bbox-height     4.49 %
-    Stereo slender-bbox SIFT  6.39 %
-    Mono + stereo routed      3.38 %
+    Get every cone the camera can see into the map early, with no false
+    positives, at a position good enough to plan on.
 
-How it works
-------------
-`/cones` carries the fused estimate but not which tier produced each cone, so
-this subscribes to the fusion debug stream alongside it:
+which is a recall/FP/covariance question, not a range-RMSE one.  Range error is
+still reported (the paper's Table 1 metric), but it is no longer the headline:
+a cone's error splits into LATERAL (across the corridor) and LONGITUDINAL
+(along the line of sight), and only the lateral part moves the track boundary.
+Those are reported separately.
 
-    /cones                       final cone positions, base_footprint
-    /fusion/debug/cone_tiers     one marker per published cone, ns = the tier
-                                 that produced it, at the SAME position (needs
-                                 publish_fusion_debug:=true)
-    /ground_truth/cones          true cone positions, base_footprint
+Why not /ground_truth/cones
+---------------------------
+`/ground_truth/cones` is itself FOV/range-filtered by the simulated-perception
+plugin (`cameraFOV`, `lidar*ViewDistance`).  Recall measured against it plots
+THE INSTRUMENT'S LIMIT, NOT THE PIPELINE'S, and a real detection outside that
+filter counts as a false positive.
 
-Cones are attributed to a tier by matching the cone_tiers marker sitting on the
-same position, so one run gives the per-tier breakdown; no A/B runs needed.
+So this uses `/ground_truth/track`: the unfiltered full track, every cone in the
+world.  The catch is that it publishes in `map` (the car's SPAWN pose, not the
+Gazebo origin), so it is transformed into `base_footprint` here using
+`/ground_truth/odom` -- matched by stamp, because `/cones` is stamped at bbox
+capture and trails sim time by the detector's latency.
 
-Each published cone is matched to its nearest ground-truth cone (greedy, gated
-by --match-radius). Unmatched cones are counted as false positives, and truths
-with no cone within the gate as misses, because a tier that simply drops hard
-cones would otherwise look artificially accurate.
+Visibility gate
+---------------
+The full track includes cones behind the car, so a gate is needed or every cone
+on the lap counts as a miss.  Unlike the plugin's, this gate is OURS: explicit,
+logged, and tunable, so the recall curve is a statement about the pipeline
+inside a stated envelope.  Defaults are the sim camera's 110 deg HFOV and its
+**20 m far clip**, which is a hard ceiling on any recall curve measured in sim.
+
+An estimate that matches a real cone OUTSIDE the gate is neither a hit nor a
+false positive -- it is a real cone we simply did not require.  It is excluded,
+so widening the gate cannot manufacture false positives.
+
+Covariance consistency
+----------------------
+The headline check for the honest-covariance work.  For each matched cone the
+error is rotated into the bearing frame and normalized by the reported sigma:
+
+    (lat_err / sigma_lat)^2   should average 1.0
+    (lon_err / sigma_lon)^2   should average 1.0
+    NEES = e^T Sigma^-1 e     should average 2.0 (2 DOF)
+
+Above 1.0 the tier is over-confident and will corrupt the map, because the
+optimizer believes what it is told.  Below 1.0 it is over-cautious and is
+throwing information away.  These numbers are what `sigma_u_px`, `sigma_h_px`
+and `sigma_d_px` are tuned against.
 
 Usage
 -----
-Run the simulator with perception and debug enabled, drive a lap, then:
+Run the sim with perception and debug enabled, drive a lap, then:
 
     ros2 run eufs_perception_baseline evaluate_perception_tiers.py --duration 60
 
@@ -49,6 +72,7 @@ try:
     from rclpy.node import Node
     from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
     from eufs_msgs.msg import ConeArrayWithCovariance
+    from nav_msgs.msg import Odometry
     from visualization_msgs.msg import Marker, MarkerArray
 except ImportError:
     sys.exit(
@@ -68,7 +92,11 @@ CONE_FIELDS = (
 
 
 def cones_of(msg):
-    """Flatten a ConeArrayWithCovariance into [(x, y, colour, variance), ...]."""
+    """Flatten a ConeArrayWithCovariance into [(x, y, colour, covariance), ...].
+
+    ``covariance`` is the full [xx, xy, yx, yy], because a vision cone's error
+    is an ellipse and its off-diagonal is the whole point.
+    """
     out = []
     for field, colour in CONE_FIELDS:
         for cone in getattr(msg, field, []):
@@ -79,9 +107,11 @@ def cones_of(msg):
             # "truth value is ambiguous", so test it by length, not truthiness.
             raw_cov = getattr(cone, "covariance", None)
             covariance = (
-                list(raw_cov) if raw_cov is not None and len(raw_cov) else [0.0]
+                [float(v) for v in raw_cov]
+                if raw_cov is not None and len(raw_cov) == 4
+                else None
             )
-            out.append((x, y, colour, float(covariance[0])))
+            out.append((x, y, colour, covariance))
     return out
 
 
@@ -99,6 +129,41 @@ def nearest_by_stamp(buffer, target_ns):
     return best, best_d
 
 
+def yaw_of(quaternion):
+    """Yaw from a geometry_msgs quaternion; the track is planar."""
+    x, y, z, w = (
+        float(quaternion.x),
+        float(quaternion.y),
+        float(quaternion.z),
+        float(quaternion.w),
+    )
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+def map_to_base(cones, pose):
+    """Express map-frame cones in base_footprint, given the car's map pose.
+
+    Returns ``(truths, keys)``.  ``keys`` identifies each cone across frames,
+    which is what makes "when was this cone first seen vs first mapped"
+    answerable.
+
+    The key is the cone's INDEX, not its position. Cones are physics objects --
+    the car knocks them and they move, and the plugin reports their live
+    ``WorldPose()`` -- so a position hash would mint a new identity every time a
+    cone was nudged, and a rolling cone would become a new "cone" every frame.
+    The plugin walks the track model's links in a fixed order and packs them
+    into per-colour arrays, so the flattened index is stable and survives the
+    cone moving.
+    """
+    car_x, car_y, car_yaw = pose
+    cos_y, sin_y = math.cos(-car_yaw), math.sin(-car_yaw)
+    truths = []
+    for x, y, colour, _cov in cones:
+        dx, dy = x - car_x, y - car_y
+        truths.append((dx * cos_y - dy * sin_y, dx * sin_y + dy * cos_y, colour))
+    return truths, list(range(len(truths)))
+
+
 def tier_at(tiers, ex, ey, eps=0.05):
     """Tier whose cone_tiers marker sits on this estimate.
 
@@ -113,52 +178,145 @@ def tier_at(tiers, ex, ey, eps=0.05):
     return best
 
 
-def greedy_match(estimates, truths, radius, tiers=()):
-    """Pair each estimate with its nearest unused truth inside ``radius``."""
-    pairs, misses = [], []
+def error_split(ex, ey, tx, ty):
+    """Split an estimate's error into (longitudinal, lateral) about the truth.
+
+    Longitudinal runs along the line of sight to the true cone; lateral runs
+    across it.  Signed, so a bias shows up as a non-zero mean rather than
+    averaging into the noise.
+    """
+    theta = math.atan2(ty, tx)
+    dx, dy = ex - tx, ey - ty
+    lon = dx * math.cos(theta) + dy * math.sin(theta)
+    lat = -dx * math.sin(theta) + dy * math.cos(theta)
+    return lon, lat
+
+
+def covariance_along_bearing(covariance, x, y):
+    """Reported (sigma_lon, sigma_lat) for a cone at (x, y).
+
+    Rotates the reported 2x2 into the bearing frame, which is where the tier's
+    error model actually lives.
+    """
+    if covariance is None:
+        return None
+    xx, xy, _yx, yy = covariance
+    if not all(math.isfinite(v) for v in (xx, xy, yy)):
+        return None
+    theta = math.atan2(y, x)
+    cos_t, sin_t = math.cos(theta), math.sin(theta)
+    # u = (cos, sin) is the line of sight; v = (-sin, cos) is across it.
+    var_lon = xx * cos_t * cos_t + 2.0 * xy * cos_t * sin_t + yy * sin_t * sin_t
+    var_lat = xx * sin_t * sin_t - 2.0 * xy * sin_t * cos_t + yy * cos_t * cos_t
+    if var_lon <= 0.0 or var_lat <= 0.0:
+        return None
+    return math.sqrt(var_lon), math.sqrt(var_lat)
+
+
+def nees(covariance, dx, dy):
+    """Normalized estimation error squared: e^T Sigma^-1 e. Should average 2."""
+    if covariance is None:
+        return None
+    xx, xy, _yx, yy = covariance
+    det = xx * yy - xy * xy
+    if not math.isfinite(det) or det <= 0.0:
+        return None
+    # Inverse of a 2x2, written out; e^T Sigma^-1 e.
+    value = (yy * dx * dx - 2.0 * xy * dx * dy + xx * dy * dy) / det
+    return value if math.isfinite(value) and value >= 0.0 else None
+
+
+class Visibility:
+    """The envelope this run holds the pipeline to."""
+
+    def __init__(self, args):
+        self.half_fov = math.radians(args.fov_deg) / 2.0
+        self.min_range = args.min_range
+        self.max_range = args.max_range
+
+    def sees(self, x, y):
+        rng = math.hypot(x, y)
+        if not (self.min_range <= rng <= self.max_range):
+            return False
+        return abs(math.atan2(y, x)) <= self.half_fov
+
+
+def greedy_match(estimates, truths, radius, visibility, tiers=()):
+    """Pair each estimate with its nearest unused truth inside ``radius``.
+
+    ``truths`` is the FULL track in base_footprint, so an estimate can pair
+    with a cone outside the visibility gate.  That is deliberate: such a pair
+    is excluded rather than counted as a false positive.
+    """
+    pairs, false_positives, excluded = [], 0, 0
     taken = set()
-    for ex, ey, ecolour, evar in estimates:
+    for ex, ey, ecolour, ecov in estimates:
         best, best_d2 = None, radius * radius
-        for index, (tx, ty, tcolour) in enumerate(truths):
+        for index, (tx, ty, _tcolour) in enumerate(truths):
             if index in taken:
                 continue
             d2 = (ex - tx) ** 2 + (ey - ty) ** 2
             if d2 <= best_d2:
                 best, best_d2 = index, d2
         if best is None:
-            misses.append((ex, ey, ecolour))
+            # Matched no real cone at all: a genuine false positive.
+            false_positives += 1
             continue
         taken.add(best)
         tx, ty, tcolour = truths[best]
+        if not visibility.sees(tx, ty):
+            excluded += 1
+            continue
+        lon_err, lat_err = error_split(ex, ey, tx, ty)
+        sigmas = covariance_along_bearing(ecov, ex, ey)
         pairs.append({
+            "truth_index": best,
             "est_range": math.hypot(ex, ey),
             "true_range": math.hypot(tx, ty),
-            "lateral_err": math.hypot(ex - tx, ey - ty),
+            "lon_err": lon_err,
+            "lat_err": lat_err,
+            "sigma_lon": sigmas[0] if sigmas else None,
+            "sigma_lat": sigmas[1] if sigmas else None,
+            "nees": nees(ecov, ex - tx, ey - ty),
             "colour_ok": ecolour == tcolour,
-            "variance": evar,
             "tier": tier_at(tiers, ex, ey),
         })
-    unseen = len(truths) - len(taken)
-    return pairs, misses, unseen
+    return pairs, false_positives, excluded
 
 
 class TierEvaluator(Node):
     def __init__(self, args):
         super().__init__("evaluate_perception_tiers")
         self.args = args
+        self.visibility = Visibility(args)
         self.samples = []
         self.false_positives = 0
-        self.missed_truths = 0
+        self.excluded_out_of_gate = 0
+        self.estimates_seen = 0
         self.frames = 0
         # /cones is stamped at BBOX CAPTURE time, which trails the simulator's
         # ground truth by the detector's latency (~0.5 s). Comparing it against
         # the NEWEST truth measures how far the car drove in between, not
-        # perception error -- so buffer truth by stamp and match on it.
+        # perception error -- so buffer truth and odom by stamp and match on it.
         self.truth_buffer = deque(maxlen=600)
+        self.odom_buffer = deque(maxlen=4000)   # 200 Hz needs a deeper buffer
         self.tier_buffer = {}
         self.tier_order = deque(maxlen=600)
         self.skews = []
         self.dropped_no_truth = 0
+        self.dropped_no_odom = 0
+        # Recall per range band, and time-to-confirm. Truth cones are static in
+        # map, so their map coordinates are a stable identity across frames --
+        # which is what makes "when was this cone first seen vs first mapped"
+        # answerable at all.
+        self.visible_by_band = defaultdict(int)
+        self.hit_by_band = defaultdict(int)
+        self.first_visible_ns = {}
+        self.first_matched_ns = {}
+        # Index-as-identity holds only while the track's cone count is fixed.
+        # If it ever changes, every index past the change refers to a different
+        # cone and time-to-confirm is silently wrong -- so watch for it.
+        self.truth_counts = set()
 
         sensor_qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
@@ -169,13 +327,16 @@ class TierEvaluator(Node):
             ConeArrayWithCovariance, args.truth_topic,
             self._on_truth, sensor_qos)
         self.create_subscription(
+            Odometry, args.odom_topic, self._on_odom, sensor_qos)
+        self.create_subscription(
             ConeArrayWithCovariance, args.cones_topic,
             self._on_cones, sensor_qos)
         self.create_subscription(
             MarkerArray, args.tiers_topic, self._on_tiers, sensor_qos)
         self.get_logger().info(
             f"comparing {args.cones_topic} against {args.truth_topic}; "
-            f"match radius {args.match_radius} m"
+            f"match radius {args.match_radius} m; visibility gate "
+            f"{args.fov_deg:.0f} deg, {args.min_range}-{args.max_range} m"
         )
 
     def _on_tiers(self, msg):
@@ -196,118 +357,264 @@ class TierEvaluator(Node):
         while len(self.tier_buffer) > self.tier_order.maxlen:
             self.tier_buffer.pop(self.tier_order.popleft(), None)
 
-    def _on_truth(self, msg):
-        self.truth_buffer.append((
+    def _on_odom(self, msg):
+        pose = msg.pose.pose
+        self.odom_buffer.append((
             stamp_ns(msg),
-            [(x, y, colour) for x, y, colour, _ in cones_of(msg)],
+            (float(pose.position.x), float(pose.position.y),
+             yaw_of(pose.orientation)),
         ))
+
+    def _on_truth(self, msg):
+        # Trust the message's own frame rather than a flag: /ground_truth/track
+        # is map, /ground_truth/cones is already base_footprint, and this script
+        # should stay usable against either.
+        self.truth_buffer.append(
+            (stamp_ns(msg), msg.header.frame_id, cones_of(msg))
+        )
+
+    def _truth_in_base(self, target_ns):
+        """Full track in base_footprint at the /cones stamp.
+
+        Returns ``(truths, keys, skew)``; ``keys`` is None when the truth topic
+        is already base_footprint, because a cone's position in a moving frame
+        is not an identity and time-to-confirm cannot be computed from it.
+        """
+        entry, skew = nearest_by_stamp(
+            [(s, (f, c)) for s, f, c in self.truth_buffer], target_ns)
+        if entry is None or skew > self.args.max_stamp_skew_sec * 1e9:
+            self.dropped_no_truth += 1
+            return None, None, None
+        frame, cones = entry
+        if frame != "map":
+            return [(x, y, c) for x, y, c, _ in cones], None, skew
+        pose, odom_skew = nearest_by_stamp(self.odom_buffer, target_ns)
+        if pose is None or odom_skew > self.args.max_stamp_skew_sec * 1e9:
+            self.dropped_no_odom += 1
+            return None, None, None
+        truths, keys = map_to_base(cones, pose)
+        self.truth_counts.add(len(truths))
+        return truths, keys, skew
 
     def _on_cones(self, msg):
         estimates = cones_of(msg)
         if not estimates:
             return
         target = stamp_ns(msg)
-        truth, skew = nearest_by_stamp(self.truth_buffer, target)
-        if truth is None or skew > self.args.max_stamp_skew_sec * 1e9:
-            self.dropped_no_truth += 1
+        truth, keys, skew = self._truth_in_base(target)
+        if truth is None:
             return
         self.skews.append(skew / 1e9)
-        pairs, misses, unseen = greedy_match(
-            estimates, truth, self.args.match_radius,
+
+        pairs, false_positives, excluded = greedy_match(
+            estimates, truth, self.args.match_radius, self.visibility,
             self.tier_buffer.get(target, []))
         self.samples.extend(pairs)
-        self.false_positives += len(misses)
-        self.missed_truths += unseen
+        self.false_positives += false_positives
+        self.excluded_out_of_gate += excluded
+        self.estimates_seen += len(estimates)
         self.frames += 1
+        self._account_recall(truth, keys, pairs, target)
+
+    def _account_recall(self, truth, keys, pairs, target_ns):
+        """Recall and time-to-confirm, per truth cone this frame."""
+        hit = {p["truth_index"] for p in pairs}
+        for index, (tx, ty, _colour) in enumerate(truth):
+            if not self.visibility.sees(tx, ty):
+                continue
+            band = self._band(math.hypot(tx, ty))
+            self.visible_by_band[band] += 1
+            if index in hit:
+                self.hit_by_band[band] += 1
+            if keys is None:
+                continue
+            key = keys[index]
+            self.first_visible_ns.setdefault(key, target_ns)
+            if index in hit:
+                self.first_matched_ns.setdefault(key, target_ns)
+
+    def _band(self, range_m):
+        width = self.args.band_m
+        return int(range_m // width) * width
 
     def report(self):
         if not self.samples:
-            print("\nNo matched cones. Check that perception is publishing and "
-                  "that the simulator's ground-truth cone topic is enabled.")
+            print("\nNo matched cones. Check that perception is publishing, "
+                  f"that {self.args.truth_topic} and {self.args.odom_topic} are "
+                  "live, and that the car has driven far enough for cones to "
+                  "enter the visibility gate.")
             return
 
-        print(f"\n{'=' * 62}")
+        print(f"\n{'=' * 66}")
         print(f"cone frames        {self.frames}")
         print(f"matched cones      {len(self.samples)}")
-        print(f"false positives    {self.false_positives}")
-        print(f"missed truths      {self.missed_truths}")
+        print(f"false positives    {self.false_positives} "
+              f"({100.0 * self.false_positives / max(1, self.estimates_seen):.1f} % "
+              f"of {self.estimates_seen} published cones)")
+        print(f"excluded           {self.excluded_out_of_gate} "
+              f"(real cones outside the gate -- not counted either way)")
         if self.skews:
-            print(f"stamp skew         mean {1000 * sum(self.skews) / len(self.skews):.1f} ms"
+            print(f"stamp skew         mean "
+                  f"{1000 * sum(self.skews) / len(self.skews):.1f} ms"
                   f"   max {1000 * max(self.skews):.1f} ms")
         if self.dropped_no_truth:
             print(f"frames dropped     {self.dropped_no_truth} "
                   f"(no truth within {self.args.max_stamp_skew_sec}s)")
+        if self.dropped_no_odom:
+            print(f"frames dropped     {self.dropped_no_odom} "
+                  f"(no odom within {self.args.max_stamp_skew_sec}s)")
 
-        # Depth error, which is what the paper's Table 1 reports.
-        errors = [
+        self._report_recall()
+        self._report_error_split()
+        self._report_covariance()
+        self._report_range_error()
+        self._report_time_to_confirm()
+
+        colour_ok = sum(1 for s in self.samples if s["colour_ok"])
+        print(f"\ncolour correct     "
+              f"{100.0 * colour_ok / len(self.samples):5.1f} %")
+        print(f"{'=' * 66}")
+        print(f"\nVisibility gate: {self.args.fov_deg:.0f} deg HFOV, "
+              f"{self.args.min_range}-{self.args.max_range} m. Recall is a "
+              f"statement about\nthe pipeline INSIDE this envelope. The sim "
+              f"camera's far clip is 20 m, which is a\nhard ceiling on any "
+              f"recall curve measured in sim.")
+        print("\nTier names: cluster/sparse = Tier 1 (LiDAR-camera), monocular* "
+              "= Tier 2,\n"
+              "stereo_rektnet_pnp_sift = Tier 3, lidar_only = LiDAR cluster the "
+              "camera never confirmed.")
+
+    def _report_recall(self):
+        print(f"\nrecall by range band (matched / visible truths):")
+        for band in sorted(self.visible_by_band):
+            visible = self.visible_by_band[band]
+            hits = self.hit_by_band.get(band, 0)
+            print(f"  {band:5.1f}-{band + self.args.band_m:5.1f} m   "
+                  f"n={visible:5d}   recall {100.0 * hits / visible:5.1f} %")
+
+    def _report_error_split(self):
+        # The reframing that matters: cones lie ALONG the boundary, so a
+        # longitudinal error slides a cone on the boundary it already defines
+        # and barely moves its shape. Lateral error is what bends the track.
+        print(f"\nposition error split (signed, m) -- lateral is what moves "
+              f"the boundary:")
+        print(f"  {'tier':26s} {'n':>5s} {'lat mean':>9s} {'lat rms':>8s} "
+              f"{'lon mean':>9s} {'lon rms':>8s}")
+        by_tier = defaultdict(list)
+        for s in self.samples:
+            by_tier[s["tier"]].append(s)
+        for tier in sorted(by_tier):
+            rows = by_tier[tier]
+            print(f"  {tier:26s} {len(rows):5d} "
+                  f"{_mean(r['lat_err'] for r in rows):9.3f} "
+                  f"{_rms(r['lat_err'] for r in rows):8.3f} "
+                  f"{_mean(r['lon_err'] for r in rows):9.3f} "
+                  f"{_rms(r['lon_err'] for r in rows):8.3f}")
+
+    def _report_covariance(self):
+        rows = [s for s in self.samples if s["nees"] is not None]
+        if not rows:
+            print("\ncovariance consistency: no cone carried a usable 2x2.")
+            return
+        print(f"\ncovariance consistency -- 1.0 is honest, >1 over-confident, "
+              f"<1 wasteful:")
+        print(f"  {'tier':26s} {'n':>5s} {'lat z^2':>8s} {'lon z^2':>8s} "
+              f"{'NEES/2':>8s}")
+        by_tier = defaultdict(list)
+        for s in rows:
+            by_tier[s["tier"]].append(s)
+        for tier in sorted(by_tier):
+            group = by_tier[tier]
+            lat_z = [
+                (r["lat_err"] / r["sigma_lat"]) ** 2
+                for r in group if r["sigma_lat"]
+            ]
+            lon_z = [
+                (r["lon_err"] / r["sigma_lon"]) ** 2
+                for r in group if r["sigma_lon"]
+            ]
+            print(f"  {tier:26s} {len(group):5d} "
+                  f"{_mean(lat_z):8.2f} {_mean(lon_z):8.2f} "
+                  f"{_mean(r['nees'] / 2.0 for r in group):8.2f}")
+        print("  (lat z^2 tunes sigma_u_px; lon z^2 tunes sigma_h_px for "
+              "monocular\n   and sigma_d_px for stereo -- scale each sigma by "
+              "sqrt of its column.)")
+
+    def _report_range_error(self):
+        # The paper's Table 1 metric, kept for comparability. It mixes the two
+        # error axes above into one number, which is why it is reported last.
+        errors = sorted(
             abs(s["est_range"] - s["true_range"]) / s["true_range"] * 100.0
             for s in self.samples if s["true_range"] > 0.1
-        ]
-        errors.sort()
-        colour_ok = sum(1 for s in self.samples if s["colour_ok"])
+        )
+        if not errors:
+            return
 
         def pct(p):
             return errors[min(len(errors) - 1, int(p / 100.0 * len(errors)))]
 
-        print(f"\nrange error vs ground truth (paper's metric):")
-        print(f"  mean    {sum(errors) / len(errors):6.2f} %")
-        print(f"  median  {pct(50):6.2f} %")
-        print(f"  p90     {pct(90):6.2f} %")
-        print(f"  max     {errors[-1]:6.2f} %")
-        print(f"\n  within  <5%   {100.0 * sum(1 for e in errors if e < 5) / len(errors):5.1f} %")
-        print(f"  within  <10%  {100.0 * sum(1 for e in errors if e < 10) / len(errors):5.1f} %")
-        print(f"  within  <20%  {100.0 * sum(1 for e in errors if e < 20) / len(errors):5.1f} %")
-        print(f"\ncolour correct    {100.0 * colour_ok / len(self.samples):5.1f} %")
-
-        # By range band: LiDAR carries the near field, vision the far field, so
-        # a single mean hides which tier is actually failing.
-        print(f"\nrange error by distance band:")
-        bands = defaultdict(list)
-        for s in self.samples:
-            if s["true_range"] <= 0.1:
-                continue
-            band = int(s["true_range"] // 5) * 5
-            err = abs(s["est_range"] - s["true_range"]) / s["true_range"] * 100.0
-            bands[band].append(err)
-        for band in sorted(bands):
-            values = bands[band]
-            print(f"  {band:2d}-{band + 5:2d} m   n={len(values):4d}   "
-                  f"mean {sum(values) / len(values):6.2f} %")
-
-        # Per-tier: the whole point. cone_tiers labels each published cone with
-        # the tier that produced it, so no A/B runs are needed.
+        print(f"\nrange error vs ground truth (the paper's metric):")
+        print(f"  mean {sum(errors) / len(errors):6.2f} %   "
+              f"median {pct(50):6.2f} %   p90 {pct(90):6.2f} %   "
+              f"max {errors[-1]:6.2f} %")
         print(f"\nrange error by tier:")
         by_tier = defaultdict(list)
         for s in self.samples:
             if s["true_range"] <= 0.1:
                 continue
             err = abs(s["est_range"] - s["true_range"]) / s["true_range"] * 100.0
-            by_tier[s.get("tier", "unattributed")].append(err)
-        if not by_tier or set(by_tier) == {"unattributed"}:
+            by_tier[s["tier"]].append(err)
+        if set(by_tier) == {"unattributed"}:
             print("  no tier labels received -- run the sim with "
                   "perception_publish_fusion_debug:=true")
         for tier in sorted(by_tier):
             values = sorted(by_tier[tier])
-            mean = sum(values) / len(values)
-            median = values[len(values) // 2]
-            p90 = values[min(len(values) - 1, int(0.9 * len(values)))]
-            print(f"  {tier:26s} n={len(values):4d}  mean {mean:6.2f} %  "
-                  f"median {median:6.2f} %  p90 {p90:6.2f} %")
+            print(f"  {tier:26s} n={len(values):4d}  "
+                  f"mean {sum(values) / len(values):6.2f} %  "
+                  f"median {values[len(values) // 2]:6.2f} %  "
+                  f"p90 {values[min(len(values) - 1, int(0.9 * len(values)))]:6.2f} %")
+        print(f"\n  paper Table 1: LiDAR-camera 0.85 %, monocular 4.49 %, "
+              f"stereo 6.39 %, routed 3.38 %")
 
-        print(f"\npaper Table 1 for reference:")
-        print(f"  LiDAR-camera fusion  0.85 %")
-        print(f"  monocular bb-height  4.49 %")
-        print(f"  stereo slender SIFT  6.39 %")
-        print(f"  mono + stereo routed 3.38 %")
-        print(f"{'=' * 62}")
-        print(f"\nNOTE: {self.args.truth_topic} is itself FOV/range-filtered by the "
-              "simulated-perception\nplugin (cameraFOV, lidar*ViewDistance), so a real "
-              "detection outside that filter\ncounts as a false positive here. Range error "
-              "on matched cones is unaffected.")
-        print("\nTier names: cluster/sparse = Tier 1 (LiDAR-camera), monocular* "
-              "= Tier 2,\n"
-              "stereo_rektnet_pnp_sift = Tier 3, lidar_only = LiDAR cluster the "
-              "camera never confirmed.")
+    def _report_time_to_confirm(self):
+        deltas = [
+            (self.first_matched_ns[k] - self.first_visible_ns[k]) / 1e9
+            for k in self.first_matched_ns
+            if k in self.first_visible_ns
+        ]
+        confirmed, visible = len(self.first_matched_ns), len(self.first_visible_ns)
+        print(f"\ntime to confirm (first visible -> first mapped):")
+        if not visible:
+            print(f"  needs a map-frame truth topic for a stable cone "
+                  f"identity; {self.args.truth_topic} publishes in "
+                  f"base_footprint.")
+            return
+        if not deltas:
+            print("  no cone was both seen and mapped.")
+            return
+        deltas.sort()
+        print(f"  cones ever mapped  {confirmed}/{visible} "
+              f"({100.0 * confirmed / visible:.1f} %)")
+        print(f"  median {deltas[len(deltas) // 2]:5.2f} s   "
+              f"p90 {deltas[min(len(deltas) - 1, int(0.9 * len(deltas)))]:5.2f} s   "
+              f"max {deltas[-1]:5.2f} s")
+        if len(self.truth_counts) > 1:
+            print(f"  WARNING: the track's cone count changed "
+                  f"({sorted(self.truth_counts)}), so the index identity these "
+                  f"numbers rest on\n  is broken. Treat time-to-confirm as "
+                  f"invalid for this run.")
+
+
+def _mean(values):
+    values = list(values)
+    return sum(values) / len(values) if values else float("nan")
+
+
+def _rms(values):
+    values = list(values)
+    if not values:
+        return float("nan")
+    return math.sqrt(sum(v * v for v in values) / len(values))
 
 
 def main():
@@ -315,13 +622,28 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--cones-topic", default="/cones")
-    parser.add_argument("--truth-topic", default="/ground_truth/cones")
+    parser.add_argument("--truth-topic", default="/ground_truth/track",
+                        help="unfiltered full track, map frame; pass "
+                             "/ground_truth/cones for the plugin's own "
+                             "FOV-filtered view (already base_footprint)")
+    parser.add_argument("--odom-topic", default="/ground_truth/odom",
+                        help="map -> base_footprint pose, used only when the "
+                             "truth topic publishes in map")
     parser.add_argument("--tiers-topic", default="/fusion/debug/cone_tiers")
     parser.add_argument("--max-stamp-skew-sec", type=float, default=0.05,
                         help="max |cones - truth| stamp gap to accept (s); "
-                             "truth publishes at 20 Hz")
+                             "truth publishes at 20 Hz, odom at 200 Hz")
     parser.add_argument("--match-radius", type=float, default=2.0,
                         help="max distance to call an estimate the same cone (m)")
+    parser.add_argument("--fov-deg", type=float, default=110.0,
+                        help="visibility gate: camera HFOV (sim ZED is 110)")
+    parser.add_argument("--min-range", type=float, default=0.5,
+                        help="visibility gate: near limit (m)")
+    parser.add_argument("--max-range", type=float, default=20.0,
+                        help="visibility gate: far limit (m); the sim camera's "
+                             "far clip is 20 m")
+    parser.add_argument("--band-m", type=float, default=2.5,
+                        help="range band width for the recall curve (m)")
     parser.add_argument("--duration", type=float, default=60.0,
                         help="seconds to collect; 0 runs until Ctrl-C")
     args = parser.parse_args()

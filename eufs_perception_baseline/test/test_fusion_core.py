@@ -5,13 +5,16 @@ import numpy as np
 
 from eufs_perception_baseline.fusion_core import (
     baseline_from_projection,
+    bearing_aligned_covariance,
     camera_point_from_depth,
     classify_cone_condition,
     disparity_to_depth,
     estimate_stereo_depth,
     monocular_depth_from_bbox,
+    monocular_relative_depth_sigma,
     remove_ground_ransac,
     slender_bbox,
+    stereo_relative_depth_sigma,
 )
 
 
@@ -135,6 +138,90 @@ class MonocularDepthTest(unittest.TestCase):
             classify_cone_condition((40, 0, 60, 60), (100, 100)),
             "bad",
         )
+
+
+class VisionCovarianceTest(unittest.TestCase):
+    """The error model behind the tiers' reported covariance.
+
+    A vision cone's error is an ellipse along the line of sight: weak in depth,
+    strong in bearing.  These check the two sigmas and the rotation that puts
+    them on the right axes.
+    """
+
+    def test_monocular_sigma_is_the_curve_derivative_and_ignores_coefficient(self):
+        # sigma_D/D = |e| * sigma_h / h, straight out of D = c*h_n^e.
+        self.assertAlmostEqual(
+            monocular_relative_depth_sigma(10.0, -0.7555, 1.5),
+            0.7555 * 1.5 / 10.0,
+            places=12,
+        )
+
+    def test_monocular_sigma_grows_as_the_box_shrinks(self):
+        near = monocular_relative_depth_sigma(48.0, -0.7555, 1.5)
+        far = monocular_relative_depth_sigma(12.0, -0.7555, 1.5)
+        # A quarter of the pixel height is four times the fractional error --
+        # which is exactly the far-cone problem the ellipse exists to report.
+        self.assertAlmostEqual(far / near, 4.0, places=9)
+
+    def test_stereo_sigma_is_linear_in_depth(self):
+        self.assertAlmostEqual(
+            stereo_relative_depth_sigma(15.0, 448.13, 0.12, 0.25),
+            15.0 * 0.25 / (448.13 * 0.12),
+            places=12,
+        )
+        self.assertAlmostEqual(
+            stereo_relative_depth_sigma(30.0, 448.13, 0.12, 0.25)
+            / stereo_relative_depth_sigma(15.0, 448.13, 0.12, 0.25),
+            2.0,
+            places=9,
+        )
+
+    def test_invalid_inputs_return_none(self):
+        self.assertIsNone(monocular_relative_depth_sigma(0.0, -0.7555, 1.5))
+        self.assertIsNone(monocular_relative_depth_sigma(10.0, float("nan"), 1.5))
+        self.assertIsNone(stereo_relative_depth_sigma(15.0, 448.0, 0.0, 0.25))
+        self.assertIsNone(stereo_relative_depth_sigma(-1.0, 448.0, 0.12, 0.25))
+        self.assertIsNone(bearing_aligned_covariance(1.0, 0.0, -1.0, 0.1))
+        self.assertIsNone(bearing_aligned_covariance(float("inf"), 0.0, 1.0, 0.1))
+
+    def test_cone_straight_ahead_puts_depth_error_on_x(self):
+        xx, xy, yx, yy = bearing_aligned_covariance(14.0, 0.0, 1.6, 0.05)
+        self.assertAlmostEqual(xx, 1.6 ** 2, places=12)
+        self.assertAlmostEqual(yy, 0.05 ** 2, places=12)
+        self.assertAlmostEqual(xy, 0.0, places=12)
+        self.assertEqual(xy, yx)
+
+    def test_cone_abeam_swaps_the_axes(self):
+        # At 90 deg the line of sight is +y, so the weak axis must move to yy.
+        xx, _xy, _yx, yy = bearing_aligned_covariance(0.0, 14.0, 1.6, 0.05)
+        self.assertAlmostEqual(xx, 0.05 ** 2, places=12)
+        self.assertAlmostEqual(yy, 1.6 ** 2, places=12)
+
+    def test_off_axis_cone_needs_the_off_diagonal(self):
+        # The whole reason an axis-aligned matrix cannot express this: at 45 deg
+        # the ellipse's major axis lies on neither x nor y.
+        xx, xy, _yx, yy = bearing_aligned_covariance(10.0, 10.0, 1.6, 0.05)
+        self.assertAlmostEqual(xx, yy, places=12)
+        self.assertGreater(abs(xy), 0.5)
+        # Rotation preserves the eigenvalues, so the ellipse is the same shape.
+        trace, det = xx + yy, xx * yy - xy * xy
+        self.assertAlmostEqual(trace, 1.6 ** 2 + 0.05 ** 2, places=12)
+        self.assertAlmostEqual(det, (1.6 * 0.05) ** 2, places=12)
+
+    def test_covariance_is_positive_definite_at_every_bearing(self):
+        for degrees in range(-180, 180, 7):
+            theta = math.radians(degrees)
+            x, y = 12.0 * math.cos(theta), 12.0 * math.sin(theta)
+            xx, xy, _yx, yy = bearing_aligned_covariance(x, y, 1.6, 0.05)
+            self.assertGreater(xx, 0.0)
+            self.assertGreater(xx * yy - xy * xy, 0.0, f"singular at {degrees} deg")
+
+    def test_origin_falls_back_to_isotropic(self):
+        # atan2(0, 0) would otherwise pick an arbitrary axis for the ellipse.
+        xx, xy, _yx, yy = bearing_aligned_covariance(0.0, 0.0, 1.6, 0.05)
+        self.assertAlmostEqual(xx, 1.6 ** 2, places=12)
+        self.assertAlmostEqual(yy, 1.6 ** 2, places=12)
+        self.assertAlmostEqual(xy, 0.0, places=12)
 
 
 class StereoDepthTest(unittest.TestCase):

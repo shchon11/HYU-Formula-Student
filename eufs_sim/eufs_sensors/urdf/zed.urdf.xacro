@@ -4,7 +4,11 @@
 
   <xacro:property name="M_PI" value="3.1415926535897931" />
 
-  <xacro:macro name="zed_camera" params="prefix parent *origin active">
+  <!-- depth: emit the Gazebo `depth` sensor. Off by default because it costs a
+       second full 1280x720 render pass plus a point cloud, competing with the
+       left and right cameras for the render thread, and nothing in this
+       workspace subscribes to what it produces. See the block itself. -->
+  <xacro:macro name="zed_camera" params="prefix parent *origin active depth:=false">
 
     <joint name="${prefix}_base_joint" type="fixed">
       <axis xyz="1 0 0"/>
@@ -82,8 +86,16 @@
          drifted apart. Fusion needs the pair within image_sync_tolerance_sec (50 ms)
          or it drops the stereo tier for that frame, which starved Tier 3. Equal,
          sustainable rates keep both sensors on the same update tick.
-         The depth camera is not subscribed by anything in this workspace, so it only
-         competed for the GPU; it is kept alive at a token rate. -->
+         MEASURED AGAIN, and the ceiling is lower than it looks: at a 30 Hz request
+         the left camera achieved 8.9 Hz while the right achieved 17.2 Hz: they
+         diverged, which is the same starvation, so 30 is not available here. At 15
+         both settle at ~8.8 Hz together, which is why 15 stays. The GPU is not the
+         limit (gzserver renders on the RTX 4070 at ~150% CPU); Gazebo Classic
+         serialises every sensor on one render thread, so the two cameras and the
+         12800-ray VLP-16 share it. To go faster, cut that work, not the request.
+         The depth camera is not subscribed by anything in this workspace, so it
+         only competed for the render thread; it is now off by default (depth false)
+         rather than kept alive at a token rate. -->
     <!-- Simulate raw perception sensors only if we're not using the abstracted perception simulation -->
     <xacro:unless value="${active}">
       <gazebo reference="${prefix}_left_camera_frame">
@@ -91,7 +103,7 @@
           <!-- see MultiSenseSLPlugin.h for available modes -->
           <always_on>true</always_on>
           <update_rate>15.0</update_rate>
-          <visualize>true</visualize>
+          <visualize>false</visualize>
           <camera>
             <pose>0 0.0 0 0 0 0</pose>
             <horizontal_fov>1.91986</horizontal_fov>
@@ -141,7 +153,7 @@
         <sensor type="camera" name="${prefix}_right_camera">
           <always_on>true</always_on>
           <update_rate>15.0</update_rate>
-          <visualize>true</visualize>
+          <visualize>false</visualize>
           <camera>
             <pose>0 0.0 0 0 0 0</pose>
             <horizontal_fov>1.91986</horizontal_fov>
@@ -187,8 +199,20 @@
         </sensor>
       </gazebo>
 
+      <!-- Depth simulation. DISABLED.
+           A `depth` sensor costs a full 1280x720 render pass plus a point
+           cloud, and nothing subscribes to any of what it emits:
+           /zed/depth/image_raw, /zed/points and /zed/image_raw all measured
+           zero subscribers with the real perception stack running. The stereo
+           tier works from the left and right image_rect_color topics instead.
+           The cost is not the 1 Hz it asks for: it competes with the left and
+           right cameras for Gazebo's render thread, and those two already miss
+           their requested rate (15 Hz asked, ~8.8 Hz achieved), which is what
+           starves the bbox/LiDAR pairing downstream.
+           Re-enable (always_on true) only if something actually consumes it,
+           e.g. if the ZED SDK NEURAL depth option in the roadmap is tried. -->
+      <xacro:if value="${depth}">
       <gazebo reference="${prefix}_depth_camera_frame">
-        <!-- Depth simulation -->
         <sensor name="stereo_depth" type="depth">
           <always_on>true</always_on>
           <update_rate>1.0</update_rate>
@@ -222,6 +246,7 @@
 
         </sensor>
       </gazebo>
+      </xacro:if>
     </xacro:unless>
 
   </xacro:macro>

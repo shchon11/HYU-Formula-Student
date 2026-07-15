@@ -1,3 +1,4 @@
+import math
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -28,6 +29,7 @@ from eufs_perception_baseline.perception_baseline_node import (
     FusionComputation,
     PerceptionBaselineNode,
     StereoContext,
+    VisionMeasurement,
 )
 from eufs_perception_baseline.latest_only_worker import WorkerCompletion
 from eufs_perception_baseline.sync_buffer import TimestampBuffer
@@ -50,6 +52,15 @@ class ThreeTierRoutingTest(unittest.TestCase):
         node.monocular_depth_exponent = -0.954
         node.monocular_min_depth_m = 0.5
         node.monocular_max_depth_m = 30.0
+        # Vision covariance model: a bearing-aligned ellipse derived from the
+        # measurement, rather than a per-tier constant.
+        node.honest_vision_covariance = True
+        node.sigma_u_px = 3.0
+        node.sigma_h_px = 4.0
+        node.sigma_d_px = 0.25
+        node.monocular_sigma_u_px = 10.0
+        node.horizontal_clip_sigma_u_px = 30.0
+        node.min_variance = 1.0e-4
         node.good_cone_min_height_to_width = 1.2
         node.good_cone_border_margin_ratio = 0.01
         node.horizontal_clip_fallback_enabled = True
@@ -223,6 +234,58 @@ class ThreeTierRoutingTest(unittest.TestCase):
             )
 
         self.assertEqual(assignments, [])
+
+    def test_far_cone_publishes_with_an_honest_ellipse_when_the_floor_is_off(self):
+        """With the floor disabled, a far cone still reports honestly.
+
+        The shipped config keeps the floor at 16 px: measured on small_track,
+        the detector's bbox centre collapses from ~2 px to 17-32 px past ~9 m,
+        so a far cone's bearing is NOT the good measurement the ellipse would
+        claim. But the floor is a detector property, not a law -- it moves with
+        imgsz and must be re-derived on the real car. When it is lowered, the
+        covariance must still describe the cone rather than the tier.
+        """
+        node = self._node()
+        node.monocular_min_bbox_height_px = 0.0
+        # The same 10 px cone the floor used to drop.
+        detection = Detection("blue", 0.9, 45.0, 45.0, 51.0, 55.0)
+
+        with patch.object(
+            node,
+            "_prepare_stereo_context",
+            side_effect=AssertionError("a far cone must not pay for stereo"),
+        ), patch.object(
+            node,
+            "_lookup_transform_matrix",
+            return_value=self._camera_to_base(),
+        ):
+            assignments = node._associate_visual_detections(
+                [detection],
+                set(),
+                self._camera_info(),
+                TimeMsg(sec=1),
+                None,
+                None,
+                None,
+            )
+
+        self.assertEqual(len(assignments), 1)
+        cluster = assignments[0].cluster
+        self.assertEqual(cluster.source, "monocular")
+        cone = node._cluster_to_cone(cluster)
+        xx, xy, _yx, yy = cone.covariance
+        self.assertGreater(xx * yy - xy * xy, 0.0)
+        # The ellipse must still be longer along the ray than across it, which
+        # is what lets SLAM weight the two apart at all. Checked via the
+        # eigenvalues rather than the diagonal, so it holds at whatever bearing
+        # the fixture lands on.
+        trace, det = xx + yy, xx * yy - xy * xy
+        spread = math.sqrt(max(0.0, trace * trace / 4.0 - det))
+        major, minor = trace / 2.0 + spread, trace / 2.0 - spread
+        # (sigma_lon/sigma_lat)^2 = (|e|*sigma_h/h * fx/sigma_u)^2 -- ~15 for
+        # this fixture. Far short of the ~1000 the roadmap predicted from an
+        # ideal detector, because the measured sigma_u is 10 px, not 1.5.
+        self.assertGreater(major / minor, 5.0)
 
     def test_bad_unmatched_cone_routes_to_rektnet_pnp_sift(self):
         node = self._node()
@@ -1812,6 +1875,127 @@ class CalibrationAndTfTest(unittest.TestCase):
         cluster.source = "lidar"
         cone = node._cluster_to_cone(cluster)
         self.assertEqual(list(cone.covariance), [0.01, 0.0, 0.0, 0.01])
+
+
+class HonestVisionCovarianceTest(unittest.TestCase):
+    """A vision cone must report its ellipse, not a circle.
+
+    The per-tier constants were simultaneously ~160x too pessimistic across the
+    corridor and ~7x too optimistic along it, because one isotropic number
+    cannot be both.  SLAM already carries a full 2x2 landmark covariance and
+    consumes what perception reports, so the fix is to stop lying to it.
+    """
+
+    def _node(self, **overrides):
+        node = object.__new__(PerceptionBaselineNode)
+        node.honest_vision_covariance = True
+        node.sigma_u_px = 3.0
+        node.sigma_h_px = 4.0
+        node.sigma_d_px = 0.25
+        node.monocular_sigma_u_px = 10.0
+        node.horizontal_clip_sigma_u_px = 30.0
+        node.min_variance = 1.0e-4
+        node.range_variance_scale = 0.0
+        node.fused_variance_x = 0.04
+        node.fused_variance_y = 0.04
+        node.sparse_variance_x = 0.12
+        node.sparse_variance_y = 0.12
+        node.monocular_variance_x = 0.35
+        node.monocular_variance_y = 0.35
+        node.horizontal_clip_variance_x = 0.70
+        node.horizontal_clip_variance_y = 1.40
+        node.stereo_variance_x = 0.50
+        node.stereo_variance_y = 0.50
+        node.lidar_only_variance_x = 0.20
+        node.lidar_only_variance_y = 0.20
+        for name, value in overrides.items():
+            setattr(node, name, value)
+        return node
+
+    def _cluster(self, x, y, measurement=None, source="monocular"):
+        return Cluster(
+            points_base=np.asarray([[x, y, 0.0]]),
+            points_camera=np.asarray([[0.0, 0.0, math.hypot(x, y)]]),
+            centroid_base=np.asarray([x, y, 0.0]),
+            range_m=math.hypot(x, y),
+            indices=np.empty((0,), dtype=np.int64),
+            source=source,
+            vision_measurement=measurement,
+        )
+
+    def test_far_cone_is_precise_across_the_corridor_and_vague_along_it(self):
+        # The measurement that matters: a 15 m cone's bearing is good to ~5 cm
+        # while its depth is good to ~2 m. The old 0.35 circle claimed both
+        # were 59 cm.
+        measurement = VisionMeasurement(
+            relative_depth_sigma=0.12, sigma_u_px=1.5, fx_px=448.13
+        )
+        cone = self._node()._cluster_to_cone(
+            self._cluster(15.0, 0.0, measurement))
+        xx, xy, yx, yy = cone.covariance
+        self.assertAlmostEqual(math.sqrt(xx), 15.0 * 0.12, places=9)
+        self.assertAlmostEqual(math.sqrt(yy), 15.0 * 1.5 / 448.13, places=9)
+        self.assertAlmostEqual(xy, 0.0, places=12)
+        self.assertEqual(xy, yx)
+        # Lateral must be far tighter than the retired isotropic constant.
+        self.assertLess(yy, 0.35 / 100.0)
+
+    def test_ellipse_follows_the_bearing_not_the_axes(self):
+        measurement = VisionMeasurement(
+            relative_depth_sigma=0.12, sigma_u_px=1.5, fx_px=448.13
+        )
+        cone = self._node()._cluster_to_cone(
+            self._cluster(10.0, 10.0, measurement))
+        xx, xy, _yx, yy = cone.covariance
+        # A cone at 45 deg has its weak axis on neither x nor y, so an
+        # axis-aligned matrix could not describe it however it was tuned.
+        self.assertGreater(abs(xy), 0.0)
+        self.assertAlmostEqual(xx, yy, places=9)
+
+    def test_lidar_tiers_keep_their_measured_constants(self):
+        # LiDAR ranges directly to ~1%, so its error really is the near-circle
+        # the constants describe. The ellipse is a vision model only.
+        cone = self._node()._cluster_to_cone(
+            self._cluster(15.0, 0.0, None, source="lidar_only"))
+        self.assertEqual(list(cone.covariance), [0.20, 0.0, 0.0, 0.20])
+
+    def test_disabling_the_model_restores_the_per_tier_constants(self):
+        # The only way to A/B this against the old behaviour.
+        measurement = VisionMeasurement(
+            relative_depth_sigma=0.12, sigma_u_px=1.5, fx_px=448.13
+        )
+        node = self._node(honest_vision_covariance=False)
+        cone = node._cluster_to_cone(self._cluster(15.0, 0.0, measurement))
+        self.assertEqual(list(cone.covariance), [0.35, 0.0, 0.0, 0.35])
+
+    def test_minimum_variance_clamps_the_diagonal_without_rotating(self):
+        # min_variance is a sanity floor and will bite the lateral term at
+        # short range. Lifting the axes only makes the ellipse rounder; scaling
+        # the off-diagonal to match would swing it off the bearing.
+        measurement = VisionMeasurement(
+            relative_depth_sigma=0.02, sigma_u_px=1.5, fx_px=448.13
+        )
+        node = self._node(min_variance=0.01)
+        cone = node._cluster_to_cone(self._cluster(2.0, 2.0, measurement))
+        xx, xy, _yx, yy = cone.covariance
+        self.assertGreaterEqual(xx, 0.01)
+        self.assertGreaterEqual(yy, 0.01)
+        self.assertGreater(xx * yy - xy * xy, 0.0)
+
+    def test_unusable_measurement_falls_back_rather_than_dropping_the_cone(self):
+        node = self._node()
+        self.assertIsNone(node._vision_measurement(
+            relative_depth_sigma=None, sigma_u_px=1.5,
+            camera_matrix=np.asarray([[448.0, 0, 640], [0, 448.0, 360], [0, 0, 1]]),
+        ))
+        # An all-NaN camera matrix is what _camera_matrix returns for a
+        # malformed CameraInfo; the cone must still publish.
+        self.assertIsNone(node._vision_measurement(
+            relative_depth_sigma=0.1, sigma_u_px=1.5,
+            camera_matrix=np.full((3, 3), np.nan),
+        ))
+        cone = node._cluster_to_cone(self._cluster(15.0, 0.0, None))
+        self.assertEqual(list(cone.covariance), [0.35, 0.0, 0.0, 0.35])
 
 
 class LidarOnlyClusterEmitTest(unittest.TestCase):
