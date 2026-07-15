@@ -75,6 +75,36 @@ def fit_power_law(normalized_heights, depths):
     return coefficient, float(exponent), h.size, relative_error
 
 
+def report_by_range(coefficient, exponent, heights, depths):
+    """Residual by true range, SIGNED.
+
+    A curve can fit well on average and still be biased where it is actually
+    used: the monocular tier only runs inside monocular_min_bbox_height_px, so
+    a curve fitted across every range can be unbiased overall and wrong there.
+    The sign is the point -- a mean |error| hides exactly the thing that makes
+    a cone land systematically short.
+    """
+    import numpy as np
+
+    h = np.asarray(heights, dtype=float)
+    d = np.asarray(depths, dtype=float)
+    keep = (h > 0) & (d > 0) & np.isfinite(h) & np.isfinite(d)
+    h, d = h[keep], d[keep]
+    predicted = coefficient * h ** exponent
+    error = predicted - d
+
+    print("\nsigned residual by true range (predicted - true):")
+    print(f"  {'band':>12} {'n':>6} {'mean':>9} {'mean %':>8} {'rms':>8}")
+    for low in range(0, 20, 2):
+        band = (d >= low) & (d < low + 2)
+        if not np.any(band):
+            continue
+        print(f"  {low:5d}-{low + 2:2d} m {int(band.sum()):6d} "
+              f"{float(np.mean(error[band])):+8.3f}m "
+              f"{100 * float(np.mean(error[band] / d[band])):+7.1f}% "
+              f"{float(np.sqrt(np.mean(error[band] ** 2))):7.3f}m")
+
+
 def report_fit(coefficient, exponent, count, relative_error):
     import numpy as np
 
@@ -299,7 +329,9 @@ def main():
 
     if args.live:
         heights, depths = collect_live(args)
-        report_fit(*fit_power_law(heights, depths))
+        fit = fit_power_law(heights, depths)
+        report_fit(*fit)
+        report_by_range(fit[0], fit[1], heights, depths)
         return
 
     if not args.analytic:

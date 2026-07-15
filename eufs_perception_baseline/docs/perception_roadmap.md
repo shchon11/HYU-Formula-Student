@@ -800,17 +800,36 @@ Two things measured along the way, both worth knowing:
 - **`/cones` is at 4 Hz against a 10 Hz backbone, with ~0.8 s of latency**, and
   the cause is measured: Tier 3 SIFT at 200–235 % CPU (§6b). This is the largest
   open item and it is Step 5.
-- **The monocular tier's −0.5 m range bias survived the curve re-fit**, so the
-  curve was not its only source. `fit_mono_depth_curve.py --live` is now
-  implemented (it was a stub) and fitted **c=0.2913, e=-0.9814** on n=1571,
-  which lands almost exactly on the ANALYTIC pinhole curve (0.2801, −1.0) and
-  refutes §2.1's premise: this detector's box does not run short enough to bend
-  the exponent. The old hand fit (0.5575, −0.7555) read a 10 m cone at 8.3 m and
-  a 15 m cone at 11.3 m, and that error grew with range — which is what the bias
-  looked like. Re-fitting cut the tier's `lon z²` from 3.09 to 0.45 and its
-  NEES/2 from 1.78 to 0.38, and left `lon mean` at −0.516 m. **Something else is
-  biasing it.** `sigma_h_px` is down 8.0 → 5.5 but is still covering that
+- **The monocular tier's −0.5 m bias is NOT the curve, and the sign proves it.**
+  `fit_mono_depth_curve.py --live` is now implemented (it was a stub). Two
+  independent runs agree — **c=0.2913, e=-0.9814** (n=1571) and **c=0.3053,
+  e=-0.9670** (n=1272) — and both land near the ANALYTIC pinhole curve
+  (0.2801, −1.0), not near the shipped hand fit (0.5575, −0.7555). That refutes
+  §2.1's premise: this detector's box does not run short enough to bend the
+  exponent off −1. Re-fitting cut the tier's `lon z²` from 3.09 to 0.45 and its
+  NEES/2 from 1.78 to 0.38 — and left `lon mean` at −0.516 m.
+
+  The by-range residual says why that matters. Where the tier actually runs, the
+  **curve reads cones too FAR**:
+
+  | band | 6–8 m | 8–10 m | 10–12 m | 16–18 m | 18–20 m |
+  |---|---|---|---|---|---|
+  | curve residual | +0.28 m | **+0.79 m** | +0.46 m | −0.56 m | −1.37 m |
+
+  So the curve over-predicts by +0.5 to +0.8 m at 8–12 m, and the published cone
+  lands 0.5 m **short**. **Opposite signs**: there is an unexplained ~1.0–1.3 m
+  term between the curve's output and the cone's position, pulling cones toward
+  the car. The curve is exonerated; the search moves to `_back_project` and the
+  camera→base transform. `sigma_h_px` is down 8.0 → 5.5 and still covers the
   remainder with noise.
+- **The LiDAR's `max_range: 100` cannot be trimmed**, which makes no sense and
+  is reproducible. The ROI needs only 33.5 m, so 2/3 of every ray is
+  distance nothing consumes, and "a ray that stops early is a cheap ray" says
+  cutting it should be free. Measured at 35 m, twice: left **11.5 → 3.3 → 2.3
+  Hz**, with the velodyne control healthy at 7.8. `left/velodyne` is 0.42 and
+  0.30 for this config against ≥0.88 for every other, so it is not host drift.
+  **Mechanism unknown.** Not shipped, because shipping something that measures
+  worse and cannot be explained is worse than leaving the rays long.
 - **`monocular_sigma_u_px: 10.0` is a symptom, not a property.** It is large
   because the 16 px gate (10.2 m) reaches into the detector's cliff, which
   starts at ~8.8 m. Step 4 moves the cliff; then both numbers move.
