@@ -65,11 +65,13 @@ or against a bag:
 import argparse
 import math
 import sys
+import time
 from collections import defaultdict, deque
 
 try:
     import rclpy
     from rclpy.node import Node
+    from rclpy.parameter import Parameter
     from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
     from eufs_msgs.msg import ConeArrayWithCovariance
     from nav_msgs.msg import Odometry
@@ -286,7 +288,19 @@ def greedy_match(estimates, truths, radius, visibility, tiers=()):
 
 class TierEvaluator(Node):
     def __init__(self, args):
-        super().__init__("evaluate_perception_tiers")
+        # --duration is SIM seconds, not wall seconds. The sim runs at RTF 0.21
+        # to 0.37 and it DRIFTS with load, so two runs at the same wall duration
+        # collect different amounts of sim time -- measured 112 vs 64 cone frames
+        # for the same `--duration 30`. That is not one experiment with a variable
+        # changed; it is two different experiments, and every A/B done that way
+        # silently compares different stretches of track.
+        super().__init__(
+            "evaluate_perception_tiers",
+            parameter_overrides=(
+                [] if args.wall_clock
+                else [Parameter("use_sim_time", value=True)]
+            ),
+        )
         self.args = args
         self.visibility = Visibility(args)
         self.samples = []
@@ -305,6 +319,13 @@ class TierEvaluator(Node):
         self.skews = []
         self.dropped_no_truth = 0
         self.dropped_no_odom = 0
+        # "unattributed" has two causes that look identical in the table: the
+        # provenance for that frame never arrived (THE APPARATUS FAILED), or a
+        # marker did arrive but sat too far from the estimate (a real result).
+        # Conflating them is how a dead tiers topic read as a measurement for a
+        # whole session. Count the first cause so it can never be silent again.
+        self.frames_without_provenance = 0
+        self.cones_without_provenance = 0
         # Recall per range band, and time-to-confirm. Truth cones are static in
         # map, so their map coordinates are a stable identity across frames --
         # which is what makes "when was this cone first seen vs first mapped"
@@ -406,9 +427,13 @@ class TierEvaluator(Node):
             return
         self.skews.append(skew / 1e9)
 
+        tiers = self.tier_buffer.get(target)
+        if tiers is None:
+            self.frames_without_provenance += 1
+            self.cones_without_provenance += len(estimates)
+            tiers = []
         pairs, false_positives, excluded = greedy_match(
-            estimates, truth, self.args.match_radius, self.visibility,
-            self.tier_buffer.get(target, []))
+            estimates, truth, self.args.match_radius, self.visibility, tiers)
         self.samples.extend(pairs)
         self.false_positives += false_positives
         self.excluded_out_of_gate += excluded
@@ -463,6 +488,16 @@ class TierEvaluator(Node):
         if self.dropped_no_odom:
             print(f"frames dropped     {self.dropped_no_odom} "
                   f"(no odom within {self.args.max_stamp_skew_sec}s)")
+        if self.frames_without_provenance:
+            share = 100.0 * self.frames_without_provenance / max(1, self.frames)
+            print(f"NO PROVENANCE      {self.frames_without_provenance} frames "
+                  f"({share:.1f} %) -> {self.cones_without_provenance} cones "
+                  f"forced to\n                   'unattributed'. That row is "
+                  f"THIS TOOL FAILING, not a result.")
+            if share > 50.0:
+                print(f"                   Over half the run. Check that "
+                      f"{self.args.tiers_topic}\n                   is the "
+                      f"topic the node actually publishes.")
 
         self._report_recall()
         self._report_error_split()
@@ -479,10 +514,18 @@ class TierEvaluator(Node):
               f"statement about\nthe pipeline INSIDE this envelope. The sim "
               f"camera's far clip is 20 m, which is a\nhard ceiling on any "
               f"recall curve measured in sim.")
-        print("\nTier names: cluster/sparse = Tier 1 (LiDAR-camera), monocular* "
-              "= Tier 2,\n"
-              "stereo_rektnet_pnp_sift = Tier 3, lidar_only = LiDAR cluster the "
-              "camera never confirmed.")
+        print("\nProvenance -- what produced the cone, in the order the node "
+              "tries them:\n"
+              "  cluster_camera   LiDAR cluster a detection coloured\n"
+              "  cluster_only     LiDAR cluster the camera never confirmed "
+              "(colour unknown)\n"
+              "  sparse           raw LiDAR inside a box, too thin to cluster\n"
+              "  monocular        no LiDAR: bbox height through the fitted "
+              "depth curve\n"
+              "  monocular_zncc   same bearing, depth replaced by the stereo "
+              "ZNCC peak\n"
+              "  unattributed     NOT a result: the provenance for that frame "
+              "never arrived.")
 
     def _report_recall(self):
         print(f"\nrecall by range band (matched / visible truths):")
@@ -537,8 +580,74 @@ class TierEvaluator(Node):
                   f"{_mean(lat_z):8.2f} {_mean(lon_z):8.2f} "
                   f"{_mean(r['nees'] / 2.0 for r in group):8.2f}")
         print("  (lat z^2 tunes sigma_u_px; lon z^2 tunes sigma_h_px for "
-              "monocular\n   and sigma_d_px for stereo -- scale each sigma by "
-              "sqrt of its column.)")
+              "monocular\n   and sigma_d_px for monocular_zncc -- scale each "
+              "sigma by sqrt of its column.)")
+        self._report_covariance_shape(rows)
+
+    def _report_covariance_shape(self, rows):
+        """z^2 per range band: does the model have the right SHAPE, not just size?
+
+        The aggregate z^2 above says how big the reported sigma is on average.
+        It cannot say whether the sigma is wrong by a CONSTANT (scale it and be
+        done) or wrong by a FUNCTION OF RANGE (scaling just moves the error from
+        one end to the other, and the fixed point never converges -- which is
+        exactly what sigma_u_px did: 3.0 implied 10, 10 implied 18.6).
+
+        A flat row means one constant can be right. A row that climbs means the
+        model is missing a range term and no constant will do.
+        """
+        bands = sorted({self._band(s["true_range"]) for s in rows})
+        if len(bands) < 2:
+            return
+        by_tier = defaultdict(lambda: defaultdict(list))
+        for s in rows:
+            if s["sigma_lat"]:
+                by_tier[s["tier"]][self._band(s["true_range"])].append(
+                    (s["lat_err"] / s["sigma_lat"]) ** 2)
+        print(f"\ncovariance SHAPE -- lat z^2 by range band. Flat means one "
+              f"constant can be\nright; a sloped row means the model needs a "
+              f"range term and no constant will do:")
+        print(f"  {'tier':22s}" + "".join(f"{b:>7.1f}m" for b in bands))
+        for tier in sorted(by_tier):
+            cells = []
+            for b in bands:
+                vals = by_tier[tier].get(b, [])
+                cells.append(f"{_mean(vals):>8.2f}" if len(vals) >= 3
+                             else f"{'-':>8s}")
+            print(f"  {tier:22s}" + "".join(cells))
+        print("  (n<3 in a band prints '-'. Read ACROSS a row, not down a "
+              "column.)")
+        self._report_lateral_fit(rows, bands)
+
+    def _report_lateral_fit(self, rows, bands):
+        """What the model SAYS vs what the error IS, per band, in metres.
+
+        z^2 alone cannot tell you which side is wrong. This prints both, so the
+        model's functional form can be read off directly: if the reported sigma
+        is a straight line through the origin and the real error is not, the
+        missing term is a FLOOR, and no value of sigma_u_px will fix it.
+        """
+        per = defaultdict(lambda: defaultdict(lambda: ([], [])))
+        for s in rows:
+            if s["sigma_lat"]:
+                errs, sigmas = per[s["tier"]][self._band(s["true_range"])]
+                errs.append(s["lat_err"])
+                sigmas.append(s["sigma_lat"])
+        for tier in sorted(per):
+            usable = [b for b in bands if len(per[tier][b][0]) >= 3]
+            if len(usable) < 3:
+                continue
+            print(f"\n  {tier}: lateral model vs reality (m)")
+            print(f"    {'band':>8s} {'n':>5s} {'real rms':>9s} "
+                  f"{'model says':>11s} {'ratio':>7s}")
+            for b in usable:
+                errs, sigmas = per[tier][b]
+                real, model = _rms(errs), _mean(sigmas)
+                print(f"    {b:7.1f}m {len(errs):5d} {real:9.3f} "
+                      f"{model:11.3f} {real / model if model else float('nan'):7.2f}")
+            print(f"    ratio > 1 = the model is too tight in that band. A ratio "
+                  f"that FALLS with\n    range means the model's slope is too "
+                  f"steep and it is missing a floor.")
 
     def _report_range_error(self):
         # The paper's Table 1 metric, kept for comparability. It mixes the two
@@ -565,8 +674,12 @@ class TierEvaluator(Node):
             err = abs(s["est_range"] - s["true_range"]) / s["true_range"] * 100.0
             by_tier[s["tier"]].append(err)
         if set(by_tier) == {"unattributed"}:
-            print("  no tier labels received -- run the sim with "
-                  "perception_publish_fusion_debug:=true")
+            print(f"  NO PROVENANCE RECEIVED on {self.args.tiers_topic} -- every "
+                  f"number above is\n  a blend of all provenances and means "
+                  f"nothing. Check that topic exists\n  (`ros2 topic list | grep "
+                  f"cone_provenance`) before reading anything else.\n"
+                  f"  The publisher flag is perception_publish_debug:=true "
+                  f"(default true).")
         for tier in sorted(by_tier):
             values = sorted(by_tier[tier])
             print(f"  {tier:26s} n={len(values):4d}  "
@@ -629,7 +742,10 @@ def main():
     parser.add_argument("--odom-topic", default="/ground_truth/odom",
                         help="map -> base_footprint pose, used only when the "
                              "truth topic publishes in map")
-    parser.add_argument("--tiers-topic", default="/fusion/debug/cone_tiers")
+    parser.add_argument("--tiers-topic", default="/fusion/debug/cone_provenance",
+                        help="Per-cone provenance markers. This was /fusion/debug/cone_tiers,\n"
+                             "which the rebuilt node stopped publishing when the tiers\n"
+                             "went away -- leaving every cone silently 'unattributed'.")
     parser.add_argument("--max-stamp-skew-sec", type=float, default=0.05,
                         help="max |cones - truth| stamp gap to accept (s); "
                              "truth publishes at 20 Hz, odom at 200 Hz")
@@ -645,12 +761,23 @@ def main():
     parser.add_argument("--band-m", type=float, default=2.5,
                         help="range band width for the recall curve (m)")
     parser.add_argument("--duration", type=float, default=60.0,
-                        help="seconds to collect; 0 runs until Ctrl-C")
+                        help="SIM seconds to collect; 0 runs until Ctrl-C. Sim "
+                             "seconds, not wall seconds, so the same --duration "
+                             "always covers the same stretch of track no matter "
+                             "what the machine is doing")
+    parser.add_argument("--wall-clock", action="store_true",
+                        help="measure --duration in wall seconds. Only for a "
+                             "source with no /clock: RTF drifts (0.21-0.37 "
+                             "measured here), so two wall-timed runs collect "
+                             "different amounts of sim time and are not "
+                             "comparable to each other")
     args = parser.parse_args()
 
     rclpy.init()
     node = TierEvaluator(args)
     try:
+        if not _wait_for_clock(node):
+            return
         if args.duration > 0:
             end = node.get_clock().now().nanoseconds + args.duration * 1e9
             while rclpy.ok() and node.get_clock().now().nanoseconds < end:
@@ -663,6 +790,28 @@ def main():
         node.report()
         node.destroy_node()
         rclpy.try_shutdown()
+
+
+def _wait_for_clock(node, timeout_sec=30.0):
+    """Block until sim time starts, so the collection window is real.
+
+    Under use_sim_time the clock reads 0 until the first /clock arrives. Taking
+    the window's start from that zero would measure from the epoch and the loop
+    would never exit -- a hang that looks exactly like "the sim is just slow".
+    """
+    if node.args.wall_clock:
+        return True
+    deadline = time.time() + timeout_sec
+    while rclpy.ok() and node.get_clock().now().nanoseconds <= 0:
+        if time.time() > deadline:
+            node.get_logger().error(
+                f"No /clock after {timeout_sec:.0f}s, so sim time never "
+                f"started. Run the simulator, play the bag with --clock, or "
+                f"pass --wall-clock if this source genuinely has no sim time."
+            )
+            return False
+        rclpy.spin_once(node, timeout_sec=0.1)
+    return rclpy.ok()
 
 
 if __name__ == "__main__":
