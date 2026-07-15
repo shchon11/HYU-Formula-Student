@@ -55,6 +55,13 @@
   <arg name="camera_cones_fov" default="2.09"/>
   <arg name="camera_cones_detection_probability" default="1.0"/>
 
+  <!-- Procedural bump field (real geometry: the lidar sees it, the car rides it) -->
+  <arg name="terrain" default="false"/>
+  <arg name="terrain_seed" default="7"/>
+  <arg name="terrain_density" default="0.02"/>
+  <arg name="terrain_height_mean" default="0.020"/>
+  <arg name="road_noise" default="true"/>
+
   <!-- Initial vehicle pose -->
   <arg name="x" default="0.0"/>
   <arg name="y" default="-14.4"/>
@@ -105,6 +112,11 @@
     <arg name="camera_cones_min_view_distance" value="$(var camera_cones_min_view_distance)"/>
     <arg name="camera_cones_fov" value="$(var camera_cones_fov)"/>
     <arg name="camera_cones_detection_probability" value="$(var camera_cones_detection_probability)"/>
+    <arg name="terrain" value="$(var terrain)"/>
+    <arg name="terrain_seed" value="$(var terrain_seed)"/>
+    <arg name="terrain_density" value="$(var terrain_density)"/>
+    <arg name="terrain_height_mean" value="$(var terrain_height_mean)"/>
+    <arg name="road_noise" value="$(var road_noise)"/>
   </include>
 
 </launch>

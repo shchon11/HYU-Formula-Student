@@ -60,6 +60,13 @@ install(TARGETS ${PROJECT_NAME}
   RUNTIME DESTINATION bin
   INCLUDES DESTINATION include)
 
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+
+  ament_add_gtest(dynamic_bicycle_test test/dynamic_bicycle_test.cpp)
+  target_link_libraries(dynamic_bicycle_test eufs_models)
+endif()
+
 ament_package()
 
 install(FILES models.txt

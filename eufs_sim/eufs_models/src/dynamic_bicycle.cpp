@@ -1,5 +1,7 @@
 #include "eufs_models/dynamic_bicycle.hpp"
 
+#include <algorithm>
+
 namespace eufs {
 namespace models {
 
@@ -10,14 +12,19 @@ void DynamicBicycle::updateState(State &state, Input &input, const double dt) {
 
   double Fz = _getNormalForce(state);
 
+  // Drivetrain first: the longitudinal force sets the load transfer, and the
+  // load transfer sets what each axle's tyres can hold. Computing Fx after the
+  // tyre forces would mean the axle loads always lagged the accelerating or
+  // braking that caused them by a step.
+  const double Fx = _getFx(state, input);
+  const double w_front = _getDynamicWeightFront(Fx);
+
   double slip_angle_front = getSlipAngle(state, input, true);
-  double FyF = _getFy(Fz, true, slip_angle_front);
+  double FyF = _getFy(Fz, w_front, true, slip_angle_front);
 
   double slip_angle_back = getSlipAngle(state, input, false);
-  double FyR = _getFy(Fz, false, slip_angle_back);
+  double FyR = _getFy(Fz, w_front, false, slip_angle_back);
 
-  // Drivetrain Model
-  const double Fx = _getFx(state, input);
   // Dynamics
   const auto x_dot_dyn = _f(state, input, Fx, FyF, FyR);
   const auto x_next_dyn = state + x_dot_dyn * dt;
@@ -84,8 +91,30 @@ double DynamicBicycle::_getFdown(const State &x) { return _param.aero.c_down * x
 
 double DynamicBicycle::_getFdrag(const State &x) { return _param.aero.c_drag * x.v_x * x.v_x; }
 
-double DynamicBicycle::_getFy(const double Fz, bool front, double slip_angle) {
-  const double Fz_axle = front ? _getDownForceFront(Fz) : _getDownForceRear(Fz);
+double DynamicBicycle::getDynamicWeightFront(const State &x, const Input &u) {
+  return _getDynamicWeightFront(_getFx(x, u));
+}
+
+double DynamicBicycle::_getDynamicWeightFront(const double Fx) const {
+  const double w_static = _param.kinematic.w_front;
+  if (!_param.suspension.load_transfer_to_tires) {
+    return w_static;
+  }
+
+  // Accelerating (Fx > 0) pitches the car back onto the rear axle; braking
+  // throws it onto the front. The transferred fraction is the moment
+  // (m*a_x*h_cg) over the wheelbase, as a share of the car's weight.
+  const double a_x = Fx / _param.inertia.m;
+  const double shift = a_x * _param.suspension.h_cg / (_param.inertia.g * _param.kinematic.l);
+  // Keep a little load on both axles: a wheel with zero normal force generates
+  // no lateral force at all, and the bicycle model has no business simulating
+  // a wheelie. (min/max rather than std::clamp -- this package is built as C++14.)
+  return std::min(std::max(w_static - shift, 0.05), 0.95);
+}
+
+double DynamicBicycle::_getFy(const double Fz, const double w_front, bool front,
+                             double slip_angle) {
+  const double Fz_axle = front ? _getDownForceFront(Fz, w_front) : _getDownForceRear(Fz, w_front);
 
   const double B = _param.tire.B;
   const double C = _param.tire.C;
@@ -97,13 +126,14 @@ double DynamicBicycle::_getFy(const double Fz, bool front, double slip_angle) {
   return Fy;
 }
 
-double DynamicBicycle::_getDownForceFront(const double Fz) {
-  double FzAxle = 0.5 * _param.kinematic.w_front * Fz;
+double DynamicBicycle::_getDownForceFront(const double Fz, const double w_front) {
+  // Per tyre, not per axle: _f doubles these back up.
+  double FzAxle = 0.5 * w_front * Fz;
   return FzAxle;
 }
 
-double DynamicBicycle::_getDownForceRear(const double Fz) {
-  double FzAxle = 0.5 * (1 - _param.kinematic.w_front) * Fz;
+double DynamicBicycle::_getDownForceRear(const double Fz, const double w_front) {
+  double FzAxle = 0.5 * (1 - w_front) * Fz;
   return FzAxle;
 }
 

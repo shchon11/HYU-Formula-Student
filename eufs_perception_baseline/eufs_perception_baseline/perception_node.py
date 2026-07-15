@@ -46,6 +46,7 @@ produced it.
 
 import math
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -163,9 +164,15 @@ class PerceptionNode(Node):
 
         self._lock = threading.Lock()
         self._cluster_frame: Optional[ClusterFrame] = None
+        self._bbox_msg: Optional[BoundingBoxes] = None
         self._camera_info: Optional[CameraInfo] = None
-        self._left_image: Optional[Image] = None
-        self._right_image: Optional[Image] = None
+        # Stereo halves waiting for their partner, keyed by exact stamp, plus
+        # the newest complete pair. See _offer_half for why "newest of each"
+        # is not the same thing as "a pair".
+        self._pending_left: "OrderedDict[int, Image]" = OrderedDict()
+        self._pending_right: "OrderedDict[int, Image]" = OrderedDict()
+        self._pair: Optional[Tuple[Image, Image]] = None
+        self._pair_buffer_size = 8
         self._latencies: List[float] = []
         self._last_latency_log_ns: Optional[int] = None
         self._warned: Dict[str, float] = {}
@@ -185,23 +192,23 @@ class PerceptionNode(Node):
             MarkerArray, self.debug_prefix + "/cone_provenance", 10)
 
         self.create_subscription(
-            PointCloud2, self.pointcloud_topic, self._cloud_callback, qos)
-        self.create_subscription(
             CameraInfo, self.camera_info_topic, self._camera_info_callback, qos)
+        self.create_subscription(
+            BoundingBoxes, self.bbox_topic, self._bbox_callback, qos)
         if self.zncc_enabled:
             self.create_subscription(
                 Image, self.left_image_topic, self._left_image_callback, qos)
             self.create_subscription(
                 Image, self.right_image_topic, self._right_image_callback, qos)
-        # Last: give the first bbox frame a chance of finding a cloud.
+        # Last: the output path, so the first cloud can find a bbox to colour by.
         self.create_subscription(
-            BoundingBoxes, self.bbox_topic, self._bbox_callback, qos)
+            PointCloud2, self.pointcloud_topic, self._cloud_callback, qos)
 
         self.get_logger().info(
             f"Perception: LiDAR backbone {self.pointcloud_topic}, colour and "
             f"vision fallback {self.bbox_topic}, ZNCC cross-check "
             f"{'on' if self.zncc_enabled else 'off'}; publishing "
-            f"{self.output_cones_topic} on every bbox frame")
+            f"{self.output_cones_topic} on every LiDAR cloud")
 
     # ---------------------------------------------------------------- params
 
@@ -221,6 +228,7 @@ class PerceptionNode(Node):
 
         self.declare_parameter("max_cluster_age_sec", 0.20)
         self.declare_parameter("max_image_age_sec", 0.10)
+        self.declare_parameter("max_pair_skew_sec", 0.005)
         self.declare_parameter("motion_compensation_frame", "map")
         self.declare_parameter("tf_timeout_sec", 0.0)
 
@@ -345,6 +353,7 @@ class PerceptionNode(Node):
             setattr(self, name, int(g(name)))
         for name in (
             "latency_log_period_sec", "max_cluster_age_sec", "max_image_age_sec",
+            "max_pair_skew_sec",
             "tf_timeout_sec", "min_bbox_probability", "min_project_depth",
             "roi_min_x", "roi_max_x", "roi_abs_y", "roi_min_z", "roi_max_z",
             "ground_min_z", "ground_ransac_distance_threshold",
@@ -420,15 +429,52 @@ class PerceptionNode(Node):
             self._camera_info = msg
 
     def _left_image_callback(self, msg: Image) -> None:
-        with self._lock:
-            self._left_image = msg
+        self._offer_half(msg, self._pending_left, self._pending_right, left=True)
 
     def _right_image_callback(self, msg: Image) -> None:
+        self._offer_half(msg, self._pending_right, self._pending_left, left=False)
+
+    def _offer_half(self, msg, mine, theirs, left: bool) -> None:
+        """Pair the stereo halves by exact stamp, not by "whatever arrived last".
+
+        Both halves come out of one multicamera sensor, so a true pair is
+        stamp-identical and this match is exact rather than a tolerance. Keeping
+        the newest of each independently looked equivalent and was not: no single
+        Python process can deserialise two 2.7 MB streams at 30 Hz, so the halves
+        arrive at different effective rates and the two "newest" images are
+        routinely different instants. Triangulating those measures the car's
+        motion and reports it as depth.
+
+        Dropping frames is fine here. We only need a pair per LiDAR cloud, and
+        pairs survive at well over 10 Hz even when each half loses a third.
+        """
+        key = self._stamp_key(msg.header.stamp)
         with self._lock:
-            self._right_image = msg
+            match = theirs.pop(key, None)
+            if match is not None:
+                self._pair = (msg, match) if left else (match, msg)
+                theirs.clear()
+                mine.clear()
+                return
+            mine[key] = msg
+            # Unmatched halves are frames whose counterpart the process dropped.
+            # Bound the buffer; the stale ones will never find a partner.
+            while len(mine) > self._pair_buffer_size:
+                del mine[next(iter(mine))]
+
+    @staticmethod
+    def _stamp_key(stamp) -> int:
+        return int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
 
     def _cloud_callback(self, msg: PointCloud2) -> None:
-        """Rebuild the backbone. Once per cloud, never once per output."""
+        """The output path. One cloud in, one /cones frame out.
+
+        The LiDAR is the backbone: it is what actually measures where a cone is,
+        so it sets the rate. Running the output off the camera instead meant
+        republishing the same clusters two extra times per cloud, dressed in a
+        new stamp each time, which invites a consumer to read three independent
+        measurements where there was one.
+        """
         if not msg.header.frame_id:
             self._warn_throttled(
                 "cloud_frame", "LiDAR cloud has an empty frame_id; it cannot be "
@@ -453,30 +499,40 @@ class PerceptionNode(Node):
             frame.cluster_indices = self._cluster(points_base[keep])
         with self._lock:
             self._cluster_frame = frame
-
-    def _bbox_callback(self, msg: BoundingBoxes) -> None:
-        """The output path. Publishes on every bbox frame; waits for nothing."""
-        stamp = self._bbox_stamp(msg)
-        with self._lock:
             camera_info = self._camera_info
-            cluster_frame = self._cluster_frame
-            left, right = self._left_image, self._right_image
+            bbox_msg = self._bbox_msg
+            pair = self._pair
+        left, right = pair if pair is not None else (None, None)
+
+        stamp = frame.stamp
         if camera_info is None:
             self._warn_throttled(
                 "no_camera_info", f"Waiting for {self.camera_info_topic}; "
                 f"cannot project without intrinsics")
             return
-
         camera_matrix = self._camera_matrix(camera_info)
         if not np.all(np.isfinite(camera_matrix)):
             self._warn_throttled(
                 "bad_camera_info",
                 f"{self.camera_info_topic} carries no usable K or P")
             return
-        detections = self._extract_detections(msg, camera_info)
-        scene = self._scene_at(cluster_frame, stamp, camera_matrix)
+        if bbox_msg is None:
+            self._warn_throttled(
+                "no_bbox", f"Waiting for {self.bbox_topic}; publishing "
+                f"uncoloured clusters until it arrives")
+            detections, image_stamp = [], stamp
+        else:
+            image_stamp = self._bbox_stamp(bbox_msg)
+            detections = self._extract_detections(bbox_msg, camera_info)
+
+        scene = self._scene_at(frame, image_stamp, camera_matrix)
         cones = self._build_cones(detections, scene, camera_info, camera_matrix,
-                                  stamp, left, right)
+                                  image_stamp, left, right)
+        # The vision-only provenances measured their cone in an image from
+        # `image_stamp`, so their x/y belong to that instant, not to the cloud's.
+        # The array goes out under one stamp; carrying them forward is what makes
+        # that stamp true for every cone in it rather than just for the clusters.
+        cones = self._carry_vision_cones(cones, image_stamp, stamp)
         # Provenance goes out FIRST. A consumer keys it by the /cones stamp, so
         # publishing it afterwards leaves that consumer holding cones it cannot
         # attribute for one frame -- which reads as "no provenance" rather than
@@ -484,6 +540,47 @@ class PerceptionNode(Node):
         if self.publish_debug:
             self.provenance_pub.publish(self._provenance_markers(cones, stamp))
         self._publish(cones, stamp)
+
+    def _bbox_callback(self, msg: BoundingBoxes) -> None:
+        """Cache the newest detections. The cloud callback does the publishing.
+
+        Colour does not move, so a bbox up to one camera period old still
+        describes the same cone. Holding it costs nothing and lets the output
+        stay on the LiDAR's clock.
+        """
+        with self._lock:
+            self._bbox_msg = msg
+
+    def _carry_vision_cones(self, cones: List[Cone], from_stamp, to_stamp):
+        """Move the vision-only cones from the image's instant to the cloud's.
+
+        Cluster cones are already at ``to_stamp`` by construction: the scene put
+        them there. Only the monocular and ZNCC provenances came out of the
+        image alone, and they carry its stamp. Returns the cones unchanged if
+        the gap is negligible or TF cannot span it, which is honest: a cone at a
+        stamp 30 ms stale beats no cone.
+        """
+        vision = [c for c in cones
+                  if c.provenance in (PROV_MONOCULAR, PROV_MONO_ZNCC)]
+        if not vision:
+            return cones
+        gap = abs(self._stamp_sec(to_stamp) - self._stamp_sec(from_stamp))
+        if gap < 1e-4:
+            return cones
+        carry = self._lookup_transform_between(
+            self.output_frame, to_stamp, self.output_frame, from_stamp)
+        if carry is None:
+            self._warn_throttled(
+                "vision_carry_tf",
+                f"No TF to carry vision-only cones {gap * 1000:.0f} ms to the "
+                f"cloud stamp; they go out at the image's instant")
+            return cones
+        points = np.array([[c.x, c.y, 0.0] for c in vision], dtype=np.float64)
+        moved = self._transform_points(points, carry)
+        for cone, (x, y, _) in zip(vision, moved):
+            cone.x, cone.y = float(x), float(y)
+            cone.range_m = float(math.hypot(x, y))
+        return cones
 
     # -------------------------------------------------------------- backbone
 
@@ -612,35 +709,40 @@ class PerceptionNode(Node):
     def _scene_at(
         self,
         frame: Optional[ClusterFrame],
-        stamp,
+        image_stamp,
         camera_matrix: np.ndarray,
     ) -> Optional[Scene]:
-        """Carry the cached cloud into this bbox's instant, once.
+        """Resolve the cached cloud for this LiDAR frame's output.
 
-        The cloud is up to ``max_cluster_age_sec`` old and the car is moving, so
-        its points are transformed from their own stamp to the bbox stamp
-        through a fixed frame. Every cone in the output then belongs to the one
-        header timestamp, which is what lets a consumer trust it. Transform and
-        projection happen once for the whole cloud; clusters and sparse support
-        are both just index sets into it.
+        Positions and association want different instants, and this is the one
+        place that difference is expressible. The cones go out at the cloud's
+        own stamp, so their positions are native and need no compensation at
+        all. The pixels have to line up with an image taken up to one bbox
+        period earlier, so the projection, and only the projection, time-travels
+        back to the image stamp. At 6.5 m/s a 33 ms gap is 0.21 m, which is
+        roughly 20 px at 15 m against a cone about 30 px wide, so skipping that
+        compensation would mis-associate real cones at range.
+
+        Both transforms start from the LiDAR frame, so each is a single
+        transform of the raw points rather than a correction on a correction.
         """
         if frame is None or frame.points_lidar.shape[0] == 0:
             return None
-        age = abs(self._stamp_sec(stamp) - self._stamp_sec(frame.stamp))
+        age = abs(self._stamp_sec(image_stamp) - self._stamp_sec(frame.stamp))
         if age > self.max_cluster_age_sec:
             self._warn_throttled(
                 "cluster_age",
-                f"Newest LiDAR cloud is {age:.2f}s from the bbox stamp (limit "
-                f"{self.max_cluster_age_sec}s); publishing vision-only cones")
+                f"Newest bbox frame is {age:.2f}s from the cloud stamp (limit "
+                f"{self.max_cluster_age_sec}s); publishing uncoloured cones")
             return None
-        to_base = self._lookup_transform_between(
-            self.output_frame, stamp, frame.frame_id, frame.stamp)
+        to_base = self._lookup_transform(
+            self.output_frame, frame.frame_id, frame.stamp)
         to_camera = self._lookup_transform_between(
-            self.camera_frame, stamp, frame.frame_id, frame.stamp)
+            self.camera_frame, image_stamp, frame.frame_id, frame.stamp)
         if to_base is None or to_camera is None:
             self._warn_throttled(
-                "cluster_tf", "No TF to carry the LiDAR points to the bbox "
-                "stamp; publishing vision-only cones")
+                "cluster_tf", "No TF to place the LiDAR points and project them "
+                "into the image stamp; publishing uncoloured cones")
             return None
         return Scene(
             points_base=self._transform_points(frame.points_lidar, to_base),
@@ -926,6 +1028,21 @@ class PerceptionNode(Node):
                     "image_age", "Stereo images are too far from the bbox stamp "
                     "for the ZNCC cross-check; keeping the monocular estimate")
                 return cone
+        # The pair must be the same instant as EACH OTHER, which is a stricter
+        # thing than both being near the bbox. Disparity between images taken at
+        # different times contains the car's motion, and a triangulation cannot
+        # tell that apart from depth: 33 ms at 6.5 m/s is 0.21 m of pure error,
+        # reported with a confident sigma. Checking only against the bbox stamp
+        # let two images 2x max_image_age_sec apart both pass.
+        pair_gap = abs(self._stamp_sec(left.header.stamp)
+                       - self._stamp_sec(right.header.stamp))
+        if pair_gap > self.max_pair_skew_sec:
+            self._warn_throttled(
+                "pair_skew",
+                f"Stereo pair is {pair_gap * 1000:.0f} ms apart (limit "
+                f"{self.max_pair_skew_sec * 1000:.0f} ms); the disparity would "
+                f"be ego motion, not depth. Keeping the monocular estimate")
+            return cone
         left_gray = self._to_gray(left)
         right_gray = self._to_gray(right)
         if left_gray is None or right_gray is None:
@@ -1094,7 +1211,7 @@ class PerceptionNode(Node):
                 if attempted else "")
         self._zncc_stats = [0, 0]
         self.get_logger().info(
-            f"{self.output_cones_topic} latency (now - bbox stamp): "
+            f"{self.output_cones_topic} latency (now - cloud stamp): "
             f"mean {1000 * sum(samples) / len(samples):.0f} ms  "
             f"p90 {1000 * samples[min(len(samples) - 1, int(0.9 * len(samples)))]:.0f} ms  "
             f"max {1000 * samples[-1]:.0f} ms  over {len(samples)} msgs / "

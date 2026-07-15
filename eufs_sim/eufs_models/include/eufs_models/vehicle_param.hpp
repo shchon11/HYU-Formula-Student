@@ -39,6 +39,11 @@ struct Param {
     kinematic = config["kinematics"].as<Param::Kinematic>();
     tire = config["tire"].as<Param::Tire>();
     aero = config["aero"].as<Param::Aero>();
+    // Optional: a config written before the body had a suspension keeps its
+    // defaults rather than failing to load.
+    if (config["suspension"]) {
+      suspension = config["suspension"].as<Param::Suspension>();
+    }
     input_ranges = config["input_ranges"].as<Param::InputRanges>();
   }
 
@@ -72,6 +77,30 @@ struct Param {
     double c_drag;
   };
 
+  /// How the body leans, and whether that lean is allowed to change what the
+  /// tyres can do.
+  ///
+  /// The defaults stand in for a Formula Student car and are used whenever a
+  /// config predates this section, so an old config still loads -- it just gets
+  /// a generic car's suspension rather than this one's.
+  struct Suspension {
+    /// Centre of gravity height [m]. This is the whole reason a car leans: it
+    /// is the moment arm the inertial force acts through.
+    double h_cg = 0.30;
+    /// Resistance to leaning [N*m/rad]. At 300 kg and h_cg 0.30, cornering at
+    /// 1 g is a 883 N*m moment, so k_roll = 30000 leans the body 1.7 deg.
+    double k_roll = 30000.0;
+    double k_pitch = 40000.0;
+    /// How the body gets there: a spring-mass, not a lag. Formula Student cars
+    /// sit around 2-3 Hz, underdamped enough to overshoot a step.
+    double natural_freq_hz = 2.5;
+    double damping_ratio = 0.5;
+    /// Feed longitudinal load transfer back into the tyre normal loads, so
+    /// braking really does buy front grip. Off by default: it changes how the
+    /// car handles, and the controllers are tuned against it being off.
+    bool load_transfer_to_tires = false;
+  };
+
   struct InputRanges {
     struct Range {
       double min;
@@ -87,6 +116,7 @@ struct Param {
   Kinematic kinematic;
   Tire tire;
   Aero aero;
+  Suspension suspension;
   InputRanges input_ranges;
 };
 
@@ -136,6 +166,33 @@ struct convert<eufs::models::Param::Aero> {
   static bool decode(const Node &node, eufs::models::Param::Aero &cType) {
     cType.c_down = node["C_Down"].as<double>();
     cType.c_drag = node["C_drag"].as<double>();
+    return true;
+  }
+};
+
+template <>
+struct convert<eufs::models::Param::Suspension> {
+  static bool decode(const Node &node, eufs::models::Param::Suspension &cType) {
+    // Every field is optional and keeps its default, so a config can specify
+    // only what it actually knows about its car.
+    if (node["h_cg"]) {
+      cType.h_cg = node["h_cg"].as<double>();
+    }
+    if (node["k_roll"]) {
+      cType.k_roll = node["k_roll"].as<double>();
+    }
+    if (node["k_pitch"]) {
+      cType.k_pitch = node["k_pitch"].as<double>();
+    }
+    if (node["natural_freq_hz"]) {
+      cType.natural_freq_hz = node["natural_freq_hz"].as<double>();
+    }
+    if (node["damping_ratio"]) {
+      cType.damping_ratio = node["damping_ratio"].as<double>();
+    }
+    if (node["load_transfer_to_tires"]) {
+      cType.load_transfer_to_tires = node["load_transfer_to_tires"].as<bool>();
+    }
     return true;
   }
 };

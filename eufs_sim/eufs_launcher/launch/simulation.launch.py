@@ -14,12 +14,6 @@ from launch.launch_description_sources import FrontendLaunchDescriptionSource
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 
 
-def _default_python_executable():
-    # Keep the ROS entrypoint's interpreter unless the caller opts in to a
-    # different executable. Ambient Conda state must not alter ROS ABI loading.
-    return ''
-
-
 PERCEPTION_LAUNCH_ARGUMENTS = [
     (
         'perception_camera_view_distance',
@@ -93,6 +87,38 @@ PERCEPTION_LAUNCH_ARGUMENTS = [
     ),
 ]
 
+# Procedural bump field. Off by default: it is real geometry in the world, so it
+# changes what the LiDAR sees, and no run should get that without asking.
+TERRAIN_LAUNCH_ARGUMENTS = [
+    (
+        'terrain',
+        'false',
+        'Insert a procedural bump field into the world: real geometry the LiDAR '
+        'ray-traces and the car rides, instead of a perfectly flat floor.',
+    ),
+    (
+        'terrain_seed',
+        '7',
+        'Seed for the bump field; the same seed is the same bumps every run.',
+    ),
+    (
+        'terrain_density',
+        '0.02',
+        'Bumps per square metre.',
+    ),
+    (
+        'terrain_height_mean',
+        '0.020',
+        'Mean bump peak height [m]. Raise to stress ground-plane removal.',
+    ),
+    (
+        'road_noise',
+        'true',
+        'Speed-scaled roughness vibration on the body. It is louder than the '
+        "car's own load transfer at speed, so turn it off to observe that.",
+    ),
+]
+
 
 def _resolve_perception_mode(context):
     """Map the single `perception_mode` knob onto launch_group + perception.
@@ -151,13 +177,14 @@ def _validate_perception_wiring(context):
 
 
 def generate_launch_description():
+    forwarded_arguments = PERCEPTION_LAUNCH_ARGUMENTS + TERRAIN_LAUNCH_ARGUMENTS
     perception_argument_declarations = [
         DeclareLaunchArgument(name, default_value=default, description=description)
-        for name, default, description in PERCEPTION_LAUNCH_ARGUMENTS
+        for name, default, description in forwarded_arguments
     ]
     perception_launch_arguments = [
         (name, LaunchConfiguration(name))
-        for name, _, _ in PERCEPTION_LAUNCH_ARGUMENTS
+        for name, _, _ in forwarded_arguments
     ]
 
     return LaunchDescription([
@@ -241,20 +268,21 @@ def generate_launch_description():
             default_value='false',
             description="Launch eufs_perception_baseline with the simulator"),
 
-        DeclareLaunchArgument(
-            name='perception_bbox_source',
-            default_value='yolov8',
-            description="Perception bbox source: simulated or yolov8"),
-
+        # These wrap eufs_perception_baseline's launch interface. Anything the
+        # baseline does not declare cannot be forwarded: an IncludeLaunchDescription
+        # that passes an unknown argument fails the whole launch. The tier-era
+        # knobs (bbox_source, monocular/stereo_fallback_enabled, python_executable)
+        # went away with the tiers; the node now picks its provenance per cone
+        # from what the sensors actually support, so there is nothing to switch.
         DeclareLaunchArgument(
             name='perception_output_cones_topic',
             default_value='/cones',
             description="Perception output cone topic"),
 
         DeclareLaunchArgument(
-            name='perception_publish_fusion_debug',
+            name='perception_publish_debug',
             default_value='true',
-            description="Publish fusion debug topics for RViz"),
+            description="Publish cone provenance/covariance markers for RViz"),
 
         DeclareLaunchArgument(
             name='perception_publish_yolo_debug_image',
@@ -267,52 +295,12 @@ def generate_launch_description():
             description="Right rectified image consumed by perception"),
 
         DeclareLaunchArgument(
-            name='perception_right_camera_info_topic',
-            default_value='/zed/right/camera_info',
-            description="Right CameraInfo consumed by perception"),
-
-        DeclareLaunchArgument(
-            name='perception_right_camera_frame',
-            default_value='zed_right_camera_optical_frame',
-            description="Right optical frame used by perception"),
-
-        DeclareLaunchArgument(
             name='perception_motion_compensation_frame',
             default_value='map',
             description=(
                 "Fixed TF frame for cross-time perception transforms; map is "
                 "the ground-truth default, use odom when GraphSLAM owns TF"
             )),
-
-        DeclareLaunchArgument(
-            name='perception_monocular_allowed_colors',
-            default_value='blue,yellow,orange',
-            description=(
-                "Colours the Tier-2 height curve is calibrated for. Empty it "
-                "(with perception_monocular_fallback_enabled:=false) to route "
-                "every cone to the stereo tier instead of dropping it."
-            )),
-
-        DeclareLaunchArgument(
-            name='perception_monocular_fallback_enabled',
-            default_value='true',
-            description=(
-                "Enable monocular visual-only cone depth fallback in the real "
-                "perception pipeline"
-            )),
-
-        DeclareLaunchArgument(
-            name='perception_stereo_fallback_enabled',
-            default_value='true',
-            description=(
-                "Enable stereo visual-only cone depth fallback in the real "
-                "perception pipeline"
-            )),
-
-        DeclareLaunchArgument(
-            name='perception_python_executable',
-            default_value=_default_python_executable(),
-            description="Python interpreter used to run perception nodes"),
 
         # Resolve perception_mode -> launch_group/perception FIRST, then
         # validate the (possibly resolved) combination.
@@ -353,35 +341,22 @@ def generate_launch_description():
                 PathJoinSubstitution([
                     get_package_share_directory('eufs_perception_baseline'),
                     'launch',
-                    'perception_baseline.launch.py'
+                    'perception.launch.py'
                 ]),
             ),
             condition=IfCondition(LaunchConfiguration('perception')),
             launch_arguments=[
-                ('bbox_source', LaunchConfiguration('perception_bbox_source')),
                 ('output_cones_topic',
                  LaunchConfiguration('perception_output_cones_topic')),
                 ('use_sim_time', LaunchConfiguration('use_sim_time')),
-                ('publish_fusion_debug',
-                 LaunchConfiguration('perception_publish_fusion_debug')),
+                ('publish_debug',
+                 LaunchConfiguration('perception_publish_debug')),
                 ('publish_yolo_debug_image',
                  LaunchConfiguration('perception_publish_yolo_debug_image')),
                 ('right_image_topic',
                  LaunchConfiguration('perception_right_image_topic')),
-                ('right_camera_info_topic',
-                 LaunchConfiguration('perception_right_camera_info_topic')),
-                ('right_camera_frame',
-                 LaunchConfiguration('perception_right_camera_frame')),
                 ('motion_compensation_frame',
                  LaunchConfiguration('perception_motion_compensation_frame')),
-                ('monocular_fallback_enabled',
-                 LaunchConfiguration('perception_monocular_fallback_enabled')),
-                ('monocular_allowed_colors',
-                 LaunchConfiguration('perception_monocular_allowed_colors')),
-                ('stereo_fallback_enabled',
-                 LaunchConfiguration('perception_stereo_fallback_enabled')),
-                ('python_executable',
-                 LaunchConfiguration('perception_python_executable')),
             ],
         ),
     ])

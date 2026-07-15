@@ -18,6 +18,14 @@ tire:
   E: -0.58
   radius: 0.2525
 
+suspension:
+  h_cg: 0.30                    # Centre of gravity height [m] -- the moment arm the car leans through
+  k_roll: 30000.0               # Roll stiffness [N*m/rad]; 300 kg at 1 g leans ~1.7 deg
+  k_pitch: 40000.0              # Pitch stiffness [N*m/rad]
+  natural_freq_hz: 2.5          # Body attitude natural frequency
+  damping_ratio: 0.5            # Underdamped, so a step of throttle overshoots
+  load_transfer_to_tires: false # Feed longitudinal transfer into tyre normal loads (changes handling)
+
 aero:
   C_Down: 1.9 # F_Downforce = C_Downforce*v_x^2
   C_drag: 1   # F_Drag = C_Drag*v_x^2

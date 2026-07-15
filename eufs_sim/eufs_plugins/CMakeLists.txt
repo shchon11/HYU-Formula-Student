@@ -88,6 +88,9 @@ if(ENABLE_PROFILER)
 endif()
 
 install(DIRECTORY urdf DESTINATION share/${PROJECT_NAME})
+# The unit bump dome the terrain field instances. Resolved at runtime by
+# absolute path (see RaceCarModelPlugin::initTerrain), not via GAZEBO_MODEL_PATH.
+install(DIRECTORY meshes DESTINATION share/${PROJECT_NAME})
 
 add_subdirectory(gazebo_cone_plugins)
 add_subdirectory(gazebo_race_car_model)

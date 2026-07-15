@@ -31,7 +31,11 @@
 #include <cmath>
 #include <fstream>
 #include <mutex>  // NOLINT(build/c++11)
+#include <string>
 #include <thread>  // NOLINT(build/c++11)
+
+// ROS Include
+#include <ament_index_cpp/get_package_share_directory.hpp>
 
 
 namespace gazebo_plugins {
@@ -72,6 +76,9 @@ void RaceCarModelPlugin::Load(gazebo::physics::ModelPtr model, sdf::ElementPtr s
 
   // Initialize acceleration-driven load transfer (roll/pitch)
   initLoadTransfer(sdf);
+
+  // Initialize the procedural bump field and insert its geometry into the world
+  initTerrain(sdf);
 
   // ROS Publishers
   _pub_ground_truth_car_state =
@@ -366,21 +373,155 @@ void RaceCarModelPlugin::initLoadTransfer(const sdf::ElementPtr &sdf) {
 
   _load_transfer_enabled =
       sdf->HasElement("loadTransfer") && sdf->GetElement("loadTransfer")->Get<bool>();
-  // ~0.006 rad per m/s^2 -> about 3.4 deg lean at 1 g.
-  _lt_roll_gain = get_double("loadTransferRollGain", 0.006);
-  _lt_pitch_gain = get_double("loadTransferPitchGain", 0.006);
-  _lt_tau = std::max(get_double("loadTransferTau", 0.15), 1.0e-3);
+  // Clamps only. How far the body leans and how it gets there come from the
+  // car's own suspension parameters, not from the SDF.
   _lt_max_roll = std::max(get_double("loadTransferMaxRoll", 0.10), 0.0);
   _lt_max_pitch = std::max(get_double("loadTransferMaxPitch", 0.10), 0.0);
   _lt_roll = 0.0;
   _lt_pitch = 0.0;
+  _lt_roll_rate = 0.0;
+  _lt_pitch_rate = 0.0;
 
   if (_load_transfer_enabled) {
+    const auto &param = _vehicle->getParam();
+    const auto &suspension = param.suspension;
+    const double mass = param.inertia.m;
+    // Report the lean at 1 g, because that is the number anyone can sanity-check
+    // against the real car -- unlike a stiffness in N*m/rad.
+    const double roll_at_1g = mass * param.inertia.g * suspension.h_cg / suspension.k_roll;
     RCLCPP_INFO(_rosnode->get_logger(),
-                "Acceleration load transfer enabled (roll_gain=%.4f, pitch_gain=%.4f rad/(m/s^2), "
-                "tau=%.3f s)",
-                _lt_roll_gain, _lt_pitch_gain, _lt_tau);
+                "Acceleration load transfer enabled (h_cg=%.3f m, k_roll=%.0f k_pitch=%.0f N*m/rad,"
+                " %.2f Hz zeta=%.2f) -> %.2f deg of roll at 1 g; tyre coupling %s",
+                suspension.h_cg, suspension.k_roll, suspension.k_pitch, suspension.natural_freq_hz,
+                suspension.damping_ratio, roll_at_1g * 180.0 / M_PI,
+                suspension.load_transfer_to_tires ? "ON" : "off");
   }
+}
+
+void RaceCarModelPlugin::initTerrain(const sdf::ElementPtr &sdf) {
+  auto get_double = [&](const char *name, double def) {
+    return sdf->HasElement(name) ? sdf->GetElement(name)->Get<double>() : def;
+  };
+
+  TerrainField::Config config;
+  config.enabled = sdf->HasElement("terrain") && sdf->GetElement("terrain")->Get<bool>();
+  config.seed = sdf->HasElement("terrainSeed") ? sdf->GetElement("terrainSeed")->Get<unsigned int>()
+                                               : 7u;
+  config.density = get_double("terrainDensity", 0.02);
+  config.half_extent_x = get_double("terrainHalfExtentX", 60.0);
+  config.half_extent_y = get_double("terrainHalfExtentY", 60.0);
+  config.height_mean = get_double("terrainHeightMean", 0.020);
+  config.height_sigma = get_double("terrainHeightSigma", 0.010);
+  config.height_min = get_double("terrainHeightMin", 0.004);
+  config.radius_min = get_double("terrainRadiusMin", 0.25);
+  config.radius_max = get_double("terrainRadiusMax", 0.60);
+  config.track_margin = get_double("terrainTrackMargin", 3.5);
+
+  _terrain_enabled = config.enabled;
+  if (!_terrain_enabled) {
+    return;
+  }
+
+  // Grow the field around the track's cones, which is the only ground the car
+  // can reach. The track model is loaded before the car, so its links are
+  // already here; this is the same enumeration the ground-truth cone plugin
+  // does.
+  if (gazebo::physics::ModelPtr track = _world->ModelByName("track")) {
+    for (const gazebo::physics::LinkPtr &link : track->GetLinks()) {
+      const ignition::math::Vector3d position = link->WorldPose().Pos();
+      config.track_points.emplace_back(position.X(), position.Y());
+    }
+  }
+  if (config.track_points.empty()) {
+    RCLCPP_WARN(_rosnode->get_logger(),
+                "Terrain: no 'track' model found, so bumps will be spread over the whole "
+                "+-%.0f x %.0f m area. Lower terrainDensity to keep the count sane.",
+                config.half_extent_x, config.half_extent_y);
+  }
+
+  _terrain.generate(config);
+
+  // Each bump is a separate trimesh collision, and Gazebo has been seen to die
+  // outright somewhere above a thousand of them. Refuse to build a world that
+  // kills the simulator: a run that dies on startup teaches nothing.
+  const auto max_bumps = static_cast<std::size_t>(get_double("terrainMaxBumps", 600.0));
+  if (_terrain.bumps().size() > max_bumps) {
+    _terrain_enabled = false;
+    RCLCPP_ERROR(_rosnode->get_logger(),
+                 "Terrain: %zu bumps exceeds terrainMaxBumps=%zu and would risk killing "
+                 "gzserver; disabling. Lower terrainDensity or terrainTrackMargin.",
+                 _terrain.bumps().size(), max_bumps);
+    return;
+  }
+  if (_terrain.empty()) {
+    _terrain_enabled = false;
+    RCLCPP_WARN(_rosnode->get_logger(),
+                "Terrain enabled but the configuration generated no bumps; disabling.");
+    return;
+  }
+
+  // Resolve the unit dome by absolute path rather than model://, so the field
+  // does not depend on GAZEBO_MODEL_PATH being set up.
+  const std::string mesh_uri =
+      "file://" + ament_index_cpp::get_package_share_directory("eufs_plugins") +
+      "/meshes/bump_dome.stl";
+
+  const std::string model_name = "eufs_terrain";
+  _world->InsertModelString(_terrain.sdf(model_name, mesh_uri));
+
+  RCLCPP_INFO(_rosnode->get_logger(),
+              "Terrain bump field enabled: %zu bumps (seed=%u, density=%.3f /m^2, "
+              "height %.3f+-%.3f m, radius %.2f-%.2f m) within %.1f m of %zu track cones",
+              _terrain.bumps().size(), config.seed, config.density, config.height_mean,
+              config.height_sigma, config.radius_min, config.radius_max, config.track_margin,
+              config.track_points.size());
+}
+
+void RaceCarModelPlugin::sampleTerrain(double x, double y, double yaw, double *z, double *roll,
+                                       double *pitch) const {
+  *z = 0.0;
+  *roll = 0.0;
+  *pitch = 0.0;
+  if (!_terrain_enabled) {
+    return;
+  }
+
+  const auto &param = _vehicle->getParam();
+  const double half_track = 0.5 * param.kinematic.axle_width;
+  const double l_f = param.kinematic.l_F;
+  const double l_r = param.kinematic.l_R;
+  const double cos_yaw = std::cos(yaw);
+  const double sin_yaw = std::sin(yaw);
+
+  // Contact points in body frame, front/rear x left/right.
+  const std::array<double, 4> body_x = {l_f, l_f, -l_r, -l_r};
+  const std::array<double, 4> body_y = {half_track, -half_track, half_track, -half_track};
+  std::array<double, 4> h{};
+  for (std::size_t i = 0; i < h.size(); ++i) {
+    h[i] = _terrain.height(x + body_x[i] * cos_yaw - body_y[i] * sin_yaw,
+                           y + body_x[i] * sin_yaw + body_y[i] * cos_yaw);
+  }
+
+  // Least-squares plane z = a + b*x_body + c*y_body through the four contact
+  // points. The wheel layout is symmetric in y and two-valued in x, so the
+  // normal equations collapse to these differences.
+  const double front = 0.5 * (h[0] + h[1]);
+  const double rear = 0.5 * (h[2] + h[3]);
+  const double left = 0.5 * (h[0] + h[2]);
+  const double right = 0.5 * (h[1] + h[3]);
+  const double wheelbase = l_f + l_r;
+
+  const double b = wheelbase > 1.0e-6 ? (front - rear) / wheelbase : 0.0;
+  const double c = half_track > 1.0e-6 ? (left - right) / (2.0 * half_track) : 0.0;
+  const double mean_h = 0.25 * (h[0] + h[1] + h[2] + h[3]);
+  // The contact-point centroid sits at x_body = (l_F - l_R)/2, which is the
+  // body origin only on a car with equal overhangs; carry the term so it is not
+  // silently wrong for one that is not.
+  *z = mean_h - b * 0.5 * (l_f - l_r);
+  // REP-103: +pitch is nose down, so a front-high plane pitches negative.
+  // +roll rotates +y up, so a left-high plane rolls positive.
+  *pitch = -std::atan(b);
+  *roll = std::atan(c);
 }
 
 void RaceCarModelPlugin::setPositionFromWorld() {
@@ -425,12 +566,18 @@ bool RaceCarModelPlugin::resetVehiclePosition(
   const ignition::math::Vector3d angular(0.0, 0.0, 0.0);
 
   // Clear the road-roughness and load-transfer accumulators so the vehicle
-  // resets flat.
+  // resets flat. The terrain accumulators hold the bump the car was sitting on;
+  // clearing them stops the jump back to the start line reading as a rate spike
+  // on the IMU. The field itself is unchanged -- it is the ground, not a state.
   _road_z = 0.0;
   _road_roll = 0.0;
   _road_pitch = 0.0;
   _lt_roll = 0.0;
   _lt_pitch = 0.0;
+  _terrain_z = 0.0;
+  _terrain_v_z = 0.0;
+  _terrain_roll = 0.0;
+  _terrain_pitch = 0.0;
 
   _model->SetWorldPose(_offset);
   _model->SetAngularVel(angular);
@@ -462,42 +609,89 @@ void RaceCarModelPlugin::setModelState(double dt) {
       _offset.Pos().X() + _state.x * cos(_offset.Rot().Yaw()) - _state.y * sin(_offset.Rot().Yaw());
   double y =
       _offset.Pos().Y() + _state.x * sin(_offset.Rot().Yaw()) + _state.y * cos(_offset.Rot().Yaw());
-  double z = _state.z;
-
-  // Body attitude perturbations added to the otherwise-flat pose: an
-  // acceleration-driven load transfer plus continuous road roughness. The
-  // matching (clamped) body rates are fed to Gazebo so the rigidly-attached
+  // Body attitude perturbations added to the otherwise-flat pose: the terrain
+  // under the wheels, an acceleration-driven load transfer, and continuous road
+  // roughness. The matching body rates are fed to Gazebo so the rigidly-attached
   // IMU also senses the motion.
+  //
+  // Physical contributions (terrain, load transfer) and the roughness noise are
+  // accumulated separately, because only the noise gets rate-clamped. Clamping
+  // the total would silently cap real motion: crossing a 3 cm bump of 0.4 m
+  // radius at 20 m/s is a genuine 2.4 m/s of vertical speed, five times the
+  // clamp that exists to bound the noise.
   double roll = 0.0, pitch = 0.0;
   double roll_rate = 0.0, pitch_rate = 0.0, z_rate = 0.0;
+  double road_roll_rate = 0.0, road_pitch_rate = 0.0, road_z_rate = 0.0;
   const double road_z_prev = _road_z;
+
+  // Terrain: the plane through the four wheel contact points. This is the same
+  // surface the LiDAR ray-traces, so a bump in the point cloud is a bump the
+  // car climbs -- and vice versa. Sampled at the pose we are about to apply.
+  double terrain_z = 0.0;
+  double terrain_z_rate = 0.0;
+  double terrain_a_z = 0.0;
+  if (_terrain_enabled) {
+    double terrain_roll = 0.0, terrain_pitch = 0.0;
+    sampleTerrain(x, y, yaw, &terrain_z, &terrain_roll, &terrain_pitch);
+
+    if (dt > 0.0) {
+      terrain_z_rate = (terrain_z - _terrain_z) / dt;
+      terrain_a_z = (terrain_z_rate - _terrain_v_z) / dt;
+      z_rate += terrain_z_rate;
+      roll_rate += (terrain_roll - _terrain_roll) / dt;
+      pitch_rate += (terrain_pitch - _terrain_pitch) / dt;
+    }
+    _terrain_z = terrain_z;
+    _terrain_v_z = terrain_z_rate;
+    _terrain_roll = terrain_roll;
+    _terrain_pitch = terrain_pitch;
+
+    roll += terrain_roll;
+    pitch += terrain_pitch;
+  }
 
   // Load transfer: longitudinal accel pitches the body (accel = nose up,
   // braking = dive), lateral accel rolls it outward in a corner. Uses the
   // body-frame specific forces (with the convective yaw-rate terms) so a steady
-  // corner still leans the car. A first-order lag mimics suspension response.
+  // corner still leans the car.
+  //
+  // The lean is the inertial moment about the CoG divided by the suspension's
+  // resistance to it, and the body takes a spring-mass path to get there. This
+  // replaces a hand-tuned rad-per-m/s^2 gain behind a first-order lag, which
+  // was wrong in two ways: the gain was a number with no car behind it (0.010
+  // leaned this car 5.6 deg at 1 g, roughly triple what its stiffness allows),
+  // and a lag cannot overshoot, so a step of throttle settled onto the stops
+  // like a damper rather than bouncing the way a car on springs does.
   if (_load_transfer_enabled && dt > 0.0) {
+    const auto &param = _vehicle->getParam();
+    const auto &suspension = param.suspension;
+    const double mass = param.inertia.m;
     const double a_long = _state.a_x - _state.v_y * _state.r_z;
     const double a_lat = _state.a_y + _state.v_x * _state.r_z;
-    const double pitch_target =
-        std::clamp(-_lt_pitch_gain * a_long, -_lt_max_pitch, _lt_max_pitch);
-    const double roll_target = std::clamp(_lt_roll_gain * a_lat, -_lt_max_roll, _lt_max_roll);
-    const double alpha = 1.0 - std::exp(-dt / _lt_tau);
-    const double lt_roll_prev = _lt_roll, lt_pitch_prev = _lt_pitch;
 
-    _lt_roll += (roll_target - _lt_roll) * alpha;
-    _lt_pitch += (pitch_target - _lt_pitch) * alpha;
+    const double roll_target =
+        std::clamp(mass * a_lat * suspension.h_cg / suspension.k_roll, -_lt_max_roll, _lt_max_roll);
+    const double pitch_target = std::clamp(-mass * a_long * suspension.h_cg / suspension.k_pitch,
+                                           -_lt_max_pitch, _lt_max_pitch);
+
+    const double omega = 2.0 * M_PI * suspension.natural_freq_hz;
+    const double zeta = suspension.damping_ratio;
+    _lt_roll_rate += (omega * omega * (roll_target - _lt_roll) - 2.0 * zeta * omega * _lt_roll_rate) * dt;
+    _lt_pitch_rate +=
+        (omega * omega * (pitch_target - _lt_pitch) - 2.0 * zeta * omega * _lt_pitch_rate) * dt;
+    _lt_roll += _lt_roll_rate * dt;
+    _lt_pitch += _lt_pitch_rate * dt;
 
     roll += _lt_roll;
     pitch += _lt_pitch;
-    roll_rate += (_lt_roll - lt_roll_prev) / dt;
-    pitch_rate += (_lt_pitch - lt_pitch_prev) / dt;
+    roll_rate += _lt_roll_rate;
+    pitch_rate += _lt_pitch_rate;
   }
 
   // Continuous road roughness: speed-scaled AR(1) colored noise on z/roll/pitch.
-  // Because _state.z is read back from the world each step, the previously
-  // applied z offset is removed before reapplying the new one so the vertical
-  // offset cannot random-walk away.
+  // This is texture finer than the terrain field resolves, not terrain: it is
+  // re-rolled every step, so it is the same patch of road only by accident. Any
+  // feature the LiDAR must also see belongs in the terrain field instead.
   if (_road_noise_enabled && dt > 0.0) {
     const double speed = std::hypot(_state.v_x, _state.v_y);
     const double gain = std::min(speed / _road_speed_ref, _road_max_gain);
@@ -511,19 +705,45 @@ void RaceCarModelPlugin::setModelState(double dt) {
 
     roll += _road_roll;
     pitch += _road_pitch;
-    z_rate += (_road_z - road_z_prev) / dt;
-    roll_rate += (_road_roll - prev_roll) / dt;
-    pitch_rate += (_road_pitch - prev_pitch) / dt;
+    road_z_rate = (_road_z - road_z_prev) / dt;
+    road_roll_rate = (_road_roll - prev_roll) / dt;
+    road_pitch_rate = (_road_pitch - prev_pitch) / dt;
   }
 
-  // Clamp the total body rates fed to the IMU.
-  z_rate = std::clamp(z_rate, -_road_max_z_rate, _road_max_z_rate);
-  roll_rate = std::clamp(roll_rate, -_road_max_ang_rate, _road_max_ang_rate);
-  pitch_rate = std::clamp(pitch_rate, -_road_max_ang_rate, _road_max_ang_rate);
+  // Clamp the roughness rates only. These bound a noise process whose step-to-
+  // step difference is unbounded by construction; the terrain and load-transfer
+  // rates above are real motion and are left alone.
+  z_rate += std::clamp(road_z_rate, -_road_max_z_rate, _road_max_z_rate);
+  roll_rate += std::clamp(road_roll_rate, -_road_max_ang_rate, _road_max_ang_rate);
+  pitch_rate += std::clamp(road_pitch_rate, -_road_max_ang_rate, _road_max_ang_rate);
 
-  // Remove last step's applied z offset (already in _state.z via world read-back)
-  // before adding the new one.
-  z = z - road_z_prev + _road_z;
+  double z;
+  if (_terrain_enabled) {
+    // The terrain owns the height outright; roughness rides on top of it.
+    z = terrain_z + _road_z;
+  } else {
+    // _state.z came back from the world with last step's roughness already in
+    // it, so remove that before adding this step's, or the offset random-walks.
+    z = _state.z - road_z_prev + _road_z;
+  }
+
+  // Report the pose and motion actually applied. The planar vehicle model never
+  // writes any of these, so this is their only source. Doing it here, after the
+  // model has run and before publishCarState, is what keeps CarState honest
+  // about the attitude the IMU is simultaneously feeling.
+  //
+  // a_z comes from the terrain alone. Differencing the total would differentiate
+  // the roughness noise twice, and a white process differentiated twice is not
+  // an acceleration -- it is 1/dt^2 times a random number, which at 1 kHz pinned
+  // a_z to +-1000 m/s^2. The terrain profile is smooth, so its second difference
+  // is the real thing: a few g crossing a bump at speed, which is what a car does.
+  _state.a_z = terrain_a_z;
+  _state.z = z;
+  _state.v_z = z_rate;
+  _state.roll = roll;
+  _state.pitch = pitch;
+  _state.r_x = roll_rate;
+  _state.r_y = pitch_rate;
 
   double vx = _state.v_x * cos(yaw) - _state.v_y * sin(yaw);
   double vy = _state.v_x * sin(yaw) + _state.v_y * cos(yaw);
@@ -550,7 +770,13 @@ eufs_msgs::msg::CarState RaceCarModelPlugin::stateToCarStateMsg(const eufs::mode
   car_state.pose.pose.position.y = state.y;
   car_state.pose.pose.position.z = state.z;
 
-  std::vector<double> orientation = {state.yaw, 0.0, 0.0};
+  // Report the attitude the body is actually in. This used to be hardcoded flat,
+  // which silently zeroed the load transfer and terrain lean the body really
+  // carries: the IMU is rigidly attached and feels the lean, but every consumer
+  // of this topic was told the car was level. sim_ellipse_d reads roll/pitch
+  // straight from here to synthesise the INS attitude output, so a flat lie here
+  // became a flat lie on /sbg/ekf_euler.
+  std::vector<double> orientation = {state.yaw, state.pitch, state.roll};
 
   orientation = ToQuaternion(orientation);
 
@@ -867,7 +1093,14 @@ void RaceCarModelPlugin::updateState(const double dt) {
   // the vehicle in simulation has problems interacting with the ground plane.
   // This may cause problems if the vehicle models start to take into account z
   // but because this simulation isn't for flying cars we should be ok (at least for now).
-  _state.z = _model->WorldPose().Pos().Z();
+  //
+  // With a terrain field the height is not the ground plane's to settle: the
+  // car is teleported every step, so letting contact decide z would make the
+  // ride over a bump depend on penetration and impulse rather than on the bump.
+  // setModelState takes z from the terrain instead, and owns it outright.
+  if (!_terrain_enabled) {
+    _state.z = _model->WorldPose().Pos().Z();
+  }
 
   _vehicle->updateState(_state, _act_input, dt);
   updateWheelJointPositions(dt);
@@ -916,8 +1149,12 @@ std::vector<double> RaceCarModelPlugin::ToQuaternion(std::vector<double> &euler)
   double cr = cos(euler[2] * 0.5);
   double sr = sin(euler[2] * 0.5);
 
+  // resize, not reserve: reserve leaves size() at 0, so the writes below and
+  // every read in the caller were out of bounds. It happened to work because
+  // the capacity was allocated, but the vector returned still claimed to be
+  // empty.
   std::vector<double> q;
-  q.reserve(4);
+  q.resize(4);
   q[0] = cy * cp * sr - sy * sp * cr;  // x
   q[1] = sy * cp * sr + cy * sp * cr;  // y
   q[2] = sy * cp * cr - cy * sp * sr;  // z

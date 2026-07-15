@@ -63,9 +63,10 @@
         <origin xyz="0.0 0.0 0.4" rpy="0 0 0"/>
     </xacro:sensor_gps>
 
-    <!-- Real car: VLP-16 (16 channels) mounted on the nose cone.
-         lasers must be passed explicitly — the VLP-16R macro default is 40. -->
-    <xacro:VLP-16R parent="chassis" name="velodyne" topic="/velodyne_points" hz="10" lasers="16" active="$(arg simulate_perception)">
+    <!-- Real car: VLP-16 (16 channels) mounted on the nose cone. hz is the only
+         knob; the macro derives horizontal resolution from it the way the
+         hardware does (10 Hz -> 0.2 deg). -->
+    <xacro:VLP-16R parent="chassis" name="velodyne" topic="/velodyne_points" hz="10" active="$(arg simulate_perception)">
         <origin xyz="1.6 0.0 0.25" rpy="0 ${1*M_PI/180.0} 0"/>
         <!-- main-hoop mount (previous): <origin xyz="-0.15 0.0 0.79" rpy="0 ${1*M_PI/180.0} 0"/> -->
     </xacro:VLP-16R>

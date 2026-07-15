@@ -2,7 +2,8 @@ cmake_minimum_required(VERSION 3.5)
 
 add_library(gazebo_race_car_model SHARED
   src/gazebo_ros_race_car_model.cpp
-  src/state_machine.cpp)
+  src/state_machine.cpp
+  src/terrain_field.cpp)
 
 find_package(gazebo_dev REQUIRED)
 find_package(gazebo_ros REQUIRED)
@@ -17,10 +18,12 @@ find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(eufs_models REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 
 ament_target_dependencies(gazebo_race_car_model
   "gazebo_dev"
   "gazebo_ros"
+  "ament_index_cpp"
   "rclcpp"
   "eufs_msgs"
   "nav_msgs"
@@ -42,3 +45,15 @@ install(TARGETS gazebo_race_car_model
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib)
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+
+  # terrain_field.cpp is compiled into the test rather than linked from the
+  # plugin: the field is plain geometry with no Gazebo in it, and keeping it
+  # that way means it can be tested without standing up a simulator.
+  ament_add_gtest(terrain_field_test
+    test/terrain_field_test.cpp
+    src/terrain_field.cpp)
+  target_include_directories(terrain_field_test PRIVATE include)
+endif()

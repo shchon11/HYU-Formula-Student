@@ -94,6 +94,40 @@ PERCEPTION_XACRO_ARGS = [
     ),
 ]
 
+# Procedural bump field. Off by default: it is real geometry in the world, so
+# turning it on changes what the LiDAR sees, and no run should get that without
+# asking for it.
+TERRAIN_XACRO_ARGS = [
+    (
+        'terrain',
+        'false',
+        'Insert a procedural bump field into the world. The LiDAR ray-traces it '
+        'and the car rides it, so the floor stops being perfectly flat.',
+    ),
+    (
+        'terrain_seed',
+        '7',
+        'Seed for the bump field. Same seed = same bumps in the same places, '
+        'every run; change it to drive a different surface.',
+    ),
+    (
+        'terrain_density',
+        '0.02',
+        'Bumps per square metre.',
+    ),
+    (
+        'terrain_height_mean',
+        '0.020',
+        'Mean bump peak height [m]. Raise to stress ground-plane removal.',
+    ),
+    (
+        'road_noise',
+        'true',
+        'Speed-scaled roughness vibration on the body. It is louder than the '
+        "car's own load transfer at speed, so turn it off to observe that.",
+    ),
+]
+
 
 def spawn_car(context, *args, **kwargs):
     # Get the values of the arguments
@@ -115,6 +149,10 @@ def spawn_car(context, *args, **kwargs):
     perception_mappings = {
         name: get_argument(context, name)
         for name, _, _ in PERCEPTION_XACRO_ARGS
+    }
+    terrain_mappings = {
+        name: get_argument(context, name)
+        for name, _, _ in TERRAIN_XACRO_ARGS
     }
 
     simulate_perception = 'true' if launch_group == 'no_perception' else 'false'
@@ -147,6 +185,7 @@ def spawn_car(context, *args, **kwargs):
                                  'pub_ground_truth': pub_ground_truth,
                                  'bounding_box_settings': bounding_boxes_file,
                                  **perception_mappings,
+                                 **terrain_mappings,
                              })
     out = xacro.open_output(urdf_path)
     out.write(doc.toprettyxml(indent='  '))
@@ -240,7 +279,7 @@ def spawn_car(context, *args, **kwargs):
 def generate_launch_description():
     perception_arguments = [
         DeclareLaunchArgument(name, default_value=default, description=description)
-        for name, default, description in PERCEPTION_XACRO_ARGS
+        for name, default, description in PERCEPTION_XACRO_ARGS + TERRAIN_XACRO_ARGS
     ]
 
     return LaunchDescription([

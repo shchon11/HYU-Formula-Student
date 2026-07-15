@@ -64,6 +64,7 @@
 // EUFS includes
 #include "eufs_models/eufs_models.hpp"
 #include "gazebo_race_car_model/state_machine.hpp"
+#include "gazebo_race_car_model/terrain_field.hpp"
 
 namespace gazebo_plugins {
 namespace eufs_plugins {
@@ -97,6 +98,15 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
   void initNoise(const sdf::ElementPtr &sdf);
   void initRoadNoise(const sdf::ElementPtr &sdf);
   void initLoadTransfer(const sdf::ElementPtr &sdf);
+  void initTerrain(const sdf::ElementPtr &sdf);
+
+  /// @brief Ground plane under the car, from the terrain height at the four
+  /// wheel contact points. Returns the height at the body origin and the roll
+  /// and pitch of the least-squares plane through them, all zero on bare
+  /// asphalt. base_footprint sits exactly on the contact plane (the chassis is
+  /// mounted one wheel radius above it), so the fitted height is the body z.
+  void sampleTerrain(double x, double y, double yaw, double *z, double *roll,
+                     double *pitch) const;
 
   eufs_msgs::msg::CarState stateToCarStateMsg(const eufs::models::State &state);
 
@@ -156,13 +166,31 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
 
   // Load transfer: the ego's longitudinal acceleration pitches the body (accel
   // = nose up, braking = dive) and its lateral acceleration rolls it outward in
-  // a corner. A first-order lag mimics suspension response. This adds to the
-  // road-roughness roll/pitch. Disabled unless <loadTransfer> is set true.
+  // a corner. The body is a spring-mass driven towards the lean its suspension
+  // stiffness allows, so it overshoots a step the way a real one does. This adds
+  // to the terrain and road-roughness roll/pitch. The physical constants live
+  // with the rest of the car in its vehicle config (Param::Suspension), not in
+  // the SDF -- h_cg and roll stiffness are properties of the car, not the world.
+  // Disabled unless <loadTransfer> is set true.
   bool _load_transfer_enabled{false};
-  double _lt_roll_gain, _lt_pitch_gain;  // rad per (m/s^2)
-  double _lt_tau;                        // suspension response time [s]
   double _lt_max_roll, _lt_max_pitch;    // clamps [rad]
-  double _lt_roll{0.0}, _lt_pitch{0.0};  // current lagged attitudes
+  double _lt_roll{0.0}, _lt_pitch{0.0};  // current attitudes
+  double _lt_roll_rate{0.0}, _lt_pitch_rate{0.0};
+
+  // Procedural bump field. When enabled the plugin inserts its geometry into
+  // the world (so the LiDAR ray-traces it and the cameras render it) and takes
+  // over the car's z/roll/pitch from the terrain height under each wheel, so
+  // the surface the sensors see and the surface the car rides are one surface.
+  // Unlike the road-roughness noise above, a bump is a function of position:
+  // drive the same line twice and you hit the same bump twice.
+  TerrainField _terrain;
+  bool _terrain_enabled{false};
+  // Last applied terrain attitude, differenced to give the body rates the IMU
+  // feels while climbing a bump.
+  double _terrain_z{0.0};
+  double _terrain_v_z{0.0};
+  double _terrain_roll{0.0};
+  double _terrain_pitch{0.0};
 
   // Gazebo
   gazebo::physics::WorldPtr _world;

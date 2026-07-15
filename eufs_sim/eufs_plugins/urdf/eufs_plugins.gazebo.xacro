@@ -22,6 +22,15 @@
   <xacro:arg name="camera_cones_min_view_distance" default="0.5"/>
   <xacro:arg name="camera_cones_fov" default="2.09"/>
   <xacro:arg name="camera_cones_detection_probability" default="1.0"/>
+  <!-- Road-roughness vibration. On by default (unchanged behaviour), but it is
+       the loudest thing on the body attitude at speed, so turn it off to observe
+       the car's own physics. -->
+  <xacro:arg name="road_noise" default="true"/>
+  <!-- Procedural bump field; off by default so existing runs are unchanged. -->
+  <xacro:arg name="terrain" default="false"/>
+  <xacro:arg name="terrain_seed" default="7"/>
+  <xacro:arg name="terrain_density" default="0.02"/>
+  <xacro:arg name="terrain_height_mean" default="0.020"/>
 
   <!-- Custom plugin which controls the car using a given vehicle model.
    It controls the car by setting its velocity and position
@@ -56,7 +65,7 @@
            (z) and rocks (roll/pitch) with an amplitude that scales with speed,
            so the rigidly-attached IMU/camera/LiDAR feel it too. Set roadNoise
            to false to keep the car perfectly flat. -->
-      <roadNoise>true</roadNoise>
+      <roadNoise>$(arg road_noise)</roadNoise>
       <roadNoiseZ>0.010</roadNoiseZ><!-- vertical bounce stddev [m] at v_ref -->
       <roadNoiseRoll>0.006</roadNoiseRoll><!-- roll stddev [rad] at v_ref -->
       <roadNoisePitch>0.006</roadNoisePitch><!-- pitch stddev [rad] at v_ref -->
@@ -65,14 +74,39 @@
       <roadNoiseMaxGain>2.0</roadNoiseMaxGain><!-- cap on speed amplitude gain -->
       <!-- Acceleration load transfer: longitudinal accel pitches the body
            (accel = nose up, braking = dive), lateral accel rolls it outward in
-           a corner. Gains are rad per m/s^2 (~0.006 -> ~3.4 deg at 1 g). Raise
-           for a more dramatic lean; set loadTransfer false to disable. -->
+           a corner. How far it leans and how it gets there are properties of the
+           car, so they live in its vehicle config (the `suspension:` block in
+           robots/[car]/config*.yaml) alongside its mass and tyres, including
+           `load_transfer_to_tires`, which couples the transfer into tyre grip.
+           Only the safety clamps are here. -->
       <loadTransfer>true</loadTransfer>
-      <loadTransferRollGain>0.010</loadTransferRollGain><!-- roll per lateral accel [rad/(m/s^2)] -->
-      <loadTransferPitchGain>0.010</loadTransferPitchGain><!-- pitch per long. accel [rad/(m/s^2)] -->
-      <loadTransferTau>0.15</loadTransferTau><!-- suspension response time [s] -->
       <loadTransferMaxRoll>0.12</loadTransferMaxRoll><!-- clamp [rad] (~6.9 deg) -->
       <loadTransferMaxPitch>0.12</loadTransferMaxPitch><!-- clamp [rad] -->
+      <!-- Procedural bump field. Unlike roadNoise above, these are real geometry
+           inserted into the world: the LiDAR ray-traces them and the cameras see
+           them, and the car's z/roll/pitch come from the terrain height under
+           each wheel, so the bump in the point cloud is the bump the car climbs.
+           Bumps are a function of position, so the same seed is the same track
+           every run and driving a line twice hits the same bumps twice.
+           Defaults are gentle asphalt undulation (~2 cm). Raise terrainHeightMean
+           to stress ground-plane RANSAC and the INS; set terrain false for the
+           perfectly flat floor. -->
+      <terrain>$(arg terrain)</terrain>
+      <terrainSeed>$(arg terrain_seed)</terrainSeed>
+      <terrainDensity>$(arg terrain_density)</terrainDensity><!-- bumps per m^2 -->
+      <terrainHeightMean>$(arg terrain_height_mean)</terrainHeightMean><!-- peak height [m] -->
+      <terrainHeightSigma>0.010</terrainHeightSigma><!-- height stddev [m] -->
+      <terrainHeightMin>0.004</terrainHeightMin><!-- floor on the height draw [m] -->
+      <terrainRadiusMin>0.25</terrainRadiusMin><!-- footprint radius [m] -->
+      <terrainRadiusMax>0.60</terrainRadiusMax>
+      <!-- Bumps are grown within this distance of a track cone: the car only
+           drives between the cones, so that is the only ground a bump can
+           matter on, and covering the rest costs thousands of them for nothing. -->
+      <terrainTrackMargin>3.5</terrainTrackMargin><!-- [m] from any cone -->
+      <terrainMaxBumps>600</terrainMaxBumps><!-- refuse to build a world that kills gzserver -->
+      <!-- Fallback area, used only if the world has no 'track' model. -->
+      <terrainHalfExtentX>60.0</terrainHalfExtentX>
+      <terrainHalfExtentY>60.0</terrainHalfExtentY>
       <wheelSpeedsTopicName>/ros_can/wheel_speeds</wheelSpeedsTopicName>
       <groundTruthWheelSpeedsTopicName>/ground_truth/wheel_speeds</groundTruthWheelSpeedsTopicName>
       <jointStatesTopicName>/eufs/joint_states</jointStatesTopicName>

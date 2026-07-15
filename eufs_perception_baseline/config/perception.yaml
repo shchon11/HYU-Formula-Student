@@ -34,6 +34,11 @@ perception_node:
     # Stereo images this far from the bbox stamp are not worth cross-checking
     # against; the check is skipped and the monocular estimate stands.
     max_image_age_sec: 0.10
+    # The stereo pair must be the same instant as each other, not merely
+    # each near the bbox. A multicamera sensor renders both children in one
+    # update, so a real pair is stamp-identical and this only ever fires if
+    # the sensor has been split back into two independent <sensor> blocks.
+    max_pair_skew_sec: 0.005
     # Fixed frame the cloud-stamp -> bbox-stamp compensation goes through. Use
     # odom when GraphSLAM owns the map->base TF.
     motion_compensation_frame: map

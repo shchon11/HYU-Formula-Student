@@ -125,13 +125,44 @@
     <!-- Simulate raw perception sensors only if we're not using the abstracted perception simulation -->
     <xacro:unless value="${active}">
       <gazebo reference="${prefix}_left_camera_frame">
-        <sensor type="camera" name="${prefix}_left_camera">
-          <!-- see MultiSenseSLPlugin.h for available modes -->
+        <!-- ONE multicamera sensor, not two camera sensors. This is what makes
+             the pair a stereo pair.
+
+             As two independent sensors they each chased their own sim time
+             tick, and under load the right one missed every other tick and sat
+             at EXACTLY half the left's rate (15.15 against 28.99). Two images
+             at different sim instants are not a stereo pair: the disparity
+             between them contains the car's motion, not the scene's depth, and
+             the ZNCC cross check that removes the monocular tier's range bias
+             silently stops running.
+
+             A multicamera sensor renders both children in ONE update, so they
+             share a sim time and a stamp by construction rather than by luck.
+             Tuning rates could never have fixed this; it is structural. -->
+        <sensor type="multicamera" name="${prefix}_stereo_camera">
           <always_on>true</always_on>
           <update_rate>30.0</update_rate>
           <visualize>false</visualize>
-          <camera>
-            <pose>0 0.0 0 0 0 0</pose>
+          <camera name="left">
+            <pose>0 0.06 0 0 0 0</pose>
+            <horizontal_fov>1.91986</horizontal_fov>
+            <image>
+              <width>1280</width>
+              <height>720</height>
+              <format>R8G8B8</format>
+            </image>
+            <clip>
+              <near>0.5</near>
+              <far>20</far>
+            </clip>
+            <noise>
+              <type>gaussian</type>
+              <mean>0.0</mean>
+              <stddev>0.007</stddev>
+            </noise>
+          </camera>
+          <camera name="right">
+            <pose>0 -0.06 0 0 0 0</pose>
             <horizontal_fov>1.91986</horizontal_fov>
             <image>
               <width>1280</width>
@@ -149,78 +180,14 @@
             </noise>
           </camera>
 
-          <plugin name="${prefix}_left_camera_controller" filename="libgazebo_ros_camera.so">
+          <plugin name="${prefix}_stereo_controller" filename="libgazebo_ros_camera.so">
             <ros>
-              <parameter name="update_rate" type="double">30.0</parameter>
-              <remapping>/${prefix}_left/image_raw:=/${prefix}/left/image_rect_color</remapping>
-              <remapping>/${prefix}_left/camera_info:=/${prefix}/left/camera_info</remapping>
-              <qos>
-                <topic name="/${prefix}/left/image_rect_color">
-                  <publisher>
-                    <reliability>reliable</reliability>
-                  </publisher>
-                </topic>
-                <topic name="/${prefix}/left/camera_info">
-                  <publisher>
-                    <reliability>reliable</reliability>
-                  </publisher>
-                </topic>
-              </qos>
+              <remapping>${prefix}/left/image_raw:=${prefix}/left/image_rect_color</remapping>
+              <remapping>${prefix}/right/image_raw:=${prefix}/right/image_rect_color</remapping>
             </ros>
-
-            <camera_name>${prefix}_left</camera_name>
+            <camera_name>${prefix}</camera_name>
             <frame_name>${prefix}_left_camera_optical_frame</frame_name>
-            <triggered>false</triggered>
-          </plugin>
-        </sensor>
-      </gazebo>
-
-      <gazebo reference="${prefix}_right_camera_frame">
-        <sensor type="camera" name="${prefix}_right_camera">
-          <always_on>true</always_on>
-          <update_rate>30.0</update_rate>
-          <visualize>false</visualize>
-          <camera>
-            <pose>0 0.0 0 0 0 0</pose>
-            <horizontal_fov>1.91986</horizontal_fov>
-            <image>
-              <width>1280</width>
-              <height>720</height>
-              <format>R8G8B8</format>
-            </image>
-            <clip>
-              <near>0.5</near>
-              <far>20</far>
-            </clip>
-            <noise>
-              <type>gaussian</type>
-              <mean>0.0</mean>
-              <stddev>0.007</stddev>
-            </noise>
-          </camera>
-
-          <plugin name="${prefix}_right_camera_controller" filename="libgazebo_ros_camera.so">
-            <ros>
-              <parameter name="update_rate" type="double">30.0</parameter>
-              <remapping>/${prefix}_right/image_raw:=/${prefix}/right/image_rect_color</remapping>
-              <remapping>/${prefix}_right/camera_info:=/${prefix}/right/camera_info</remapping>
-              <qos>
-                <topic name="/${prefix}/right/image_rect_color">
-                  <publisher>
-                    <reliability>reliable</reliability>
-                  </publisher>
-                </topic>
-                <topic name="/${prefix}/right/camera_info">
-                  <publisher>
-                    <reliability>reliable</reliability>
-                  </publisher>
-                </topic>
-              </qos>
-            </ros>
-
-            <camera_name>${prefix}_right</camera_name>
-            <frame_name>${prefix}_right_camera_optical_frame</frame_name>
-            <triggered>false</triggered>
+            <hack_baseline>0.12</hack_baseline>
           </plugin>
         </sensor>
       </gazebo>

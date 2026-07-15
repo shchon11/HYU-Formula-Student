@@ -280,6 +280,42 @@ x=+20에서 끝나고 경로는 그 1 m쯤 뒤에서 무효화되므로, 하드 
 더 빠르게 하려면 속도 상한을 올리되(local 경로 속도 ≤ 컨트롤러 max_speed), 위 제동 예산 식으로
 정지거리가 braking zone을 넘지 않는지 확인하세요.
 
+### 🪨 노면 (bump) · 차체 자세
+
+기본 바닥은 완전한 평면입니다. `terrain:=true`를 주면 **실제 지오메트리인 범프**가 월드에
+깔립니다 — LiDAR가 레이트레이싱으로 보고, 카메라가 찍고, 차가 그 위를 탑니다. 같은 표면을
+센서와 차량이 공유하므로 **포인트 클라우드에 보이는 범프가 곧 차가 넘는 범프**입니다.
+
+```bash
+race small_track sim terrain:=true                     # 기본 ~2 cm 노면 요철
+race small_track sim terrain:=true terrain_height_mean:=0.05   # 지면 제거(RANSAC) 스트레스
+race small_track sim terrain:=true terrain_seed:=11    # 다른 노면 (시드만 바꾸면 됨)
+race small_track sim road_noise:=false                 # 노면 진동 노이즈 끄기
+```
+
+| 인자 | 뜻 | 기본 |
+|---|---|---|
+| `terrain` | 범프 필드 on/off | `false` |
+| `terrain_seed` | **같은 시드 = 항상 같은 자리의 같은 범프** | 7 |
+| `terrain_density` | 범프/m² (트랙 주변에만 생성) | 0.02 |
+| `terrain_height_mean` | 범프 높이 평균 [m] | 0.020 |
+| `road_noise` | 속도 비례 진동 노이즈 | `true` |
+
+- 범프는 **콘 주변 3.5 m 안에만** 생깁니다. 차는 콘 사이로만 다니므로 나머지에 깔아봐야
+  지오메트리만 수천 개 늘고(gzserver가 죽습니다) 얻는 게 없습니다. `terrain_density:=0.15`가
+  small_track에서 175개인데, 트랙 밴드 제한이 없으면 같은 밀도가 1440개입니다.
+- **`road_noise`는 노면이 아니라 텍스처입니다.** 매 스텝 새로 뽑으므로 같은 자리를 두 번
+  지나도 같은 값이 아니고 LiDAR에도 안 잡힙니다. 재현이 필요하면 `terrain`을 쓰세요.
+- 차체 자세(가속 시 nose-up, 제동 시 dive, 코너에서 바깥쪽 롤)는 차의 **서스펜션 물성**에서
+  나옵니다 — `eufs_racecar/robots/<car>/config*.yaml`의 `suspension:` 블록
+  (`h_cg`, `k_roll`, `k_pitch`, `natural_freq_hz`, `damping_ratio`). 기울기는
+  `m·a·h_cg / k`이고 2차 스프링-댐퍼로 도달하므로 스텝 입력에 오버슈트합니다.
+- `suspension.load_transfer_to_tires: true`로 하면 **종방향 하중이동이 타이어 접지력에
+  반영**됩니다(제동 시 앞그립↑). **기본 off** — 주행 거동이 바뀌어 컨트롤러 재튜닝이 필요합니다.
+
+> ⚠️ 자세 물리를 눈으로 확인할 땐 `road_noise:=false`를 주세요. 15 m/s에서 노이즈 pitch는
+> σ≈0.69°인데 하중이동 pitch는 0.2° 수준이라 **노이즈가 신호를 3배로 덮습니다.**
+
 ### 자주 쓰는 변형
 ```bash
 pbring enable_controller:=false      # 주행 없이 계획만 (수동 개입: teleop)
