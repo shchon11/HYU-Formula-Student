@@ -71,7 +71,22 @@ perception_node:
     ground_min_z: 0.05
     ground_ransac_enabled: true
     ground_ransac_distance_threshold: 0.03
-    ground_ransac_max_iterations: 200
+    # 50, not 200. MEASURED: the loop is linear in iterations -- 32.9 / 17.2 /
+    # 9.1 / 5.5 ms at 200 / 100 / 50 / 25 on a 16,773-point scene -- and it was
+    # 19 ms of every cloud, second only to DBSCAN.
+    #
+    # 200 was never buying anything. ~80 % of the cloud is ground, so three
+    # random points are all ground with p ~ 0.5, and the chance of drawing no
+    # clean sample in 50 tries is 0.5^50 ~ 1e-15. The extra 150 iterations are
+    # re-finding the same plane, and an SVD refinement on the winner's inliers
+    # runs afterwards anyway, so the sample only has to be good enough to
+    # identify the inlier set.
+    #
+    # Also here: 45 % of the loop is np.median over the inliers, sorting ~10k
+    # points EVERY iteration, purely to break ties in inlier_count. That is the
+    # next 15 ms if this is ever not enough -- score by count first and only
+    # settle a tie when there is one.
+    ground_ransac_max_iterations: 50
     # Candidate normals are held near vertical so a wall cannot win the vote.
     ground_ransac_max_tilt_degrees: 20.0
     ground_ransac_min_inliers: 20
@@ -172,8 +187,13 @@ perception_node:
     # rectified pair the scale differs ~1 %, the rotation is 0, and the match is
     # on the same row. It is a 1D search with a known prior.
     #
-    # Fails OPEN: no images, stale images, or no peak -> the monocular estimate
-    # stands. A cross-check must never become a blocking dependency.
+    # Fails CLOSED: no images, stale images, or no peak -> NO CONE. This is not
+    # a cross-check any more, it is the measurement: the monocular tier was
+    # removed because a published position must not rest on "the box was N px
+    # tall and a cone is 450 mm". The curve survives only to size the search
+    # window below. Cost of failing closed, measured: every stale-pair event
+    # (48 in a 100 s lap, caused by the detector's ~0.21 s latency against
+    # max_image_age_sec) now deletes a cone that used to be published.
     zncc_enabled: true
     stereo_baseline_m: 0.12
     zncc_min_score: 0.5
@@ -185,15 +205,11 @@ perception_node:
     # peak, so the check stays independent.
     zncc_search_low_ratio: 0.70
     zncc_search_high_ratio: 1.45
-    # Take the ZNCC depth as the measurement. The monocular curve carries a
-    # MEASURED -0.88 m bias; disparity does not use the cone-size assumption at
-    # all, so it has no such bias.
-    zncc_replaces_depth: true
-    # Drop a monocular cone the check could not confirm. OFF until the
-    # confirmation rate is measured: a low-texture cone is a plausible ZNCC
-    # miss, and this would delete it. Turn on once the rate says it is safe --
-    # the payoff is the 6.3 % false-positive rate.
-    zncc_reject_unconfirmed: false
+    # zncc_replaces_depth / zncc_reject_unconfirmed: REMOVED. Both chose between
+    # a stereo depth and the curve's depth, and the curve's depth is no longer
+    # publishable -- ZNCC is the only way a vision cone gets a position now, and
+    # every path that cannot produce a peak drops the cone. The rate those flags
+    # were waiting on was measured at 95.9 % (5017/5231 over a lap).
     # Effective per-cone disparity sigma, AFTER the sub-pixel fit. 0.25 came
     # from the old SIFT tier, where it measured lon z^2 = 0.96 -- but that tier
     # only ever saw ~24 big/fallen cones a run. With ZNCC running on every
@@ -235,8 +251,14 @@ perception_node:
     # Set to ~4x the measured mean-square error, not to z^2 = 1: this is one
     # track and one run, and a MIS-ASSOCIATED LiDAR cone is worse than a noisy
     # one, so the headroom buys tolerance for the failure the number cannot see.
-    lidar_variance_x: 0.008
-    lidar_variance_y: 0.008
+    #
+    # RE-MEASURED after the VLP-16 went to its real spec (3d9f676, 5.3x the
+    # rays). The tuning above PREDATES that sensor change and the LiDAR got much
+    # more accurate underneath it: cluster_camera's lateral rms is now 0.036 m
+    # (n=2322), so 0.008 measured z^2 = 0.11 against the 0.25 this policy aims
+    # for. 0.0052 is 4x the mean square of 0.036.
+    lidar_variance_x: 0.0052
+    lidar_variance_y: 0.0052
     # This was set equal to a confirmed cluster on the argument that a cluster
     # the camera never confirmed has an IDENTICAL position measurement -- the
     # same centroid of the same returns -- and that its doubt is about
@@ -249,17 +271,82 @@ perception_node:
     # same reasons its centroid is off. 0.03 is what that measures, and it is
     # still 6x tighter than the 0.20 it replaced.
     #
-    # PROVISIONAL: n=14. Re-measure before trusting the exact value.
-    lidar_only_variance_x: 0.03
-    lidar_only_variance_y: 0.03
-    sparse_variance_x: 0.012
-    sparse_variance_y: 0.012
-    range_variance_scale: 0.0005
+    # RE-MEASURED at n=106 (was 14): lateral rms 0.055 m, so 0.03 read z^2 =
+    # 0.05. 0.0121 is 4x its mean square, and it stays ~2x looser than a
+    # confirmed cluster, which is what the argument above predicted.
+    lidar_only_variance_x: 0.0121
+    lidar_only_variance_y: 0.0121
+    # sparse is BEARING-ALIGNED, not isotropic, and it is the only LiDAR
+    # provenance that is. See _sparse_covariance for why: a cluster has the
+    # returns to find the cone's centre (lat/lon rms 0.041 / 0.035 m, n=5203 --
+    # a circle), while a sparse cone is 2-3 returns on the front face, so the
+    # bearing stays sharp and the range does not.
+    #
+    # THE ANISOTROPY IS NOT SUPPORTED BY CLEAN DATA. Read this before trusting it.
+    #
+    # It was introduced on a longitudinal spread of 0.047 / 0.088 / 0.125 m that
+    # turned out to be TWO perception nodes publishing to /cones at once -- the
+    # tell was n jumping 2322 -> 5784 for the same 60 s, which no code change can
+    # do. Re-measured on a verified single stack, three runs:
+    #
+    #   lateral       0.056  0.058  0.078 m
+    #   longitudinal  0.064  0.065  0.051 m
+    #
+    # Those are the same number. sparse is ISOTROPIC and the ellipse is fitting a
+    # ghost. The physical story that justified it -- 2-3 returns on the front face
+    # fix the bearing but not the range -- sounded right and the clean data
+    # refuses it.
+    #
+    # These values are kept only because they are MEASURED SAFE across those same
+    # three runs (lat z^2 0.32/0.34/0.61, lon z^2 0.07/0.07/0.04): never
+    # over-confident, which is the failure that corrupts a map. They are wasteful,
+    # not wrong -- the longitudinal is ~4x over-cautious.
+    #
+    # The fix is to go back to one isotropic constant at ~0.017 (4x the mean
+    # square of 0.065) and delete _sparse_covariance. That is UNVERIFIED: it has
+    # not been run. Do it before believing any per-axis story about sparse.
+    sparse_sigma_lat_m: 0.10
+    sparse_sigma_lon_m: 0.25
+    # 0. NOT a rounding-down -- the term has no support in the data. sparse's
+    # lateral rms by range band is 0.031 / 0.034 / 0.030 / 0.029 / 0.033 m from
+    # 7.5 m to 20 m (n=219..520 per band): FLAT, while this term grew the model
+    # 0.129 -> 0.146 m across the same span. cluster_camera says the same thing
+    # from 0 to 12.5 m (0.041 -> 0.033, n=2322).
+    #
+    # It should be flat: what limits a cone's centroid is the CONE, not the ray
+    # density -- the returns land somewhere on a 0.2 m-wide object, and that
+    # spread does not care how far away it is. A ray-count term would have
+    # mattered at the old 0.655 deg/ray, where a 15 m cone got 1.7 rays; at the
+    # Puck's real 0.2 deg it gets 5.4 and the geometry takes over.
+    range_variance_scale: 0.0
     min_variance: 0.0001
     # Bbox centre noise for the monocular tier, in px. MEASURED: lat z^2 was
     # 10.71 at sigma_u 3.0 (n=75), implying ~10 px. Large because the 16 px gate
     # (10.2 m) reaches into the cliff's shoulder, which starts at ~8.8 m.
     monocular_sigma_u_px: 10.0
+    # Range-independent floor on the vision LATERAL sigma, in metres, combined
+    # with the pixel term in quadrature. This is the term that made sigma_u_px
+    # unfittable: MEASURED lateral rms across 0-20 m was 0.136 / 0.128 / 0.258 /
+    # 0.281 / 0.139 / 0.229 / 0.197 / 0.368 m (n=480) -- NO range trend -- while
+    # the pixel term ran 0.052 -> 0.406 m. Every attempt to fix that with the
+    # constant chased its own tail (3.0 implied 10 px, 10 implied 18.6) because
+    # the aggregate z^2 is just a weighted average over whatever ranges a run
+    # happened to sample: the SAME code measured 0.88 on one lap and 3.47 on the
+    # next.
+    #
+    # 0.25 covers the observed error and takes lat z^2 from 4.47 (over-confident,
+    # the direction that corrupts the map) down to ~0.3 near while leaving the
+    # far end near 0.6. It does NOT model the floor; nothing here explains how a
+    # PIXEL error produces a range-independent error in METRES.
+    #
+    # The leading suspect is not perception at all: _carry_vision_cones moves a
+    # vision cone by (bbox-to-cloud stamp gap x speed), and that gap measured
+    # 10 ms median / 173 ms p90 / 407 ms max -- 0.05 to 2 m of carry at 5 m/s.
+    # The tail is Gazebo's bursty rendering (RTF 0.34, 1.2 cores, serial) and has
+    # no counterpart on the car. So this floor may be fitting the SIMULATOR.
+    # Re-measure on real sensor data before believing the value; the shape of
+    # the fix (a floor exists) is better supported than its size.
+    vision_lateral_floor_m: 0.25
     # Bbox HEIGHT noise, in px, driving sigma_D/D = |e|*sigma_h/h.
     #
     # Was 8.0 to cover the curve's bias with noise. Re-fitting c/e (above) cut

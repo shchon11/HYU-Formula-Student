@@ -41,7 +41,8 @@ def _node(**overrides):
     node.range_variance_scale = 0.0
     node.lidar_variance_x = node.lidar_variance_y = 0.04
     node.lidar_only_variance_x = node.lidar_only_variance_y = 0.20
-    node.sparse_variance_x = node.sparse_variance_y = 0.12
+    node.sparse_sigma_lat_m, node.sparse_sigma_lon_m = 0.10, 0.25
+    node.vision_lateral_floor_m = 0.25
     for name, value in overrides.items():
         setattr(node, name, value)
     return node
@@ -157,6 +158,44 @@ class SparseGateTest(unittest.TestCase):
             DETECTION, _scene(CONE_POINTS, [OUTSIDE] * 3, []), NO_CLUSTER))
 
 
+class ClusteringTest(unittest.TestCase):
+    """DBSCAN's contract. Speed is worthless if the partition changes: every
+    covariance constant in perception.yaml was fitted against these clusters."""
+
+    def _cluster_node(self):
+        return _node(cluster_eps=0.35, cluster_min_points=3)
+
+    def test_two_cones_a_corridor_apart_stay_two_clusters(self):
+        node = self._cluster_node()
+        left = np.random.default_rng(1).normal([5.0, 1.5], 0.05, size=(12, 2))
+        right = np.random.default_rng(2).normal([5.0, -1.5], 0.05, size=(12, 2))
+        labels = node._dbscan_xy(np.vstack([left, right]))
+        self.assertEqual(len({int(x) for x in labels if x >= 0}), 2)
+        # and they are not mixed
+        self.assertEqual(len(set(labels[:12])), 1)
+        self.assertEqual(len(set(labels[12:])), 1)
+        self.assertNotEqual(labels[0], labels[12])
+
+    def test_a_point_alone_is_noise_not_a_cone(self):
+        # min_samples is what stops one stray return becoming a cone.
+        node = self._cluster_node()
+        labels = node._dbscan_xy(np.array([[5.0, 0.0], [20.0, 9.0]]))
+        self.assertTrue(all(x < 0 for x in labels))
+
+    def test_eps_is_what_joins_returns_into_one_cone(self):
+        node = self._cluster_node()
+        # Three returns 10 cm apart: one cone.
+        tight = np.array([[5.0, 0.0], [5.1, 0.0], [5.05, 0.05]])
+        self.assertEqual(len({int(x) for x in node._dbscan_xy(tight) if x >= 0}), 1)
+        # The same three a metre apart: nothing, they are not a blob.
+        loose = np.array([[5.0, 0.0], [6.0, 0.0], [7.0, 0.0]])
+        self.assertTrue(all(x < 0 for x in node._dbscan_xy(loose)))
+
+    def test_an_empty_cloud_does_not_explode(self):
+        labels = self._cluster_node()._dbscan_xy(np.empty((0, 2)))
+        self.assertEqual(labels.shape, (0,))
+
+
 class CovarianceTest(unittest.TestCase):
     """What SLAM is told. Understating this corrupts the map rather than merely
     adding noise, because the optimizer believes it."""
@@ -171,9 +210,41 @@ class CovarianceTest(unittest.TestCase):
                     fx_px=448.13)
         xx, xy, yx, yy = node._covariance(cone)
         self.assertAlmostEqual(math.sqrt(xx), 15.0 * 0.12, places=9)
-        self.assertAlmostEqual(math.sqrt(yy), 15.0 * 10.0 / 448.13, places=9)
+        # Lateral is the pixel term and the floor in quadrature. The floor is
+        # what the measured error has and the pixel term does not: rms showed no
+        # range trend across 0-20 m while the pixel term tripled.
+        self.assertAlmostEqual(math.sqrt(yy),
+                               math.hypot(0.25, 15.0 * 10.0 / 448.13), places=9)
         self.assertAlmostEqual(xy, 0.0, places=12)
         self.assertEqual(xy, yx)
+        # The point of the ellipse survives the floor: still a sliver on the ray.
+        self.assertGreater(xx, 4.0 * yy)
+
+    def test_the_lateral_floor_is_what_stops_a_near_vision_cone_lying(self):
+        # The pixel term is a straight line through the origin, so without a
+        # floor a 1 m cone claims ~2 cm of lateral certainty. Measured lateral
+        # rms in the nearest band was 0.136 m -- z^2 = 4.47, over-confident by
+        # the factor that corrupts a map rather than merely adding noise.
+        node = self._vision_node()
+        cone = Cone(x=1.0, y=0.0, color="blue", provenance=PROV_MONOCULAR,
+                    range_m=1.0, relative_depth_sigma=0.12, sigma_u_px=10.0,
+                    fx_px=448.13)
+        _xx, _xy, _yx, yy = node._covariance(cone)
+        pixel_only = 1.0 * 10.0 / 448.13
+        self.assertAlmostEqual(math.sqrt(yy), math.hypot(0.25, pixel_only),
+                               places=9)
+        self.assertGreater(math.sqrt(yy), 10.0 * pixel_only)
+
+    def test_the_lateral_floor_does_not_set_the_far_field(self):
+        # A floor that dominated at range would be a constant wearing a model's
+        # clothes. At 20 m the pixel term is 0.45 m and the floor moves it 15 %.
+        node = self._vision_node()
+        cone = Cone(x=20.0, y=0.0, color="blue", provenance=PROV_MONOCULAR,
+                    range_m=20.0, relative_depth_sigma=0.12, sigma_u_px=10.0,
+                    fx_px=448.13)
+        _xx, _xy, _yx, yy = node._covariance(cone)
+        pixel_only = 20.0 * 10.0 / 448.13
+        self.assertLess(math.sqrt(yy), 1.2 * pixel_only)
 
     def test_an_off_axis_vision_cone_needs_the_off_diagonal(self):
         node = self._vision_node()
@@ -187,17 +258,44 @@ class CovarianceTest(unittest.TestCase):
         self.assertGreater(abs(xy), 0.0)
         self.assertAlmostEqual(xx, yy, places=9)
 
-    def test_lidar_provenances_keep_their_measured_constants(self):
-        # LiDAR ranges directly to ~1 %, so its error really is a near-circle.
+    def test_a_cluster_keeps_its_measured_constant_because_it_is_a_circle(self):
+        # A cluster has the returns to find the cone's CENTRE, and measures it
+        # near-isotropically: lat/lon rms 0.041 / 0.035 m (n=5203). One constant
+        # really is the truth for it -- unlike sparse, below.
         node = _node()
         for provenance, expected in ((PROV_CLUSTER, 0.04),
-                                     (PROV_CLUSTER_ONLY, 0.20),
-                                     (PROV_SPARSE, 0.12)):
+                                     (PROV_CLUSTER_ONLY, 0.20)):
             with self.subTest(provenance=provenance):
                 cone = Cone(x=10.0, y=0.0, color="blue",
                             provenance=provenance, range_m=10.0)
                 self.assertEqual(list(node._covariance(cone)),
                                  [expected, 0.0, 0.0, expected])
+
+    def test_a_sparse_cone_is_an_ellipse_pointing_along_the_ray(self):
+        # 2-3 returns on the front face: which ray hit fixes the BEARING, how
+        # far down the face they landed leaves the RANGE noisy. Measured lateral
+        # 0.050 m stable, longitudinal 0.047-0.125 m. An isotropic constant read
+        # lon z^2 = 2.42 -- over-confident along the ray.
+        node = _node()
+        cone = Cone(x=10.0, y=0.0, color="blue", provenance=PROV_SPARSE,
+                    range_m=10.0)
+        xx, xy, _yx, yy = node._covariance(cone)
+        # Dead ahead, so the ray is +x: xx is the range axis, yy the bearing.
+        self.assertAlmostEqual(math.sqrt(xx), 0.25, places=9)
+        self.assertAlmostEqual(math.sqrt(yy), 0.10, places=9)
+        self.assertAlmostEqual(xy, 0.0, places=12)
+        self.assertGreater(xx, 4.0 * yy)
+
+    def test_an_off_axis_sparse_cone_rotates_with_the_bearing(self):
+        # The ellipse follows the RAY, not the x axis. A diagonal-only matrix
+        # would point a sparse cone's uncertainty at the wrong thing entirely.
+        node = _node()
+        theta = math.radians(45.0)
+        cone = Cone(x=10.0 * math.cos(theta), y=10.0 * math.sin(theta),
+                    color="blue", provenance=PROV_SPARSE, range_m=10.0)
+        xx, xy, _yx, yy = node._covariance(cone)
+        self.assertGreater(abs(xy), 0.0)
+        self.assertAlmostEqual(xx, yy, places=9)
 
     def test_range_term_is_added_to_the_lidar_constants(self):
         node = _node(range_variance_scale=0.01)

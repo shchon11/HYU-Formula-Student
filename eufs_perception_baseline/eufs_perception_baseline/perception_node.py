@@ -46,6 +46,7 @@ produced it.
 
 import math
 import threading
+import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -88,7 +89,10 @@ CONE_COLORS = ("blue", "yellow", "orange", "big_orange", "unknown")
 PROV_CLUSTER = "cluster_camera"      # LiDAR cluster + a detection's colour
 PROV_CLUSTER_ONLY = "cluster_only"   # LiDAR cluster the camera never confirmed
 PROV_SPARSE = "sparse"               # raw LiDAR inside a box, too thin to cluster
-PROV_MONOCULAR = "monocular"         # bbox height only
+# Never published. The bbox-height curve's estimate exists only to centre the
+# ZNCC disparity search; a cone carrying this provenance is dropped if stereo
+# cannot measure it. See _stereo_cone.
+PROV_MONOCULAR = "monocular"         # bbox height only -- INTERNAL CANDIDATE
 PROV_MONO_ZNCC = "monocular_zncc"    # bbox bearing, stereo disparity depth
 
 
@@ -174,6 +178,9 @@ class PerceptionNode(Node):
         self._pair: Optional[Tuple[Image, Image]] = None
         self._pair_buffer_size = 8
         self._latencies: List[float] = []
+        self._stage_ms: Dict[str, List[float]] = {}
+        # Cleared every cloud; see _to_gray for why id() is the key.
+        self._gray_cache: Dict[int, np.ndarray] = {}
         self._last_latency_log_ns: Optional[int] = None
         self._warned: Dict[str, float] = {}
         self._zncc_stats = [0, 0]            # [attempted, confirmed]
@@ -206,8 +213,9 @@ class PerceptionNode(Node):
 
         self.get_logger().info(
             f"Perception: LiDAR backbone {self.pointcloud_topic}, colour and "
-            f"vision fallback {self.bbox_topic}, ZNCC cross-check "
-            f"{'on' if self.zncc_enabled else 'off'}; publishing "
+            f"vision fallback {self.bbox_topic}, vision depth by ZNCC stereo "
+            f"{'on' if self.zncc_enabled else 'OFF -- no vision cones at all'} "
+            f"(monocular depth is never published); publishing "
             f"{self.output_cones_topic} on every LiDAR cloud")
 
     # ---------------------------------------------------------------- params
@@ -307,14 +315,11 @@ class PerceptionNode(Node):
         # short past 6 m, so the true disparity sits ABOVE a box-derived prior.
         self.declare_parameter("zncc_search_low_ratio", 0.70)
         self.declare_parameter("zncc_search_high_ratio", 1.45)
-        # Accept the ZNCC depth as the measurement, not just as a check. The
-        # monocular curve carries a measured -0.88 m bias; disparity does not
-        # depend on the cone-size assumption at all, so it has no such bias.
-        self.declare_parameter("zncc_replaces_depth", True)
-        # Drop a monocular cone the cross-check could not confirm. OFF by
-        # default: a confirmation rate has to be measured before it is trusted
-        # to delete real cones -- a low-texture cone is a plausible ZNCC miss.
-        self.declare_parameter("zncc_reject_unconfirmed", False)
+        # zncc_replaces_depth and zncc_reject_unconfirmed are GONE. Both existed
+        # to choose between publishing a stereo depth and publishing the
+        # monocular curve's depth, and the curve's depth is no longer publishable
+        # at all: it sizes the disparity search and is discarded. Measured
+        # confirmation rate when the choice was still live: 95.9 % (5017/5231).
         self.declare_parameter("sigma_d_px", 0.25)
 
         # --- covariance ------------------------------------------------------
@@ -322,12 +327,17 @@ class PerceptionNode(Node):
         self.declare_parameter("lidar_variance_y", 0.04)
         self.declare_parameter("lidar_only_variance_x", 0.20)
         self.declare_parameter("lidar_only_variance_y", 0.20)
-        self.declare_parameter("sparse_variance_x", 0.12)
-        self.declare_parameter("sparse_variance_y", 0.12)
+        # Bearing-aligned, not isotropic. See _sparse_covariance.
+        self.declare_parameter("sparse_sigma_lat_m", 0.10)
+        self.declare_parameter("sparse_sigma_lon_m", 0.25)
         self.declare_parameter("range_variance_scale", 0.0005)
         self.declare_parameter("min_variance", 1.0e-4)
         self.declare_parameter("monocular_sigma_u_px", 10.0)
         self.declare_parameter("sigma_h_px", 4.0)
+        # Range-independent floor on a vision cone's LATERAL sigma. See
+        # _vision_covariance: the measured error has no range trend and the
+        # pixel term does, so the pixel term alone is over-confident near.
+        self.declare_parameter("vision_lateral_floor_m", 0.25)
 
     def _load_parameters(self) -> None:
         g = lambda name: self.get_parameter(name).value  # noqa: E731
@@ -342,8 +352,7 @@ class PerceptionNode(Node):
         self.projection_model = str(g("projection_model"))
         self.bbox_coordinates = str(g("bbox_coordinates")).upper()
         for name in ("publish_debug", "ground_ransac_enabled", "self_mask_enabled",
-                     "sparse_enabled", "monocular_enabled", "zncc_enabled",
-                     "zncc_replaces_depth", "zncc_reject_unconfirmed"):
+                     "sparse_enabled", "monocular_enabled", "zncc_enabled"):
             setattr(self, name, bool(g(name)))
         for name in ("sync_queue_size", "ground_ransac_max_iterations",
                      "ground_ransac_min_inliers", "ground_ransac_seed",
@@ -372,9 +381,9 @@ class PerceptionNode(Node):
             "vision_dedup_radius_m", "stereo_baseline_m", "zncc_min_score",
             "zncc_search_low_ratio", "zncc_search_high_ratio", "sigma_d_px",
             "lidar_variance_x", "lidar_variance_y", "lidar_only_variance_x",
-            "lidar_only_variance_y", "sparse_variance_x", "sparse_variance_y",
+            "lidar_only_variance_y", "sparse_sigma_lat_m", "sparse_sigma_lon_m",
             "range_variance_scale", "min_variance", "monocular_sigma_u_px",
-            "sigma_h_px",
+            "sigma_h_px", "vision_lateral_floor_m",
         ):
             setattr(self, name, float(g(name)))
 
@@ -414,7 +423,7 @@ class PerceptionNode(Node):
         for name in ("monocular_sigma_u_px", "sigma_h_px", "sigma_d_px",
                      "stereo_baseline_m", "lidar_variance_x", "lidar_variance_y",
                      "lidar_only_variance_x", "lidar_only_variance_y",
-                     "sparse_variance_x", "sparse_variance_y", "min_variance",
+                     "sparse_sigma_lat_m", "sparse_sigma_lon_m", "min_variance",
                      "standard_cone_height_m", "big_cone_height_m",
                      "max_cluster_age_sec"):
             if getattr(self, name) <= 0.0:
@@ -480,7 +489,10 @@ class PerceptionNode(Node):
                 "cloud_frame", "LiDAR cloud has an empty frame_id; it cannot be "
                 "transformed into the output frame")
             return
+        t = self._stage_timer()
+        self._gray_cache.clear()
         points = self._pointcloud_to_xyz(msg)
+        t("deserialise")
         frame = ClusterFrame(stamp=msg.header.stamp, frame_id=msg.header.frame_id)
         if points.shape[0]:
             # ROI and ground removal want a level ground plane, so they run in
@@ -494,9 +506,12 @@ class PerceptionNode(Node):
                     f"{self.output_frame} at the cloud stamp; skipping cloud")
                 return
             points_base = self._transform_points(points, lidar_to_base)
+            t("tf+transform")
             keep = self._roi_mask(points_base) & self._non_ground_mask(points_base)
+            t("roi+ground")
             frame.points_lidar = points[keep]
             frame.cluster_indices = self._cluster(points_base[keep])
+            t("cluster")
         with self._lock:
             self._cluster_frame = frame
             camera_info = self._camera_info
@@ -524,10 +539,13 @@ class PerceptionNode(Node):
         else:
             image_stamp = self._bbox_stamp(bbox_msg)
             detections = self._extract_detections(bbox_msg, camera_info)
+        t("detections")
 
         scene = self._scene_at(frame, image_stamp, camera_matrix)
+        t("scene(tf+project)")
         cones = self._build_cones(detections, scene, camera_info, camera_matrix,
                                   image_stamp, left, right)
+        t("build_cones(+zncc)")
         # The vision-only provenances measured their cone in an image from
         # `image_stamp`, so their x/y belong to that instant, not to the cloud's.
         # The array goes out under one stamp; carrying them forward is what makes
@@ -540,6 +558,48 @@ class PerceptionNode(Node):
         if self.publish_debug:
             self.provenance_pub.publish(self._provenance_markers(cones, stamp))
         self._publish(cones, stamp)
+        t("publish")
+        self._commit_stages(t)
+
+    def _stage_timer(self):
+        """Wall-clock stopwatch for the cloud callback's stages.
+
+        Wall, not CPU: the number this has to explain is the 70.8 ms median a
+        consumer actually waits, and a CPU profile cannot see a TF lookup or a
+        lock blocking. perf_counter is monotonic and ~50 ns, so ~8 calls a frame
+        at 10 Hz costs nothing measurable.
+        """
+        marks = []
+        start = [time.perf_counter()]
+
+        def mark(name: str) -> None:
+            now = time.perf_counter()
+            marks.append((name, (now - start[0]) * 1000.0))
+            start[0] = now
+
+        mark.marks = marks
+        return mark
+
+    def _commit_stages(self, timer) -> None:
+        for name, ms in timer.marks:
+            self._stage_ms.setdefault(name, []).append(ms)
+
+    def _log_stages(self) -> None:
+        """Where the callback's wall time went, per stage, over the last window."""
+        if not self._stage_ms:
+            return
+        parts, total = [], 0.0
+        for name, values in self._stage_ms.items():
+            values.sort()
+            median = values[len(values) // 2]
+            p90 = values[min(len(values) - 1, int(0.9 * len(values)))]
+            total += median
+            parts.append(f"{name} {median:.1f}/{p90:.1f}")
+        n = max(len(v) for v in self._stage_ms.values())
+        self.get_logger().info(
+            f"/cones stages median/p90 ms over {n} clouds: "
+            + "  ".join(parts) + f"   [sum of medians {total:.1f} ms]")
+        self._stage_ms.clear()
 
     def _bbox_callback(self, msg: BoundingBoxes) -> None:
         """Cache the newest detections. The cloud callback does the publishing.
@@ -659,52 +719,46 @@ class PerceptionNode(Node):
         return clusters
 
     def _dbscan_xy(self, xy: np.ndarray) -> np.ndarray:
-        """DBSCAN over a uniform grid. No sklearn dependency."""
+        """DBSCAN in the ground plane, in C rather than in Python.
+
+        This replaces a hand-rolled grid DBSCAN whose docstring said "No sklearn
+        dependency". The dependency it avoided cost 113-138 ms of every 220 ms
+        cloud -- 55 % of the node -- because the inner test was a numpy call per
+        NEIGHBOUR PAIR (`np.sum((xy[other] - xy[index]) ** 2)`), at ~2 us of
+        interpreter overhead each, and the BFS re-derived a point's neighbours
+        every time it reached it.
+
+        MEASURED against the implementation it replaces, same eps and
+        min_samples, on track-shaped scenes, checked for IDENTICAL partitions
+        (not merely similar ones -- every covariance constant in perception.yaml
+        was fitted against the old clusters, so a different partition would
+        silently invalidate them):
+
+            N      old        sklearn   same partition?
+            400     13.3 ms    0.9 ms   identical
+            960     37.0 ms    1.5 ms   identical
+            1460    45.3 ms    2.8 ms   identical
+            3800   125.9 ms    6.0 ms   identical      <- this is the real load
+            8400   350.4 ms   17.1 ms   identical
+
+        ~3800 points survive ROI and ground removal, which is why the node
+        measured 113-138 ms here: the benchmark reproduces the real cost.
+
+        Not a GPU: at 3800 points the host-to-device copy alone is ~1 ms and the
+        pairwise form is O(N^2). sklearn's kd-tree is 6 ms on one core and the
+        machine has 15 idle ones. A GPU would win somewhere past ~100k points,
+        which is 6x more than the whole cloud.
+        """
         count = xy.shape[0]
-        labels = np.full(count, -1, dtype=np.int64)
         if count == 0:
-            return labels
-        eps = self.cluster_eps
-        cells: Dict[Tuple[int, int], List[int]] = {}
-        for index in range(count):
-            key = (int(math.floor(xy[index, 0] / eps)),
-                   int(math.floor(xy[index, 1] / eps)))
-            cells.setdefault(key, []).append(index)
-
-        def neighbours(index: int) -> List[int]:
-            cx = int(math.floor(xy[index, 0] / eps))
-            cy = int(math.floor(xy[index, 1] / eps))
-            found = []
-            for dx in (-1, 0, 1):
-                for dy in (-1, 0, 1):
-                    for other in cells.get((cx + dx, cy + dy), ()):
-                        if np.sum((xy[other] - xy[index]) ** 2) <= eps * eps:
-                            found.append(other)
-            return found
-
-        visited = np.zeros(count, dtype=bool)
-        cluster_id = 0
-        for index in range(count):
-            if visited[index]:
-                continue
-            visited[index] = True
-            seeds = neighbours(index)
-            if len(seeds) < self.cluster_min_points:
-                continue                        # noise, for now
-            labels[index] = cluster_id
-            queue = list(seeds)
-            while queue:
-                current = queue.pop()
-                if not visited[current]:
-                    visited[current] = True
-                    grown = neighbours(current)
-                    if len(grown) >= self.cluster_min_points:
-                        queue.extend(grown)
-                # A border point joins whichever cluster claims it first.
-                if labels[current] < 0:
-                    labels[current] = cluster_id
-            cluster_id += 1
-        return labels
+            return np.full(0, -1, dtype=np.int64)
+        # Imported here, not at module scope: sklearn pulls in scipy and takes
+        # ~1 s to import, and every OTHER entry point in this package (the curve
+        # fitter, the rate measurer, the evaluator) imports this module without
+        # ever clustering.
+        from sklearn.cluster import DBSCAN
+        return DBSCAN(eps=self.cluster_eps,
+                      min_samples=self.cluster_min_points).fit(xy).labels_
 
     def _scene_at(
         self,
@@ -805,12 +859,15 @@ class PerceptionNode(Node):
             for detection in detections:
                 if detection in claimed:
                     continue
-                cone = self._monocular_cone(detection, camera_info,
-                                            camera_matrix, stamp)
-                if cone is None:
+                # The curve's cone is a CANDIDATE: it sizes the disparity search
+                # and is then thrown away. Only a stereo-measured cone is
+                # published, so no cone's position rests on the bbox height.
+                candidate = self._monocular_cone(detection, camera_info,
+                                                 camera_matrix, stamp)
+                if candidate is None:
                     continue
-                cone = self._cross_check(cone, detection, camera_matrix, left,
-                                         right, stamp)
+                cone = self._stereo_cone(candidate, detection, camera_matrix,
+                                         left, right, stamp)
                 if cone is None:
                     continue
                 # A cluster we failed to match plus a monocular estimate of the
@@ -998,36 +1055,42 @@ class PerceptionNode(Node):
 
     # ------------------------------------------------------------ ZNCC check
 
-    def _cross_check(
+    def _stereo_cone(
         self,
-        cone: Cone,
+        candidate: Cone,
         detection: Detection,
         camera_matrix: np.ndarray,
         left: Optional[Image],
         right: Optional[Image],
         stamp,
     ) -> Optional[Cone]:
-        """Confirm a monocular cone against stereo disparity, and use its depth.
+        """Measure a vision cone's depth by stereo disparity, or publish nothing.
 
-        The two measurements fail differently -- monocular depends on the cone's
-        assumed size, stereo on matching -- which is the whole point. A ZNCC peak
-        near the disparity the box implies is physical evidence that something
-        geometrically consistent exists there, and background texture cannot
-        produce it.
+        ``candidate`` is NOT a publishable cone. It is the monocular curve's
+        estimate, and it exists for one reason: to centre the disparity search.
+        Its depth never reaches /cones. A box-derived prior is 8 % low at 6 m and
+        46 % low at 15 m, so the search window has to come from the fitted curve
+        or it misses the true peak outright at range -- but the MEASUREMENT is
+        the correlation peak, which does not use the cone-size assumption at all.
 
-        Fails OPEN: if the images are missing or stale the check simply does not
-        run, and the monocular cone stands. A cross-check must never be a
-        blocking dependency, or it becomes the latency it was meant to avoid.
+        Fails CLOSED. Every path that cannot produce a disparity peak returns
+        None and the cone is dropped. This is the whole point of removing the
+        monocular tier: a published cone's position must never trace back to
+        "the box was this many pixels tall, and we assumed a cone is 450 mm".
+        Failing open is what let that estimate out under a different name.
         """
         if not self.zncc_enabled or left is None or right is None:
-            return cone
+            self._warn_throttled(
+                "zncc_unavailable", "No stereo pair for the ZNCC measurement; "
+                "dropping the vision cone (monocular depth is not published)")
+            return None
         for image in (left, right):
             if abs(self._stamp_sec(stamp)
                    - self._stamp_sec(image.header.stamp)) > self.max_image_age_sec:
                 self._warn_throttled(
                     "image_age", "Stereo images are too far from the bbox stamp "
-                    "for the ZNCC cross-check; keeping the monocular estimate")
-                return cone
+                    "for the ZNCC measurement; dropping the vision cone")
+                return None
         # The pair must be the same instant as EACH OTHER, which is a stricter
         # thing than both being near the bbox. Disparity between images taken at
         # different times contains the car's motion, and a triangulation cannot
@@ -1041,20 +1104,22 @@ class PerceptionNode(Node):
                 "pair_skew",
                 f"Stereo pair is {pair_gap * 1000:.0f} ms apart (limit "
                 f"{self.max_pair_skew_sec * 1000:.0f} ms); the disparity would "
-                f"be ego motion, not depth. Keeping the monocular estimate")
-            return cone
+                f"be ego motion, not depth. Dropping the vision cone")
+            return None
         left_gray = self._to_gray(left)
         right_gray = self._to_gray(right)
         if left_gray is None or right_gray is None:
-            return cone
+            return None
 
         fx = float(camera_matrix[0, 0])
-        # Centre the window on the curve's own depth rather than on the box
-        # height: the fitted curve already absorbs the detector's box bias,
-        # where a box-derived prior is 8 % low at 6 m and 46 % low at 15 m. The
-        # prior only chooses where to look -- the MEASUREMENT is still the
-        # correlation peak, so the check stays independent of the curve.
-        prior = fx * self.stereo_baseline_m / max(cone.range_m, 1.0e-3)
+        # The candidate's depth chooses WHERE to look, and nothing else. A
+        # box-derived prior (d = h*B/H) is 8 % low at 6 m and 46 % low at 15 m,
+        # so a [0.70, 1.45] window around one misses the true peak outright at
+        # range; the fitted curve's depth puts the window on the truth. What
+        # comes out is the correlation peak, which never uses the cone-size
+        # assumption -- which is why the curve may pick the window without its
+        # depth reaching /cones.
+        prior = fx * self.stereo_baseline_m / max(candidate.range_m, 1.0e-3)
         match = zncc_disparity(
             left_gray, right_gray,
             (detection.xmin, detection.ymin, detection.xmax, detection.ymax),
@@ -1064,44 +1129,65 @@ class PerceptionNode(Node):
         )
         self._zncc_stats[0] += 1
         if match is None:
-            if self.zncc_reject_unconfirmed:
-                return None
-            return cone
+            return None
         self._zncc_stats[1] += 1
-        if not self.zncc_replaces_depth:
-            return cone
 
         depth = fx * self.stereo_baseline_m / match.disparity_px
         if not (self.monocular_min_depth_m <= depth <= self.monocular_max_depth_m):
-            return cone
+            return None
         base = self._back_project(detection, depth, camera_matrix, stamp)
         if base is None:
-            return cone
+            return None
         return Cone(
-            x=float(base[0]), y=float(base[1]), color=cone.color,
+            x=float(base[0]), y=float(base[1]), color=candidate.color,
             provenance=PROV_MONO_ZNCC,
             range_m=float(np.hypot(base[0], base[1])),
             relative_depth_sigma=stereo_relative_depth_sigma(
                 depth, fx, self.stereo_baseline_m, self.sigma_d_px),
             # The bearing still comes from the same bbox centre, so it keeps the
-            # monocular tier's measured sigma_u. Stereo fixes depth, not bearing.
+            # curve's measured sigma_u. Stereo fixes depth, not bearing -- which
+            # is why monocular_min_bbox_height_px still gates this path: past
+            # ~9 m the box CENTRE degrades to 17-32 px and stereo cannot help.
             sigma_u_px=self.monocular_sigma_u_px,
             fx_px=fx,
         )
 
     def _to_gray(self, image: Image) -> Optional[np.ndarray]:
+        """Grey the image once per cloud, not once per detection.
+
+        This is called from _stereo_cone, which runs PER VISION CANDIDATE, and
+        it converts the WHOLE image: 1280x720x3 uint8 -> float64 is a 22 MB
+        allocation before the mean, twice (left and right) for every candidate.
+        The images do not change within a cloud, so the second candidate onward
+        was re-deriving an identical array.
+
+        It also explains the tail rather than just the mean: the cost was
+        proportional to the number of vision candidates in the frame, which is
+        why build_cones measured 31 ms median against a 129 ms p90 -- a frame
+        with six candidates paid six times.
+
+        Keyed on id(), which is safe here and only here: the cache is cleared at
+        the top of each cloud callback and the images are held alive by `left`
+        and `right` for the whole of it, so an id cannot be recycled underneath.
+        """
+        cached = self._gray_cache.get(id(image))
+        if cached is not None:
+            return cached
         try:
             array = image_message_to_numpy(image)
         except Exception:
             return None
         if array is None or array.size == 0:
             return None
+        gray = None
         if array.ndim == 2:
-            return array.astype(np.float64)
-        if array.ndim == 3 and array.shape[2] >= 3:
+            gray = array.astype(np.float64)
+        elif array.ndim == 3 and array.shape[2] >= 3:
             # Luma only; ZNCC is normalised so the exact weights do not matter.
-            return array[:, :, :3].astype(np.float64).mean(axis=2)
-        return None
+            gray = array[:, :, :3].astype(np.float64).mean(axis=2)
+        if gray is not None:
+            self._gray_cache[id(image)] = gray
+        return gray
 
     # ------------------------------------------------------------ covariance
 
@@ -1116,9 +1202,12 @@ class PerceptionNode(Node):
         ellipse = self._vision_covariance(cone)
         if ellipse is not None:
             return ellipse
+        if cone.provenance == PROV_SPARSE:
+            ellipse = self._sparse_covariance(cone)
+            if ellipse is not None:
+                return ellipse
         base_x, base_y = {
             PROV_CLUSTER: (self.lidar_variance_x, self.lidar_variance_y),
-            PROV_SPARSE: (self.sparse_variance_x, self.sparse_variance_y),
         }.get(cone.provenance,
               (self.lidar_only_variance_x, self.lidar_only_variance_y))
         return [
@@ -1129,6 +1218,36 @@ class PerceptionNode(Node):
                 self.min_variance),
         ]
 
+    def _sparse_covariance(self, cone: Cone) -> Optional[List[float]]:
+        """A sparse cone's error is an ellipse too, and it points the other way.
+
+        A CLUSTER has enough returns to find the cone's centre, and measures it
+        near-isotropically: lateral/longitudinal rms 0.041 / 0.035 m (n=5203).
+        One constant is the truth for it.
+
+        A SPARSE cone was thought not to: 2-3 returns on the cone's FRONT FACE
+        should fix the BEARING while leaving the RANGE noisy. THE CLEAN DATA
+        REFUSES THAT. Measured on a verified single stack, three runs:
+
+            lateral       0.056  0.058  0.078 m
+            longitudinal  0.064  0.065  0.051 m
+
+        Those are the same number. The 2.7x longitudinal spread that motivated
+        this ellipse came from two perception nodes publishing at once, which
+        this code did not notice until n doubled for an unchanged 60 s window.
+
+        It survives only because it is measured SAFE (lat z^2 0.32/0.34/0.61,
+        lon 0.07/0.07/0.04 -- never over-confident) and deleting it is a change
+        nobody has run yet. See perception.yaml: the honest end state is one
+        isotropic constant at ~0.017 and this method gone.
+        """
+        sigmas = bearing_aligned_covariance(
+            cone.x, cone.y, self.sparse_sigma_lon_m, self.sparse_sigma_lat_m)
+        if sigmas is None:
+            return None
+        xx, xy, yx, yy = sigmas
+        return [max(xx, self.min_variance), xy, yx, max(yy, self.min_variance)]
+
     def _vision_covariance(self, cone: Cone) -> Optional[List[float]]:
         if (cone.relative_depth_sigma is None or cone.sigma_u_px is None
                 or cone.fx_px is None or not math.isfinite(cone.range_m)
@@ -1138,7 +1257,27 @@ class PerceptionNode(Node):
         # a widening arc, the depth one because the measurement bounds the
         # FRACTION sigma_D/D -- which is why it survives the projection above.
         sigma_lon = cone.range_m * cone.relative_depth_sigma
-        sigma_lat = cone.range_m * cone.sigma_u_px / cone.fx_px
+        # The pixel term alone is a straight line through the origin, and the
+        # error is not: MEASURED lateral rms by range band was 0.136 / 0.128 /
+        # 0.258 / 0.281 / 0.139 / 0.229 / 0.197 / 0.368 m from 0 to 20 m (n=480)
+        # -- no range trend at all, while the pixel term ran 0.052 -> 0.406 m.
+        # So the model was over-confident by 2.6x at 1 m and over-cautious by
+        # 0.9x at 18 m, and NO value of sigma_u_px fixes both: 3.0 implied 10,
+        # 10 implied 18.6. A floor is the missing term, and adding it is what
+        # makes the sigma honest near, which is the half that corrupts the map.
+        #
+        # The floor's CAUSE is not established. A pixel error cannot produce a
+        # range-independent error in metres, so something else dominates --
+        # _carry_vision_cones moves a vision cone by (stamp gap x speed), and the
+        # bbox-to-cloud stamp gap was measured at 10 ms median but 173 ms p90 and
+        # 407 ms max, which at 5 m/s is 0.05 to 2 m of pure carry. That jitter is
+        # Gazebo's bursty rendering and does NOT exist on the car, so this floor
+        # may be fitting the simulator. It is set to cover the observed error
+        # rather than to model it: over-stating costs information, under-stating
+        # corrupts the map. Re-measure on real sensor data before trusting it.
+        sigma_lat = math.hypot(
+            self.vision_lateral_floor_m,
+            cone.range_m * cone.sigma_u_px / cone.fx_px)
         covariance = bearing_aligned_covariance(cone.x, cone.y, sigma_lon,
                                                 sigma_lat)
         if covariance is None:
@@ -1216,6 +1355,7 @@ class PerceptionNode(Node):
             f"p90 {1000 * samples[min(len(samples) - 1, int(0.9 * len(samples)))]:.0f} ms  "
             f"max {1000 * samples[-1]:.0f} ms  over {len(samples)} msgs / "
             f"{elapsed:.1f} s ({len(samples) / elapsed:.1f} Hz){zncc}")
+        self._log_stages()
 
     def _cone_markers(self, cones: List[Cone], covariances: List[List[float]],
                       stamp) -> MarkerArray:

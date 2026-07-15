@@ -15,6 +15,9 @@
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
+  <!-- DBSCAN. The hand-rolled one this replaced was 20x slower and was 55 % of
+       the fusion node's per-cloud wall time. See _dbscan_xy. -->
+  <exec_depend>python3-sklearn</exec_depend>
   <exec_depend>python3-pip</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
   <exec_depend>rclpy</exec_depend>
