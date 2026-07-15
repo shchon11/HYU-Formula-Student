@@ -540,15 +540,41 @@ is that hop's cumulative age (`--duration 30`, driving):
 lags the stamps by up to one 126 ms tick. It biases every row equally.)
 
 **YOLO is not the bottleneck** — it tracks the camera at ~0 added latency. The
-fusion node is: it halves the rate and adds ~0.8 s, and it does so at **200–235 %
-CPU**. That is §2.2's bomb going off. That section said Tier 3's SIFT cost was
-"masked: in normal routing only n≈24 cones/run reach Tier 3… a latency bomb
-waiting for conditions that send more cones there." A 60 s driving run puts
-**n=130** through the stereo tier. The conditions arrived.
+fusion node is: it halves the rate and adds ~0.8 s, at **200–235 % CPU**. That is
+§2.2's bomb going off. That section said Tier 3's SIFT cost was "masked: in
+normal routing only n≈24 cones/run reach Tier 3… a latency bomb waiting for
+conditions that send more cones there." A 60 s driving run puts **n=130** through
+the stereo tier. The conditions arrived.
 
-So **`/cones` cannot reach the sensor rate until Step 5 lands** (ZNCC is 1–3 ms
-where SIFT is 150–300 ms). Step 5 is a throughput fix, not the accuracy fix this
-document files it as.
+### The Tier 3 A/B, which splits the problem in two
+
+`perception_stereo_fallback_enabled:=false`, same track, same driving. Rates are
+normalised by the **LiDAR's achieved rate**, because the host drifts between runs
+and the LiDAR is the one thing none of this touches:
+
+| | perception CPU | `/cones` ÷ LiDAR |
+|---|---|---|
+| Tier 3 **on** | **200–235 %** | 0.40 |
+| Tier 3 **off** | **28 %** | 0.59 |
+
+Two separate conclusions, and conflating them is what sent this document to
+Step 5:
+
+1. **SIFT is ~85–90 % of the node's CPU.** The bomb is real and it is Tier 3.
+2. **SIFT is NOT the rate bottleneck.** With it gone the node idles at 28 % CPU
+   and still publishes at only ~0.6× the LiDAR. The remaining loss is not
+   compute — it is the **one-to-one bbox/LiDAR pairing**, failing because the
+   camera free-runs at ~8.8 Hz against a LiDAR that hits 10.0 Hz exactly. That is
+   §2.3's pathology, unfixed at this level.
+
+So **ZNCC (Step 5) would not get `/cones` to the backbone's rate.** It would buy
+back the CPU and most of the 0.8 s. The rate needs the sync fixed — or Tier 3
+deleted rather than optimised, which is the question §0 raises: the design as
+stated has a LiDAR backbone plus camera-only cones at trustworthy range, and
+**no stereo tier at all**. Before spending 2–3 days making SIFT fast, measure
+what Tier 3 is worth: it produced n=130 of ~600 cones at 1.34 % range error, but
+those are the big-orange and fallen cones, and it is unmeasured whether the
+LiDAR backbone already covers them.
 
 Two things measured along the way, both worth knowing:
 
@@ -562,13 +588,26 @@ Two things measured along the way, both worth knowing:
   again. Both reverted; 15 stays because at 15 the two cameras at least land on
   ~8.8 Hz *together*.
   The GPU is not the constraint: gzserver renders on the RTX 4070 (confirmed via
-  `nvidia-smi`, 214 MiB, NVIDIA GL renderer) at ~150 % CPU with the GPU nearly
-  idle. **Gazebo Classic serialises every sensor on one render thread**, so the
-  two 1280×720 cameras and the 12 800-ray VLP-16 share it. Going faster means
-  removing work from that thread — camera resolution, LiDAR `samples`, or the
-  sensor count — not raising the number in the xacro. Note that cutting camera
-  resolution moves `fx`, the mono curve's `c`/`e`, and the px gate, and makes the
-  Step-4 far-cone problem worse, so it is not free.
+  `nvidia-smi`, 214 MiB, NVIDIA GL renderer) at ~150 % CPU with the GPU ~11 %
+  busy. Per-thread CPU inside gzserver, over 10 s:
+
+  | thread | CPU |
+  |---|---|
+  | hottest | **79.8 %** |
+  | main | 38.4 % |
+  | third | 17.3 % |
+  | other 72 | < 5 % each |
+
+  So one thread does dominate — consistent with Gazebo Classic rendering all
+  image sensors on a single Ogre context — but it is **not pinned at 100 %**.
+  It is stalling, not computing, which points at GPU sync/readback per frame
+  rather than a CPU wall. That matters for what would fix it: **more cores will
+  not help, and neither will a faster GPU**; fewer or cheaper render jobs will.
+  Untried levers, cheapest first: the VLP-16's ray count (16 × 350 shares that
+  same thread), and camera resolution — though cutting resolution moves `fx`,
+  the mono curve's `c`/`e` and the px gate, and makes Step 4's far-cone problem
+  worse, so it is not free. **None of this is measured**; the one-thread claim
+  above is inference from the CPU split, not from a profile.
 - **The ZED's `depth` sensor was rendering for nobody.** A second full 1280×720
   pass plus a point cloud, with `/zed/depth/image_raw`, `/zed/points` and
   `/zed/image_raw` all measured at **0 subscribers** while the real perception
