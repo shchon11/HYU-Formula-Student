@@ -741,8 +741,10 @@ class PerceptionNode(Node):
             3800   125.9 ms    6.0 ms   identical      <- this is the real load
             8400   350.4 ms   17.1 ms   identical
 
-        ~3800 points survive ROI and ground removal, which is why the node
-        measured 113-138 ms here: the benchmark reproduces the real cost.
+        The 3800 row is the one that matters because it is where the bench meets
+        the 113-138 ms the node actually measured -- so ~3800 points is INFERRED
+        to be what survives ROI and ground removal, not counted. If you need the
+        real number, count it; the swap does not rest on it either way.
 
         Not a GPU: at 3800 points the host-to-device copy alone is ~1 ms and the
         pairwise form is O(N^2). sklearn's kd-tree is 6 ms on one core and the
@@ -1184,7 +1186,18 @@ class PerceptionNode(Node):
             gray = array.astype(np.float64)
         elif array.ndim == 3 and array.shape[2] >= 3:
             # Luma only; ZNCC is normalised so the exact weights do not matter.
-            gray = array[:, :, :3].astype(np.float64).mean(axis=2)
+            #
+            # `@` rather than `.astype(np.float64).mean(axis=2)`, which is not a
+            # style preference: MEASURED 11.04 ms per image, of which the cast is
+            # 0.81 and the mean is 10.08. A reduction over a length-3 axis is
+            # pathological in numpy -- it strides the wrong way and gets no
+            # vectorisation -- while the same arithmetic as a matrix product goes
+            # to BLAS. 2.69 ms per image, 5.2 vs 23.0 per stereo pair, and the
+            # two agree to 2.8e-14, which is float64 rounding.
+            #
+            # float32 would be 1.11 ms but the results differ by 2e-5, and this
+            # feeds ZNCC's correlation peak. Not worth 3 ms.
+            gray = array[:, :, :3] @ np.array([1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0])
         if gray is not None:
             self._gray_cache[id(image)] = gray
         return gray
