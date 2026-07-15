@@ -40,12 +40,14 @@ setup(
         (
             f"share/{package_name}/scripts",
             [
+                "scripts/measure_sim_rates.py",
                 "scripts/evaluate_perception_tiers.py",
                 "scripts/fit_mono_depth_curve.py",
             ],
         ),
     ],
     scripts=[
+        "scripts/measure_sim_rates.py",
         "scripts/evaluate_perception_tiers.py",
         "scripts/fit_mono_depth_curve.py",
     ],

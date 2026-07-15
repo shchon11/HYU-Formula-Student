@@ -80,48 +80,48 @@
       <child link="${prefix}_depth_camera_optical_frame"/>
     </joint>
 
-    <!-- 15 Hz, and this is what is known about why.
+    <!-- 30 Hz, and it is delivered. Read the note about clocks before
+         "fixing" this.
 
-         An earlier version of this comment said 30 Hz was beyond the GPU. That
-         is wrong: the GPU sits at 11 % while gzserver renders on the RTX 4070,
-         and the render thread is not GL-blocked at all. Sampled through /proc
-         it is 88-92 % RUNNING, i.e. CPU-bound. More cores will not help either;
-         one Ogre GL context binds to one thread, so every image sensor
-         serialises there by construction and 14 cores sit idle.
+         Measured from the message stamps, which is the only clock that matters
+         here: left 29.41 Hz, velodyne 10.00 Hz (jitter 0.3 ms), /cones 29.41.
+         `ros2 topic hz` reports WALL clock and will show ~24 instead, because
+         the sim runs at RTF 0.83. Everything downstream (perception, SLAM,
+         planning) runs on sim time, so a sensor firing every 33 ms of SIM time
+         is a 30 Hz sensor no matter how long the wall clock takes. A slow RTF
+         costs test wall time and nothing else.
 
-         What throttles the cameras is the LIDAR HOLDING A LOCK, not burning
-         CPU. `type="ray"` queries ODE's collision world under its mutex, and
-         the render thread waits on it. The render thread showed 11 futex_wait
-         samples with the LiDAR at 2928 rays and zero at 64, and with the LiDAR
-         out of the way the cameras delivered exactly what they asked for: 14.87
-         at a 15 Hz request, 29.8 at a 30 Hz request.
+         This distinction is not academic. A whole investigation was run against
+         wall-clock rates and concluded the cameras "could not reach 15 Hz",
+         when they were reaching 15 Hz in sim time the entire time and the RTF
+         was 0.6. Sensor rate and RTF are different numbers; `topic hz` gives
+         the second one.
 
-         So 30 Hz is reachable if the LiDAR stops holding that lock so often.
-         The way that was tried, trimming the VLP-16's arc, is reverted: it cost
-         real sensor FOV and the recall check that "cleared" it was gated to
-         +-55 deg, i.e. it only looked inside the part the trim kept. Whether 30
-         is reachable with the full arc is UNVERIFIED.
+         `format` is R8G8B8, not B8G8R8: Ogre renders 32 bit, and asking for a
+         24 bit format made it convert 921k pixels per frame ON THE CPU, inside
+         the single Ogre GL thread every image sensor shares. Worth ~25 % of RTF
+         (left went 19.8 to 25.0 Hz wall). Safe because ros_image_utils reads
+         the source encoding off the message and swaps channels, and
+         yolov8_bbox_node asks for bgr8 explicitly.
 
-         Two things ruled out by measurement rather than argument, since both
-         look obviously right: compression and moving the publish to a worker
-         thread. Publishing costs nothing. gzserver with no subscribers is at
-         139 % CPU and its hottest thread at 84 %; with both image topics
-         subscribed, 138 % and 82 %. Identical. The 84 % is render and readback.
+         `__GL_YIELD=USLEEP` in the sim launch environment is also worth having:
+         the NVIDIA driver busy waits on the readback sync by default, burning
+         the render thread. Making it sleep drops host load ~2.5 to ~1.8.
 
-         Untried, and free of any perception cost: the world renders an animated
-         sky (`<sky><clouds><speed>12`) for every camera every frame, while the
-         cameras clip at 20 m and never see it. And the track's ~142 cones are
-         each a separate visual, so each is a draw call per camera per frame,
-         which is exactly the CPU-side work that leaves a GPU at 11 %.
+         Ruled out by measurement, not argument: a faster GPU (it idles at 11 %
+         while the render thread is CPU bound at 88 to 92 %), more cores (one
+         Ogre GL context binds to one thread, so 14 cores sit idle), compressed
+         images and a publish worker thread (publishing costs NOTHING: 139 % CPU
+         with no subscribers, 138 % with both image topics subscribed), removing
+         the sky (the cameras clip at 20 m and never saw it), and removing the
+         camera noise (faster, but the detector trains on FSOCO's real noisy
+         images, so a clean sim is an easier sim).
 
-         Whatever the rate ends up being, the pair must stay together: fusion
-         has no hard bbox/LiDAR gate any more, but the ZNCC cross-check needs
-         both images within max_image_age_sec or it silently does not run.
-
-         MEASURING THIS IS HARDER THAN IT LOOKS. Subscribing to a 720p topic
-         costs the simulator tens of MB/s, so `ros2 topic hz` on left then right
-         answers differently than both at once. Measure concurrently, three runs
-         minimum, 40 s settle, and print the host load with every number. -->
+         KNOWN AND OPEN: the right camera settles at 20.00 Hz in sim time while
+         the left holds 29.41, and both jitter badly (60 to 100 ms against the
+         velodyne's 0.3). The ZNCC cross check needs both images within
+         max_image_age_sec or it silently does not run, and it is what removes
+         the monocular tier's range bias. Watch its confirm rate. -->
     <!-- Simulate raw perception sensors only if we're not using the abstracted perception simulation -->
     <xacro:unless value="${active}">
       <gazebo reference="${prefix}_left_camera_frame">
@@ -136,7 +136,7 @@
             <image>
               <width>1280</width>
               <height>720</height>
-              <format>B8G8R8</format>
+              <format>R8G8B8</format>
             </image>
             <clip>
               <near>0.5</near>
@@ -186,7 +186,7 @@
             <image>
               <width>1280</width>
               <height>720</height>
-              <format>B8G8R8</format>
+              <format>R8G8B8</format>
             </image>
             <clip>
               <near>0.5</near>
@@ -248,7 +248,7 @@
             <image>
               <width>1280</width>
               <height>720</height>
-              <format>B8G8R8</format>
+              <format>R8G8B8</format>
             </image>
             <depth_camera>
             </depth_camera>
