@@ -226,4 +226,49 @@ TEST(SlamCenterlineBuilder, StartFinishGateIsBridgedFromCarStart)
     << "no centerline sample at the start/finish gate";
 }
 
+// The published global path must be a closed loop from EVERY ego position, not
+// just the lucky ones. The ring seam lands wherever the boundary walk happened to
+// be seeded, and the sweep can leave its two ends metres apart there (measured up
+// to 19 m), so accepting whatever the ego seed produced made the SAME map close
+// or break depending only on where the car was when it was rebuilt: ~4% of ego
+// positions on small_track and ~20% on the seam_fold map published a path broken
+// across the start/finish. That is the intermittent break seen live. The builder
+// now rejects a seed whose ring does not close and retries from another.
+TEST(SlamCenterlineBuilder, ClosesFromEveryEgoPositionOnShippedTracks)
+{
+  for (const char * track : {"eufs_sim/eufs_tracks/csv/small_track.csv",
+      "eufs_sim/eufs_tracks/csv/peanut.csv",
+      "planning/global_planner/test/fixtures/seam_fold_cone_map.csv"})
+  {
+    const auto map = loadConeMapCsv(track);
+    std::size_t built = 0U;
+    std::size_t open = 0U;
+    for (const auto & seed : bluePoints(map)) {
+      for (const double lateral : {0.0, 1.5}) {
+        nav_msgs::msg::Odometry odom;
+        odom.pose.pose.position.x = seed.x;
+        odom.pose.pose.position.y = seed.y + lateral;
+        odom.pose.pose.orientation.w = 1.0;
+
+        std::vector<PlannerWaypoint> waypoints;
+        std::string reason;
+        if (!buildCenterlineFromSlamMap(map, odom, fixtureConfig(), waypoints, reason)) {
+          ADD_FAILURE() << track << ": build failed at ego (" << odom.pose.pose.position.x
+                        << ", " << odom.pose.pose.position.y << "): " << reason;
+          continue;
+        }
+        ++built;
+        if (distance(
+            {waypoints.front().x, waypoints.front().y},
+            {waypoints.back().x, waypoints.back().y}) > fixtureConfig().duplicate_point_tolerance)
+        {
+          ++open;
+        }
+      }
+    }
+    EXPECT_GT(built, 0U) << track;
+    EXPECT_EQ(open, 0U) << track << ": " << open << " ego positions published an OPEN loop";
+  }
+}
+
 }  // namespace global_planner::test

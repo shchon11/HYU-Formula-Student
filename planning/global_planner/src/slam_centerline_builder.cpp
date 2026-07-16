@@ -572,6 +572,22 @@ static bool buildCenterlineFromSeed(
     }
   }
 
+  // A ring that did not close is a bad SEED, not a bad map. orderSlamBoundaries
+  // already refuses a boundary whose own ends exceed max_boundary_gap_m, so by
+  // the time we are here the cone rings ARE closed and the centerline is a loop;
+  // the seam is just wherever this particular walk happened to start and end,
+  // and the sweep can leave its two ends metres apart there. Accepting that
+  // silently is what published a global path broken across the start/finish --
+  // intermittently, because the seam moves with the ego seed, so the SAME map
+  // closed or broke depending only on where the car was when it was rebuilt
+  // (measured: ~4% of ego positions on small_track, ~20% on the seam_fold map,
+  // seams up to 19 m). Reject the seed instead and let the caller's retry find
+  // one whose walk closes; a genuinely open map fails from every seed, as before.
+  if (distance(centerline.front(), centerline.back()) > config.duplicate_point_tolerance) {
+    reason = "loop_not_closed";
+    return false;
+  }
+
   // Resample BEFORE optimising. The pairing sweep samples at uniform BLUE arc
   // length, so the midpoints it emits are unevenly spaced -- occasionally almost
   // coincident. The curvature weights go like 1/(h1*h2), so those samples
