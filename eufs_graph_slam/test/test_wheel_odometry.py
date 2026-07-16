@@ -1,0 +1,190 @@
+# Copyright 2026 shchon11
+#
+# Use of this source code is governed by an MIT-style
+# license that can be found in the LICENSE file or at
+# https://opensource.org/licenses/MIT.
+"""
+Synthetic-feed behaviour checks for wheel odometry's INS coupling.
+
+Messages are fed straight into the callbacks (no executor) and publishes are
+captured through a stub. Pinned here, all of them things that fail silently:
+
+  * the SBG body frame is Z-DOWN, so the reported yaw rate must be negated
+    before it is integrated — get it wrong and the car turns the wrong way
+    while every topic still looks healthy;
+  * a_x is taken from the gravity-free channel and drives slip compensation
+    in the right direction (braking under-reads, traction over-reads);
+  * a stale INS falls back to bicycle-model yaw and PAUSES slip compensation
+    rather than integrating a stale kappa;
+  * sigma_v widens with the applied correction, so the graph downweights
+    odometry exactly when the estimate is working hardest.
+"""
+import importlib.util
+import math
+import os
+
+import pytest
+
+rclpy = pytest.importorskip("rclpy")
+pytest.importorskip("sbg_driver.msg")
+
+from builtin_interfaces.msg import Time as TimeMsg  # noqa: E402
+from eufs_msgs.msg import WheelSpeedsStamped  # noqa: E402
+from sbg_driver.msg import SbgEkfRotAccel  # noqa: E402
+
+_MODULE_PATH = os.path.join(
+    os.path.dirname(__file__), "..", "scripts", "wheel_odometry.py"
+)
+_RADIUS = 0.2525
+_RPM_TO_RAD_S = 2.0 * math.pi / 60.0
+
+
+class _StubPub:
+    """Captures publishes instead of sending them anywhere."""
+
+    def __init__(self):
+        self.msgs = []
+
+    def publish(self, msg):
+        """Record the message."""
+        self.msgs.append(msg)
+
+
+def _stamp(t):
+    sec = int(t)
+    return TimeMsg(sec=sec, nanosec=int(round((t - sec) * 1e9)))
+
+
+def _speeds(t, v, steering=0.0):
+    """Wheel speeds reporting a true ground speed v (no differential split)."""
+    msg = WheelSpeedsStamped()
+    msg.header.stamp = _stamp(t)
+    rpm = v / (_RADIUS * _RPM_TO_RAD_S)
+    msg.speeds.lb_speed = rpm
+    msg.speeds.rb_speed = rpm
+    msg.speeds.lf_speed = rpm
+    msg.speeds.rf_speed = rpm
+    msg.speeds.steering = steering
+    return msg
+
+
+def _rot_accel(t, yaw_rate_flu, a_x, frame_id="imu_link_ned"):
+    """SbgEkfRotAccel as the driver emits it: body RFD, so Z-down."""
+    msg = SbgEkfRotAccel()
+    msg.header.stamp = _stamp(t)
+    msg.header.frame_id = frame_id
+    msg.rate.z = -yaw_rate_flu  # Z-down on the wire
+    msg.acceleration.x = a_x
+    return msg
+
+
+def _reset(node):
+    node.x = node.y = node.yaw = 0.0
+    node.last_t = None
+    node.ins_yaw_rate = None
+    node.ins_stamp = None
+    node.used_ins_fallback = False
+    node.accel_x_lp = 0.0
+    node.accel_lp_stamp = None
+    node.warned_frame = False
+    node.pub = _StubPub()
+
+
+@pytest.fixture(scope="module")
+def node():
+    """One WheelOdometry instance, reset per test by the helper."""
+    rclpy.init()
+    spec = importlib.util.spec_from_file_location("wheel_odometry", _MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    instance = module.WheelOdometry()
+    yield instance
+    instance.destroy_node()
+    rclpy.try_shutdown()
+
+
+def _drive(node, duration, rate, v, yaw_rate_flu, a_x, feed_ins=True):
+    """Feed a constant-state run; returns the published CarStates."""
+    _reset(node)
+    dt = 1.0 / rate
+    for i in range(int(round(duration * rate))):
+        t = 100.0 + i * dt
+        if feed_ins:
+            node.on_rot_accel(_rot_accel(t, yaw_rate_flu, a_x))
+        node.on_wheel_speeds(_speeds(t, v))
+    return node.pub.msgs
+
+
+def test_ins_yaw_rate_sign(node):
+    """Z-down on the wire must integrate as a left turn in FLU."""
+    out = _drive(node, 2.0, 100.0, v=6.0, yaw_rate_flu=0.3, a_x=0.0)
+    assert out
+    # The node must report the FLU yaw rate, not the wire's Z-down value.
+    assert abs(out[-1].twist.twist.angular.z - 0.3) < 1e-6
+    # ...and integrate it into a LEFT (positive) heading over 2 s.
+    assert node.yaw > 0.5
+    assert node.y > 0.0
+
+
+def test_slip_compensation_direction_and_sigma(node):
+    """Traction over-reads (v drops); sigma_v widens with the correction."""
+    baseline = _drive(node, 1.0, 100.0, v=10.0, yaw_rate_flu=0.0, a_x=0.0)
+    v_coast = baseline[-1].twist.twist.linear.x
+    sigma_coast = math.sqrt(baseline[-1].pose.covariance[0])
+
+    driving = _drive(node, 1.0, 100.0, v=10.0, yaw_rate_flu=0.0, a_x=8.0)
+    v_driving = driving[-1].twist.twist.linear.x
+    sigma_driving = math.sqrt(driving[-1].pose.covariance[0])
+
+    braking = _drive(node, 1.0, 100.0, v=10.0, yaw_rate_flu=0.0, a_x=-8.0)
+    v_braking = braking[-1].twist.twist.linear.x
+
+    # Same encoder reading, three traction states: under power the wheels
+    # over-read so true v is LOWER; under braking they under-read.
+    assert v_driving < v_coast < v_braking
+    # The correction is a real fraction of v, not noise-level.
+    assert (v_coast - v_driving) > 0.1
+    # Confidence tracks the work done: coasting is the tight one.
+    assert sigma_driving > sigma_coast
+
+
+def test_stale_ins_falls_back_and_pauses_slip(node):
+    """No INS: bicycle-model yaw, and kappa must not be applied at all."""
+    out = _drive(node, 1.0, 100.0, v=10.0, yaw_rate_flu=0.0, a_x=0.0,
+                 feed_ins=False)
+    assert out
+    assert node.used_ins_fallback
+    # Straight steering -> bicycle yaw is zero, and with slip paused the
+    # reported speed is the raw encoder speed.
+    assert abs(out[-1].twist.twist.angular.z) < 1e-9
+    assert abs(out[-1].twist.twist.linear.x - 10.0) < 1e-6
+    # sigma_v stays at the floor: no correction was applied to widen it.
+    assert abs(math.sqrt(out[-1].pose.covariance[0]) - node.sigma_v) < 1e-9
+
+
+def test_enu_frame_id_warns(node):
+    """An ENU frame_id means swapped body axes; say so instead of drifting."""
+    _reset(node)
+    warnings = []
+    original = node.get_logger().warn
+    node.get_logger().warn = lambda m: warnings.append(m)
+    try:
+        node.on_rot_accel(_rot_accel(100.0, 0.0, 0.0, frame_id="imu_link"))
+        node.on_rot_accel(_rot_accel(100.01, 0.0, 0.0, frame_id="imu_link"))
+    finally:
+        node.get_logger().warn = original
+    assert len(warnings) == 1  # warned once, not per message
+    assert "use_enu" in warnings[0]
+
+
+def test_ned_frame_id_is_quiet(node):
+    """The expected frame must not cry wolf."""
+    _reset(node)
+    warnings = []
+    original = node.get_logger().warn
+    node.get_logger().warn = lambda m: warnings.append(m)
+    try:
+        node.on_rot_accel(_rot_accel(100.0, 0.0, 0.0))
+    finally:
+        node.get_logger().warn = original
+    assert not warnings

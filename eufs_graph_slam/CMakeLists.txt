@@ -121,6 +121,14 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   find_package(ament_lint_auto REQUIRED)
 
+  # The python nodes under scripts/ had no test runner at all, so the INS
+  # coupling in wheel_odometry (body-frame sign conventions, slip direction)
+  # was unguarded. Mirrors eufs_sensors' pytest wiring.
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(wheel_odometry_tests test/test_wheel_odometry.py
+    TIMEOUT 120
+  )
+
   ament_add_gtest(loop_confirmation_test
     test/loop_confirmation_test.cpp)
   target_include_directories(loop_confirmation_test PRIVATE
