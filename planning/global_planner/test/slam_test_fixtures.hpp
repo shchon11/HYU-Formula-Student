@@ -62,9 +62,41 @@ inline eufs_msgs::msg::ConeArrayWithCovariance loadConeMapCsv(const std::string 
       map.blue_cones.push_back(cone);
     } else if (fields[0] == "yellow") {
       map.yellow_cones.push_back(cone);
+    } else if (fields[0] == "big_orange") {
+      map.big_orange_cones.push_back(cone);
+    } else if (fields[0] == "orange") {
+      map.orange_cones.push_back(cone);
     }
   }
   return map;
+}
+
+// Ego at a track's `car_start` row. The shipped tracks start the car ON the
+// start/finish line, which is the seed that exposes the gate: the boundary walk
+// begins on one side of the orange gate and ends on the other, so the ring seam
+// lands on the gate gap rather than on ordinary cone spacing.
+inline nav_msgs::msg::Odometry egoAtCarStart(const std::string & relative)
+{
+  std::ifstream file(fixturePath(relative));
+  if (!file.is_open()) {
+    throw std::runtime_error("could not open fixture: " + relative);
+  }
+  std::string line;
+  std::getline(file, line);
+  while (std::getline(file, line)) {
+    if (line.empty()) {
+      continue;
+    }
+    const auto fields = splitCsvLine(line);
+    if (fields.size() >= 3U && fields[0] == "car_start") {
+      nav_msgs::msg::Odometry odom;
+      odom.pose.pose.position.x = std::stod(fields[1]);
+      odom.pose.pose.position.y = std::stod(fields[2]);
+      odom.pose.pose.orientation.w = 1.0;
+      return odom;
+    }
+  }
+  throw std::runtime_error("fixture has no car_start row: " + relative);
 }
 
 inline nav_msgs::msg::Odometry egoAtOrigin()

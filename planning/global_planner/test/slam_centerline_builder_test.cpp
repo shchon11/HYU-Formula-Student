@@ -185,4 +185,45 @@ TEST(SlamCenterlineBuilder, WidthFixtureFailsClosedWithExplicitReason)
   EXPECT_EQ(reason, "invalid_width");
 }
 
+// FS marks the start/finish line with big orange cones, and the blue/yellow
+// boundaries both break across it (5.9 m blue / 5.3 m yellow on small_track).
+// The car starts ON that line, so the boundary walk seeds beside the gate: it
+// runs away around the lap and ends on the far side, putting the ring seam on
+// the gate gap instead of on ordinary cone spacing. With the markers dropped
+// the seam exceeds close_loop_distance_m, the ring is never closed, and the
+// global path is published with a visible break across the start/finish.
+// Folding the markers into the boundary they flank halves that gap.
+TEST(SlamCenterlineBuilder, StartFinishGateIsBridgedFromCarStart)
+{
+  const std::string track = "eufs_sim/eufs_tracks/csv/small_track.csv";
+  const auto map = loadConeMapCsv(track);
+  ASSERT_EQ(map.big_orange_cones.size(), 4U) << "small_track should ship a 4-cone start/finish gate";
+
+  std::vector<PlannerWaypoint> waypoints;
+  std::string reason;
+  ASSERT_TRUE(
+    buildCenterlineFromSlamMap(map, egoAtCarStart(track), fixtureConfig(), waypoints, reason))
+    << reason;
+
+  const double seam = distance(
+    {waypoints.front().x, waypoints.front().y}, {waypoints.back().x, waypoints.back().y});
+  EXPECT_LE(seam, fixtureConfig().close_loop_distance_m)
+    << "ring seam " << seam << " m sits on the start/finish gate, so the loop never closes and "
+    << "the global path is published broken there";
+  EXPECT_FALSE(hasSelfIntersection(waypoints));
+
+  // The gate must carry real centerline samples, not be spanned by a blind chord.
+  PlannerPoint gate{0.0, 0.0};
+  for (const auto & cone : map.big_orange_cones) {
+    gate.x += cone.point.x / static_cast<double>(map.big_orange_cones.size());
+    gate.y += cone.point.y / static_cast<double>(map.big_orange_cones.size());
+  }
+  double nearest_sample = std::numeric_limits<double>::infinity();
+  for (const auto & waypoint : waypoints) {
+    nearest_sample = std::min(nearest_sample, distance(gate, {waypoint.x, waypoint.y}));
+  }
+  EXPECT_LE(nearest_sample, fixtureConfig().waypoint_spacing_m)
+    << "no centerline sample at the start/finish gate";
+}
+
 }  // namespace global_planner::test

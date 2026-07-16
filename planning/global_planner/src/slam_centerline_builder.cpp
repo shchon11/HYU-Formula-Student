@@ -85,6 +85,49 @@ std::vector<PlannerPoint> finiteConePoints(
   return points;
 }
 
+double nearestDistance(const PlannerPoint & point, const std::vector<PlannerPoint> & candidates)
+{
+  double best = std::numeric_limits<double>::infinity();
+  for (const auto & candidate : candidates) {
+    best = std::min(best, distance(point, candidate));
+  }
+  return best;
+}
+
+// FS marks the start/finish line with (big) orange cones, placed exactly where
+// the blue and yellow boundaries break for the timing gate. The pairing sweep
+// only knows blue<->yellow, so those markers are invisible to it and each
+// boundary carries one long step across the gate (5.9 m blue / 5.3 m yellow on
+// small_track). The car starts ON that line, so the boundary walk seeds beside
+// the gate, runs away around the lap and ends on its far side: the ring seam
+// then lands on the gate gap, close_loop_distance_m rejects it, and the global
+// path is published with a visible break across the start/finish.
+//
+// Fold each marker into the boundary it flanks (nearest coloured cone wins) so
+// the gate carries real boundary points. Markers within merge_tolerance of one
+// another (the paired timing cones) collapse to one, and a marker landing on an
+// existing cone is dropped, so the same-colour-duplicate gate cannot trip on a
+// point this function introduced.
+void foldStartFinishMarkers(
+  const std::vector<PlannerPoint> & markers, double merge_tolerance,
+  std::vector<PlannerPoint> & blue_points, std::vector<PlannerPoint> & yellow_points)
+{
+  std::vector<PlannerPoint> collapsed;
+  for (const auto & marker : markers) {
+    if (nearestDistance(marker, collapsed) > merge_tolerance) {
+      collapsed.push_back(marker);
+    }
+  }
+  for (const auto & marker : collapsed) {
+    std::vector<PlannerPoint> & side =
+      nearestDistance(marker, blue_points) <= nearestDistance(marker, yellow_points) ?
+      blue_points : yellow_points;
+    if (nearestDistance(marker, side) > merge_tolerance) {
+      side.push_back(marker);
+    }
+  }
+}
+
 constexpr double kPi = 3.14159265358979323846;
 // No drivable track turns 60 deg between successive samples (at the 0.5 m
 // default spacing that is a sub-0.5 m turn radius). A step this sharp is a
@@ -165,14 +208,16 @@ bool hasInvalidNearestTrackWidth(
   return false;
 }
 
-double distanceToPolyline(const PlannerPoint & query, const std::vector<PlannerPoint> & poly)
+// Nearest point on a polyline. The raceline needs the point, not just the
+// distance: which SIDE of a point's normal a boundary sits on decides whether
+// that boundary caps the positive or the negative offset.
+PlannerPoint closestPointOnPolyline(
+  const PlannerPoint & query, const std::vector<PlannerPoint> & poly)
 {
-  if (poly.empty()) {
-    return std::numeric_limits<double>::infinity();
-  }
   if (poly.size() == 1U) {
-    return distance(query, poly.front());
+    return poly.front();
   }
+  PlannerPoint best = poly.front();
   double best_d2 = std::numeric_limits<double>::max();
   for (std::size_t i = 0; i + 1U < poly.size(); ++i) {
     const PlannerPoint & a = poly[i];
@@ -184,16 +229,21 @@ double distanceToPolyline(const PlannerPoint & query, const std::vector<PlannerP
     if (len2 > 0.0) {
       t = std::clamp(((query.x - a.x) * vx + (query.y - a.y) * vy) / len2, 0.0, 1.0);
     }
-    const double dx = query.x - (a.x + t * vx);
-    const double dy = query.y - (a.y + t * vy);
-    best_d2 = std::min(best_d2, dx * dx + dy * dy);
+    const PlannerPoint projected{a.x + t * vx, a.y + t * vy};
+    const double dx = query.x - projected.x;
+    const double dy = query.y - projected.y;
+    const double d2 = dx * dx + dy * dy;
+    if (d2 < best_d2) {
+      best_d2 = d2;
+      best = projected;
+    }
   }
-  return std::sqrt(best_d2);
+  return best;
 }
 
 }  // namespace
 
-void applyRacelineSmoothing(
+void applyMinimumCurvatureRaceline(
   std::vector<PlannerPoint> & centerline,
   const std::vector<PlannerPoint> & left_boundary,
   const std::vector<PlannerPoint> & right_boundary,
@@ -202,64 +252,188 @@ void applyRacelineSmoothing(
   if (config.raceline_smoothing_iterations <= 0 || centerline.size() < 3U) {
     return;
   }
-  const double alpha = std::clamp(config.raceline_alpha, 0.0, 0.45);
-  if (alpha <= 0.0) {
-    return;
-  }
 
-  // A closed ring arrives with the first point duplicated at the tail; smooth
-  // the ring without the duplicate so the seam gets the same treatment as any
-  // other point, and restore the duplicate afterwards.
+  // A closed ring arrives with the first point duplicated at the tail; optimise
+  // the ring without the duplicate so the seam is treated like any other point,
+  // and restore the duplicate afterwards.
   const bool closed = centerline.size() >= 4U &&
     distance(centerline.front(), centerline.back()) <= config.duplicate_point_tolerance;
-  std::vector<PlannerPoint> ring(centerline.begin(), closed ? centerline.end() - 1 : centerline.end());
+  std::vector<PlannerPoint> ring(
+    centerline.begin(), closed ? centerline.end() - 1 : centerline.end());
   const std::size_t n = ring.size();
   if (n < 3U) {
     return;
   }
 
-  // Displacement budget per point, priced ONCE against the original position:
-  // budget_i = clearance_i - margin. Any point moved at most budget_i from its
-  // origin keeps >= margin to both boundaries (triangle inequality), so the
-  // clamp below is a hard safety guarantee independent of iteration count.
-  const std::vector<PlannerPoint> original = ring;
-  std::vector<double> budget(n, 0.0);
+  // Curvature needs both neighbours. An open path additionally pins its
+  // endpoints so the join to upstream geometry is not disturbed.
+  const std::size_t first = closed ? 0U : 1U;
+  const std::size_t last = closed ? n - 1U : n - 2U;
+  const auto back_of = [&](std::size_t i) {return closed ? (i + n - 1U) % n : i - 1U;};
+  const auto front_of = [&](std::size_t i) {return closed ? (i + 1U) % n : i + 1U;};
+
+  // p_i = c_i + alpha_i * n_i is only linear while n_i is held fixed, but the
+  // optimum moves points by the better part of a metre, by which point those
+  // frozen normals no longer describe the line. Minimising the stale model then
+  // makes the REAL curvature worse the harder it converges. So re-linearise:
+  // solve, move the line, rebuild normals/bounds/model from where it now is, and
+  // solve again. Each pass is a fresh convex QP over the true corridor, so the
+  // clearance guarantee holds at every step rather than accumulating error.
+  constexpr int kRelinearisations = 6;
+  for (int pass = 0; pass < kRelinearisations; ++pass) {
+
+  // Unit left-normal from a central-difference tangent. Every offset below is
+  // measured along this direction, which is what keeps the model linear.
+  std::vector<PlannerPoint> normal(n, PlannerPoint{0.0, 0.0});
   for (std::size_t i = 0; i < n; ++i) {
-    const double clearance = std::min(
-      distanceToPolyline(original[i], left_boundary),
-      distanceToPolyline(original[i], right_boundary));
-    budget[i] = std::max(0.0, clearance - config.raceline_margin_m);
+    const PlannerPoint & behind = ring[closed ? (i + n - 1U) % n : (i == 0U ? i : i - 1U)];
+    const PlannerPoint & ahead = ring[closed ? (i + 1U) % n : (i + 1U == n ? i : i + 1U)];
+    const double tx = ahead.x - behind.x;
+    const double ty = ahead.y - behind.y;
+    const double length = std::hypot(tx, ty);
+    if (!(length > 0.0)) {
+      return;  // degenerate sampling: leave the centerline untouched
+    }
+    normal[i] = PlannerPoint{-ty / length, tx / length};
   }
 
-  // Curvature-energy descent: each pass relaxes every point toward its
-  // neighbours' midpoint (discrete Laplacian), which straightens corners and
-  // leaves straights untouched; the budget clamp stops the cut at the margin.
-  // Open paths keep both endpoints fixed so the join to upstream geometry is
-  // not disturbed.
-  std::vector<PlannerPoint> next = ring;
-  for (int iteration = 0; iteration < config.raceline_smoothing_iterations; ++iteration) {
-    for (std::size_t i = 0; i < n; ++i) {
-      if (!closed && (i == 0U || i + 1U == n)) {
+  // Corridor box per point. Each boundary caps only the side of the normal it
+  // actually lies on, so this holds whichever way round the line was ordered.
+  // alpha = 0 stays feasible, so the optimum can never be worse than the
+  // centerline it started from -- including where a point is already inside the
+  // margin, which simply pins it.
+  const double cap = std::max(0.0, config.max_track_width_m);
+  std::vector<double> lower(n, -cap);
+  std::vector<double> upper(n, cap);
+  for (std::size_t i = 0; i < n; ++i) {
+    for (const auto * boundary : {&left_boundary, &right_boundary}) {
+      if (boundary->empty()) {
         continue;
       }
-      const PlannerPoint & previous = ring[(i + n - 1U) % n];
-      const PlannerPoint & current = ring[i];
-      const PlannerPoint & following = ring[(i + 1U) % n];
-      PlannerPoint moved{
-        current.x + alpha * (0.5 * (previous.x + following.x) - current.x),
-        current.y + alpha * (0.5 * (previous.y + following.y) - current.y)};
-      const double offset_x = moved.x - original[i].x;
-      const double offset_y = moved.y - original[i].y;
-      const double offset = std::hypot(offset_x, offset_y);
-      if (offset > budget[i] && offset > 0.0) {
-        const double scale = budget[i] / offset;
-        moved.x = original[i].x + offset_x * scale;
-        moved.y = original[i].y + offset_y * scale;
+      const PlannerPoint closest = closestPointOnPolyline(ring[i], *boundary);
+      const double room = distance(ring[i], closest) - config.raceline_margin_m;
+      const double side =
+        (closest.x - ring[i].x) * normal[i].x + (closest.y - ring[i].y) * normal[i].y;
+      if (side >= 0.0) {
+        upper[i] = std::min(upper[i], room);
+      } else {
+        lower[i] = std::max(lower[i], -room);
       }
-      next[i] = moved;
     }
-    ring.swap(next);
+    upper[i] = std::max(upper[i], 0.0);
+    lower[i] = std::min(lower[i], 0.0);
   }
+
+  // kappa_i = base_i + ca_i*alpha_{i-1} + cc_i*alpha_i + cb_i*alpha_{i+1}, using
+  // the three-point second-derivative weights for UNEVEN spacing: the centerline
+  // is sampled at uniform blue arc length, which compresses the midpoints
+  // through corners, so assuming a constant ds would mis-weight exactly the
+  // places that matter most.
+  std::vector<double> base(n, 0.0);
+  std::vector<double> ca(n, 0.0);
+  std::vector<double> cb(n, 0.0);
+  std::vector<double> cc(n, 0.0);
+  for (std::size_t i = first; i <= last; ++i) {
+    const std::size_t p = back_of(i);
+    const std::size_t q = front_of(i);
+    const double h1 = distance(ring[p], ring[i]);
+    const double h2 = distance(ring[i], ring[q]);
+    if (!(h1 > 0.0) || !(h2 > 0.0)) {
+      return;
+    }
+    const double w1 = 2.0 / (h1 * (h1 + h2));
+    const double w2 = -2.0 / (h1 * h2);
+    const double w3 = 2.0 / (h2 * (h1 + h2));
+    base[i] = (w1 * ring[p].x + w2 * ring[i].x + w3 * ring[q].x) * normal[i].x +
+      (w1 * ring[p].y + w2 * ring[i].y + w3 * ring[q].y) * normal[i].y;
+    ca[i] = w1 * (normal[p].x * normal[i].x + normal[p].y * normal[i].y);
+    // The spacing is frozen at the reference line's h1/h2, but the offset curve
+    // does not keep it: its arc spacing scales as h*(1 - alpha*kappa). Dropping
+    // that factor costs exactly the first-order offset term and INVERTS it --
+    // the frozen model reports d(kappa)/d(alpha) = -kappa_0^2 where the truth
+    // (differentiating 1/(R - alpha)) is +kappa_0^2. Uncorrected, the model
+    // believes that sliding a point toward its centre of curvature FLATTENS the
+    // line, so on any constant-radius section the solver drives it to the inside
+    // bound: the sharpest line the corridor allows, and worse than the
+    // centerline it replaced. Adding 2*kappa_0^2 flips the slope back (-k^2 +
+    // 2k^2 = +k^2). base[i] is the signed curvature, so squaring it is
+    // orientation-safe, and 2*kappa^2 (~1e-2) is negligible beside w2 (~-8), so
+    // the dominant alpha'' term is untouched.
+    cc[i] = w2 + 2.0 * base[i] * base[i];
+    cb[i] = w3 * (normal[q].x * normal[i].x + normal[q].y * normal[i].y);
+  }
+
+  // A: alpha -> curvature deviation, and its transpose. Pinned entries of alpha
+  // are always 0, so reading them costs nothing and writes to them are ignored.
+  const auto applyA = [&](const std::vector<double> & v, std::vector<double> & out) {
+      out.assign(n, 0.0);
+      for (std::size_t i = first; i <= last; ++i) {
+        out[i] = ca[i] * v[back_of(i)] + cc[i] * v[i] + cb[i] * v[front_of(i)];
+      }
+    };
+  const auto applyAT = [&](const std::vector<double> & r, std::vector<double> & out) {
+      out.assign(n, 0.0);
+      for (std::size_t i = first; i <= last; ++i) {
+        out[back_of(i)] += ca[i] * r[i];
+        out[i] += cc[i] * r[i];
+        out[front_of(i)] += cb[i] * r[i];
+      }
+    };
+
+  // Step size needs an upper bound on the Lipschitz constant of grad f, i.e. on
+  // 2*lambda_max(A^T A). ||A||_1 * ||A||_inf bounds it, is O(n), and is exact
+  // enough here (the top mode of a second-difference operator saturates it) --
+  // and unlike a power iteration it is trivially deterministic.
+  double norm_inf = 0.0;
+  std::vector<double> column_sum(n, 0.0);
+  for (std::size_t i = first; i <= last; ++i) {
+    norm_inf = std::max(norm_inf, std::abs(ca[i]) + std::abs(cc[i]) + std::abs(cb[i]));
+    column_sum[back_of(i)] += std::abs(ca[i]);
+    column_sum[i] += std::abs(cc[i]);
+    column_sum[front_of(i)] += std::abs(cb[i]);
+  }
+  const double norm_one = *std::max_element(column_sum.begin(), column_sum.end());
+  const double lipschitz = 2.0 * norm_one * norm_inf;
+  if (!(lipschitz > 0.0) || !std::isfinite(lipschitz)) {
+    return;
+  }
+
+  // FISTA (accelerated projected gradient). Minimising sum kappa^2 makes the
+  // normal equations biharmonic, whose condition number grows like n^4: a
+  // coordinate/Gauss-Seidel sweep needs O(kappa) passes and crawls, while an
+  // accelerated method needs O(sqrt(kappa)). The projection is exact, so every
+  // returned alpha is inside the corridor no matter where the loop is stopped.
+  std::vector<double> alpha(n, 0.0);
+  std::vector<double> momentum(n, 0.0);
+  std::vector<double> previous(n, 0.0);
+  std::vector<double> residual;
+  std::vector<double> gradient;
+  double theta = 1.0;
+  for (int iteration = 0; iteration < config.raceline_smoothing_iterations; ++iteration) {
+    applyA(momentum, residual);
+    for (std::size_t i = first; i <= last; ++i) {
+      residual[i] += base[i];
+    }
+    applyAT(residual, gradient);
+    for (std::size_t i = first; i <= last; ++i) {
+      alpha[i] = std::clamp(
+        momentum[i] - 2.0 * gradient[i] / lipschitz, lower[i], upper[i]);
+    }
+    const double theta_next = 0.5 * (1.0 + std::sqrt(1.0 + 4.0 * theta * theta));
+    const double beta = (theta - 1.0) / theta_next;
+    for (std::size_t i = first; i <= last; ++i) {
+      momentum[i] = alpha[i] + beta * (alpha[i] - previous[i]);
+      previous[i] = alpha[i];
+    }
+    theta = theta_next;
+  }
+
+  for (std::size_t i = 0; i < n; ++i) {
+    ring[i] = PlannerPoint{
+      ring[i].x + alpha[i] * normal[i].x, ring[i].y + alpha[i] * normal[i].y};
+  }
+
+  }  // re-linearisation pass
 
   centerline.assign(ring.begin(), ring.end());
   if (closed) {
@@ -398,10 +572,25 @@ static bool buildCenterlineFromSeed(
     }
   }
 
-  applyRacelineSmoothing(centerline, ordered_blue, ordered_yellow, config);
-
-  const auto resampled = resampleBySpacing(
+  // Resample BEFORE optimising. The pairing sweep samples at uniform BLUE arc
+  // length, so the midpoints it emits are unevenly spaced -- occasionally almost
+  // coincident. The curvature weights go like 1/(h1*h2), so those samples
+  // dominate the objective and wreck its conditioning; on the shipped track that
+  // alone made the "minimum curvature" line twice as sharp as the centerline.
+  // A uniformly spaced line is what the finite-difference model assumes.
+  auto resampled = resampleBySpacing(
     centerline, config.waypoint_spacing_m, config.duplicate_point_tolerance);
+  if (resampled.size() < 3U) {
+    reason = "resampled centerline has fewer than three points";
+    return false;
+  }
+
+  applyMinimumCurvatureRaceline(resampled, ordered_blue, ordered_yellow, config);
+
+  // The lateral offsets stretch and compress the spacing a little; resample once
+  // more so the published waypoints keep their uniform-spacing contract.
+  resampled = resampleBySpacing(
+    resampled, config.waypoint_spacing_m, config.duplicate_point_tolerance);
   if (resampled.size() < 3U) {
     reason = "resampled centerline has fewer than three points";
     return false;
@@ -438,8 +627,20 @@ bool buildCenterlineFromSlamMap(
     return false;
   }
 
-  const auto blue_points = finiteConePoints(cone_map.blue_cones);
-  const auto yellow_points = finiteConePoints(cone_map.yellow_cones);
+  auto blue_points = finiteConePoints(cone_map.blue_cones);
+  auto yellow_points = finiteConePoints(cone_map.yellow_cones);
+
+  // The start/finish markers join the boundaries before every gate below, so the
+  // duplicate and width checks validate exactly the points the sweep will pair.
+  std::vector<PlannerPoint> markers = finiteConePoints(cone_map.big_orange_cones);
+  const auto small_orange = finiteConePoints(cone_map.orange_cones);
+  markers.insert(markers.end(), small_orange.begin(), small_orange.end());
+  if (!markers.empty()) {
+    foldStartFinishMarkers(
+      markers, std::max(config.duplicate_point_tolerance, config.min_track_width_m * 0.25),
+      blue_points, yellow_points);
+  }
+
   if (blue_points.size() < static_cast<std::size_t>(config.min_cones_per_side) ||
     yellow_points.size() < static_cast<std::size_t>(config.min_cones_per_side))
   {

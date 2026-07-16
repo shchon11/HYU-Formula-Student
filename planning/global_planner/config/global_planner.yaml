@@ -66,12 +66,30 @@ planner_node:
     duplicate_point_tolerance: 0.001
     odom_timeout_sec: 0.5
     hold_last_valid_path: true
-    # Raceline smoothing: iteratively relax the centerline toward a
-    # minimum-curvature line, hard-clamped so every point keeps
-    # raceline_margin_m clearance to both boundary polylines (margin ~= car
-    # half-width + safety). 0 iterations = pure centerline (previous behavior).
-    raceline_smoothing_iterations: 400
-    raceline_margin_m: 1.2
+    # Minimum-curvature raceline: solve for the flattest line the cone corridor
+    # allows, so it runs wide into a corner, clips the apex and tracks out again.
+    # Every point keeps raceline_margin_m clearance to both boundary polylines
+    # (margin ~= car half-width + safety), so raceline_margin_m is the real
+    # aggression knob: the line may leave the centerline by at most
+    # (half track width - raceline_margin_m). 0 iterations = pure centerline.
+    #
+    # Iterations are solver iterations, not a step count: the objective is
+    # convex, so more only tightens convergence. On small_track (211 points)
+    # this drops curvature energy 5.06 -> 1.39 (-73%) and peak curvature
+    # 0.87 -> 0.19 /m; ~3000 is already at the optimum, 5000 is margin. Costs
+    # ~50 ms, and only runs when the cone map changes.
+    raceline_smoothing_iterations: 5000
+    # THE aggression knob: the line may leave the centerline by at most
+    # (corridor half-width - margin). Measured on small_track (half-width
+    # 2.02..3.53 m), curvature energy vs margin: 1.2 -> 1.343, 1.4 -> 1.386,
+    # 1.6 -> 1.448, 1.8 -> 1.537, 2.0 -> 1.700 (centerline 5.06). 1.4 buys 0.2 m
+    # of clearance over 1.2 for +3% energy, holding max deviation to 1.09 m and
+    # clearance to 1.40 m. Car half-width is ~0.75 m, so ~0.65 m is left for
+    # SLAM, cone and tracking error. Raise it to trade lap time for room; past
+    # 2.0 the narrowest sections pin to the centerline outright (budget -> 0).
+    raceline_margin_m: 1.4
+    # Unused by the min-curvature solver (legacy Laplacian step size). Kept so
+    # existing parameter files keep loading unchanged.
     raceline_alpha: 0.3
 
 wpnt_publisher:

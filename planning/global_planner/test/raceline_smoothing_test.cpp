@@ -164,7 +164,7 @@ TEST(RacelineSmoothing, StraightSegmentsDoNotMove)
     left.push_back({static_cast<double>(i), 1.8});
     right.push_back({static_cast<double>(i), -1.8});
   }
-  applyRacelineSmoothing(centerline, left, right, racelineConfig(400));
+  applyMinimumCurvatureRaceline(centerline, left, right, racelineConfig(400));
   ASSERT_EQ(centerline.size(), reference.size());
   for (std::size_t i = 0; i < centerline.size(); ++i) {
     EXPECT_NEAR(centerline[i].x, reference[i].x, 1.0e-9);
@@ -221,6 +221,153 @@ TEST(OrderingEgoSweep, SeamFoldMapBuildsFromEveryEgoPosition)
     }
   }
   EXPECT_EQ(failures, 0U);
+}
+
+// A 90 deg LEFT corner (radius 10 m) between two 20 m straights, in a 4 m wide
+// corridor. `normal` is the left normal, so a positive lateral offset is toward
+// the INSIDE of this corner and a negative one is toward the outside.
+struct CornerTrack
+{
+  std::vector<PlannerPoint> centerline;
+  std::vector<PlannerPoint> left;
+  std::vector<PlannerPoint> right;
+  std::vector<PlannerPoint> normal;
+  std::size_t arc_begin{0};
+  std::size_t arc_end{0};
+};
+
+CornerTrack cornerTrack()
+{
+  constexpr double kRadius = 10.0;
+  constexpr double kHalfWidth = 2.0;
+  CornerTrack track;
+  const auto push = [&](PlannerPoint centre, PlannerPoint n) {
+      track.centerline.push_back(centre);
+      track.normal.push_back(n);
+      track.left.push_back({centre.x + kHalfWidth * n.x, centre.y + kHalfWidth * n.y});
+      track.right.push_back({centre.x - kHalfWidth * n.x, centre.y - kHalfWidth * n.y});
+    };
+
+  for (double x = -20.0; x < -1.0e-9; x += 0.5) {
+    push({x, 0.0}, {0.0, 1.0});
+  }
+  track.arc_begin = track.centerline.size();
+  for (double a = -kPi / 2.0; a <= 1.0e-9; a += 0.5 / kRadius) {
+    push(
+      {kRadius * std::cos(a), kRadius + kRadius * std::sin(a)},
+      {-std::cos(a), -std::sin(a)});
+  }
+  track.arc_end = track.centerline.size() - 1U;
+  for (double y = kRadius + 0.5; y <= kRadius + 20.0; y += 0.5) {
+    push({kRadius, y}, {-1.0, 0.0});
+  }
+  return track;
+}
+
+// Menger curvature of the sampled line: 4*Area / (a*b*c).
+double maxDiscreteCurvature(const std::vector<PlannerPoint> & points)
+{
+  double worst = 0.0;
+  for (std::size_t i = 1U; i + 1U < points.size(); ++i) {
+    const double a = distance(points[i - 1U], points[i]);
+    const double b = distance(points[i], points[i + 1U]);
+    const double c = distance(points[i - 1U], points[i + 1U]);
+    const double cross = std::abs(
+      (points[i].x - points[i - 1U].x) * (points[i + 1U].y - points[i - 1U].y) -
+      (points[i].y - points[i - 1U].y) * (points[i + 1U].x - points[i - 1U].x));
+    if (a * b * c > 0.0) {
+      worst = std::max(worst, 2.0 * cross / (a * b * c));
+    }
+  }
+  return worst;
+}
+
+// THE point of a minimum-curvature raceline, and what a Laplacian/curve
+// shortening pass can never do: curvature is spent where it is cheapest, so the
+// line runs WIDE into the corner, clips the apex on the inside, and tracks OUT
+// again. A contraction pass instead pulls the whole corner inward, cutting
+// entry and exit alike.
+TEST(MinimumCurvatureRaceline, RunsWideInClipsApexAndTracksOut)
+{
+  const auto track = cornerTrack();
+  std::vector<PlannerPoint> raceline = track.centerline;
+  applyMinimumCurvatureRaceline(raceline, track.left, track.right, racelineConfig(600));
+  ASSERT_EQ(raceline.size(), track.centerline.size());
+
+  const auto lateral = [&](std::size_t i) {
+      return (raceline[i].x - track.centerline[i].x) * track.normal[i].x +
+             (raceline[i].y - track.centerline[i].y) * track.normal[i].y;
+    };
+
+  const std::size_t entry = track.arc_begin - 8U;             // ~4 m before turn-in
+  const std::size_t apex = (track.arc_begin + track.arc_end) / 2U;
+  const std::size_t exit = track.arc_end + 8U;                // ~4 m after track-out
+
+  EXPECT_LT(lateral(entry), -0.2) << "entry should run WIDE (outside), got " << lateral(entry);
+  EXPECT_GT(lateral(apex), 0.2) << "apex should clip the INSIDE, got " << lateral(apex);
+  EXPECT_LT(lateral(exit), -0.2) << "exit should track OUT (outside), got " << lateral(exit);
+
+  // And the whole point: a flatter corner than the centerline.
+  EXPECT_LT(maxDiscreteCurvature(raceline), maxDiscreteCurvature(track.centerline));
+
+  // Never outside the corridor: 2.0 m half width less the 1.2 m margin.
+  for (std::size_t i = 0; i < raceline.size(); ++i) {
+    EXPECT_LE(std::abs(lateral(i)), 0.8 + 1.0e-6) << "left the corridor at " << i;
+  }
+}
+
+// The shipped track, raceline enabled end to end, seeded where the car really
+// starts: still a valid closed non-intersecting path, and measurably flatter
+// than the pure centerline it was turned on to improve.
+TEST(MinimumCurvatureRaceline, ShippedTrackFlattensCorners)
+{
+  const std::string track = "eufs_sim/eufs_tracks/csv/small_track.csv";
+  const auto map = loadConeMapCsv(track);
+  std::vector<PlannerWaypoint> centerline;
+  std::vector<PlannerWaypoint> raceline;
+  std::string reason;
+  ASSERT_TRUE(
+    buildCenterlineFromSlamMap(map, egoAtCarStart(track), fixtureConfig(), centerline, reason))
+    << reason;
+  ASSERT_TRUE(
+    buildCenterlineFromSlamMap(map, egoAtCarStart(track), racelineConfig(3000), raceline, reason))
+    << reason;
+
+  EXPECT_LT(maxAbsCurvature(raceline), 0.85 * maxAbsCurvature(centerline))
+    << "raceline " << maxAbsCurvature(raceline) << " vs centerline "
+    << maxAbsCurvature(centerline);
+  EXPECT_FALSE(hasSelfIntersection(raceline));
+  EXPECT_LE(
+    distance({raceline.front().x, raceline.front().y}, {raceline.back().x, raceline.back().y}),
+    fixtureConfig().close_loop_distance_m);
+}
+
+// A constant-radius ring is where a minimum-curvature line has exactly ONE right
+// answer: the largest circle the corridor allows, because a bigger circle is
+// flatter. Moving toward the centre of curvature makes the line SHARPER. This
+// pins the radius directly, because a peak-curvature check cannot see it: the
+// centerline is resampled off cone chords, so its discrete kappa is dominated by
+// interpolation spikes and smoothing them away passes the check whichever way
+// the line actually moved.
+TEST(MinimumCurvatureRaceline, RingOptimisesOutwardToTheLargestCircle)
+{
+  const auto map = ringMap(120U);
+  std::vector<PlannerWaypoint> raceline;
+  std::string reason;
+  ASSERT_TRUE(
+    buildCenterlineFromSlamMap(map, egoOnRing(), racelineConfig(5000), raceline, reason)) << reason;
+
+  double sum = 0.0;
+  for (const auto & waypoint : raceline) {
+    sum += std::hypot(waypoint.x, waypoint.y);
+  }
+  const double mean_radius = sum / static_cast<double>(raceline.size());
+
+  // Centerline 20 m, cones at 18/22, margin 1.2 -> the corridor is [19.2, 20.8].
+  EXPECT_GT(mean_radius, 20.0)
+    << "raceline moved INWARD, i.e. SHARPER than the centerline: r=" << mean_radius;
+  EXPECT_NEAR(mean_radius, 20.8, 0.3)
+    << "expected the largest circle the corridor allows, got r=" << mean_radius;
 }
 
 }  // namespace
