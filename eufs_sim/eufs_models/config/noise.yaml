@@ -14,5 +14,20 @@ noise:
   # X, Y, Z
   linearAccelerationNoise: [0.0, 0.0, 0.0]
 
-  # lf, rf, lb, rb
-  wheelSpeedNoise: [1.0, 1.0, 1.0, 1.0]
+  # Wheel-speed signal chain, modelled on the real drivetrain: 4WD, one AMK
+  # DD5-14-10-POW (A2370DD) per wheel, each with an 18-bit absolute encoder
+  # on the MOTOR shaft (262144 pulses/rev -- position is effectively
+  # continuous). The inverter (KW26-S5-FSE-4Q, PDK_205481) reports
+  # AMK_ActualVelocity in 'Actual Values 1' as a SIGNED 16-BIT INTEGER in
+  # MOTOR rpm, so the wheel-speed granularity is 1 motor-rpm / gear ratio,
+  # not the 1 wheel-RPM a hub encoder would give.
+  #
+  # lf, rf, lb, rb [wheel-RPM, 1-sigma]: sub-LSB dither of N_act
+  # (~0.7 motor-rpm / 14.5). Neither datasheet gives a speed-noise figure;
+  # this is an estimate to pin with sensor_parity_report.py on the bench.
+  wheelSpeedNoise: [0.05, 0.05, 0.05, 0.05]
+
+  # 1 motor-rpm (AMK N_act int16 LSB) / gear ratio. ASSUMED ratio 14.5:1
+  # (common AMK FS planetary) -> 0.069 wheel-RPM; EDIT when the real ratio
+  # is known. 0 disables quantization.
+  wheelSpeedQuantumRPM: 0.069

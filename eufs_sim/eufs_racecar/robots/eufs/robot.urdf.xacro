@@ -51,7 +51,6 @@
 
     <!--     LOCATIONS: (XYZ)
     IMU: 0.0 0.0 0.170
-    GPS: -0.110 0.0 0.9
     LIDAR: 1.700 0.0 -0.150
     STEREO CAM: -0.110 0.0 0.800 -->
 
@@ -59,14 +58,23 @@
         <origin xyz="0.0 0.0 0.0" rpy="0 0 0"/>
     </xacro:sensor_imu>
 
-    <xacro:sensor_gps parent="chassis" prefix="gps">
-        <origin xyz="0.0 0.0 0.4" rpy="0 0 0"/>
-    </xacro:sensor_gps>
+    <!-- No gazebo GPS or magnetometer. Nothing in the stack consumed either
+         topic, and the GNSS/INS path is simulated at the driver level by
+         sim_ellipse_d (/sbg/ekf_nav + /sbg/ekf_euler), where the Ellipse-D
+         error model actually lives. A raw 2 m-white-noise NavSatFix next to
+         a cm-level RTK model was only there to mislead. -->
+
 
     <!-- Real car: VLP-16 (16 channels) mounted on the nose cone. hz is the only
          knob; the macro derives horizontal resolution from it the way the
-         hardware does (10 Hz -> 0.2 deg). -->
-    <xacro:VLP-16R parent="chassis" name="velodyne" topic="/velodyne_points" hz="10" active="$(arg simulate_perception)">
+         hardware does (10 Hz -> 0.2 deg).
+
+         The sensor emits the geometrically ideal scan on _ideal; the
+         lidar_realism bridge (spawned by load_car.launch.py) owns
+         /velodyne_points, adding motion distortion, far-ground dropout and
+         the real driver's ring/time field layout. Its spin_hz must match
+         hz here. -->
+    <xacro:VLP-16R parent="chassis" name="velodyne" topic="/velodyne_points_ideal" hz="10" active="$(arg simulate_perception)">
         <origin xyz="1.6 0.0 0.25" rpy="0 ${1*M_PI/180.0} 0"/>
         <!-- main-hoop mount (previous): <origin xyz="-0.15 0.0 0.79" rpy="0 ${1*M_PI/180.0} 0"/> -->
     </xacro:VLP-16R>
@@ -75,12 +83,7 @@
         <origin xyz="-0.08 0.0 0.76" rpy="0 0 0"/>
     </xacro:zed_camera>
 
-    <xacro:sensor_imu parent="chassis" prefix="zed_imu" topic_prefix="/camera">
-        <origin xyz="-0.08 0.0 0.76" rpy="0 0 0"/>
-    </xacro:sensor_imu>
-
-    <xacro:sensor_magnetometer parent="chassis" prefix="sbg">
-        <origin xyz="0.0 0.0 0.0" rpy="0 0 0"/>
-    </xacro:sensor_magnetometer>
+    <!-- No zed_imu: the ZED's built-in IMU is not used by the stack, and its
+         simulated stream (/camera/imu/data) had zero subscribers. -->
 
 </robot>

@@ -44,6 +44,21 @@ void expectExactBrake(const DriveCommand & command)
   EXPECT_DOUBLE_EQ(command.steering_angle_rad, 0.0);
 }
 
+TEST(PurePursuitController, ControlDecisionExposesTargetOnlyWhileTracking)
+{
+  const auto tracking = computeControl(readyInput(straightPath()));
+  ASSERT_TRUE(tracking.target.has_value());
+  EXPECT_DOUBLE_EQ(tracking.target->point.x_m, 4.0);
+  EXPECT_DOUBLE_EQ(tracking.target->point.y_m, 0.0);
+  EXPECT_DOUBLE_EQ(tracking.command.speed_mps, 3.0);
+
+  auto braking = readyInput(straightPath());
+  braking.stop_requested = true;
+  const auto braked = computeControl(braking);
+  EXPECT_FALSE(braked.target.has_value());
+  expectExactBrake(braked.command);
+}
+
 TEST(PurePursuitController, StraightPathProducesNearZeroSteer)
 {
   const auto command = computeCommand(readyInput(straightPath()));

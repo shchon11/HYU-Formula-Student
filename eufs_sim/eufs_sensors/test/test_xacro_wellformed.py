@@ -1,4 +1,10 @@
-"""Every xacro in this package must be well-formed XML.
+# Copyright 2026 shchon11
+#
+# Use of this source code is governed by an MIT-style
+# license that can be found in the LICENSE file or at
+# https://opensource.org/licenses/MIT.
+"""
+Every xacro in this package must be well-formed XML.
 
 A `--` inside an XML comment is not a comment, it is a parse error, and xacro
 reports it as "line N, column M" of a file it does not name. That signature has

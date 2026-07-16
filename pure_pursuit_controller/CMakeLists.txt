@@ -15,6 +15,7 @@ find_package(eufs_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
 
 add_library(pure_pursuit_controller_core
   src/controller.cpp
@@ -37,6 +38,7 @@ ament_target_dependencies(pure_pursuit_controller_node
   nav_msgs
   geometry_msgs
   std_msgs
+  visualization_msgs
 )
 
 install(TARGETS

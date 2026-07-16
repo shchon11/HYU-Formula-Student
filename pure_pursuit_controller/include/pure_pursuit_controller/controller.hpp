@@ -58,6 +58,13 @@ struct DriveCommand
   double steering_angle_rad{0.0};
 };
 
+struct ControlDecision
+{
+  DriveCommand command;
+  // Engaged only when the command tracks the path; empty on every brake fallback.
+  std::optional<TargetPoint> target;
+};
+
 struct ControllerInput
 {
   bool path_received{false};
@@ -90,6 +97,9 @@ std::optional<std::size_t> findNearestWaypoint(
 
 std::optional<TargetPoint> selectTarget(
   const std::vector<PathPoint> & path, const EgoState & ego, double lookahead_m);
+
+ControlDecision computeControl(
+  const ControllerInput & input, const ControllerConfig & config = ControllerConfig{});
 
 DriveCommand computeCommand(
   const ControllerInput & input, const ControllerConfig & config = ControllerConfig{});

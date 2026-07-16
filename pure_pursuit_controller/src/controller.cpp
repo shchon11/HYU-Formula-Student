@@ -155,7 +155,7 @@ std::optional<TargetPoint> selectTarget(
   return TargetPoint{point, target_index.value(), x_body, y_body};
 }
 
-DriveCommand computeCommand(const ControllerInput & input, const ControllerConfig & config)
+ControlDecision computeControl(const ControllerInput & input, const ControllerConfig & config)
 {
   if (!isValidConfig(config) || !input.path_received || !input.validity_received ||
     !input.stop_received || !input.odom_received || !input.path_frame_valid ||
@@ -166,17 +166,17 @@ DriveCommand computeCommand(const ControllerInput & input, const ControllerConfi
     !isFresh(input.odom_age_sec, config.input_timeout_sec) || !input.ego.has_value() ||
     !isFinitePose(input.ego.value()))
   {
-    return brakeCommand(config);
+    return ControlDecision{brakeCommand(config), std::nullopt};
   }
 
   const auto target = selectTarget(input.path, input.ego.value(), config.lookahead_m);
   if (!target.has_value()) {
-    return brakeCommand(config);
+    return ControlDecision{brakeCommand(config), std::nullopt};
   }
   const double lookahead_squared =
     target->x_body_m * target->x_body_m + target->y_body_m * target->y_body_m;
   if (!std::isfinite(lookahead_squared) || lookahead_squared <= 0.0) {
-    return brakeCommand(config);
+    return ControlDecision{brakeCommand(config), std::nullopt};
   }
 
   double target_speed = 0.0;
@@ -196,7 +196,12 @@ DriveCommand computeCommand(const ControllerInput & input, const ControllerConfi
     std::atan2(
       2.0 * config.wheelbase_m * target->y_body_m, lookahead_squared),
     -config.max_steering_rad, config.max_steering_rad);
-  return DriveCommand{target_speed, acceleration, steering};
+  return ControlDecision{DriveCommand{target_speed, acceleration, steering}, target};
+}
+
+DriveCommand computeCommand(const ControllerInput & input, const ControllerConfig & config)
+{
+  return computeControl(input, config).command;
 }
 
 }

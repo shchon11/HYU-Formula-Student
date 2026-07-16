@@ -54,11 +54,13 @@
        per scan returned phantoms at 17-21 m and cones beyond ~18 m vanished
        behind them. That, not texel resolution, was the bulk of the "gpu_ray
        quality is terrible" symptom; the staircase was the rest. Known
-       residuals vs CPU ray, measured and accepted: ground reads ~2 cm low
-       (constant height offset, root cause not yet found; cones unaffected at
-       +4 mm radial), car-body self-returns differ (visual vs collision
-       geometry — crop them like on the real car), and the -3 deg ring keeps
-       a ~2x-noise staircase (grazing-incidence limit of the method). -->
+       residuals vs CPU ray, measured and accepted: car-body self-returns
+       differ (visual vs collision geometry — crop them like on the real
+       car), and the -3 deg ring keeps a ~2x-noise staircase
+       (grazing-incidence limit of the method). The old "ground reads ~2 cm
+       low" residual was resolved 2026-07-16: it was the CAR settling at a
+       different height per run, not the sensor — see the Known residuals
+       section of tools/gazebo-patches/README.md for the measurements. -->
   <xacro:macro
     name="VLP-16R"
     params="*origin parent:=base_footprint

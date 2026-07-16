@@ -1,15 +1,15 @@
 <?xml version="1.0"?>
 <robot name="all_sensors" xmlns:xacro="http://www.ros.org/wiki/xacro">
-  <!-- This file unifies all sensors that can be used on simulation, defined as xacro:macros -->
+  <!-- This file unifies all sensors that can be used on simulation, defined
+       as xacro:macros.
 
-  <!-- GPS -->
-  <xacro:include filename="$(find eufs_sensors)/urdf/gps.urdf.xacro"/>
+       Gone, deliberately: the gazebo GPS and magnetometer macros. Nothing
+       subscribed to either topic, and the GNSS/INS chain is simulated at the
+       driver level by scripts/sim_ellipse_d.py (/sbg/ekf_nav + ekf_euler),
+       which carries the Ellipse-D error model the raw sensors never had. -->
 
   <!-- Velodyne VLP-16R -->
   <xacro:include filename="$(find eufs_sensors)/urdf/VLP-16R.urdf.xacro"/>
-
-  <!-- Magnetometer-->
-  <xacro:include filename="$(find eufs_sensors)/urdf/magnetometer.urdf.xacro"/>
 
   <!--IMU -->
   <xacro:include filename="$(find eufs_sensors)/urdf/imu.urdf.xacro"/>

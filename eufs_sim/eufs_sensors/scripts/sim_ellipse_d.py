@@ -51,6 +51,35 @@ Two independent degradation axes are modelled:
    (gnss_prior_max_position_sigma, default 0.5 m) then drops single-point
    anchors automatically.
 
+Two properties of a real INS output that the first version of this node got
+wrong, both load-bearing for anything that consumes the stream:
+
+* **Every output error is time-correlated, none of it is white.** An EKF is a
+  low-pass filter; its velocity/heading/attitude output errors wander over
+  seconds, they do not redraw at 200 Hz. White errors would let a downstream
+  integrator (sbg_odometry_bridge integrates velocity into the relative
+  odometry pose) average them away sqrt(N)-style — the sim odometry drift was
+  structurally optimistic. Velocity, heading, attitude and altitude errors are
+  now first-order Gauss-Markov states (``vel_error_tau``,
+  ``heading_error_tau``, ``attitude_error_tau``; altitude shares
+  ``gnss_error_tau``), like the horizontal GNSS error always was. The
+  correlation times are NOT datasheet numbers — the datasheet only gives
+  steady-state sigmas — they are exposed as parameters so the Allan/parity
+  harness can pin them against real bench logs.
+
+* **The reported accuracy is what the unit believes, not what is true.** It
+  used to be ``sigma_tier + |realised error|`` — an oracle no real EKF has.
+  A real unit reports its covariance: a deterministic function of the aiding
+  history (which modes, for how long), propagated from the same nominal
+  constants, *independent of the realised error draw*. This node now
+  propagates that model (``pos/vel/heading`` accuracy states mirroring every
+  branch of the error propagation, with nominal magnitudes and no randomness)
+  and reports it. Consequences worth having: the reported sigma is identical
+  across seeds while the realised error differs, reported and realised can
+  disagree in both directions (confidently wrong / conservatively right), and
+  the SLAM prior gate finally gets exercised the way the real unit will
+  exercise it. ``position_valid`` is likewise gated on the *believed* accuracy.
+
 Mode control (topics override and disable the schedules):
   * ``mode_schedule``, e.g. ``"20:3,30:4"`` (t_sec:mode, relative to first GT)
   * ``correction_schedule``, e.g. ``"40:single,50:rtk_fixed"``
@@ -62,8 +91,23 @@ Geodesy: local ENU ground truth is inverse-projected about a configurable datum
 bridge uses. Output convention is NED by default (driver ``use_enu: false``).
 Run with ``use_sim_time:=true`` alongside the simulator; all internal timing is
 driven by ground-truth message stamps.
+
+Transport latency IS modelled: messages are stamped at measurement time but
+released ``latency_mean`` (+ truncated-gaussian ``latency_jitter``) later, in
+FIFO order, the way a serial link delivers them. The defaults (8 +/- 2 ms) are
+representative of the common RS-232/422 hookup (a sbgECom frame at 115200+
+baud plus OS scheduling); an ethernet install runs ~1 ms. These are
+engineering estimates, NOT datasheet values — when the bench exists, measure
+arrival-vs-time_stamp with scripts/sensor_parity_report.py and pin them. The
+release clock is the ground-truth stream itself, so the worst extra
+granularity is one GT period.
+
+Known gaps, recorded so they are chosen and not discovered: no antenna lever
+arm, and no 5 Hz measurement-update sawtooth inside mode 4 (the GM error is
+smooth).
 """
 
+import collections
 import math
 import random
 import sys
@@ -96,6 +140,10 @@ _MODE_NAMES = {
     4: "NAV_POSITION",
 }
 _CORRECTION_TYPES = ("rtk_fixed", "rtk_float", "single")
+
+# Believed position sigma [m] above which the unit stops calling its own
+# position valid (mirrors the realised-error threshold this replaced).
+_POSITION_VALID_SIGMA = 10.0
 
 
 def _normalize_angle(angle):
@@ -146,6 +194,19 @@ class SimEllipseD(Node):
         # ~0.0087 (0.5 deg) for a short (~0.5 m) Formula Student baseline.
         self.sigma_heading = self.declare_parameter("sigma_heading", 0.0035).value
         self.sigma_attitude = self.declare_parameter("sigma_attitude", 0.00087).value
+        # Correlation times of the INS output errors. The datasheet gives the
+        # steady-state sigmas above but says nothing about correlation; these
+        # defaults are engineering estimates (EKF bandwidth ~ the 5 Hz GNSS
+        # aiding for velocity, slower for the angle channels) exposed as
+        # parameters so bench parity runs can pin them. They must be > 0; the
+        # whole point is that the errors are NOT white at 200 Hz.
+        self.vel_error_tau = self.declare_parameter("vel_error_tau", 2.0).value
+        self.heading_error_tau = self.declare_parameter(
+            "heading_error_tau", 10.0
+        ).value
+        self.attitude_error_tau = self.declare_parameter(
+            "attitude_error_tau", 10.0
+        ).value
         # Free-inertial divergence model (mode <= 2 without odometer):
         # gravity leakage through the attitude error, ramped by the gyro bias.
         self.attitude_error_deg = self.declare_parameter(
@@ -164,6 +225,11 @@ class SimEllipseD(Node):
         # Error decay time constant when (re-)entering mode 4 [s].
         self.reacquire_tau = self.declare_parameter("reacquire_tau", 0.5).value
         self.max_dt = self.declare_parameter("max_dt", 0.5).value
+        # Transport latency (serial/ethernet + driver): stamp stays the
+        # measurement time, arrival is delayed. Estimates, not datasheet —
+        # see the module docstring. 0 = publish immediately.
+        self.latency_mean = self.declare_parameter("latency_mean", 0.008).value
+        self.latency_jitter = self.declare_parameter("latency_jitter", 0.002).value
 
         # Mode / correction control.
         self.mode = int(self.declare_parameter("initial_mode", 4).value)
@@ -185,20 +251,43 @@ class SimEllipseD(Node):
 
         self.rng = random.Random(self.declare_parameter("seed", 42).value)
 
-        # Error state (ENU): mode-drift position/velocity/heading errors, the
-        # Gauss-Markov GNSS measurement error, and per-episode directions.
+        # Realised error state (ENU): mode-drift position/velocity/heading
+        # errors, per-episode directions, and the Gauss-Markov output errors
+        # (GNSS position, velocity, heading, attitude, altitude).
         self.pos_err = [0.0, 0.0]
         self.vel_err = [0.0, 0.0]
         self.heading_err = 0.0
         self.gm_err = [0.0, 0.0]
+        self.vel_gm = [0.0, 0.0]
+        self.heading_gm = 0.0
+        self.att_gm = [0.0, 0.0]  # roll, pitch
+        self.alt_gm = 0.0
         self.vel_bias_vec = [0.0, 0.0]
         self.accel_dir = [1.0, 0.0]
         self.drift_dir = [1.0, 0.0]
         self.degraded_since = None  # stamp when mode dropped below 3
 
+        # Believed (reported) accuracy state: the EKF covariance surrogate.
+        # Each channel mirrors the realised propagation branch-for-branch with
+        # NOMINAL magnitudes and no randomness: `lin` accumulates bias-like
+        # growth [unit], `var` accumulates random-walk variance [unit^2].
+        # Reported 1-sigma = sqrt(tier^2 + lin^2 + var). Never touched by the
+        # realised draws — that independence is the point.
+        self.acc_pos_lin = 0.0
+        self.acc_pos_var = 0.0
+        self.acc_vel_lin = 0.0
+        self.acc_vel_var = 0.0
+        self.acc_hdg_lin = 0.0
+        self.acc_hdg_var = 0.0
+
         self.first_stamp = None
         self.last_stamp = None
         self.last_pub_stamp = None
+
+        # Messages waiting out their transport latency: (due_time, nav, euler)
+        # in FIFO order, the way a serial link delivers them. Released against
+        # the ground-truth stream's clock in on_ground_truth.
+        self._outbox = collections.deque()
 
         # Datum radii for the inverse projection.
         lat0 = math.radians(self.datum_lat)
@@ -313,33 +402,79 @@ class SimEllipseD(Node):
 
     # --- error-state propagation -------------------------------------------
 
+    def _gm_step(self, value, sigma, tau, dt, pull_in=False):
+        """
+        One first-order Gauss-Markov step toward steady-state 1-sigma.
+
+        With ``pull_in``, a value left out-of-family by a sigma downgrade
+        (e.g. the RTK refix after riding at single-point error) is dragged in
+        over ``reacquire_tau`` instead of the slow wander tau — a refix snaps
+        in seconds, it does not take a 30 s correlation time to matter.
+        """
+        if pull_in and abs(value) > 3.0 * sigma:
+            value *= math.exp(-dt / self.reacquire_tau)
+        alpha = math.exp(-dt / tau)
+        scale = sigma * math.sqrt(max(0.0, 1.0 - alpha * alpha))
+        return value * alpha + self.rng.gauss(0.0, scale)
+
     def _propagate_errors(self, dt, stamp, speed):
         if dt <= 0.0 or dt > self.max_dt:
             return
         sq = math.sqrt(dt)
 
-        # GNSS measurement error: first-order Gauss-Markov at the current
-        # correction tier's steady-state sigma.
+        # Correlated output errors: GNSS position (per axis), velocity,
+        # heading, attitude, altitude. Steady-state sigma follows the current
+        # correction tier where the tier owns the channel.
         sigma_tier = self.sigma_pos[self.correction]
-        alpha = math.exp(-dt / self.gnss_error_tau)
-        scale = sigma_tier * math.sqrt(max(0.0, 1.0 - alpha * alpha))
-        self.gm_err[0] = self.gm_err[0] * alpha + self.rng.gauss(0.0, scale)
-        self.gm_err[1] = self.gm_err[1] * alpha + self.rng.gauss(0.0, scale)
+        sigma_vel = (
+            self.sigma_vel_single if self.correction == "single" else self.sigma_vel
+        )
+        for i in (0, 1):
+            self.gm_err[i] = self._gm_step(
+                self.gm_err[i], sigma_tier, self.gnss_error_tau, dt, pull_in=True
+            )
+            self.vel_gm[i] = self._gm_step(
+                self.vel_gm[i], sigma_vel, self.vel_error_tau, dt, pull_in=True
+            )
+            self.att_gm[i] = self._gm_step(
+                self.att_gm[i], self.sigma_attitude, self.attitude_error_tau, dt
+            )
+        self.heading_gm = self._gm_step(
+            self.heading_gm, self.sigma_heading, self.heading_error_tau, dt
+        )
+        # Datasheet gives no vertical tier table; 2x the horizontal sigma is
+        # the convention this node has always reported for z — now it is also
+        # what the altitude error actually does.
+        self.alt_gm = self._gm_step(
+            self.alt_gm, 2.0 * sigma_tier, self.gnss_error_tau, dt, pull_in=True
+        )
 
+        # Mode-drift errors (realised) and believed accuracy (nominal), branch
+        # for branch. The believed side uses the same constants with no
+        # randomness and no knowledge of the realised draws.
         if self.mode >= 4:
             decay = math.exp(-dt / self.reacquire_tau)
             self.pos_err = [e * decay for e in self.pos_err]
             self.vel_err = [e * decay for e in self.vel_err]
             self.heading_err *= decay
+            self.acc_pos_lin *= decay
+            self.acc_pos_var *= decay * decay
+            self.acc_vel_lin *= decay
+            self.acc_vel_var *= decay * decay
+            self.acc_hdg_lin *= decay
+            self.acc_hdg_var *= decay * decay
             return
 
         if self.mode == 3:
             decay = math.exp(-dt / self.reacquire_tau)
             self.vel_err = [e * decay for e in self.vel_err]
+            self.acc_vel_lin *= decay
+            self.acc_vel_var *= decay * decay
             if self.odometer_aided:
                 step = self.odometer_drift_ratio * speed * dt
                 self.pos_err[0] += self.drift_dir[0] * step
                 self.pos_err[1] += self.drift_dir[1] * step
+                self.acc_pos_lin += step
             else:
                 self.pos_err[0] += self.vel_bias_vec[0] * dt + self.rng.gauss(
                     0.0, self.mode3_pos_rw * sq
@@ -347,6 +482,8 @@ class SimEllipseD(Node):
                 self.pos_err[1] += self.vel_bias_vec[1] * dt + self.rng.gauss(
                     0.0, self.mode3_pos_rw * sq
                 )
+                self.acc_pos_lin += self.mode3_vel_bias * dt
+                self.acc_pos_var += self.mode3_pos_rw * self.mode3_pos_rw * dt
             return
 
         # mode <= 2: dead reckoning.
@@ -355,6 +492,7 @@ class SimEllipseD(Node):
             step = self.odometer_drift_ratio * speed * dt
             self.pos_err[0] += self.drift_dir[0] * step
             self.pos_err[1] += self.drift_dir[1] * step
+            self.acc_pos_lin += step
         else:
             # Free inertial: gravity leaks through the attitude error, which
             # ramps at the gyro in-run bias. (The 14 ug accel bias is
@@ -370,15 +508,26 @@ class SimEllipseD(Node):
             self.vel_err[1] += self.accel_dir[1] * accel * dt
             self.pos_err[0] += self.vel_err[0] * dt
             self.pos_err[1] += self.vel_err[1] * dt
+            self.acc_vel_lin += accel * dt
+            self.acc_pos_lin += self.acc_vel_lin * dt
         if self.mode <= 1:
             # Heading no longer aided: gyro-bias ramp + angular random walk
             # (0.18 deg/sqrt(h) = deg/60 per sqrt(s)).
-            self.heading_err += math.radians(self.gyro_bias_dph / 3600.0) * dt
-            self.heading_err += self.rng.gauss(
-                0.0, math.radians(self.gyro_arw_dpsh) / 60.0 * sq
-            )
+            ramp = math.radians(self.gyro_bias_dph / 3600.0) * dt
+            arw = math.radians(self.gyro_arw_dpsh) / 60.0
+            self.heading_err += ramp
+            self.heading_err += self.rng.gauss(0.0, arw * sq)
+            self.acc_hdg_lin += ramp
+            self.acc_hdg_var += arw * arw * dt
 
     # --- publishing ----------------------------------------------------------
+
+    def _flush_outbox(self, now):
+        """Release queued messages whose transport latency has elapsed."""
+        while self._outbox and self._outbox[0][0] <= now:
+            _, nav, euler = self._outbox.popleft()
+            self.nav_pub.publish(nav)
+            self.euler_pub.publish(euler)
 
     def on_ground_truth(self, msg):
         stamp = msg.header.stamp
@@ -386,6 +535,7 @@ class SimEllipseD(Node):
         if self.first_stamp is None:
             self.first_stamp = t
             self.last_stamp = t
+        self._flush_outbox(t)
         self._apply_schedules(t - self.first_stamp)
         vx, vy = msg.twist.twist.linear.x, msg.twist.twist.linear.y
         self._propagate_errors(t - self.last_stamp, t, math.hypot(vx, vy))
@@ -411,41 +561,52 @@ class SimEllipseD(Node):
         ve_true = vx * math.cos(yaw) - vy * math.sin(yaw)
         vn_true = vx * math.sin(yaw) + vy * math.cos(yaw)
 
-        # INS estimate = truth + mode drift + GNSS Gauss-Markov error.
-        sigma_vel = (
-            self.sigma_vel_single if self.correction == "single" else self.sigma_vel
-        )
+        # INS estimate = truth + mode drift + correlated output errors. No
+        # white noise anywhere: at 200 Hz a real EKF's output error moves on
+        # its correlation time, not per sample.
         east = msg.pose.pose.position.x + self.pos_err[0] + self.gm_err[0]
         north = msg.pose.pose.position.y + self.pos_err[1] + self.gm_err[1]
-        ve = ve_true + self.vel_err[0] + self.rng.gauss(0.0, sigma_vel)
-        vn = vn_true + self.vel_err[1] + self.rng.gauss(0.0, sigma_vel)
-        yaw_out = _normalize_angle(
-            yaw + self.heading_err + self.rng.gauss(0.0, self.sigma_heading)
-        )
-        roll_out = roll + self.rng.gauss(0.0, self.sigma_attitude)
-        pitch_out = pitch + self.rng.gauss(0.0, self.sigma_attitude)
+        ve = ve_true + self.vel_err[0] + self.vel_gm[0]
+        vn = vn_true + self.vel_err[1] + self.vel_gm[1]
+        yaw_out = _normalize_angle(yaw + self.heading_err + self.heading_gm)
+        roll_out = roll + self.att_gm[0]
+        pitch_out = pitch + self.att_gm[1]
 
         # Inverse ENU -> geodetic about the datum.
         lat = self.datum_lat + math.degrees(north / self._meridional_radius)
         lon = self.datum_lon + math.degrees(
             east / (self._prime_vertical_radius * self._cos_lat0)
         )
-        alt = self.datum_alt + msg.pose.pose.position.z
+        alt = self.datum_alt + msg.pose.pose.position.z + self.alt_gm
 
-        # Reported (EKF self-estimated) accuracies: tier sigma + drift growth.
+        # Reported (believed) accuracies: deterministic covariance surrogate,
+        # independent of the realised draws above. Identical across seeds.
         sigma_tier = self.sigma_pos[self.correction]
-        pos_acc_e = sigma_tier + abs(self.pos_err[0])
-        pos_acc_n = sigma_tier + abs(self.pos_err[1])
-        vel_acc_e = sigma_vel + abs(self.vel_err[0])
-        vel_acc_n = sigma_vel + abs(self.vel_err[1])
-        heading_acc = self.sigma_heading + abs(self.heading_err)
+        sigma_vel = (
+            self.sigma_vel_single if self.correction == "single" else self.sigma_vel
+        )
+        pos_acc = math.sqrt(
+            sigma_tier * sigma_tier
+            + self.acc_pos_lin * self.acc_pos_lin
+            + self.acc_pos_var
+        )
+        vel_acc = math.sqrt(
+            sigma_vel * sigma_vel
+            + self.acc_vel_lin * self.acc_vel_lin
+            + self.acc_vel_var
+        )
+        heading_acc = math.sqrt(
+            self.sigma_heading * self.sigma_heading
+            + self.acc_hdg_lin * self.acc_hdg_lin
+            + self.acc_hdg_var
+        )
 
         status = SbgEkfStatus()
         status.solution_mode = self.mode
         status.attitude_valid = self.mode >= 1
         status.heading_valid = self.mode >= 2
         status.velocity_valid = self.mode >= 3
-        status.position_valid = self.mode >= 3 and math.hypot(*self.pos_err) < 10.0
+        status.position_valid = self.mode >= 3 and pos_acc < _POSITION_VALID_SIGMA
         status.gps1_pos_used = self.mode >= 4
         status.gps1_vel_used = self.mode >= 3
         status.gps1_hdt_used = self.mode >= 2
@@ -464,17 +625,15 @@ class SimEllipseD(Node):
         nav.status = status
         if self.use_enu:
             nav.velocity.x, nav.velocity.y, nav.velocity.z = ve, vn, 0.0
-            nav.position_accuracy.x = pos_acc_e
-            nav.position_accuracy.y = pos_acc_n
-            nav.velocity_accuracy.x = vel_acc_e
-            nav.velocity_accuracy.y = vel_acc_n
         else:  # NED: x=North, y=East, z=Down
             nav.velocity.x, nav.velocity.y, nav.velocity.z = vn, ve, 0.0
-            nav.position_accuracy.x = pos_acc_n
-            nav.position_accuracy.y = pos_acc_e
-            nav.velocity_accuracy.x = vel_acc_n
-            nav.velocity_accuracy.y = vel_acc_e
+        # The believed accuracy model is isotropic (a real EKF's is close to
+        # it on a land vehicle); publish the same sigma on both axes.
+        nav.position_accuracy.x = pos_acc
+        nav.position_accuracy.y = pos_acc
         nav.position_accuracy.z = 2.0 * sigma_tier
+        nav.velocity_accuracy.x = vel_acc
+        nav.velocity_accuracy.y = vel_acc
         nav.velocity_accuracy.z = self.sigma_vel
 
         euler = SbgEkfEuler()
@@ -492,8 +651,12 @@ class SimEllipseD(Node):
         euler.accuracy.x = euler.accuracy.y = self.sigma_attitude
         euler.accuracy.z = heading_acc
 
-        self.nav_pub.publish(nav)
-        self.euler_pub.publish(euler)
+        if self.latency_mean <= 0.0:
+            self.nav_pub.publish(nav)
+            self.euler_pub.publish(euler)
+        else:
+            due = t + max(0.0, self.rng.gauss(self.latency_mean, self.latency_jitter))
+            self._outbox.append((due, nav, euler))
 
 
 def main():

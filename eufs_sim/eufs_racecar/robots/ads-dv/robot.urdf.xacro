@@ -51,7 +51,6 @@
 
     <!--     LOCATIONS: (XYZ)
     IMU: 0.0 0.0 0.0
-    GPS: 0.463 0.0679 0.224
     LIDAR: 0.243 0.0 0.324
     STEREO CAM: 0.334 0.0 0.295 -->
 
@@ -59,24 +58,16 @@
         <origin xyz="0.0 0.0 0.0" rpy="0 0 0"/>
     </xacro:sensor_imu>
 
-    <xacro:sensor_gps parent="chassis" prefix="gps">
-        <origin xyz="0.463 0.06792 0.224" rpy="0 0 0"/>
-    </xacro:sensor_gps>
+    <!-- No gazebo GPS/magnetometer/zed_imu: zero subscribers; the GNSS/INS
+         path is sim_ellipse_d at the driver level. See robots/eufs. -->
 
-    <xacro:VLP-16R parent="chassis" name="velodyne" topic="/velodyne_points" hz="10" active="$(arg simulate_perception)">
+    <!-- Ideal scan; the lidar_realism bridge owns /velodyne_points. -->
+    <xacro:VLP-16R parent="chassis" name="velodyne" topic="/velodyne_points_ideal" hz="10" active="$(arg simulate_perception)">
 	    <origin xyz="0.243 0.0 0.324" rpy="0 ${6.1*M_PI/180.0} 0"/>
     </xacro:VLP-16R>
 
     <xacro:zed_camera parent="chassis" prefix="zed" active="$(arg simulate_perception)">
 	    <origin xyz="0.334 0.0 0.295" rpy="0 ${10.15*M_PI/180.0} 0"/>
     </xacro:zed_camera>
-
-    <xacro:sensor_imu parent="chassis" prefix="zed_imu" topic_prefix="/camera">
-        <origin xyz="0.334 0.0 0.295" rpy="0 ${10.15*M_PI/180.0} 0"/>
-    </xacro:sensor_imu>
-    
-    <xacro:sensor_magnetometer parent="chassis" prefix="sbg">
-        <origin xyz="0.0 0.0 0.0" rpy="0 0 0"/>
-    </xacro:sensor_magnetometer>
 
 </robot>

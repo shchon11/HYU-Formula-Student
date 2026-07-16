@@ -140,10 +140,21 @@ gate ate them — no cone is actually lost.
 
 Known residuals, measured and accepted:
 
-- **Ground reads ~2 cm low** via gpu_ray (bias × tan(elev) ≈ 19-22 mm across
-  all rings = a constant height offset; root cause not yet found — sensor
-  origin vs frame lumping suspected). Radially that is 75-320 mm on grazing
-  rings, but it is smooth, not staircase, and cone centroids sit at +4 mm.
+- **"Ground reads ~2 cm low" — RESOLVED 2026-07-16: there is no GPU height
+  bias.** Two experiments: (1) a bare-SDF rig with a `ray` and a `gpu_ray`
+  sensor at the SAME pose over a plane reads the same ground to <0.3 mm
+  (CPU -1.0000 m exactly, GPU -0.9997..-0.9999 m at TEX 8192); (2) on the
+  car, the per-ring ground-z deltas between a gpu_ray run and a ray run
+  (+14.0..+15.1 mm) match the difference in the car's own resting height
+  between those two runs (/ground_truth/state z: +0.0803 vs +0.0951 m =
+  14.8 mm) ring for ring. The car settles at a slightly different height
+  each run (~1.5 cm observed), and the original A/B compared per-beam
+  ranges ACROSS runs assuming equal height — the "sensor bias" was the car,
+  with a random sign per run pair (theirs -2 cm, this rerun +1.5 cm). Rule
+  for any future cross-run cloud comparison: record /ground_truth/state z
+  with every capture and subtract it (or compare ground-relative); never
+  assume the spawn settle reproduces. The run-to-run settle variance itself
+  is a (small, separate) race-car-plugin spawn behaviour, now on record.
 - **Car-body self-returns differ**: the GPU sees visual meshes (~900 more
   points <2 m per frame than CPU's collision boxes). Crop them like on the
   real car.

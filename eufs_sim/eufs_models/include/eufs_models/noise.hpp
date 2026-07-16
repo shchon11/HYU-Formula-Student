@@ -2,6 +2,8 @@
 #define EUFS_MODELS_INCLUDE_EUFS_MODELS_NOISE_HPP_
 
 #include <math.h>
+
+#include <cmath>
 #include <string>
 #include "eufs_models/vehicle_state.hpp"
 #include "eufs_msgs/msg/wheel_speeds.hpp"
@@ -17,6 +19,12 @@ struct NoiseParam {
   double angular_velocity[3];
   double linear_acceleration[3];
   double wheel_speed[4];
+  // The real feed is the AMK inverter's N_act: integer MOTOR rpm on CAN
+  // (int16), from an 18-bit shaft encoder. At the wheel that is
+  // (1 motor-rpm / gear ratio) -- the last thing that happens to the signal
+  // is rounding to this step, not gaussian jitter. [wheel-RPM]; 0 disables.
+  // Value and derivation live in config/noise.yaml.
+  double wheel_speed_quantum = 0.069;
 
   std::string array_to_str(const double arr[], int len) {
     std::string message;
@@ -34,7 +42,8 @@ struct NoiseParam {
            " linear_velocity: " + array_to_str(linear_velocity, 3) +
            " angular_velocity: " + array_to_str(angular_velocity, 3) +
            " linear_acceleration: " + array_to_str(linear_acceleration, 3) +
-           " wheel_speed: " + array_to_str(wheel_speed, 4);
+           " wheel_speed: " + array_to_str(wheel_speed, 4) +
+           " wheel_speed_quantum: " + std::to_string(wheel_speed_quantum) + "\n";
   }
 };
 
@@ -78,11 +87,15 @@ class Noise {
       const eufs_msgs::msg::WheelSpeeds &wheel_speeds) {
     eufs_msgs::msg::WheelSpeeds new_wheel_speeds = wheel_speeds;
 
-    // Add noise to wheel speed
-    new_wheel_speeds.lf_speed += _gaussianKernel(0, _noise_param.wheel_speed[0]);
-    new_wheel_speeds.rf_speed += _gaussianKernel(0, _noise_param.wheel_speed[1]);
-    new_wheel_speeds.lb_speed += _gaussianKernel(0, _noise_param.wheel_speed[2]);
-    new_wheel_speeds.rb_speed += _gaussianKernel(0, _noise_param.wheel_speed[3]);
+    // Add noise to wheel speed, then quantize the way the CAN feed does.
+    new_wheel_speeds.lf_speed =
+        _quantize(new_wheel_speeds.lf_speed + _gaussianKernel(0, _noise_param.wheel_speed[0]));
+    new_wheel_speeds.rf_speed =
+        _quantize(new_wheel_speeds.rf_speed + _gaussianKernel(0, _noise_param.wheel_speed[1]));
+    new_wheel_speeds.lb_speed =
+        _quantize(new_wheel_speeds.lb_speed + _gaussianKernel(0, _noise_param.wheel_speed[2]));
+    new_wheel_speeds.rb_speed =
+        _quantize(new_wheel_speeds.rb_speed + _gaussianKernel(0, _noise_param.wheel_speed[3]));
 
     return new_wheel_speeds;
   }
@@ -96,6 +109,11 @@ class Noise {
 
   // Initialise seed for pseudo-random number generator
   unsigned seed = 0.0;
+
+  double _quantize(double value) {
+    const double q = _noise_param.wheel_speed_quantum;
+    return (q > 0.0) ? std::round(value / q) * q : value;
+  }
 
   double _gaussianKernel(double mu, double sigma) {
     // using Box-Muller transform to generate two independent standard
@@ -160,6 +178,10 @@ struct convert<eufs::models::NoiseParam> {
       cType.wheel_speed[1] = node["wheelSpeedNoise"][1].as<double>();
       cType.wheel_speed[2] = node["wheelSpeedNoise"][2].as<double>();
       cType.wheel_speed[3] = node["wheelSpeedNoise"][3].as<double>();
+    }
+
+    if (node["wheelSpeedQuantumRPM"]) {
+      cType.wheel_speed_quantum = node["wheelSpeedQuantumRPM"].as<double>();
     }
 
     return true;

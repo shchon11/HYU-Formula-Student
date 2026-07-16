@@ -70,6 +70,11 @@ struct Param {
     double D;
     double E;
     double radius;
+    /// Slip ratio at which the tyre's longitudinal force peaks. Below the
+    /// peak, kappa(utilization) is near-linear, which is all getWheelSpeeds
+    /// models. ~0.15 is generic race-tyre physics, NOT an FSK measurement;
+    /// pin it from real launch logs when they exist. 0 disables slip.
+    double peak_slip_ratio = 0.15;
   };
 
   struct Aero {
@@ -157,6 +162,9 @@ struct convert<eufs::models::Param::Tire> {
     cType.D = node["D"].as<double>() * cType.tire_coefficient;
     cType.E = node["E"].as<double>();
     cType.radius = node["radius"].as<double>();
+    if (node["peak_slip_ratio"]) {
+      cType.peak_slip_ratio = node["peak_slip_ratio"].as<double>();
+    }
     return true;
   }
 };

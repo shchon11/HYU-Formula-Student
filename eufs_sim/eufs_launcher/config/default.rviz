@@ -431,6 +431,19 @@ Visualization Manager:
             Reliability Policy: Reliable
             Value: /path_waypoints/path
           Value: true
+        - Class: rviz_default_plugins/Marker
+          Enabled: true
+          Name: Lookahead Point
+          Namespaces:
+            {}
+          Topic:
+            Depth: 1
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /control/lookahead_marker
+          Value: true
       Enabled: true
       Name: Planning
     - Class: rviz_common/Group

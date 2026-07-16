@@ -117,11 +117,22 @@
          camera noise (faster, but the detector trains on FSOCO's real noisy
          images, so a clean sim is an easier sim).
 
-         KNOWN AND OPEN: the right camera settles at 20.00 Hz in sim time while
-         the left holds 29.41, and both jitter badly (60 to 100 ms against the
-         velodyne's 0.3). The ZNCC cross check needs both images within
-         max_image_age_sec or it silently does not run, and it is what removes
-         the monocular tier's range bias. Watch its confirm rate. -->
+         RESOLVED 2026-07-16 (was KNOWN AND OPEN: right camera at 20.00 Hz,
+         both jittering 60-100 ms). Re-measured headless on the current stack
+         (patched gazebo, gpu_ray TEX 8192, R8G8B8, __GL_YIELD), one topic
+         per process, stamps in sim time:
+           sensors-only:       left 30.00 Hz, right 30.00 Hz
+           full stack (YOLO):  left 30.00 Hz, right 30.00 Hz, inter-stamp
+                               sigma 0.9 ms (a 33/34 ms alternation - the
+                               1 ms physics step quantizing 33.33 ms), and
+                               751/751 overlapping frames share their stamp
+                               bit-exactly between left and right.
+         The old symptom belonged to the era of the CPU-ray LiDAR starving
+         the render thread. The structural guarantee the ZNCC cross check
+         needs (one multicamera update = one shared stamp) measures true; it
+         still silently skips pairs older than max_image_age_sec, so if its
+         confirm rate ever drops again, re-run this measurement before
+         touching any rates. -->
     <!-- Simulate raw perception sensors only if we're not using the abstracted perception simulation -->
     <xacro:unless value="${active}">
       <gazebo reference="${prefix}_left_camera_frame">

@@ -1,81 +1,147 @@
 <?xml version="1.0"?>
 <robot name="sensor_imu" xmlns:xacro="http://www.ros.org/wiki/xacro">
-    <xacro:macro name="sensor_imu" params="prefix parent topic_prefix *origin noise:=0.08">
+    <!-- Simulated SBG Ellipse-D IMU stream (what the sbg driver puts on
+         `imu/data`), replacing the stock EUFS model.
+
+         This used to be a single `noise:=0.08` applied to BOTH the gyro
+         [rad/s] and the accelerometer [m/s^2]: one number for two different
+         physical units, and the wrong magnitude for either. 0.08 rad/s is
+         4.6 deg/s of white noise per sample - roughly 60x the real Ellipse-D
+         gyro at a 200 Hz output - and it carried no bias at all. Both errors
+         matter downstream in opposite directions: wheel_odometry.py consumes
+         this topic's yaw rate, so its sim behaviour was driven by a heading
+         random walk of ~0.15 deg/sqrt(s) (the real unit: 0.003), while the
+         missing bias made long dead-reckoning look better than a real gyro
+         ever is (white noise averages out; bias integrates linearly).
+
+         The knobs are physical densities, not per-sample sigmas; the
+         per-sample stddev follows the output rate the way the hardware does:
+         sigma = density * sqrt(rate). Change `hz` and the noise power stays
+         physical; correct a datasheet number and it is a one-value edit.
+
+         Datasheet values (Ellipse-D, MK068EN - the same source
+         sim_ellipse_d.py quotes for its INS error model):
+
+           gyro angular random walk  0.18 deg/sqrt(h) = 5.24e-5 rad/s/sqrt(Hz)
+           gyro in-run bias          7 deg/h          = 3.4e-5  rad/s
+           accel noise density       57 ug/sqrt(Hz)   = 5.6e-4  m/s^2/sqrt(Hz)
+           accel in-run bias         14 ug            = 1.4e-4  m/s^2
+           imu/data output rate      200 Hz (was 1000 here - 5x the driver)
+
+         What gazebo classic does with these: white noise per sample, plus ONE
+         bias per axis drawn at startup from N(bias_mean, bias_stddev) with a
+         random sign, held for the whole run. That is a turn-on/in-run bias
+         *level*, not a bias walk - classic ignores SDF's dynamic_bias_* tags.
+         Over a single 2-10 min session a fixed draw at the in-run instability
+         level is the honest first-order model; if slow bias wander ever
+         matters, it needs a post-processing node (sim_ellipse_d.py already
+         carries these constants for its own dead-reckoning model).
+
+         TRAP, recorded for future consumers: the `orientation` field of the
+         published Imu message carries NO noise. Gazebo classic only perturbs
+         rates and accelerations, so orientation is ground truth - a free
+         perfect AHRS that does not exist on the car. Nothing may consume sim
+         /imu/data orientation as if it were a real attitude estimate; use
+         /sbg/ekf_euler from sim_ellipse_d, which degrades honestly.
+         wheel_odometry.py reads only angular_velocity.z and is safe. -->
+    <xacro:macro name="sensor_imu"
+                 params="prefix parent topic_prefix *origin
+                         hz:=200
+                         gyro_noise_density:=5.24e-5
+                         gyro_bias_stddev:=3.4e-5
+                         accel_noise_density:=5.6e-4
+                         accel_bias_stddev:=1.4e-4">
+        <xacro:property name="gyro_stddev"
+                        value="${float(gyro_noise_density) * (float(hz) ** 0.5)}"/>
+        <xacro:property name="accel_stddev"
+                        value="${float(accel_noise_density) * (float(hz) ** 0.5)}"/>
         <joint name="${prefix}_base_joint" type="fixed">
             <axis xyz="1 0 0"/>
             <xacro:insert_block name="origin"/>
             <parent link="${parent}"/>
             <child link="${prefix}_base_link"/>
         </joint>
+        <!-- Ellipse-D-class body: 65 g, 46x45x32 mm, inertia consistent with
+             that box (the old 1 mm/1 g link carried 0.1 g-m^2 inertias, 1e6x
+             its own physics). Lumped into the chassis by the fixed joint
+             either way; this is about not asserting absurd numbers. -->
         <link name="${prefix}_base_link">
             <inertial>
-                <mass value="0.001"/>
+                <mass value="0.065"/>
                 <origin rpy="0 0 0" xyz="0 0 0"/>
-                <inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.000001" iyz="0" izz="0.0001"/>
+                <inertia ixx="${0.065/12.0*(0.045*0.045+0.032*0.032)}" ixy="0" ixz="0"
+                         iyy="${0.065/12.0*(0.046*0.046+0.032*0.032)}" iyz="0"
+                         izz="${0.065/12.0*(0.046*0.046+0.045*0.045)}"/>
             </inertial>
             <visual>
                 <origin rpy="0 0 0" xyz="0 0 0"/>
                 <geometry>
-                    <box size="0.001 0.001 0.001"/>
+                    <box size="0.046 0.045 0.032"/>
                 </geometry>
             </visual>
             <collision>
                 <origin rpy="0 0 0" xyz="0 0 0"/>
                 <geometry>
-                    <box size=".001 .001 .001"/>
+                    <box size="0.046 0.045 0.032"/>
                 </geometry>
             </collision>
         </link>
         <gazebo reference="${prefix}_base_link">
             <gravity>true</gravity>
-            <sensor name="{prefix}_sensor" type="imu">
+            <sensor name="${prefix}_sensor" type="imu">
                 <always_on>true</always_on>
-                <update_rate>1000</update_rate>
-                <visualize>true</visualize>
-                <topic>imu/data</topic>
+                <update_rate>${hz}</update_rate>
+                <visualize>false</visualize>
                 <imu>
                     <angular_velocity>
                         <x>
                             <noise type="gaussian">
                                 <mean>0.0</mean>
-                                <stddev>${noise}</stddev>
+                                <stddev>${gyro_stddev}</stddev>
+                                <bias_mean>0.0</bias_mean>
+                                <bias_stddev>${gyro_bias_stddev}</bias_stddev>
                             </noise>
                         </x>
-
                         <y>
                             <noise type="gaussian">
                                 <mean>0.0</mean>
-                                <stddev>${noise}</stddev>
+                                <stddev>${gyro_stddev}</stddev>
+                                <bias_mean>0.0</bias_mean>
+                                <bias_stddev>${gyro_bias_stddev}</bias_stddev>
                             </noise>
                         </y>
-
                         <z>
                             <noise type="gaussian">
                                 <mean>0.0</mean>
-                                <stddev>${noise}</stddev>
+                                <stddev>${gyro_stddev}</stddev>
+                                <bias_mean>0.0</bias_mean>
+                                <bias_stddev>${gyro_bias_stddev}</bias_stddev>
                             </noise>
                         </z>
                     </angular_velocity>
-
                     <linear_acceleration>
                         <x>
                             <noise type="gaussian">
                                 <mean>0.0</mean>
-                                <stddev>${noise}</stddev>
+                                <stddev>${accel_stddev}</stddev>
+                                <bias_mean>0.0</bias_mean>
+                                <bias_stddev>${accel_bias_stddev}</bias_stddev>
                             </noise>
                         </x>
-
                         <y>
                             <noise type="gaussian">
                                 <mean>0.0</mean>
-                                <stddev>${noise}</stddev>
+                                <stddev>${accel_stddev}</stddev>
+                                <bias_mean>0.0</bias_mean>
+                                <bias_stddev>${accel_bias_stddev}</bias_stddev>
                             </noise>
                         </y>
-
                         <z>
                             <noise type="gaussian">
                                 <mean>0.0</mean>
-                                <stddev>${noise}</stddev>
+                                <stddev>${accel_stddev}</stddev>
+                                <bias_mean>0.0</bias_mean>
+                                <bias_stddev>${accel_bias_stddev}</bias_stddev>
                             </noise>
                         </z>
                     </linear_acceleration>

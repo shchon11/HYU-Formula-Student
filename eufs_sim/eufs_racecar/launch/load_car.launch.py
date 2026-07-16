@@ -242,7 +242,7 @@ def spawn_car(context, *args, **kwargs):
         condition=IfCondition(LaunchConfiguration('rviz'))
     )
 
-    return [
+    actions = [
         RegisterEventHandler(
             OnProcessExit(
                 target_action=spawn_robot,
@@ -274,6 +274,26 @@ def spawn_car(context, *args, **kwargs):
             arguments=['--ros-args', '--log-level', 'warn']
         ),
     ]
+
+    # The gazebo ray sensor publishes the geometrically ideal scan on
+    # /velodyne_points_ideal; this bridge owns /velodyne_points, adding motion
+    # distortion, far-grazing-ground dropout and the real velodyne driver's
+    # ring/time field layout (see eufs_sensors/scripts/lidar_realism.py).
+    # Only spawned when the raw sensors exist at all; spin_hz must match the
+    # VLP-16R macro's hz in robots/*/robot.urdf.xacro.
+    if simulate_perception == 'false':
+        actions.append(Node(
+            name='lidar_realism',
+            package='eufs_sensors',
+            executable='lidar_realism',
+            output='screen',
+            parameters=[{
+                'use_sim_time': use_sim_time,
+                'spin_hz': 10.0,
+            }],
+        ))
+
+    return actions
 
 
 def generate_launch_description():

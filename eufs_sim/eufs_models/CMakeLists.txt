@@ -65,6 +65,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(dynamic_bicycle_test test/dynamic_bicycle_test.cpp)
   target_link_libraries(dynamic_bicycle_test eufs_models)
+
+  ament_add_gtest(wheel_speeds_test test/wheel_speeds_test.cpp)
+  target_link_libraries(wheel_speeds_test eufs_models)
 endif()
 
 ament_package()
