@@ -1,0 +1,42 @@
+# KASE 제41조 constructive layout — kase_layout.py
+track: autocross_kase2026
+layout_seed: 44
+rule_checks:
+  blue_gap_max: 4.999
+  blue_gap_min: 1.539
+  length: 301.005
+  max_straight: 50.532
+  min_blue_yellow: 3.000
+  min_corridor_gap: 4.677
+  min_radius: 9.000
+  n_big_orange: 4
+  n_blue: 112
+  n_yellow: 113
+  width_max: 4.200
+  width_min: 3.000
+  yellow_gap_max: 5.020
+  yellow_gap_min: 1.502
+segments:  # [s_from, s_to, feature, width_before_smoothing]
+  - [    0.0,    42.1, 'straight 42.1 m', 4.2]
+  - [   42.1,    70.4, 'arc R9.00 -180 deg', 3.0]
+  - [   70.4,    73.4, 'straight 3.1 m', 3.0]
+  - [   73.4,    77.5, 'arc R9.30 -25 deg', 3.0]
+  - [   77.5,    85.6, 'arc R9.30 +50 deg', 3.0]
+  - [   85.6,    93.6, 'arc R9.30 -50 deg', 3.0]
+  - [   93.6,   101.7, 'arc R9.30 +50 deg', 3.0]
+  - [  101.7,   105.8, 'arc R9.30 -25 deg', 3.0]
+  - [  105.8,   108.4, 'straight 2.7 m', 3.0]
+  - [  108.4,   137.6, 'arc R9.30 +180 deg', 3.0]
+  - [  137.6,   146.4, 'arc R9.60 -52 deg', 3.0]
+  - [  146.4,   148.4, 'straight 2.0 m', 3.0]
+  - [  148.4,   157.2, 'arc R9.60 +52 deg', 3.0]
+  - [  157.2,   163.9, 'straight 6.7 m', 3.4]
+  - [  163.9,   192.8, 'arc R9.20 -180 deg', 3.0]
+  - [  192.8,   216.9, 'straight 24.1 m', 3.4]
+  - [  216.9,   227.7, 'arc R15.47 -40 deg', 3.4]
+  - [  227.7,   235.4, 'arc R9.79 -45 deg', 3.2]
+  - [  235.4,   246.4, 'straight 11.0 m', 3.8]
+  - [  246.4,   247.1, 'arc R9.50 +4 deg', 4.2]
+  - [  247.1,   278.6, 'straight 31.5 m', 4.2]
+  - [  278.6,   295.0, 'arc R9.50 -99 deg', 4.2]
+  - [  295.0,   301.0, 'straight 6.0 m', 4.2]
