@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
 # Copyright 2026 shchon11
 #
-# Runs a full headless graph SLAM experiment:
-#   Gazebo (small_track) + drift odometry + graph SLAM + pure-pursuit driver
+# Runs a full headless graph SLAM experiment on the real sensor chain:
+#   Gazebo (small_track) + sim Ellipse-D INS + SBG bridge (/gnss/odom anchor)
+#   + wheel odometry (SLAM motion input) + graph SLAM + scripted driver
 #   + evaluator, then tears everything down and leaves a JSON report.
 #
+# The plugin's synthetic /odometry_integration/car_state no longer exists
+# (publishLocalisationCarState=false); the only state sources are the ones
+# the real car publishes.
+#
 # Usage:
-#   run_experiment.sh OUTPUT_JSON [DURATION] [DRIFT] [EXTRA_SLAM_PARAMS...]
+#   run_experiment.sh OUTPUT_JSON [DURATION] [GNSS_MODE] [EXTRA_SLAM_PARAMS...]
 #     OUTPUT_JSON        report path
 #     DURATION           sim-time seconds to record (default 120)
-#     DRIFT              1 = drifting odometry input (default), 0 = sim odometry
+#     GNSS_MODE          rtk    = RTK fixed throughout (default)
+#                        none   = bridge runs, SLAM gnss_prior_enable=false
+#                        outage = RTK -> single-point at t=40s, back at t=80s
 #     EXTRA_SLAM_PARAMS  forwarded verbatim, e.g. -p optimize_every_n_keyframes:=15
 
 # ROS Humble needs the system python; drop any conda entries from PATH.
@@ -17,16 +24,23 @@ PATH="$(echo "$PATH" | tr ':' '\n' | grep -v conda | paste -sd:)"
 export PATH
 unset PYTHONHOME
 
-WS="$(cd "$(dirname "$0")/../.." && pwd)"
+# The repo IS the workspace's src folder: sources live under $SRC, but the
+# live colcon install is at the workspace root above it ($SRC/install is a
+# stale partial remnant — see the dual-install trap).
+SRC="$(cd "$(dirname "$0")/../.." && pwd)"
+WS="$(cd "$SRC/.." && pwd)"
+if [ ! -f "$WS/install/setup.bash" ] && [ -f "$SRC/install/setup.bash" ]; then
+    WS="$SRC"
+fi
 OUT_JSON="${1:?output json path required}"
 DURATION="${2:-120}"
-DRIFT="${3:-1}"
+GNSS_MODE="${3:-rtk}"
 shift $(( $# > 3 ? 3 : $# ))
 EXTRA_PARAMS=("$@")
 
 TRACK=small_track
-CSV="$WS/eufs_sim/eufs_tracks/csv/$TRACK.csv"
-SCRIPTS="$WS/eufs_graph_slam/scripts"
+CSV="$SRC/eufs_sim/eufs_tracks/csv/$TRACK.csv"
+SCRIPTS="$SRC/eufs_graph_slam/scripts"
 LOG_DIR="$(dirname "$OUT_JSON")"
 mkdir -p "$LOG_DIR"
 
@@ -40,9 +54,11 @@ kill_harness() {
     # ros2 run/launch wrappers do not reliably forward signals to their
     # children, so kill the underlying processes by pattern as well.
     pkill -9 -f "install/eufs_graph_slam/lib/eufs_graph_slam/graph_slam_node" 2>/dev/null
-    pkill -9 -f "scripts/drift_odom.py" 2>/dev/null
     pkill -9 -f "scripts/evaluate_slam.py" 2>/dev/null
     pkill -9 -f "scripts/drive_track.py" 2>/dev/null
+    pkill -9 -f "sim_ellipse_d" 2>/dev/null
+    pkill -9 -f "sbg_odometry_bridge" 2>/dev/null
+    pkill -9 -f "eufs_graph_slam/wheel_odometry" 2>/dev/null
     pkill -9 -x gzserver 2>/dev/null
     pkill -9 -f spawner.py 2>/dev/null
     # Leftover sim launch trees keep latching stale /robot_description,
@@ -93,18 +109,41 @@ done
 sleep 3
 echo "simulator up"
 
-# The simulator now publishes drifting odometry natively on the localisation
-# car state topic (driftOdometry in eufs_plugins.gazebo.xacro); ground truth
-# stays on /ground_truth/state. The legacy drift_odom.py node is no longer used.
-SLAM_INPUT=/odometry_integration/car_state
-RAW_TOPIC=/odometry_integration/car_state
+# Real sensor chain: sim INS + SBG bridge (anchor) + wheel odometry (motion).
+SLAM_INPUT=/wheel_odometry/car_state
+RAW_TOPIC=/wheel_odometry/car_state
+
+# ros2 launch rejects name:= with an empty value as malformed, so the
+# schedule argument is only passed when it has content.
+INS_ARGS=(slam:=false use_sim_time:=true)
+if [ "$GNSS_MODE" = "outage" ]; then
+    INS_ARGS+=(correction_schedule:="40:single,80:rtk_fixed")
+fi
+
+echo "== starting INS pipeline (sim Ellipse-D + SBG bridge, gnss=$GNSS_MODE) =="
+ros2 launch eufs_graph_slam ins_pipeline.launch.py \
+    "${INS_ARGS[@]}" \
+    > "$LOG_DIR/ins.log" 2>&1 &
+PIDS+=($!)
+
+echo "== starting wheel odometry =="
+ros2 run eufs_graph_slam wheel_odometry --ros-args \
+    -p use_sim_time:=true \
+    > "$LOG_DIR/wheel_odom.log" 2>&1 &
+PIDS+=($!)
+
+GNSS_PARAMS=()
+if [ "$GNSS_MODE" = "none" ]; then
+    GNSS_PARAMS+=(-p gnss_prior_enable:=false)
+fi
 
 echo "== starting graph SLAM (input: $SLAM_INPUT) =="
 ros2 run eufs_graph_slam graph_slam_node --ros-args \
     -r __node:=graph_slam \
-    --params-file "$WS/eufs_graph_slam/config/graph_slam.yaml" \
+    --params-file "$SRC/eufs_graph_slam/config/graph_slam.yaml" \
     -p use_sim_time:=true \
     -p car_state_topic:=$SLAM_INPUT \
+    "${GNSS_PARAMS[@]}" \
     "${EXTRA_PARAMS[@]}" \
     > "$LOG_DIR/slam.log" 2>&1 &
 PIDS+=($!)
