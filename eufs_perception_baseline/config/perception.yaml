@@ -445,6 +445,16 @@ yolov8_bbox_node:
   ros__parameters:
     image_topic: /zed/left/image_rect_color
     bbox_topic: /yolo_bounding_boxes
+    # One inference per LiDAR period, phase-locked to land just before the
+    # NEXT predicted scan end: the bbox<->cloud pairing gap drops to the
+    # 30 Hz grid minimum (<=16 ms) and the YOLO load falls 3x. 'all'
+    # restores every-frame inference. Anchor is the PREVIOUS cloud stamp +
+    # period — anchoring to the previous cloud itself would hand every
+    # cloud a 100 ms-old bbox.
+    inference_mode: lidar_locked
+    lidar_topic: /velodyne_points
+    lidar_period_sec: 0.1
+    lock_tolerance_sec: 0.0167
     # YOLO26n-pose cone detector: one forward pass yields the box, the class and
     # the cone silhouette keypoints. Shipped inside the package, so there is no
     # dependency on a path outside the workspace. The launch file overrides this

@@ -83,6 +83,18 @@ class YoloV8BBoxNode(Node):
             self._image_callback,
             sensor_qos,
         )
+        self._last_cloud_stamp = None
+        self._lidar_period_est = self.lidar_period_sec
+        self._prev_image_phase = None
+        self._picked_this_period = False
+        if self.inference_mode == "lidar_locked":
+            from sensor_msgs.msg import PointCloud2
+            self.create_subscription(
+                PointCloud2,
+                self.lidar_topic,
+                self._cloud_stamp_callback,
+                sensor_qos,
+            )
         self.bbox_pub = self.create_publisher(
             BoundingBoxes,
             self.bbox_topic,
@@ -140,6 +152,18 @@ class YoloV8BBoxNode(Node):
     def _declare_parameters(self) -> None:
         self.declare_parameter("image_topic", "/zed/left/image_rect_color")
         self.declare_parameter("bbox_topic", "/yolo_bounding_boxes")
+        # 'all' infers every frame the worker can take (30 Hz). 'lidar_locked'
+        # infers ONE frame per LiDAR period — the frame landing just before
+        # the NEXT predicted scan end, so inference (~30 ms) completes right
+        # as the cloud arrives and the bbox<->cloud pairing gap drops to the
+        # 30 Hz grid minimum (<=16 ms). Anchoring to the PREVIOUS cloud
+        # instead would hand every cloud a 100+ ms-old bbox: the fusion node
+        # grabs the newest COMPLETED bbox at cloud arrival.
+        self.declare_parameter("inference_mode", "all")
+        self.declare_parameter("lidar_topic", "/velodyne_points")
+        self.declare_parameter("lidar_period_sec", 0.1)
+        # Half the camera period: exactly one 30 Hz frame per LiDAR tick.
+        self.declare_parameter("lock_tolerance_sec", 0.0167)
         self.declare_parameter(
             "model_path",
             "/home/dohyun/FS/artifacts/yolov8/fsoco_yolov8n/weights/best.pt",
@@ -170,6 +194,12 @@ class YoloV8BBoxNode(Node):
     def _load_parameters(self) -> None:
         self.image_topic = self.get_parameter("image_topic").value
         self.bbox_topic = self.get_parameter("bbox_topic").value
+        self.inference_mode = str(self.get_parameter("inference_mode").value)
+        self.lidar_topic = str(self.get_parameter("lidar_topic").value)
+        self.lidar_period_sec = float(
+            self.get_parameter("lidar_period_sec").value)
+        self.lock_tolerance_sec = float(
+            self.get_parameter("lock_tolerance_sec").value)
         self.model_path = self.get_parameter("model_path").value
         self.confidence_threshold = float(
             self.get_parameter("confidence_threshold").value
@@ -354,7 +384,45 @@ class YoloV8BBoxNode(Node):
             "class_map for perception accuracy."
         )
 
+    def _cloud_stamp_callback(self, msg) -> None:
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        # The real spin period wobbles and the config value is nominal:
+        # estimate the actual period from consecutive stamps (EMA, clamped
+        # to +/-10% of nominal so one bad stamp cannot derail the lock).
+        if self._last_cloud_stamp is not None:
+            delta = stamp - self._last_cloud_stamp
+            nominal = self.lidar_period_sec
+            if 0.5 * nominal < delta < 1.5 * nominal:
+                blended = 0.9 * self._lidar_period_est + 0.1 * delta
+                lo, hi = 0.9 * nominal, 1.1 * nominal
+                self._lidar_period_est = min(max(blended, lo), hi)
+        self._last_cloud_stamp = stamp
+
     def _image_callback(self, msg: Image) -> None:
+        if self.inference_mode == "lidar_locked" and \
+                self._last_cloud_stamp is not None:
+            # One inference per LiDAR period, jitter-proof:
+            # - preferred: the frame landing within lock_tolerance BEFORE the
+            #   next predicted scan end (inference completes as it arrives);
+            # - fallback: if jitter made every frame miss that window, the
+            #   phase WRAP frame is submitted instead, so no period is ever
+            #   skipped (gap <= one camera period).
+            # The anchor refreshes every scan, so spin-period drift does not
+            # accumulate; the period itself is estimated from the stream.
+            stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+            period = self._lidar_period_est
+            phase = (stamp - self._last_cloud_stamp) % period
+            wrapped = (self._prev_image_phase is not None
+                       and phase < self._prev_image_phase)
+            in_window = (period - phase) <= self.lock_tolerance_sec
+            take = in_window or (wrapped and not self._picked_this_period)
+            if wrapped:
+                self._picked_this_period = False
+            if not take:
+                self._prev_image_phase = phase
+                return
+            self._picked_this_period = True
+            self._prev_image_phase = phase
         self._worker.submit(YoloJob(self._clock_generation, msg))
 
     def _compute_yolo_job(self, job: YoloJob) -> YoloComputation:
