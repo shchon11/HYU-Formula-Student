@@ -160,6 +160,7 @@ class WheelOdometry(Node):
         self.last_v = 0.0
         self.last_w = 0.0
         self.ins_yaw_rate = None
+        self.ins_accel_flu = None
         self.ins_stamp = None
         self.used_ins_fallback = False
         self.accel_x_lp = 0.0
@@ -200,6 +201,11 @@ class WheelOdometry(Node):
         # ROS FLU, so the yaw rate flips sign. X is forward in both, so the
         # longitudinal acceleration passes through untouched.
         self.ins_yaw_rate = -msg.rate.z
+        # Raw (unfiltered) gravity-free body acceleration, NED body -> FLU:
+        # x passes, y flips. Passed through on the CarState for downstream
+        # consumers (TMPC vehicle state); the low-passed copy below stays
+        # dedicated to the slip estimate.
+        self.ins_accel_flu = (msg.acceleration.x, -msg.acceleration.y)
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         # Low-pass a_x for the slip estimate: per-sample accel noise would
         # otherwise jitter kappa; tau ~0.2 s tracks real traction transients.
@@ -322,6 +328,15 @@ class WheelOdometry(Node):
         out.pose.covariance[35] = self.sigma_w * self.sigma_w
         out.twist.twist.linear.x = v
         out.twist.twist.angular.z = w
+        # Body acceleration from the INS log when fresh; zeros in fallback,
+        # matching the "sensor absent" semantics of the yaw-rate fallback.
+        if (
+            self.ins_accel_flu is not None
+            and self.ins_stamp is not None
+            and abs(t - self.ins_stamp) <= self.ins_timeout
+        ):
+            out.linear_acceleration.x = self.ins_accel_flu[0]
+            out.linear_acceleration.y = self.ins_accel_flu[1]
         self.pub.publish(out)
 
 

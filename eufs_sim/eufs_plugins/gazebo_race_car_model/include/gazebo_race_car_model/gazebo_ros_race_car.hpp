@@ -247,6 +247,10 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
   // Stop Ground truth
   bool _pub_ground_truth;
 
+  // Synthetic localisation car state (state-estimation stand-in that does not
+  // exist on the real car); off when the stack runs the simulated INS pipeline.
+  bool _publish_localisation_car_state;
+
   enum CommandMode { acceleration, velocity };
   CommandMode _command_mode;
 

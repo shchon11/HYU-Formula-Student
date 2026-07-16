@@ -1,7 +1,7 @@
 <launch>
   <arg name="use_sim_time" default="true"/>
   <arg name="localization_topic" default="/localization/ego_odom"/>
-  <arg name="car_state_topic" default="/odometry_integration/car_state"/>
+  <arg name="car_state_topic" default="/wheel_odometry/car_state"/>
   <arg name="wheel_speeds_topic" default="/ros_can/wheel_speeds"/>
   <arg name="output_topic" default="/tmpc/vehicle_state"/>
   <arg name="publish_rate_hz" default="100.0"/>

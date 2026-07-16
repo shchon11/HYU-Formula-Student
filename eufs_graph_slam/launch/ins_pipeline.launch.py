@@ -7,10 +7,11 @@
 Simulated Ellipse-D INS pipeline: sim INS -> SBG bridge -> graph SLAM.
 
 One-command harness for running the real-hardware GNSS/INS pipeline against
-the EUFS simulator. The bridge output is remapped to /ins_odom/car_state
-because the simulator's race-car plugin already publishes drift odometry on
-the default /odometry_integration/car_state — without the remap the two
-sources collide and SLAM receives interleaved poses from different frames.
+the EUFS simulator. The bridge publishes its INS odometry on
+/ins_odom/car_state and the GNSS anchor on /gnss/odom. The simulator
+race-car plugin's synthetic localisation car state is disabled in the robot
+xacro (publishLocalisationCarState=false) — this pipeline plus wheel
+odometry is the only state-estimation source, in sim and on the car alike.
 
     ros2 launch eufs_graph_slam ins_pipeline.launch.py \
         mode_schedule:="30:3,45:4" correction_schedule:="60:single,70:rtk_fixed"
@@ -27,7 +28,11 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
-    car_state_topic = LaunchConfiguration("car_state_topic")
+    # Deliberately NOT named car_state_topic: launch configurations are global
+    # across includes, so a same-named argument here would silently override
+    # graph_slam.launch.py's car_state_topic default (the SLAM motion input,
+    # /wheel_odometry/car_state) with the bridge's pose-only INS odometry.
+    ins_odom_topic = LaunchConfiguration("ins_odom_topic")
 
     return LaunchDescription(
         [
@@ -37,13 +42,9 @@ def generate_launch_description():
                 description="Use the simulator clock.",
             ),
             DeclareLaunchArgument(
-                "car_state_topic",
+                "ins_odom_topic",
                 default_value="/ins_odom/car_state",
-                description=(
-                    "INS odometry topic for bridge output and SLAM input. Kept "
-                    "off /odometry_integration/car_state, which the simulator "
-                    "race-car plugin already publishes."
-                ),
+                description="INS odometry topic published by the SBG bridge.",
             ),
             DeclareLaunchArgument(
                 "mode_schedule",
@@ -110,7 +111,7 @@ def generate_launch_description():
                 parameters=[
                     {
                         "use_sim_time": use_sim_time,
-                        "car_state_topic": car_state_topic,
+                        "car_state_topic": ins_odom_topic,
                     }
                 ],
             ),
@@ -126,7 +127,9 @@ def generate_launch_description():
                 ),
                 launch_arguments={
                     "use_sim_time": use_sim_time,
-                    "car_state_topic": car_state_topic,
+                    # SLAM motion input stays on graph_slam.launch.py's default
+                    # (/wheel_odometry/car_state); the bridge contributes the
+                    # absolute /gnss/odom anchor, not the motion chain.
                     "gui": LaunchConfiguration("gui"),
                     "ate_monitor": LaunchConfiguration("ate_monitor"),
                 }.items(),

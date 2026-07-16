@@ -79,7 +79,7 @@ private:
     localization_topic_ = declare_parameter<std::string>(
       "tum_vehicle_state_bridge/localization_topic", "/localization/ego_odom");
     car_state_topic_ = declare_parameter<std::string>(
-      "tum_vehicle_state_bridge/car_state_topic", "/odometry_integration/car_state");
+      "tum_vehicle_state_bridge/car_state_topic", "/wheel_odometry/car_state");
     wheel_speeds_topic_ = declare_parameter<std::string>(
       "tum_vehicle_state_bridge/wheel_speeds_topic", "/ros_can/wheel_speeds");
     output_topic_ = declare_parameter<std::string>(

@@ -92,7 +92,7 @@ class SbgOdometryBridge(Node):
 
         # Topics.
         self.car_state_topic = self.declare_parameter(
-            "car_state_topic", "/odometry_integration/car_state"
+            "car_state_topic", "/ins_odom/car_state"
         ).value
         self.gnss_odom_topic = self.declare_parameter(
             "gnss_odom_topic", "/gnss/odom"

@@ -175,7 +175,7 @@ if [ "$EVAL_MODE" -eq 1 ]; then
 
   P_SLAM=$(tmux split-window -h -t "$P_SIM" -P -F '#{pane_id}')
   tmux send-keys -t "$P_SLAM" \
-    "$SRC echo '[② GRAPH SLAM only] waiting for car…'; $WAIT_CAR; ros2 launch eufs_graph_slam graph_slam.launch.py" C-m
+    "$SRC echo '[② INS + GRAPH SLAM] waiting for car…'; $WAIT_CAR; ros2 launch eufs_graph_slam ins_pipeline.launch.py" C-m
 
   # teleop arms AMI_MANUAL itself, so no separate mission pane is needed.
   P_TELE=$(tmux split-window -v -t "$P_SIM" -P -F '#{pane_id}')
@@ -199,7 +199,7 @@ if [ "$EVAL_MODE" -eq 1 ]; then
 
   cat <<EOF
 race: perception+SLAM up on '$TRACK'.  attach → 'race attach'   |   stop → 'race stop'
-  panes: ①sim+perception(provenance markers on)  ②graph_slam  ③teleop  ④evaluator  ⑤monitor
+  panes: ①sim+perception(provenance markers on)  ②ins+graph_slam  ③teleop  ④evaluator  ⑤monitor
   NO planner/controller — drive with teleop (pane ③), then run the evaluator (pane ④).
   Per-provenance error comes from /fusion/debug/cone_provenance, measured against
   /ground_truth/track — the FULL track. Not /ground_truth/cones: that one is itself
@@ -229,7 +229,7 @@ tmux send-keys -t "$P_DRIVE" \
 
 P_GNSS=$(tmux split-window -v -t "$P_DRIVE" -P -F '#{pane_id}')
 tmux send-keys -t "$P_GNSS" \
-  "$SRC echo '[④ GNSS HUD] waiting for ground truth…'; $WAIT_GT; ros2 launch eufs_graph_slam ins_pipeline.launch.py slam:=false use_sim_time:=$USE_SIM_TIME car_state_topic:=/ins_odom/car_state" C-m
+  "$SRC echo '[④ INS: sim Ellipse-D + SBG bridge (GNSS anchor + HUD)] waiting for ground truth…'; $WAIT_GT; ros2 launch eufs_graph_slam ins_pipeline.launch.py slam:=false use_sim_time:=$USE_SIM_TIME" C-m
 
 P_MON=$(tmux split-window -v -t "$P_PLAN" -P -F '#{pane_id}')
 tmux send-keys -t "$P_MON" \
@@ -241,7 +241,7 @@ tmux set-option    -t "$SESSION" mouse on
 
 cat <<EOF
 race: up.  attach → 'race attach'   |   stop everything → 'race stop'
-  panes: ①sim+perception  ②planning(slam+global+local+SM+selector+controller)  ③mission  ④gnss-hud  ⑤monitor
+  panes: ①sim+perception  ②planning(slam+global+local+SM+selector+controller)  ③mission  ④ins(ellipse-d+sbg bridge, gnss anchor+hud)  ⑤monitor
   the CONTROLLER drives the car — no teleop. $MISSION_NOTE
 EOF
 exec tmux attach -t "$SESSION"

@@ -85,7 +85,7 @@ perception_node:
     # measured on the ideal cloud; the realism pipeline reads +0.076 lon with
     # causes entangled, so no constant is honest right now.
     deskew_enabled: true
-    deskew_twist_topic: /odometry_integration/car_state
+    deskew_twist_topic: /wheel_odometry/car_state
     deskew_twist_timeout: 0.5
     roi_min_x: 0.5
     roi_max_x: 30.0

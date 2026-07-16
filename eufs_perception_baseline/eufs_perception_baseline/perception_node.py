@@ -259,7 +259,7 @@ class PerceptionNode(Node):
         # (~0.3 m at 6 m/s ahead, 2x that to the left under cw spin).
         self.declare_parameter("deskew_enabled", True)
         self.declare_parameter(
-            "deskew_twist_topic", "/odometry_integration/car_state")
+            "deskew_twist_topic", "/wheel_odometry/car_state")
         self.declare_parameter("deskew_twist_timeout", 0.5)
         self.declare_parameter("roi_min_x", 0.5)
         self.declare_parameter("roi_max_x", 30.0)

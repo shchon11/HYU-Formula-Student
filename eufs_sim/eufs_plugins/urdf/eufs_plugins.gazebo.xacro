@@ -53,6 +53,12 @@
       <publishTransform>$(arg publish_tf)</publishTransform>
       <groundTruthCarStateTopic>/ground_truth/state</groundTruthCarStateTopic>
       <localisationCarStateTopic>/odometry_integration/car_state</localisationCarStateTopic>
+      <!-- The synthetic localisation car state is a sim-only stand-in that the
+           real car never publishes. The stack runs the simulated INS pipeline
+           instead (sim_ellipse_d -> sbg bridge -> /gnss/odom anchor, wheel
+           odometry -> /wheel_odometry/car_state motion), so it is disabled to
+           keep anything from silently depending on it. -->
+      <publishLocalisationCarState>false</publishLocalisationCarState>
       <!-- Drifting odometry for the localisation car state (GT stays on
            groundTruthCarStateTopic). Set driftOdometry to false to restore the
            noise-model behaviour. -->

@@ -15,7 +15,7 @@ ARGUMENTS = (
     ("graph_slam_localization_mode", "false", "Localize against a saved graph SLAM map."),
     ("graph_slam_load_map_path", "", "Saved graph SLAM map for localization mode."),
     ("graph_slam_publish_tf", "true", "Allow graph SLAM to publish the map TF."),
-    ("car_state_topic", "/odometry_integration/car_state", "Graph SLAM motion input."),
+    ("car_state_topic", "/wheel_odometry/car_state", "Graph SLAM motion input."),
     ("cones_topic", "/cones", "Live cone observations for local planning and state."),
     ("cone_map_topic", "/localization/cone_map", "Graph SLAM cone-map output."),
     ("ego_odom_topic", "/localization/ego_odom", "Planner-facing odometry."),

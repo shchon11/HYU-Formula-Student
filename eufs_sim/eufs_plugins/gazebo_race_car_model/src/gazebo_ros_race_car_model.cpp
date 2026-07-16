@@ -83,8 +83,10 @@ void RaceCarModelPlugin::Load(gazebo::physics::ModelPtr model, sdf::ElementPtr s
   // ROS Publishers
   _pub_ground_truth_car_state =
       _rosnode->create_publisher<eufs_msgs::msg::CarState>(_ground_truth_car_state_topic, 1);
-  _pub_localisation_car_state =
-      _rosnode->create_publisher<eufs_msgs::msg::CarState>(_localisation_car_state_topic, 1);
+  if (_publish_localisation_car_state) {
+    _pub_localisation_car_state =
+        _rosnode->create_publisher<eufs_msgs::msg::CarState>(_localisation_car_state_topic, 1);
+  }
   _pub_wheel_speeds =
       _rosnode->create_publisher<eufs_msgs::msg::WheelSpeedsStamped>(_wheel_speeds_topic_name, 1);
   _pub_ground_truth_wheel_speeds = _rosnode->create_publisher<eufs_msgs::msg::WheelSpeedsStamped>(
@@ -225,6 +227,14 @@ void RaceCarModelPlugin::initParams(const sdf::ElementPtr &sdf) {
     _localisation_car_state_topic =
         sdf->GetElement("localisationCarStateTopic")->Get<std::string>();
   }
+
+  // The synthetic localisation car state is a state-estimation stand-in that
+  // does not exist on the real car. Stacks running the simulated INS pipeline
+  // (sim_ellipse_d -> sbg bridge -> wheel odometry) switch it off so nothing
+  // can silently depend on it.
+  _publish_localisation_car_state =
+      !sdf->HasElement("publishLocalisationCarState") ||
+      sdf->GetElement("publishLocalisationCarState")->Get<bool>();
 
   if (!sdf->HasElement("odometryTopicName")) {
     RCLCPP_FATAL(_rosnode->get_logger(),
@@ -841,6 +851,11 @@ void RaceCarModelPlugin::publishCarState() {
   }
 
   // Localisation car state: drifting odometry if enabled, otherwise iid noise.
+  // Disabled entirely (no publisher, no drift integration) when the stack
+  // runs the simulated INS pipeline instead.
+  if (!_publish_localisation_car_state) {
+    return;
+  }
   eufs::models::State state_noisy =
       _drift_odometry ? integrateDriftedState() : _noise->applyNoise(_state);
   eufs_msgs::msg::CarState car_state_noisy = stateToCarStateMsg(state_noisy);

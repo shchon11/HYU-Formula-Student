@@ -61,7 +61,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "car_state_topic",
-                default_value="/odometry_integration/car_state",
+                default_value="/wheel_odometry/car_state",
                 description="CarState topic used as the graph SLAM motion input.",
             ),
             DeclareLaunchArgument(
@@ -159,9 +159,28 @@ def generate_launch_description():
                 default_value="1",
                 description="Limit ROS discovery to localhost.",
             ),
+            DeclareLaunchArgument(
+                "wheel_odometry",
+                default_value="true",
+                description=(
+                    "Start the wheel+INS odometry node that publishes the "
+                    "default SLAM motion input (/wheel_odometry/car_state)."
+                ),
+            ),
             SetEnvironmentVariable(
                 name="ROS_LOCALHOST_ONLY",
                 value=LaunchConfiguration("ros_localhost_only"),
+            ),
+            # GNSS-independent motion source: rear wheel speeds + the INS
+            # body-rate/acceleration log, identical wiring in sim and on the
+            # car. Publishes the graph_slam default car_state_topic.
+            Node(
+                package="eufs_graph_slam",
+                executable="wheel_odometry",
+                name="wheel_odometry",
+                output="screen",
+                parameters=[{"use_sim_time": use_sim_time}],
+                condition=IfCondition(LaunchConfiguration("wheel_odometry")),
             ),
             Node(
                 package="eufs_graph_slam",

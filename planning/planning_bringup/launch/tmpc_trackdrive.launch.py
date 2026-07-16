@@ -37,7 +37,7 @@ ARGUMENTS = (
     ("tmpc_output_topic", "/tmpc/output", "Raw Formula TMPC output."),
     ("tmpc_valid_topic", "/tmpc/cmd_valid", "Output-bridge validity heartbeat."),
     ("localization_topic", "/localization/ego_odom", "Vehicle-state localization input."),
-    ("car_state_topic", "/odometry_integration/car_state", "Vehicle-state dynamics input."),
+    ("car_state_topic", "/wheel_odometry/car_state", "Vehicle-state dynamics input."),
     ("wheel_speeds_topic", "/ros_can/wheel_speeds", "Vehicle-state wheel-speed input."),
     ("publish_rate_hz", "100.0", "Bridge and selector command rate."),
     ("state_timeout_sec", "0.25", "Planning state freshness limit."),
