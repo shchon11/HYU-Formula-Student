@@ -63,6 +63,27 @@ perception_node:
     min_project_depth: 0.1
 
     # --- LiDAR backbone ---------------------------------------------------
+    # --- de-skew: undo the LiDAR bridge's motion distortion -----------------
+    # The realism bridge stamps the scan at its END and expresses each point
+    # at its own measurement time ('time' field, in (-0.1, 0] s). Uncorrected,
+    # every cone biases along the travel direction by v*|tau| — +0.3 m ahead
+    # and +0.45 m to the left at 6 m/s — which is 2-17x the cluster sigma.
+    # The inverse uses the odometry twist (never ground truth) and the bridge
+    # contract guarantees an exact deskew recovers the ideal cloud. Ideal or
+    # legacy clouds (no 'time' field) pass through untouched.
+    # A/B on the overhauled sim (2026-07-16, driving): deskew OFF read
+    # cluster lon +0.137 / FP 20.4% / cluster n collapsed 1440->393 (boxes
+    # flooded to stereo); ON read +0.076 / 12.2% / matching restored. Net win.
+    # NOTE all sigmas below were re-fitted the same day at DRIVING speed on
+    # the realism pipeline (NEES had gone 4-40x overconfident); the split
+    # between residual skew, odom-TF drift in motion compensation, and true
+    # sensor noise is NOT yet decomposed — remeasure before tightening back.
+    # cluster_range_bias_m reset to 0: the old -0.046 front-face constant was
+    # measured on the ideal cloud; the realism pipeline reads +0.076 lon with
+    # causes entangled, so no constant is honest right now.
+    deskew_enabled: true
+    deskew_twist_topic: /odometry_integration/car_state
+    deskew_twist_timeout: 0.5
     roi_min_x: 0.5
     roi_max_x: 30.0
     roi_abs_y: 15.0
@@ -291,15 +312,15 @@ perception_node:
     # 0.033 (n=2338, more edge/partial views than the scripted drive) and
     # 0.0031 measured z^2 = 0.35; sized to the worse of the two runs:
     # 4 * 0.033^2 = 0.0044.
-    lidar_variance_x: 0.0044
-    lidar_variance_y: 0.0044
+    lidar_variance_x: 0.070
+    lidar_variance_y: 0.070
     # The LiDAR only sees a cone's near face, so a cluster centroid sits short
     # of the cone axis. Measured against ground truth: cluster_camera lon mean
     # -0.046 m (n=924) with lat mean -0.002 -- a pure along-bearing bias, about
     # half the visible cone radius, exactly what front-face-only sampling
     # predicts. Applied as a forward push along the bearing in _build_cones.
     # The real car will need its own value from Tier-1 LiDAR vs RTK truth.
-    cluster_range_bias_m: 0.046
+    cluster_range_bias_m: 0.0
     # This was set equal to a confirmed cluster on the argument that a cluster
     # the camera never confirmed has an IDENTICAL position measurement -- the
     # same centroid of the same returns -- and that its doubt is about
@@ -315,8 +336,8 @@ perception_node:
     # RE-MEASURED at n=106 (was 14): lateral rms 0.055 m, so 0.03 read z^2 =
     # 0.05. 0.0121 is 4x its mean square, and it stays ~2x looser than a
     # confirmed cluster, which is what the argument above predicted.
-    lidar_only_variance_x: 0.0121
-    lidar_only_variance_y: 0.0121
+    lidar_only_variance_x: 0.23
+    lidar_only_variance_y: 0.23
     # sparse is BEARING-ALIGNED, not isotropic, and it is the only LiDAR
     # provenance that is. See _sparse_covariance for why: a cluster has the
     # returns to find the cone's centre (lat/lon rms 0.041 / 0.035 m, n=5203 --
@@ -353,8 +374,8 @@ perception_node:
     # Teleop confirmation lap: rms 0.013/0.014 (n=485), so 0.017/0.022 read
     # z^2 0.63/0.41 -- tight of the 0.25 policy. 4x-mean-square on the
     # confirmation numbers:
-    sparse_sigma_lat_m: 0.026
-    sparse_sigma_lon_m: 0.028
+    sparse_sigma_lat_m: 0.26
+    sparse_sigma_lon_m: 0.36
     # 0. NOT a rounding-down -- the term has no support in the data. sparse's
     # lateral rms by range band is 0.031 / 0.034 / 0.030 / 0.029 / 0.033 m from
     # 7.5 m to 20 m (n=219..520 per band): FLAT, while this term grew the model
@@ -406,7 +427,7 @@ perception_node:
     # zncc lateral rms reads 0.04-0.08 through 12.5 m in two independent runs.
     # 0.10 keeps a 2x margin over the worst measured band. Still re-measure on
     # the real camera before trusting it off the bench.
-    vision_lateral_floor_m: 0.10
+    vision_lateral_floor_m: 0.45
     # Bbox HEIGHT noise, in px, driving sigma_D/D = |e|*sigma_h/h.
     #
     # Was 8.0 to cover the curve's bias with noise. Re-fitting c/e (above) cut

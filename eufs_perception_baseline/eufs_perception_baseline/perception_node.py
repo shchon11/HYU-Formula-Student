@@ -60,6 +60,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 from eufs_msgs.msg import (
     BoundingBoxes,
+    CarState,
     ConeArrayWithCovariance,
     ConeWithCovariance,
 )
@@ -207,6 +208,10 @@ class PerceptionNode(Node):
                 Image, self.left_image_topic, self._left_image_callback, qos)
             self.create_subscription(
                 Image, self.right_image_topic, self._right_image_callback, qos)
+        self._twist = None
+        if self.deskew_enabled:
+            self.create_subscription(
+                CarState, self.deskew_twist_topic, self._twist_callback, qos)
         # Last: the output path, so the first cloud can find a bbox to colour by.
         self.create_subscription(
             PointCloud2, self.pointcloud_topic, self._cloud_callback, qos)
@@ -246,6 +251,16 @@ class PerceptionNode(Node):
         self.declare_parameter("min_project_depth", 0.1)
 
         # --- LiDAR backbone -------------------------------------------------
+        # De-skew: the realism bridge expresses every LiDAR point at its own
+        # measurement time (up to 100 ms before the end-stamp) and publishes
+        # the offset in the 'time' field. Undoing it needs the ego twist —
+        # from odometry, never ground truth, because the real car has no GT.
+        # Uncorrected, cones bias along the travel direction by v*|tau|
+        # (~0.3 m at 6 m/s ahead, 2x that to the left under cw spin).
+        self.declare_parameter("deskew_enabled", True)
+        self.declare_parameter(
+            "deskew_twist_topic", "/odometry_integration/car_state")
+        self.declare_parameter("deskew_twist_timeout", 0.5)
         self.declare_parameter("roi_min_x", 0.5)
         self.declare_parameter("roi_max_x", 30.0)
         self.declare_parameter("roi_abs_y", 15.0)
@@ -345,6 +360,7 @@ class PerceptionNode(Node):
         g = lambda name: self.get_parameter(name).value  # noqa: E731
         for name in (
             "pointcloud_topic", "bbox_topic", "camera_info_topic",
+            "deskew_twist_topic",
             "left_image_topic", "right_image_topic", "output_cones_topic",
             "output_frame", "camera_frame",
         ):
@@ -353,7 +369,8 @@ class PerceptionNode(Node):
         self.motion_compensation_frame = str(g("motion_compensation_frame")).strip()
         self.projection_model = str(g("projection_model"))
         self.bbox_coordinates = str(g("bbox_coordinates")).upper()
-        for name in ("publish_debug", "ground_ransac_enabled", "self_mask_enabled",
+        for name in ("deskew_enabled",
+                     "publish_debug", "ground_ransac_enabled", "self_mask_enabled",
                      "sparse_enabled", "monocular_enabled", "zncc_enabled"):
             setattr(self, name, bool(g(name)))
         for name in ("sync_queue_size", "ground_ransac_max_iterations",
@@ -378,6 +395,7 @@ class PerceptionNode(Node):
             "sparse_max_depth_span_m", "sparse_max_depth_span_ratio",
             "sparse_far_min_probability", "sparse_far_min_bbox_width_px",
             "sparse_far_min_bbox_height_px", "monocular_min_bbox_height_px",
+            "deskew_twist_timeout",
             "monocular_min_depth_m", "monocular_max_depth_m",
             "monocular_depth_coefficient", "monocular_depth_exponent",
             "standard_cone_height_m", "big_cone_height_m",
@@ -495,7 +513,7 @@ class PerceptionNode(Node):
             return
         t = self._stage_timer()
         self._gray_cache.clear()
-        points = self._pointcloud_to_xyz(msg)
+        points, point_times = self._pointcloud_to_xyz_time(msg)
         t("deserialise")
         frame = ClusterFrame(stamp=msg.header.stamp, frame_id=msg.header.frame_id)
         if points.shape[0]:
@@ -509,6 +527,8 @@ class PerceptionNode(Node):
                     "cloud_tf", f"No TF {msg.header.frame_id} -> "
                     f"{self.output_frame} at the cloud stamp; skipping cloud")
                 return
+            points = self._deskew_points(points, point_times, msg, lidar_to_base)
+            t("deskew")
             points_base = self._transform_points(points, lidar_to_base)
             t("tf+transform")
             keep = self._roi_mask(points_base) & self._non_ground_mask(points_base)
@@ -648,21 +668,86 @@ class PerceptionNode(Node):
 
     # -------------------------------------------------------------- backbone
 
-    def _pointcloud_to_xyz(self, msg: PointCloud2) -> np.ndarray:
-        """Decode xyz, vectorised. This used to be a per-point Python loop,
-        which is affordable at the cloud's rate and at nothing faster."""
+    def _pointcloud_to_xyz_time(self, msg: PointCloud2):
+        """Decode xyz (+ per-point time when the realism bridge provides it),
+        vectorised. This used to be a per-point Python loop, which is
+        affordable at the cloud's rate and at nothing faster. Ideal/legacy
+        clouds have no 'time' field and return times=None."""
+        try:
+            structured = point_cloud2.read_points(
+                msg, field_names=("x", "y", "z", "time"), skip_nans=True)
+            array = np.asarray(structured)
+            if array.size and array.dtype.names:
+                xyz = np.column_stack(
+                    [array["x"], array["y"], array["z"]]).astype(np.float64)
+                return xyz, np.asarray(array["time"], dtype=np.float64)
+        except Exception:
+            pass  # no 'time' field -> xyz-only path below
         try:
             structured = point_cloud2.read_points(
                 msg, field_names=("x", "y", "z"), skip_nans=True)
         except Exception:  # pragma: no cover - malformed cloud
-            return np.empty((0, 3), dtype=np.float64)
+            return np.empty((0, 3), dtype=np.float64), None
         array = np.asarray(structured)
         if array.size == 0:
-            return np.empty((0, 3), dtype=np.float64)
+            return np.empty((0, 3), dtype=np.float64), None
         if array.dtype.names:
             return np.column_stack(
-                [array["x"], array["y"], array["z"]]).astype(np.float64)
-        return np.asarray(array, dtype=np.float64).reshape(-1, 3)
+                [array["x"], array["y"], array["z"]]).astype(np.float64), None
+        return np.asarray(array, dtype=np.float64).reshape(-1, 3), None
+
+    def _twist_callback(self, msg: CarState) -> None:
+        tw = msg.twist.twist
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        self._twist = (tw.linear.x, tw.linear.y, tw.angular.z, stamp)
+
+    def _deskew_points(
+        self,
+        points: np.ndarray,
+        times,
+        msg: PointCloud2,
+        lidar_to_base,
+    ) -> np.ndarray:
+        """Undo the LiDAR bridge's motion distortion, point by point.
+
+        The bridge expresses each point at its own measurement time,
+        p' = R(-w*tau) @ (p - v_sensor*tau) with tau in (-period, 0] under cw
+        spin and end stamping, and publishes tau in the 'time' field. The
+        exact inverse, p = R(w*tau) @ p' + v_sensor*tau, restores the whole
+        cloud to the stamp instant — the contract every downstream stage
+        (single-transform to base, bbox pairing, projection) already assumes.
+        The bridge's own contract: a correct deskew recovers the ideal cloud.
+
+        v_sensor is the body twist at the mount lever arm, mirroring the
+        bridge (sensor yaw ~ 0). The twist comes from odometry, never ground
+        truth: this code path must behave identically on the real car.
+        """
+        if not self.deskew_enabled or times is None or points.shape[0] == 0:
+            return points
+        twist = self._twist
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        if twist is None or abs(stamp - twist[3]) > self.deskew_twist_timeout:
+            self._warn_throttled(
+                "deskew_twist",
+                "no fresh odometry twist for de-skew; publishing skewed "
+                "cloud (cone bias grows with speed)")
+            return points
+        vx, vy, wz = twist[0], twist[1], twist[2]
+        if abs(vx) < 1e-3 and abs(vy) < 1e-3 and abs(wz) < 1e-3:
+            return points
+        # lidar_to_base is the 4x4 sensor-pose matrix in the output frame;
+        # its translation column is the mount lever arm the bridge used.
+        mount_x = float(lidar_to_base[0, 3])
+        mount_y = float(lidar_to_base[1, 3])
+        v_sx = vx - wz * mount_y
+        v_sy = vy + wz * mount_x
+        theta = wz * times
+        cos_t, sin_t = np.cos(theta), np.sin(theta)
+        px, py = points[:, 0], points[:, 1]
+        out = points.copy()
+        out[:, 0] = cos_t * px - sin_t * py + v_sx * times
+        out[:, 1] = sin_t * px + cos_t * py + v_sy * times
+        return out
 
     def _roi_mask(self, points_base: np.ndarray) -> np.ndarray:
         x, y, z = points_base[:, 0], points_base[:, 1], points_base[:, 2]

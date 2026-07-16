@@ -279,6 +279,10 @@ private:
   double gnss_prior_max_position_sigma_;
   double gnss_prior_max_age_;
   double gnss_prior_robust_delta_;
+  double gnss_prior_min_sigma_;
+  double gnss_prior_innovation_max_residual_;
+  double gnss_prior_min_interval_;
+  double last_gnss_prior_stamp_sec_;
   // Manual relocalization (/initialpose) suppresses GNSS priors: the click is
   // a competing absolute reference, and an RTK prior would otherwise yank the
   // pose straight back. Priors re-arm only once GNSS agrees with the

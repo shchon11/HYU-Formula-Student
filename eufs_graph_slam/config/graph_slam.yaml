@@ -45,8 +45,13 @@ graph_slam:
     min_observation_variance: 0.01
     robust_kernel_delta: 1.0
 
-    odom_translation_sigma: 0.05
-    odom_yaw_sigma: 0.03
+    # Floors only — with use_odom_covariance the channel's own reported sigma
+    # rides above these. Lowered 2026-07-16: wheel odometry now compensates
+    # traction slip and reports honest per-sample sigma (~0.01/0.001), and the
+    # old floors were silently re-inflating it 5x/30x. The SBG channel is
+    # unaffected (its reported 0.05 sits above either floor).
+    odom_translation_sigma: 0.02
+    odom_yaw_sigma: 0.01
     # Consume the motion source's reported noise (CarState.pose.covariance)
     # per odometry edge, clamped below by the sigmas above — a degraded
     # bridge/wheel-odometry mode then weakens its own constraints.
@@ -62,6 +67,16 @@ graph_slam:
     gnss_prior_max_position_sigma: 0.5
     gnss_prior_max_age: 0.3
     gnss_prior_robust_delta: 1.0
+    # Believed-not-realized INS (2026-07-16 fidelity pass): the reported sigma
+    # is a deterministic surrogate that can be confidently wrong while the
+    # realized error is a slow Gauss-Markov excursion. Three defenses:
+    # floor any single prior's weight; take at most one prior per interval
+    # (inside it, consecutive fixes share the same error draw); and once the
+    # map has converged, reject fixes that disagree with the cone-anchored
+    # pose by more than the rearm budget.
+    gnss_prior_min_sigma: 0.25
+    gnss_prior_min_interval: 1.0
+    gnss_prior_innovation_max_residual: 2.0
     # A manual /initialpose (RViz 2D Pose Estimate) suppresses the priors so an
     # RTK fix cannot yank the pose straight back to GNSS; they re-arm after
     # suppress_duration once GNSS agrees with the cone-anchored pose within

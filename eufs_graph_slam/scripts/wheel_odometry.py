@@ -13,14 +13,31 @@ GNSS-independent odometry source for the graph SLAM motion input, so the
 GNSS prior stays the only absolute channel (no correlated double injection).
 
 Simulator wiring (default parameters):
-  - ``/ros_can/wheel_speeds``  eufs_msgs/WheelSpeedsStamped, rear speeds in
-    RPM (front are a 999 placeholder), steering in rad.
-  - ``/imu/data``              sensor_msgs/Imu yaw rate. If the IMU times out
-    the node falls back to bicycle-model yaw from the steering angle.
+  - ``/ros_can/wheel_speeds``  eufs_msgs/WheelSpeedsStamped, wheel speeds in
+    RPM (all four are real on the 4WD car; this node uses the rears, which
+    stay unsteered), steering in rad.
+  - ``/imu/data``              sensor_msgs/Imu yaw rate + longitudinal accel.
+    If the IMU times out the node falls back to bicycle-model yaw from the
+    steering angle (and slip compensation pauses).
+
+Why the rear MEAN and not four wheels: the rear differential split
+(+/- half_track * yaw_rate) cancels exactly in the mean, while the fronts
+carry a cos(steering) projection plus a lateral term. Preferring undriven
+wheels to dodge traction slip is a real-car strategy only — the sim applies
+one common-mode slip term to all four wheels, so it cannot be validated here.
+
+Slip: driven wheels over-read by kappa = peak_slip_ratio * a_x/(mu*g)
+(saturating), which is a BIAS, not noise — integrating it uncorrected put
+~0.076 m/m of drift through braking zones. The node estimates kappa from the
+IMU's low-passed longitudinal acceleration (the same traction-utilization
+signal the tyre model uses), removes it from v, and widens its reported
+sigma_v by a fraction of the correction so the graph downweights odometry
+exactly when the estimate is working hardest.
 
 Real-car wiring: point ``wheel_speeds_topic``/``imu_topic`` at the ros_can
 encoder feed and the SBG IMU; the message contracts are identical, so no code
-change is needed.
+change is needed. Re-fit slip_* parameters from RTK parity once real logs
+exist.
 """
 
 import math
@@ -49,8 +66,25 @@ class WheelOdometry(Node):
         self.declare_parameter("imu_timeout", 0.3)       # s -> steering fallback
         self.declare_parameter("max_dt", 0.5)            # s, reject stale steps
         # Per-sample noise the graph can turn into edge information later.
-        self.declare_parameter("sigma_v", 0.05)          # m/s
-        self.declare_parameter("sigma_w", 0.02)          # rad/s
+        # RE-MEASURED 2026-07-16 against the fidelity-pass sensor sim: the
+        # random error on the rear mean is ~1 mm/s (0.05 RPM noise + 0.069 RPM
+        # CAN quantum) and the 200 Hz gyro is ~7.4e-4 rad/s — the old
+        # 0.05/0.02 were 50x/27x pessimistic and starved odometry of weight.
+        # The slip BIAS is handled by compensation + dynamic widening below,
+        # not by these static floors.
+        self.declare_parameter("sigma_v", 0.01)          # m/s
+        self.declare_parameter("sigma_w", 0.001)         # rad/s
+        # Traction-slip compensation (mirrors eufs_models: slip_speed =
+        # peak_slip_ratio * clamp(a_x/(mu*g), -1, 1) * max(1, v)).
+        self.declare_parameter("slip_compensation", True)
+        self.declare_parameter("slip_peak_ratio", 0.15)  # tyre peak slip ratio
+        self.declare_parameter("slip_mu", 1.6)           # tyre D (configDry)
+        self.declare_parameter("slip_g", 9.81)
+        self.declare_parameter("slip_accel_lp_tau", 0.2)  # s, a_x low-pass
+        # Fraction of the applied correction kept as extra sigma_v: the
+        # estimate uses measured a_x against the model's commanded a, so
+        # trust it, but not fully.
+        self.declare_parameter("slip_residual_fraction", 0.3)
         self.declare_parameter("frame_id", "map")
         self.declare_parameter("child_frame_id", "base_footprint")
 
@@ -61,6 +95,13 @@ class WheelOdometry(Node):
         self.max_dt = float(self.get_parameter("max_dt").value)
         self.sigma_v = float(self.get_parameter("sigma_v").value)
         self.sigma_w = float(self.get_parameter("sigma_w").value)
+        self.slip_compensation = bool(self.get_parameter("slip_compensation").value)
+        self.slip_peak_ratio = float(self.get_parameter("slip_peak_ratio").value)
+        self.slip_mu_g = (float(self.get_parameter("slip_mu").value)
+                          * float(self.get_parameter("slip_g").value))
+        self.slip_lp_tau = float(self.get_parameter("slip_accel_lp_tau").value)
+        self.slip_residual_fraction = float(
+            self.get_parameter("slip_residual_fraction").value)
         self.frame_id = str(self.get_parameter("frame_id").value)
         self.child_frame_id = str(self.get_parameter("child_frame_id").value)
 
@@ -73,6 +114,8 @@ class WheelOdometry(Node):
         self.imu_yaw_rate = None
         self.imu_stamp = None
         self.used_imu_fallback = False
+        self.accel_x_lp = 0.0
+        self.accel_lp_stamp = None
 
         sensor_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.pub = self.create_publisher(
@@ -103,7 +146,17 @@ class WheelOdometry(Node):
 
     def on_imu(self, msg):
         self.imu_yaw_rate = msg.angular_velocity.z
-        self.imu_stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        # Low-pass a_x for the slip estimate: per-sample accel noise would
+        # otherwise jitter kappa; tau ~0.2 s tracks real traction transients.
+        if self.accel_lp_stamp is not None and stamp > self.accel_lp_stamp:
+            dt = stamp - self.accel_lp_stamp
+            alpha = dt / (self.slip_lp_tau + dt)
+            self.accel_x_lp += alpha * (msg.linear_acceleration.x - self.accel_x_lp)
+        else:
+            self.accel_x_lp = msg.linear_acceleration.x
+        self.accel_lp_stamp = stamp
+        self.imu_stamp = stamp
 
     def yaw_rate(self, t, v, steering):
         """IMU yaw rate when fresh, else kinematic bicycle fallback."""
@@ -135,8 +188,23 @@ class WheelOdometry(Node):
             return
 
         # Rear axle mean; the simulator (and real ros_can) report RPM.
+        # The differential split cancels in the mean; common-mode slip does not.
         rear_rpm = 0.5 * (msg.speeds.lb_speed + msg.speeds.rb_speed)
         v = rear_rpm * RPM_TO_RAD_S * self.wheel_radius
+
+        slip_correction = 0.0
+        if (
+            self.slip_compensation
+            and self.imu_stamp is not None
+            and abs(t - self.imu_stamp) <= self.imu_timeout
+        ):
+            utilization = max(-1.0, min(1.0, self.accel_x_lp / self.slip_mu_g))
+            kappa = self.slip_peak_ratio * utilization
+            # v_meas = v_true + kappa * max(1, v_true); one fixed-point step
+            # (kappa <= 0.15 makes the second iteration sub-mm/s).
+            slip_correction = kappa * max(1.0, abs(v - kappa * max(1.0, abs(v))))
+            v -= slip_correction
+
         w = self.yaw_rate(t, v, msg.speeds.steering)
 
         self.x += v * math.cos(self.yaw) * dt
@@ -156,8 +224,13 @@ class WheelOdometry(Node):
         out.pose.pose.orientation.w = math.cos(0.5 * self.yaw)
         # Per-sample noise levels; consumers derive relative-motion
         # information from these diagonals (same contract as the SBG bridge).
-        out.pose.covariance[0] = self.sigma_v * self.sigma_v
-        out.pose.covariance[7] = self.sigma_v * self.sigma_v
+        # sigma_v widens by a fraction of any slip correction applied — the
+        # graph consumes this (use_odom_covariance) and downweights odometry
+        # exactly in the traction regimes where the estimate works hardest.
+        sigma_v_eff = self.sigma_v + \
+            self.slip_residual_fraction * abs(slip_correction)
+        out.pose.covariance[0] = sigma_v_eff * sigma_v_eff
+        out.pose.covariance[7] = sigma_v_eff * sigma_v_eff
         out.pose.covariance[35] = self.sigma_w * self.sigma_w
         out.twist.twist.linear.x = v
         out.twist.twist.angular.z = w

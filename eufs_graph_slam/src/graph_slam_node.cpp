@@ -294,9 +294,16 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<double>("gnss_prior_suppress_duration", 20.0);
   gnss_prior_rearm_max_residual_ =
     declare_parameter<double>("gnss_prior_rearm_max_residual", 2.0);
+  gnss_prior_min_sigma_ = declare_parameter<double>("gnss_prior_min_sigma", 0.25);
+  gnss_prior_innovation_max_residual_ =
+    declare_parameter<double>("gnss_prior_innovation_max_residual", 2.0);
+  gnss_prior_min_interval_ =
+    declare_parameter<double>("gnss_prior_min_interval", 1.0);
   gnss_prior_max_position_sigma_ = std::max(1e-3, gnss_prior_max_position_sigma_);
+  gnss_prior_min_sigma_ = std::max(0.0, gnss_prior_min_sigma_);
   gnss_prior_suppressed_ = false;
   gnss_prior_suppress_until_sec_ = 0.0;
+  last_gnss_prior_stamp_sec_ = -1.0e18;
 
   keyframe_distance_ = std::max(0.0, keyframe_distance_);
   keyframe_yaw_ = std::max(0.0, keyframe_yaw_);
@@ -1011,6 +1018,33 @@ void GraphSlamNode::maybeAddGnssPrior(
     return;
   }
 
+  // The INS reports a BELIEVED accuracy that never reflects the realized
+  // (time-correlated, Gauss-Markov) error — it can be confidently wrong.
+  // Three defenses, tuned for that failure mode:
+  // 1) De-correlate: consecutive fixes share the same GM error draw, so a
+  //    prior on every 0.5 m keyframe multiplies one wrong measurement.
+  if (gnss_prior_min_interval_ > 0.0 &&
+    stamp.seconds() - last_gnss_prior_stamp_sec_ < gnss_prior_min_interval_)
+  {
+    return;
+  }
+  // 2) Innovation-gate once the map has converged: a fix that disagrees with
+  //    the cone-anchored pose by more than the rearm budget is the INS being
+  //    confidently wrong, not the map being off. Before convergence the graph
+  //    is still elastic and the Huber kernel is the only sane defense.
+  if (map_converged_) {
+    const double innovation =
+      (vertex->estimate().translation() - fix.position).norm();
+    if (innovation > gnss_prior_innovation_max_residual_) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 10000,
+        "GNSS prior rejected: fix %.2f m from the cone-anchored pose "
+        "(believed sigma %.2f m) — correlated INS excursion",
+        innovation, fix.sigma_x);
+      return;
+    }
+  }
+
   if (gnss_prior_suppressed_) {
     if (stamp.seconds() < gnss_prior_suppress_until_sec_) {
       return;
@@ -1037,10 +1071,16 @@ void GraphSlamNode::maybeAddGnssPrior(
   prior->setId(next_edge_id_++);
   prior->setVertex(0, vertex);
   prior->setMeasurement(fix.position);
+  // 3) Sigma floor: an rtk_fixed report of 0.01 m would carry information
+  //    1e4 and let one anchor out-vote the cone map; the floor keeps any
+  //    single prior's pull bounded regardless of what the INS believes.
+  const double sigma_x = std::max(fix.sigma_x, gnss_prior_min_sigma_);
+  const double sigma_y = std::max(fix.sigma_y, gnss_prior_min_sigma_);
   Eigen::Matrix2d information = Eigen::Matrix2d::Zero();
-  information(0, 0) = 1.0 / (fix.sigma_x * fix.sigma_x);
-  information(1, 1) = 1.0 / (fix.sigma_y * fix.sigma_y);
+  information(0, 0) = 1.0 / (sigma_x * sigma_x);
+  information(1, 1) = 1.0 / (sigma_y * sigma_y);
   prior->setInformation(information);
+  last_gnss_prior_stamp_sec_ = stamp.seconds();
   if (gnss_prior_robust_delta_ > 0.0) {
     auto * kernel = new g2o::RobustKernelHuber();
     kernel->setDelta(gnss_prior_robust_delta_);
