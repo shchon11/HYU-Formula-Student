@@ -1,6 +1,7 @@
 #include "local_planner/local_planner_node.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <stdexcept>
@@ -70,6 +71,21 @@ LocalPlannerNode::LocalPlannerNode(const rclcpp::NodeOptions & options)
   planner_config_.unknown_geom_deadband_m =
     declare_parameter<double>("unknown_geom_deadband_m", 0.75);
   planner_config_.use_orange_cones = declare_parameter<bool>("use_orange_cones", false);
+  use_live_cone_extension_ =
+    declare_parameter<bool>("use_live_cone_extension", false);
+  live_cone_max_age_sec_ = declare_parameter<double>("live_cone_max_age_sec", 0.4);
+  live_extension_config_.merge_radius_m =
+    declare_parameter<double>("live_merge_radius_m", 1.0);
+  live_extension_config_.as_unknown =
+    declare_parameter<bool>("live_extension_as_unknown", true);
+  if (!std::isfinite(live_cone_max_age_sec_) || live_cone_max_age_sec_ <= 0.0 ||
+    !std::isfinite(live_extension_config_.merge_radius_m) ||
+    live_extension_config_.merge_radius_m < 0.0)
+  {
+    RCLCPP_WARN(
+      get_logger(), "live cone extension parameters invalid; extension disabled");
+    use_live_cone_extension_ = false;
+  }
   planner_config_.extend_straight_to_horizon =
     declare_parameter<bool>("extend_straight_to_horizon", false);
   planner_config_.straight_extension_cap_m =
@@ -92,7 +108,8 @@ LocalPlannerNode::LocalPlannerNode(const rclcpp::NodeOptions & options)
     max_stamp_skew_sec_,
     [this](const std::string & reason) {output_->invalidateImmediately(reason);},
     [this](const LiveInputPair & input) {processLivePair(input);},
-    [this](const SlamMapInput & input) {processSlamMap(input);});
+    [this](const SlamMapInput & input) {processSlamMap(input);},
+    use_live_cone_extension_);
 }
 
 void LocalPlannerNode::processLivePair(const LiveInputPair & input)
@@ -130,7 +147,16 @@ void LocalPlannerNode::processSlamMap(const SlamMapInput & input)
     return;
   }
 
-  const auto cone_set = slamConeSet(*input.map, odom_metadata);
+  auto cone_set = slamConeSet(*input.map, odom_metadata);
+  if (use_live_cone_extension_ && input.live_cones && input.live_odom_valid) {
+    const double live_age = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - input.live_cones_receive_time).count();
+    if (live_age <= live_cone_max_age_sec_) {
+      extendConeSetWithLiveCones(
+        cone_set, *input.live_cones, input.live_odom, odom_metadata,
+        live_extension_config_);
+    }
+  }
   const auto result = buildLocalPath(cone_set, planner_config_);
   logPlannerDiagnostics(cone_set, result);
   if (result.valid) {

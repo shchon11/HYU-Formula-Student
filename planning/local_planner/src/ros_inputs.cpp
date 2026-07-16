@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 #include <utility>
 
@@ -54,6 +55,16 @@ Point2 mapToEgo(const Point2 & point, const OdomMetadata & odom)
   return {
     cosine * delta_x + sine * delta_y,
     -sine * delta_x + cosine * delta_y,
+  };
+}
+
+Point2 egoToMap(const Point2 & point, const OdomMetadata & odom)
+{
+  const double cosine = std::cos(odom.yaw);
+  const double sine = std::sin(odom.yaw);
+  return {
+    odom.position.x + cosine * point.x - sine * point.y,
+    odom.position.y + sine * point.x + cosine * point.y,
   };
 }
 
@@ -122,10 +133,72 @@ ConeSet slamConeSet(const ConeArray & message, const OdomMetadata & odom)
   };
 }
 
+void extendConeSetWithLiveCones(
+  ConeSet & cone_set, const ConeArray & live_cones, const OdomMetadata & live_odom,
+  const OdomMetadata & current_odom, const LiveExtensionConfig & config)
+{
+  if (!std::isfinite(live_odom.yaw) || !std::isfinite(current_odom.yaw) ||
+    !std::isfinite(config.merge_radius_m) || config.merge_radius_m < 0.0)
+  {
+    return;
+  }
+
+  // Snapshot the map-derived points BEFORE any append: dedupe is against the
+  // map only, so live cones never suppress each other through ordering.
+  std::vector<Point2> map_points;
+  for (const auto * bucket :
+    {&cone_set.blue, &cone_set.yellow, &cone_set.orange, &cone_set.big_orange,
+      &cone_set.unknown})
+  {
+    map_points.insert(map_points.end(), bucket->begin(), bucket->end());
+  }
+
+  const auto near_map_cone = [&map_points, &config](const Point2 & point) {
+      for (const auto & existing : map_points) {
+        if (std::hypot(existing.x - point.x, existing.y - point.y) <=
+          config.merge_radius_m)
+        {
+          return true;
+        }
+      }
+      return false;
+    };
+
+  const auto append_bucket =
+    [&](const auto & source, std::vector<Point2> & same_color_sink) {
+      std::vector<Point2> & sink = config.as_unknown ? cone_set.unknown : same_color_sink;
+      for (const auto & cone : source) {
+        const Point2 live_point{cone.point.x, cone.point.y};
+        if (!std::isfinite(live_point.x) || !std::isfinite(live_point.y)) {
+          continue;
+        }
+        if (sink.size() >= kMaxBoundaryCones) {
+          // Capacity pressure sheds LIVE cones, never the map, and never
+          // flags input_overflow: the extension must not invalidate a frame
+          // the map alone could plan.
+          return;
+        }
+        const Point2 ego_now =
+          mapToEgo(egoToMap(live_point, live_odom), current_odom);
+        if (near_map_cone(ego_now)) {
+          continue;
+        }
+        sink.push_back(ego_now);
+      }
+    };
+
+  append_bucket(live_cones.blue_cones, cone_set.blue);
+  append_bucket(live_cones.yellow_cones, cone_set.yellow);
+  append_bucket(live_cones.orange_cones, cone_set.orange);
+  append_bucket(live_cones.big_orange_cones, cone_set.big_orange);
+  append_bucket(live_cones.unknown_color_cones, cone_set.unknown);
+}
+
 LocalPlannerInputs::LocalPlannerInputs(
   rclcpp::Node & node, const SourceMode source_mode, LocalPlannerInputTopics topics,
   const double max_stamp_skew_sec, InvalidateCallback invalidate,
-  LivePairCallback live_pair_callback, SlamMapCallback slam_map_callback)
+  LivePairCallback live_pair_callback, SlamMapCallback slam_map_callback,
+  const bool slam_live_extension)
 : node_(node),
   topics_(std::move(topics)),
   max_stamp_skew_sec_(max_stamp_skew_sec),
@@ -133,6 +206,7 @@ LocalPlannerInputs::LocalPlannerInputs(
   live_pair_callback_(std::move(live_pair_callback)),
   slam_map_callback_(std::move(slam_map_callback))
 {
+  slam_live_extension_ = slam_live_extension;
   if (source_mode == SourceMode::kLiveCones) {
     configureLiveSource();
   } else {
@@ -170,6 +244,19 @@ void LocalPlannerInputs::configureSlamMapSource()
   slam_odom_subscription_ = node_.create_subscription<Odometry>(
     topics_.odom, odom_qos,
     std::bind(&LocalPlannerInputs::processSlamOdom, this, std::placeholders::_1));
+  if (slam_live_extension_) {
+    slam_live_cones_subscription_ = node_.create_subscription<ConeArray>(
+      topics_.cones, rclcpp::SensorDataQoS(),
+      std::bind(&LocalPlannerInputs::receiveSlamLiveCones, this, std::placeholders::_1));
+  }
+}
+
+void LocalPlannerInputs::receiveSlamLiveCones(const ConeArray::ConstSharedPtr & message)
+{
+  const auto now = std::chrono::steady_clock::now();
+  std::lock_guard<std::mutex> lock(mutex_);
+  latest_live_cones_ = message;
+  latest_live_cones_receive_time_ = now;
 }
 
 void LocalPlannerInputs::recordLiveCones(const ConeArray::ConstSharedPtr & message)
@@ -256,12 +343,39 @@ void LocalPlannerInputs::receiveSlamStatus(
 
 void LocalPlannerInputs::processSlamOdom(const Odometry::SharedPtr message)
 {
-  SlamMapInput input{nullptr, message, SteadyTime{}, std::chrono::steady_clock::now()};
+  const auto now = std::chrono::steady_clock::now();
+  SlamMapInput input;
+  input.odom = message;
+  input.odom_receive_time = now;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     latest_odom_stamp_key_ = stampKey(message->header.stamp);
     input.map = latched_map_;
     input.map_receive_time = latched_map_receive_time_;
+
+    if (slam_live_extension_) {
+      odom_pose_history_.emplace_back(latest_odom_stamp_key_, odomMetadata(*message, now));
+      while (odom_pose_history_.size() > 64U) {
+        odom_pose_history_.pop_front();
+      }
+      if (latest_live_cones_) {
+        input.live_cones = latest_live_cones_;
+        input.live_cones_receive_time = latest_live_cones_receive_time_;
+        // The pose the cones were measured from: the odom sample nearest the
+        // cone frame's stamp. Beyond a 0.25 s stamp gap the correction would
+        // be a guess, so the frame is left unused rather than mis-anchored.
+        const std::int64_t live_key = stampKey(latest_live_cones_->header.stamp);
+        std::int64_t best_gap = std::numeric_limits<std::int64_t>::max();
+        for (const auto & entry : odom_pose_history_) {
+          const std::int64_t gap = std::llabs(entry.first - live_key);
+          if (gap < best_gap) {
+            best_gap = gap;
+            input.live_odom = entry.second;
+          }
+        }
+        input.live_odom_valid = best_gap <= 250000000LL;
+      }
+    }
   }
   if (!input.map) {
     invalidate_("waiting for slam cone map");

@@ -33,6 +33,13 @@ private:
   double max_input_age_sec_{0.5};
   double heartbeat_hz_{10.0};
   bool log_diagnostics_{false};
+  // Live-cone extension (slam mode): stitch fresh perception cones beyond the
+  // SLAM map frontier onto the ConeSet so the path does not end at the last
+  // confirmed landmark. Map cones always win (dedupe radius); stale frames
+  // fall back to map-only.
+  bool use_live_cone_extension_{false};
+  double live_cone_max_age_sec_{0.4};
+  LiveExtensionConfig live_extension_config_{};
   std::unique_ptr<LocalPlannerOutput> output_;
   std::unique_ptr<LocalPlannerInputs> inputs_;
 };

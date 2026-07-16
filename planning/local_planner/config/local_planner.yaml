@@ -47,3 +47,16 @@ local_planner_node:
     # the finish straight. Trackdrive/autocross only; the acceleration overlay
     # keeps its own straight-corridor fold-in and skidpad stays director-fed.
     use_orange_cones: true
+    # Live-cone extension: stitch fresh perception cones (/cones) beyond the
+    # SLAM map frontier so the path does not end at the last confirmed
+    # landmark when the car outruns the map. The map always wins: live cones
+    # within live_merge_radius_m of any map cone are dropped, stale frames
+    # (older than live_cone_max_age_sec) fall back to map-only. With
+    # live_extension_as_unknown: false the perception colors are trusted
+    # directly, so live cones can pair into a two-sided path beyond the
+    # frontier on their own; a color flip is still caught by the width /
+    # midpoint-clearance / fold gates downstream.
+    use_live_cone_extension: true
+    live_cone_max_age_sec: 0.4
+    live_merge_radius_m: 1.0
+    live_extension_as_unknown: false
