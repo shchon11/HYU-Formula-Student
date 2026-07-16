@@ -162,3 +162,27 @@ graph_slam:
     lap_return_radius: 6.0
     lap_return_yaw: 1.0
     localization_window_poses: 100
+    # Freeze-quality gates. map_converged alone accepts ANY confirmed loop —
+    # on a waisted track (peanut) that can be a mid-lap mini-loop that says
+    # nothing about full-lap drift. Require seam evidence (loop candidates
+    # re-associating landmarks within lap_seam_landmark_radius_m of the lap
+    # origin) before the freeze, then dwell lap_finish_dwell_m so the seam
+    # accumulates constraints before landmarks are fixed.
+    require_lap_seam_loop_closure: true
+    lap_seam_landmark_radius_m: 10.0
+    lap_seam_candidates_required: 2
+    lap_finish_dwell_m: 5.0
+    # A verified lap return independently corroborates a loop closure: relax
+    # the confirmation window to this many candidates once the car is back at
+    # the origin (residual gates are never relaxed). 0 disables.
+    loop_confirmation_required_candidates_on_lap_return: 2
+    # The origin is captured while standing on it, so a "return" only counts
+    # after this much further travel (guards the relaxation and the finish
+    # gate against the trivial same-pose match at capture).
+    lap_return_min_travel_m: 50.0
+    # Freeze-time drift-duplicate sweep: same-color pairs within this radius
+    # merge into the recently-seen member IF their last observations are a
+    # loop_gap_distance of travel apart (a stale twin from failed association
+    # under drift). Distance alone cannot do this — real same-color cones
+    # stand as close as ~1.0 m in tight corners.
+    freeze_merge_stale_distance_m: 2.0

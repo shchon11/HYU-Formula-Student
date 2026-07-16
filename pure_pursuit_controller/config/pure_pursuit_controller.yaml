@@ -1,7 +1,18 @@
+# Default trackdrive controller = MAP (Model- and Acceleration-based Pursuit,
+# ETH-PBL). This is what `race` (trackdrive) loads. For the previous kinematic
+# pure pursuit see pure_pursuit_controller_geometric.yaml.
+#
+# MAP keeps the geometric controller's fail-safe/longitudinal behaviour but
+# replaces the kinematic steering law with: adaptive lookahead -> L1-guidance
+# lateral acceleration -> a single-track + Pacejka-tyre lookup table integrated
+# once at startup from the vehicle/tyre block below, so it accounts for the
+# speed-dependent understeer the kinematic law ignores.
 pure_pursuit_controller_node:
   ros__parameters:
+    steering_mode: map
+
+    # --- Shared limits / longitudinal control (identical to geometric mode) ---
     wheelbase_m: 1.58
-    lookahead_m: 6.0
     max_steering_rad: 0.52
     command_rate_hz: 20.0
     input_timeout_sec: 0.5
@@ -9,6 +20,60 @@ pure_pursuit_controller_node:
     longitudinal_kp: 1.2
     min_acceleration_mps2: -8.0
     max_acceleration_mps2: 2.5
-    # Deceleration on a hard brake (invalid/stale path, stop request). The
-    # in-path floor above (min_acceleration) is separate.
     brake_acceleration_mps2: -5.0
+
+    # --- MAP adaptive lookahead: L_d = clamp(intercept + slope*v, min, max) ---
+    # Starting point; TUNE ON TRACK. At 10 m/s this gives ~7.5 m, close to the
+    # geometric trackdrive lookahead of 6 m.
+    map_lookahead_slope_s: 0.6
+    map_lookahead_intercept_m: 1.5
+    map_lookahead_min_m: 2.0
+    map_lookahead_max_m: 10.0
+    # planned = feed-forward off the path speed (robust near standstill);
+    # measured = use odometry speed (exact when tracking lags).
+    map_speed_source: planned
+
+    # --- Single-track model + Pacejka tyre = EUFS `eufs` car
+    # (eufs_racecar/robots/eufs/configDry.yaml). The internal model closely
+    # matches the simulated plant (tyre force, load split, front/rear slip lever
+    # arms) so the table inverts its tyre behaviour; two low-speed slip
+    # corrections are deliberately omitted -- see steering_lookup.hpp.
+    # NOTE: pacejka_c is the MAGNITUDE of the plant's shape factor -- the plant
+    # config ships C = -1.38 under an inverted slip-sign convention; the table
+    # stores |a_lat|, so only the magnitude matters.
+    vehicle_mass_kg: 225.0
+    yaw_inertia_kg_m2: 31.27
+    cg_to_front_m: 0.869
+    cg_to_rear_m: 0.711
+    # Plant match: the EUFS DynamicBicycle getSlipAngle uses l_r for BOTH axles,
+    # so the front slip lever arm is set to l_r (0.711), not l_f, to invert the
+    # simulated plant exactly. Use 0.869 (= cg_to_front_m) for a physically
+    # single-track model tuned to a real car.
+    front_slip_lever_arm_m: 0.711
+    cg_height_m: 0.30
+    gravity_mps2: 9.81
+    aero_downforce_coeff: 1.9
+    tire_model: pacejka
+    pacejka_mu: 1.0
+    pacejka_b_front: 12.56
+    pacejka_c_front: 1.38
+    pacejka_d_front: 1.60
+    pacejka_e_front: -0.58
+    pacejka_b_rear: 12.56
+    pacejka_c_rear: 1.38
+    pacejka_d_rear: 1.60
+    pacejka_e_rear: -0.58
+
+    # --- Lookup table grid (integrated once at node startup) ---
+    lut_steer_fine_end_rad: 0.1
+    lut_steer_max_rad: 0.52
+    lut_n_steer_fine: 30
+    lut_n_steer_coarse: 30
+    lut_vel_min_mps: 0.5
+    lut_vel_max_mps: 12.0
+    lut_n_vel: 46
+    lut_sim_dt_s: 0.01
+    lut_sim_duration_s: 2.0
+    # RK4 micro-steps per 0.01 s: explicit integration is stiffness-limited and
+    # full-scale tyres need this >= ~8 to stay stable at low speed.
+    lut_sim_substeps: 10

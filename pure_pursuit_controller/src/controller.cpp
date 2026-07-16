@@ -25,9 +25,20 @@ bool isFresh(double age_sec, double timeout_sec)
   return std::isfinite(age_sec) && age_sec >= 0.0 && age_sec <= timeout_sec;
 }
 
+bool isValidMapConfig(const ControllerConfig & config)
+{
+  return std::isfinite(config.map_lookahead_slope_s) && config.map_lookahead_slope_s >= 0.0 &&
+         std::isfinite(config.map_lookahead_intercept_m) &&
+         config.map_lookahead_intercept_m >= 0.0 &&
+         std::isfinite(config.map_lookahead_min_m) && config.map_lookahead_min_m > 0.0 &&
+         std::isfinite(config.map_lookahead_max_m) &&
+         config.map_lookahead_max_m >= config.map_lookahead_min_m;
+}
+
 bool isValidConfig(const ControllerConfig & config)
 {
-  return std::isfinite(config.wheelbase_m) && config.wheelbase_m > 0.0 &&
+  const bool base_valid =
+         std::isfinite(config.wheelbase_m) && config.wheelbase_m > 0.0 &&
          std::isfinite(config.lookahead_m) && config.lookahead_m > 0.0 &&
          std::isfinite(config.max_steering_rad) && config.max_steering_rad > 0.0 &&
          std::isfinite(config.command_rate_hz) && config.command_rate_hz > 0.0 &&
@@ -39,8 +50,35 @@ bool isValidConfig(const ControllerConfig & config)
          config.min_acceleration_mps2 <= config.max_acceleration_mps2 &&
          std::isfinite(config.brake_acceleration_mps2) &&
          config.brake_acceleration_mps2 < 0.0;
+  if (!base_valid) {
+    return false;
+  }
+  // MAP steering needs a sane adaptive-lookahead band on top of the base config.
+  return config.steering_mode != SteeringMode::MAP || isValidMapConfig(config);
 }
 
+}
+
+double plannedSpeed(const PathPoint & point)
+{
+  if (std::isfinite(point.vx_mps) && point.vx_mps > 0.0) {
+    return point.vx_mps;
+  }
+  if (std::isfinite(point.speed_mps) && point.speed_mps > 0.0) {
+    return point.speed_mps;
+  }
+  return 0.0;
+}
+
+double mapLookaheadDistance(const ControllerConfig & config, double planned_speed_mps)
+{
+  const double raw =
+    config.map_lookahead_intercept_m + config.map_lookahead_slope_s * planned_speed_mps;
+  // max() guards a mis-ordered band (min > max) so std::clamp stays defined even
+  // if this public helper is called with a config computeControl would reject.
+  const double lower = config.map_lookahead_min_m;
+  const double upper = std::max(lower, config.map_lookahead_max_m);
+  return std::clamp(raw, lower, upper);
 }
 
 DriveCommand brakeCommand(const ControllerConfig & config)
@@ -155,7 +193,8 @@ std::optional<TargetPoint> selectTarget(
   return TargetPoint{point, target_index.value(), x_body, y_body};
 }
 
-ControlDecision computeControl(const ControllerInput & input, const ControllerConfig & config)
+ControlDecision computeControl(
+  const ControllerInput & input, const ControllerConfig & config, const SteeringLookup * lut)
 {
   if (!isValidConfig(config) || !input.path_received || !input.validity_received ||
     !input.stop_received || !input.odom_received || !input.path_frame_valid ||
@@ -169,7 +208,27 @@ ControlDecision computeControl(const ControllerInput & input, const ControllerCo
     return ControlDecision{brakeCommand(config), std::nullopt};
   }
 
-  const auto target = selectTarget(input.path, input.ego.value(), config.lookahead_m);
+  const EgoState & ego = input.ego.value();
+  const bool map_mode = config.steering_mode == SteeringMode::MAP;
+  // MAP steering is only as safe as its lookup table; fail to braking without one.
+  if (map_mode && (lut == nullptr || !lut->valid())) {
+    return ControlDecision{brakeCommand(config), std::nullopt};
+  }
+
+  // GEOMETRIC uses the fixed lookahead; MAP sizes it from the nearest waypoint's
+  // planned speed (L_d = clamp(q + m*v, min, max)).
+  double lookahead = config.lookahead_m;
+  double planned_speed = 0.0;
+  if (map_mode) {
+    const auto nearest = findNearestWaypoint(input.path, ego);
+    if (!nearest.has_value()) {
+      return ControlDecision{brakeCommand(config), std::nullopt};
+    }
+    planned_speed = plannedSpeed(input.path[nearest.value()]);
+    lookahead = mapLookaheadDistance(config, planned_speed);
+  }
+
+  const auto target = selectTarget(input.path, ego, lookahead);
   if (!target.has_value()) {
     return ControlDecision{brakeCommand(config), std::nullopt};
   }
@@ -179,29 +238,42 @@ ControlDecision computeControl(const ControllerInput & input, const ControllerCo
     return ControlDecision{brakeCommand(config), std::nullopt};
   }
 
-  double target_speed = 0.0;
-  if (std::isfinite(target->point.vx_mps) && target->point.vx_mps > 0.0) {
-    target_speed = target->point.vx_mps;
-  } else if (std::isfinite(target->point.speed_mps) && target->point.speed_mps > 0.0) {
-    target_speed = target->point.speed_mps;
-  }
-  target_speed = std::clamp(target_speed, 0.0, config.max_speed_mps);
-
-  const double current_speed = std::isfinite(input.ego->longitudinal_speed_mps) ?
-    std::max(0.0, input.ego->longitudinal_speed_mps) : 0.0;
+  // Longitudinal control is shared by both steering modes.
+  const double target_speed =
+    std::clamp(plannedSpeed(target->point), 0.0, config.max_speed_mps);
+  const double current_speed = std::isfinite(ego.longitudinal_speed_mps) ?
+    std::max(0.0, ego.longitudinal_speed_mps) : 0.0;
   const double acceleration = std::clamp(
     config.longitudinal_kp * (target_speed - current_speed),
     config.min_acceleration_mps2, config.max_acceleration_mps2);
-  const double steering = std::clamp(
-    std::atan2(
-      2.0 * config.wheelbase_m * target->y_body_m, lookahead_squared),
-    -config.max_steering_rad, config.max_steering_rad);
+
+  double steering = 0.0;
+  if (map_mode) {
+    // L1 guidance: the lateral acceleration needed to reach the lookahead point,
+    // then the model+tyre table converts it to a steering angle. sin(eta) is the
+    // lateral (left-positive) offset of the target over the chord distance L1.
+    const double reference_speed =
+      config.map_speed_source == MapSpeedSource::MEASURED ? current_speed : planned_speed;
+    const double chord = std::sqrt(lookahead_squared);
+    const double sin_eta = target->y_body_m / chord;
+    const double lateral_accel = 2.0 * reference_speed * reference_speed * sin_eta / lookahead;
+    const auto steer = lut->lookup(lateral_accel, reference_speed);
+    if (!steer.has_value()) {
+      return ControlDecision{brakeCommand(config), std::nullopt};
+    }
+    steering = std::clamp(steer.value(), -config.max_steering_rad, config.max_steering_rad);
+  } else {
+    steering = std::clamp(
+      std::atan2(2.0 * config.wheelbase_m * target->y_body_m, lookahead_squared),
+      -config.max_steering_rad, config.max_steering_rad);
+  }
   return ControlDecision{DriveCommand{target_speed, acceleration, steering}, target};
 }
 
-DriveCommand computeCommand(const ControllerInput & input, const ControllerConfig & config)
+DriveCommand computeCommand(
+  const ControllerInput & input, const ControllerConfig & config, const SteeringLookup * lut)
 {
-  return computeControl(input, config).command;
+  return computeControl(input, config, lut).command;
 }
 
 }

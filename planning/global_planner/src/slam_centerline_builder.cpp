@@ -165,60 +165,128 @@ bool hasInvalidNearestTrackWidth(
   return false;
 }
 
+double distanceToPolyline(const PlannerPoint & query, const std::vector<PlannerPoint> & poly)
+{
+  if (poly.empty()) {
+    return std::numeric_limits<double>::infinity();
+  }
+  if (poly.size() == 1U) {
+    return distance(query, poly.front());
+  }
+  double best_d2 = std::numeric_limits<double>::max();
+  for (std::size_t i = 0; i + 1U < poly.size(); ++i) {
+    const PlannerPoint & a = poly[i];
+    const PlannerPoint & b = poly[i + 1U];
+    const double vx = b.x - a.x;
+    const double vy = b.y - a.y;
+    const double len2 = vx * vx + vy * vy;
+    double t = 0.0;
+    if (len2 > 0.0) {
+      t = std::clamp(((query.x - a.x) * vx + (query.y - a.y) * vy) / len2, 0.0, 1.0);
+    }
+    const double dx = query.x - (a.x + t * vx);
+    const double dy = query.y - (a.y + t * vy);
+    best_d2 = std::min(best_d2, dx * dx + dy * dy);
+  }
+  return std::sqrt(best_d2);
+}
+
 }  // namespace
 
-bool buildCenterlineFromSlamMap(
-  const eufs_msgs::msg::ConeArrayWithCovariance & cone_map,
-  const nav_msgs::msg::Odometry & ego_odom,
+void applyRacelineSmoothing(
+  std::vector<PlannerPoint> & centerline,
+  const std::vector<PlannerPoint> & left_boundary,
+  const std::vector<PlannerPoint> & right_boundary,
+  const SlamCenterlineConfig & config)
+{
+  if (config.raceline_smoothing_iterations <= 0 || centerline.size() < 3U) {
+    return;
+  }
+  const double alpha = std::clamp(config.raceline_alpha, 0.0, 0.45);
+  if (alpha <= 0.0) {
+    return;
+  }
+
+  // A closed ring arrives with the first point duplicated at the tail; smooth
+  // the ring without the duplicate so the seam gets the same treatment as any
+  // other point, and restore the duplicate afterwards.
+  const bool closed = centerline.size() >= 4U &&
+    distance(centerline.front(), centerline.back()) <= config.duplicate_point_tolerance;
+  std::vector<PlannerPoint> ring(centerline.begin(), closed ? centerline.end() - 1 : centerline.end());
+  const std::size_t n = ring.size();
+  if (n < 3U) {
+    return;
+  }
+
+  // Displacement budget per point, priced ONCE against the original position:
+  // budget_i = clearance_i - margin. Any point moved at most budget_i from its
+  // origin keeps >= margin to both boundaries (triangle inequality), so the
+  // clamp below is a hard safety guarantee independent of iteration count.
+  const std::vector<PlannerPoint> original = ring;
+  std::vector<double> budget(n, 0.0);
+  for (std::size_t i = 0; i < n; ++i) {
+    const double clearance = std::min(
+      distanceToPolyline(original[i], left_boundary),
+      distanceToPolyline(original[i], right_boundary));
+    budget[i] = std::max(0.0, clearance - config.raceline_margin_m);
+  }
+
+  // Curvature-energy descent: each pass relaxes every point toward its
+  // neighbours' midpoint (discrete Laplacian), which straightens corners and
+  // leaves straights untouched; the budget clamp stops the cut at the margin.
+  // Open paths keep both endpoints fixed so the join to upstream geometry is
+  // not disturbed.
+  std::vector<PlannerPoint> next = ring;
+  for (int iteration = 0; iteration < config.raceline_smoothing_iterations; ++iteration) {
+    for (std::size_t i = 0; i < n; ++i) {
+      if (!closed && (i == 0U || i + 1U == n)) {
+        continue;
+      }
+      const PlannerPoint & previous = ring[(i + n - 1U) % n];
+      const PlannerPoint & current = ring[i];
+      const PlannerPoint & following = ring[(i + 1U) % n];
+      PlannerPoint moved{
+        current.x + alpha * (0.5 * (previous.x + following.x) - current.x),
+        current.y + alpha * (0.5 * (previous.y + following.y) - current.y)};
+      const double offset_x = moved.x - original[i].x;
+      const double offset_y = moved.y - original[i].y;
+      const double offset = std::hypot(offset_x, offset_y);
+      if (offset > budget[i] && offset > 0.0) {
+        const double scale = budget[i] / offset;
+        moved.x = original[i].x + offset_x * scale;
+        moved.y = original[i].y + offset_y * scale;
+      }
+      next[i] = moved;
+    }
+    ring.swap(next);
+  }
+
+  centerline.assign(ring.begin(), ring.end());
+  if (closed) {
+    centerline.push_back(centerline.front());
+  }
+}
+
+// Everything downstream of the map-level gates is seed-sensitive: the
+// boundary ordering walks from the cone nearest `seed`, and the pairing sweep
+// inherits that phase. From an awkward seed the same good map can fold at the
+// seam ("heading reverses"), phase-lock the monotonic pairing (invalid_width),
+// or strand cones (branch_jump). buildCenterlineFromSlamMap therefore treats
+// this whole pipeline as one attempt and retries it from alternate seeds.
+static bool buildCenterlineFromSeed(
+  const std::vector<PlannerPoint> & blue_points,
+  const std::vector<PlannerPoint> & yellow_points,
+  const PlannerPoint & seed,
   const SlamCenterlineConfig & config,
   std::vector<PlannerWaypoint> & waypoints,
   std::string & reason)
 {
   waypoints.clear();
 
-  if (!std::isfinite(config.waypoint_spacing_m) ||
-    config.waypoint_spacing_m < kMinimumWaypointSpacingM)
-  {
-    reason = "waypoint spacing is below the supported minimum";
-    return false;
-  }
-  if (!std::isfinite(config.duplicate_point_tolerance) ||
-    config.duplicate_point_tolerance < 0.0)
-  {
-    reason = "duplicate point tolerance is invalid";
-    return false;
-  }
-
-  const auto blue_points = finiteConePoints(cone_map.blue_cones);
-  const auto yellow_points = finiteConePoints(cone_map.yellow_cones);
-  if (blue_points.size() < static_cast<std::size_t>(config.min_cones_per_side) ||
-    yellow_points.size() < static_cast<std::size_t>(config.min_cones_per_side))
-  {
-    reason = "insufficient blue/yellow cones";
-    return false;
-  }
-
-  const PlannerPoint ego{ego_odom.pose.pose.position.x, ego_odom.pose.pose.position.y};
-  if (!isFinitePoint(ego)) {
-    reason = "ego odom position is non-finite";
-    return false;
-  }
-
-  const double duplicate_ghost_threshold = std::max(
-    config.duplicate_point_tolerance, config.min_track_width_m * 0.25);
-  if (hasSameColorDuplicate(blue_points, "blue", duplicate_ghost_threshold, reason) ||
-    hasSameColorDuplicate(yellow_points, "yellow", duplicate_ghost_threshold, reason))
-  {
-    return false;
-  }
-  if (hasInvalidNearestTrackWidth(blue_points, yellow_points, config, reason)) {
-    return false;
-  }
-
   std::vector<PlannerPoint> ordered_blue;
   std::vector<PlannerPoint> ordered_yellow;
   if (!orderSlamBoundaries(
-      blue_points, yellow_points, ego, config.max_boundary_gap_m,
+      blue_points, yellow_points, seed, config.max_boundary_gap_m,
       ordered_blue, ordered_yellow, reason))
   {
     return false;
@@ -330,6 +398,8 @@ bool buildCenterlineFromSlamMap(
     }
   }
 
+  applyRacelineSmoothing(centerline, ordered_blue, ordered_yellow, config);
+
   const auto resampled = resampleBySpacing(
     centerline, config.waypoint_spacing_m, config.duplicate_point_tolerance);
   if (resampled.size() < 3U) {
@@ -344,6 +414,84 @@ bool buildCenterlineFromSlamMap(
   }
   computeWaypointGeometry(waypoints);
   return validateWaypoints(waypoints, config.duplicate_point_tolerance, reason);
+}
+
+bool buildCenterlineFromSlamMap(
+  const eufs_msgs::msg::ConeArrayWithCovariance & cone_map,
+  const nav_msgs::msg::Odometry & ego_odom,
+  const SlamCenterlineConfig & config,
+  std::vector<PlannerWaypoint> & waypoints,
+  std::string & reason)
+{
+  waypoints.clear();
+
+  if (!std::isfinite(config.waypoint_spacing_m) ||
+    config.waypoint_spacing_m < kMinimumWaypointSpacingM)
+  {
+    reason = "waypoint spacing is below the supported minimum";
+    return false;
+  }
+  if (!std::isfinite(config.duplicate_point_tolerance) ||
+    config.duplicate_point_tolerance < 0.0)
+  {
+    reason = "duplicate point tolerance is invalid";
+    return false;
+  }
+
+  const auto blue_points = finiteConePoints(cone_map.blue_cones);
+  const auto yellow_points = finiteConePoints(cone_map.yellow_cones);
+  if (blue_points.size() < static_cast<std::size_t>(config.min_cones_per_side) ||
+    yellow_points.size() < static_cast<std::size_t>(config.min_cones_per_side))
+  {
+    reason = "insufficient blue/yellow cones";
+    return false;
+  }
+
+  const PlannerPoint ego{ego_odom.pose.pose.position.x, ego_odom.pose.pose.position.y};
+  if (!isFinitePoint(ego)) {
+    reason = "ego odom position is non-finite";
+    return false;
+  }
+
+  // Map-level gates are seed-independent: a genuinely bad map (ghost
+  // duplicates, impossible widths) fails closed once, before any retry.
+  const double duplicate_ghost_threshold = std::max(
+    config.duplicate_point_tolerance, config.min_track_width_m * 0.25);
+  if (hasSameColorDuplicate(blue_points, "blue", duplicate_ghost_threshold, reason) ||
+    hasSameColorDuplicate(yellow_points, "yellow", duplicate_ghost_threshold, reason))
+  {
+    return false;
+  }
+  if (hasInvalidNearestTrackWidth(blue_points, yellow_points, config, reason)) {
+    return false;
+  }
+
+  // Ego-seeded attempt first (today's behavior, and the seed most likely to
+  // start the path where the car is), then deterministic alternates spread
+  // around the lap. The published path is a closed loop in the map frame, so
+  // WHERE it was seeded does not matter to consumers — only that some seed
+  // yields a valid loop. The diagnosed reason stays the ego attempt's.
+  constexpr std::size_t kMaxCenterlineSeedAttempts = 12U;
+  std::string first_reason;
+  if (buildCenterlineFromSeed(
+      blue_points, yellow_points, ego, config, waypoints, first_reason))
+  {
+    return true;
+  }
+  const std::size_t attempts = std::min(kMaxCenterlineSeedAttempts, blue_points.size());
+  for (std::size_t i = 0; i < attempts; ++i) {
+    const PlannerPoint & seed = blue_points[(i * blue_points.size()) / attempts];
+    std::string retry_reason;
+    if (buildCenterlineFromSeed(
+        blue_points, yellow_points, seed, config, waypoints, retry_reason))
+    {
+      return true;
+    }
+  }
+
+  waypoints.clear();
+  reason = first_reason;
+  return false;
 }
 
 }  // namespace global_planner

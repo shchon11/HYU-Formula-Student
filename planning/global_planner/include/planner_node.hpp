@@ -66,6 +66,9 @@ private:
   double odom_timeout_sec_{0.5};
   double valid_heartbeat_hz_{5.0};
   bool hold_last_valid_path_{true};
+  int raceline_smoothing_iterations_{0};
+  double raceline_margin_m_{1.2};
+  double raceline_alpha_{0.3};
 
   bool has_cone_map_{false};
   bool has_ego_odom_{false};
@@ -75,6 +78,12 @@ private:
   bool warned_invalid_{false};
   std::uint64_t cone_map_version_{0U};
   std::uint64_t published_cone_map_version_{0U};
+  // Content signature of the last accepted cone map. graph_slam keeps
+  // republishing the frozen map in localization mode; identical content must
+  // not count as a new map version (it would re-derive the path from the
+  // current ego seed every tick and churn downstream consumers).
+  std::uint64_t cone_map_signature_{0U};
+  bool has_cone_map_signature_{false};
 
   eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr latest_cone_map_;
   nav_msgs::msg::Odometry latest_ego_odom_;

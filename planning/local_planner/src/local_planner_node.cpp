@@ -69,6 +69,7 @@ LocalPlannerNode::LocalPlannerNode(const rclcpp::NodeOptions & options)
     declare_parameter<double>("unknown_absorb_lateral_m", 0.75);
   planner_config_.unknown_geom_deadband_m =
     declare_parameter<double>("unknown_geom_deadband_m", 0.75);
+  planner_config_.use_orange_cones = declare_parameter<bool>("use_orange_cones", false);
   planner_config_.extend_straight_to_horizon =
     declare_parameter<bool>("extend_straight_to_horizon", false);
   planner_config_.straight_extension_cap_m =

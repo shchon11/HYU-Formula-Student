@@ -7,8 +7,32 @@
 #include <string_view>
 #include <vector>
 
+#include "pure_pursuit_controller/steering_lookup.hpp"
+
 namespace pure_pursuit_controller
 {
+
+// GEOMETRIC is the kinematic pure-pursuit steering law delta = atan2(2*L*y, d^2).
+// MAP (Model- and Acceleration-based Pursuit, ETH-PBL) instead sizes the
+// lookahead with speed, computes the lateral acceleration the L1 guidance law
+// demands, and reads the steering angle off a single-track + tyre model lookup
+// table -- so it accounts for the speed-dependent understeer the kinematic law
+// ignores. Longitudinal control is identical in both modes.
+enum class SteeringMode
+{
+  GEOMETRIC,
+  MAP
+};
+
+// Speed fed into the MAP lateral-acceleration law and the steering lookup.
+// PLANNED (the reference behaviour) uses the path's target speed, making the
+// steering a pure feed-forward that still commands sensibly near standstill;
+// MEASURED uses the odometry speed, which is exact when tracking lags.
+enum class MapSpeedSource
+{
+  PLANNED,
+  MEASURED
+};
 
 struct ControllerConfig
 {
@@ -25,6 +49,17 @@ struct ControllerConfig
   // no reachable target). Separate from min_acceleration_mps2, which only
   // clamps in-path deceleration. Model the vehicle's real braking limit here.
   double brake_acceleration_mps2{-5.0};
+
+  // Lateral steering law. GEOMETRIC keeps the original fixed-lookahead pure
+  // pursuit; MAP requires a valid SteeringLookup passed to computeControl.
+  SteeringMode steering_mode{SteeringMode::GEOMETRIC};
+
+  // MAP adaptive lookahead: L_d = clamp(intercept + slope * v, min, max).
+  double map_lookahead_slope_s{0.3};
+  double map_lookahead_intercept_m{1.0};
+  double map_lookahead_min_m{1.5};
+  double map_lookahead_max_m{8.0};
+  MapSpeedSource map_speed_source{MapSpeedSource::PLANNED};
 };
 
 struct PathPoint
@@ -98,11 +133,22 @@ std::optional<std::size_t> findNearestWaypoint(
 std::optional<TargetPoint> selectTarget(
   const std::vector<PathPoint> & path, const EgoState & ego, double lookahead_m);
 
+// Planned longitudinal speed of a path point: vx_mps if it is finite and
+// positive, else speed, else 0. Shared by the command speed and the MAP law.
+double plannedSpeed(const PathPoint & point);
+
+// MAP adaptive lookahead distance for a planned speed, clamped to [min, max].
+double mapLookaheadDistance(const ControllerConfig & config, double planned_speed_mps);
+
+// `lut` is used only in MAP steering mode; GEOMETRIC ignores it. In MAP mode a
+// null or invalid lookup fails safe to braking.
 ControlDecision computeControl(
-  const ControllerInput & input, const ControllerConfig & config = ControllerConfig{});
+  const ControllerInput & input, const ControllerConfig & config = ControllerConfig{},
+  const SteeringLookup * lut = nullptr);
 
 DriveCommand computeCommand(
-  const ControllerInput & input, const ControllerConfig & config = ControllerConfig{});
+  const ControllerInput & input, const ControllerConfig & config = ControllerConfig{},
+  const SteeringLookup * lut = nullptr);
 
 }
 

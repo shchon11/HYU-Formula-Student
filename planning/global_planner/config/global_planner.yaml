@@ -66,6 +66,13 @@ planner_node:
     duplicate_point_tolerance: 0.001
     odom_timeout_sec: 0.5
     hold_last_valid_path: true
+    # Raceline smoothing: iteratively relax the centerline toward a
+    # minimum-curvature line, hard-clamped so every point keeps
+    # raceline_margin_m clearance to both boundary polylines (margin ~= car
+    # half-width + safety). 0 iterations = pure centerline (previous behavior).
+    raceline_smoothing_iterations: 400
+    raceline_margin_m: 1.2
+    raceline_alpha: 0.3
 
 wpnt_publisher:
   ros__parameters:

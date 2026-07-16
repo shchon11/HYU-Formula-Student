@@ -257,6 +257,20 @@ GraphSlamNode::GraphSlamNode()
   localization_mode_ = declare_parameter<bool>("localization_mode", localization_mode_);
   auto_localization_after_lap_ =
     declare_parameter<bool>("auto_localization_after_lap", auto_localization_after_lap_);
+  require_lap_seam_loop_closure_ = declare_parameter<bool>(
+    "require_lap_seam_loop_closure", require_lap_seam_loop_closure_);
+  lap_seam_landmark_radius_m_ = declare_parameter<double>(
+    "lap_seam_landmark_radius_m", lap_seam_landmark_radius_m_);
+  lap_seam_candidates_required_ = declare_parameter<int>(
+    "lap_seam_candidates_required", lap_seam_candidates_required_);
+  lap_finish_dwell_m_ = declare_parameter<double>("lap_finish_dwell_m", lap_finish_dwell_m_);
+  lap_return_min_travel_m_ = declare_parameter<double>(
+    "lap_return_min_travel_m", lap_return_min_travel_m_);
+  freeze_merge_stale_distance_m_ = declare_parameter<double>(
+    "freeze_merge_stale_distance_m", freeze_merge_stale_distance_m_);
+  loop_confirmation_required_candidates_on_lap_return_ = declare_parameter<int>(
+    "loop_confirmation_required_candidates_on_lap_return",
+    loop_confirmation_required_candidates_on_lap_return_);
   lap_return_radius_ = declare_parameter<double>("lap_return_radius", lap_return_radius_);
   lap_return_yaw_ = declare_parameter<double>("lap_return_yaw", lap_return_yaw_);
   localization_window_poses_ =
@@ -329,6 +343,18 @@ GraphSlamNode::GraphSlamNode()
     loop_confirmation_config_.median_residual_max_m,
     loop_confirmation_config_.max_residual_m);
   loop_confirmation_window_ = LoopConfirmationWindow(loop_confirmation_config_);
+  lap_seam_landmark_radius_m_ = std::max(1.0, lap_seam_landmark_radius_m_);
+  lap_seam_candidates_required_ = std::max(1, lap_seam_candidates_required_);
+  lap_finish_dwell_m_ = std::max(0.0, lap_finish_dwell_m_);
+  lap_return_min_travel_m_ = std::max(0.0, lap_return_min_travel_m_);
+  freeze_merge_stale_distance_m_ = std::max(0.0, freeze_merge_stale_distance_m_);
+  loop_confirmation_required_candidates_on_lap_return_ =
+    std::max(0, loop_confirmation_required_candidates_on_lap_return_);
+  lap_finish_gate_ = LapFinishGate(
+    LapFinishGateConfig{
+      require_lap_seam_loop_closure_,
+      static_cast<std::size_t>(lap_seam_candidates_required_),
+      lap_finish_dwell_m_});
   lap_origin_capture_distance_ = std::max(1.0, lap_origin_capture_distance_);
   lap_return_radius_ = std::max(0.5, lap_return_radius_);
   lap_return_yaw_ = std::max(0.05, lap_return_yaw_);
@@ -553,7 +579,13 @@ void GraphSlamNode::resetGraph()
   gnss_prior_suppressed_ = true;
   gnss_prior_suppress_until_sec_ = 0.0;
   map_converged_ = false;
-  loop_confirmation_window_.reset();
+  // Full reconstruction, not reset(): the lap-return relaxation may have
+  // lowered the candidate threshold, and a mapping restart must go back to
+  // the strict configured window.
+  loop_confirmation_window_ = LoopConfirmationWindow(loop_confirmation_config_);
+  loop_confirmation_relaxed_on_lap_return_ = false;
+  lap_finish_gate_.reset();
+  seam_loop_candidate_count_ = 0U;
   loop_confirmation_ready_for_optimize_ = false;
   loop_closure_optimize_cycles_ = 0;
   loop_candidate_count_ = 0U;
@@ -569,6 +601,7 @@ void GraphSlamNode::resetGraph()
   lifecycle_map_saved_ = false;
   lap_return_criteria_satisfied_ = false;
   traveled_distance_ = 0.0;
+  lap_origin_capture_traveled_m_ = 0.0;
   lap_origin_captured_ = false;
   lap_origin_ = g2o::SE2();
   last_optimization_time_sec_ = -1.0;
@@ -965,6 +998,7 @@ void GraphSlamNode::addKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & 
     if (!lap_origin_captured_ && traveled_distance_ >= lap_origin_capture_distance_) {
       lap_origin_ = vertex->estimate();
       lap_origin_captured_ = true;
+      lap_origin_capture_traveled_m_ = traveled_distance_;
       RCLCPP_INFO(
         get_logger(),
         "Lap origin captured on the racing line at x=%.2f y=%.2f (%.1f m in)",
@@ -1197,9 +1231,19 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
       const bool stale_loop_candidate =
         add_edges && loop_gap_distance_ > 0.0 &&
         traveled_distance_ - landmark->last_seen_traveled >= loop_gap_distance_;
-      if (stale_loop_candidate)
-      {
+      if (stale_loop_candidate) {
         const double residual_m = (landmark->vertex->estimate() - map_point).norm();
+        // Seam evidence: this candidate re-associates a landmark that sits at
+        // the lap origin, i.e. it is part of the loop that closes the LAP,
+        // not a mid-lap mini-loop (a peanut waist). The lap-finish gate can
+        // require this before freezing the map.
+        if (lap_origin_captured_ &&
+          residual_m <= loop_confirmation_config_.max_residual_m &&
+          (landmark->vertex->estimate() - lap_origin_.translation()).norm() <=
+          lap_seam_landmark_radius_m_)
+        {
+          ++seam_loop_candidate_count_;
+        }
         const auto decision = loop_confirmation_window_.observeCandidate(
           LoopCandidate{traveled_distance_, stamp.seconds(), residual_m});
         ++loop_candidate_count_;
@@ -1816,11 +1860,17 @@ bool GraphSlamNode::shouldUpdateLandmarkDeletion(const rclcpp::Time & stamp, boo
 
 std::size_t GraphSlamNode::mergeCloseLandmarks()
 {
-  if (localization_mode_ || landmark_merge_distance_ <= 0.0 || landmarks_.size() < 2U) {
+  return mergeCloseLandmarks(landmark_merge_distance_, 0.0);
+}
+
+std::size_t GraphSlamNode::mergeCloseLandmarks(
+  const double merge_distance, const double min_last_seen_gap_m)
+{
+  if (localization_mode_ || merge_distance <= 0.0 || landmarks_.size() < 2U) {
     return 0U;
   }
 
-  const double merge_distance_sq = landmark_merge_distance_ * landmark_merge_distance_;
+  const double merge_distance_sq = merge_distance * merge_distance;
   std::size_t merged = 0U;
 
   for (std::size_t i = 0; i < landmarks_.size(); ++i) {
@@ -1836,9 +1886,26 @@ std::size_t GraphSlamNode::mergeCloseLandmarks()
         ++j;
         continue;
       }
+      if (min_last_seen_gap_m > 0.0 &&
+        std::abs(landmarks_[i].last_seen_traveled - landmarks_[j].last_seen_traveled) <
+        min_last_seen_gap_m)
+      {
+        // Both members were observed recently: two real adjacent cones, not a
+        // drift-era duplicate. Only the plain (small-radius) merge may touch
+        // such pairs.
+        ++j;
+        continue;
+      }
 
-      // Keep the landmark with more observations; it carries more edges.
-      if (landmarks_[j].observations > landmarks_[i].observations) {
+      if (min_last_seen_gap_m > 0.0) {
+        // Drift duplicate: keep the RECENTLY seen member — its position
+        // reflects the loop-closure-corrected pose, the stale twin's carries
+        // the drift error that created the duplicate in the first place.
+        if (landmarks_[j].last_seen_traveled > landmarks_[i].last_seen_traveled) {
+          std::swap(landmarks_[i], landmarks_[j]);
+        }
+      } else if (landmarks_[j].observations > landmarks_[i].observations) {
+        // Keep the landmark with more observations; it carries more edges.
         std::swap(landmarks_[i], landmarks_[j]);
       }
       LandmarkRecord & kept = landmarks_[i];
@@ -2516,49 +2583,111 @@ void GraphSlamNode::handleStartMapping(
 
 void GraphSlamNode::maybeFinishMappingLap(const g2o::SE2 & current_estimate)
 {
-  if (!auto_localization_after_lap_ || !lap_origin_captured_ || landmarks_.empty())
-  {
+  if (!auto_localization_after_lap_ || !lap_origin_captured_ || landmarks_.empty()) {
     return;
   }
 
-  const double return_distance =
-    (current_estimate.translation() - lap_origin_.translation()).norm();
-  const double yaw_error = std::abs(
-    normalizeAngle(
-      current_estimate.rotation().angle() - lap_origin_.rotation().angle()));
-  RCLCPP_DEBUG_THROTTLE(
-    get_logger(),
-    *get_clock(),
-    10000,
-    "Lap check: return=%.2f m (radius %.1f), yaw=%.2f rad",
-    return_distance, lap_return_radius_, yaw_error);
-  if (return_distance > lap_return_radius_ || yaw_error > lap_return_yaw_) {
+  // The origin pose is captured while the car is standing on it, so the
+  // radius/yaw check is trivially satisfied in that same pose update. Only a
+  // return after real travel counts as a lap.
+  if (traveled_distance_ - lap_origin_capture_traveled_m_ < lap_return_min_travel_m_) {
     return;
   }
-  lap_return_criteria_satisfied_ = true;
 
-  if (!map_converged_) {
-    RCLCPP_INFO_THROTTLE(
+  // Arming requires the vehicle to be INSIDE the origin gates right now; once
+  // armed, the finish is latched and the dwell below proceeds even as the car
+  // drives back out of the radius.
+  if (!lap_finish_gate_.armed()) {
+    const double return_distance =
+      (current_estimate.translation() - lap_origin_.translation()).norm();
+    const double yaw_error = std::abs(
+      normalizeAngle(
+        current_estimate.rotation().angle() - lap_origin_.rotation().angle()));
+    RCLCPP_DEBUG_THROTTLE(
       get_logger(),
       *get_clock(),
-      5000,
-      "Mapping lap return gated by loop confirmation: mapping_stop_reason=%s "
-      "loop_candidates=%zu loop_confirmed=%zu loop_rejected=%zu last_loop_reason=%s",
-      toString(classifyMappingStopState()),
-      loop_candidate_count_,
-      loop_confirmed_count_,
-      loop_rejected_count_,
-      toString(last_loop_confirmation_reason_));
-    publishLifecycleDiagnostics();
-    return;
+      10000,
+      "Lap check: return=%.2f m (radius %.1f), yaw=%.2f rad",
+      return_distance, lap_return_radius_, yaw_error);
+    if (return_distance > lap_return_radius_ || yaw_error > lap_return_yaw_) {
+      return;
+    }
+    if (!lap_return_criteria_satisfied_) {
+      lap_return_criteria_satisfied_ = true;
+      // The verified return is independent geometric evidence of a loop:
+      // optionally require fewer co-located candidates to confirm one. The
+      // residual gates are never relaxed.
+      if (loop_confirmation_required_candidates_on_lap_return_ > 0 &&
+        !loop_confirmation_relaxed_on_lap_return_)
+      {
+        loop_confirmation_relaxed_on_lap_return_ = true;
+        loop_confirmation_window_.setRequiredCandidates(
+          static_cast<std::size_t>(loop_confirmation_required_candidates_on_lap_return_));
+        RCLCPP_INFO(
+          get_logger(),
+          "Lap return corroborates a loop closure: confirmation threshold "
+          "relaxed %zu -> %d candidate(s)",
+          loop_confirmation_config_.required_candidates,
+          loop_confirmation_required_candidates_on_lap_return_);
+      }
+    }
   }
 
-  RCLCPP_INFO(
-    get_logger(),
-    "Mapping lap complete: returned to within %.2f m / %.2f rad of the start "
-    "with a converged map",
-    return_distance, yaw_error);
-  enterLocalizationMode("mapping lap completed");
+  const bool was_armed = lap_finish_gate_.armed();
+  const LapFinishState state = lap_finish_gate_.evaluate(
+    lap_return_criteria_satisfied_, map_converged_,
+    seam_loop_candidate_count_, traveled_distance_);
+  switch (state) {
+    case LapFinishState::WaitingReturn:
+      return;
+    case LapFinishState::GatedByConvergence:
+      RCLCPP_INFO_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        5000,
+        "Mapping lap return gated by loop confirmation: mapping_stop_reason=%s "
+        "loop_candidates=%zu loop_confirmed=%zu loop_rejected=%zu last_loop_reason=%s",
+        toString(classifyMappingStopState()),
+        loop_candidate_count_,
+        loop_confirmed_count_,
+        loop_rejected_count_,
+        toString(last_loop_confirmation_reason_));
+      publishLifecycleDiagnostics();
+      return;
+    case LapFinishState::GatedBySeam:
+      // Converged on the credentials of SOME loop (possibly a mid-lap
+      // mini-loop); the freeze waits for the loop that closes the lap.
+      RCLCPP_INFO_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        5000,
+        "Mapping lap return gated by seam closure: seam_candidates=%zu "
+        "required=%d (loop_candidates=%zu loop_confirmed=%zu)",
+        seam_loop_candidate_count_,
+        lap_seam_candidates_required_,
+        loop_candidate_count_,
+        loop_confirmed_count_);
+      publishLifecycleDiagnostics();
+      return;
+    case LapFinishState::Dwelling:
+      if (!was_armed) {
+        RCLCPP_INFO(
+          get_logger(),
+          "Mapping lap finish armed (seam_candidates=%zu); dwelling %.1f m to "
+          "accumulate seam constraints before freezing",
+          seam_loop_candidate_count_,
+          lap_finish_dwell_m_);
+      }
+      return;
+    case LapFinishState::Finished:
+      RCLCPP_INFO(
+        get_logger(),
+        "Mapping lap complete: converged map, seam_candidates=%zu, dwell %.1f m",
+        seam_loop_candidate_count_,
+        lap_finish_dwell_m_);
+      enterLocalizationMode("mapping lap completed");
+      return;
+  }
 }
 
 void GraphSlamNode::enterLocalizationMode(const std::string & reason)
@@ -2570,7 +2699,17 @@ void GraphSlamNode::enterLocalizationMode(const std::string & reason)
   // overlapping/doubled cones from the map that is about to become the fixed
   // reference. Both are gated off by localization_mode_, so they must run now.
   optimizeGraph();
-  const std::size_t merged_on_freeze = mergeCloseLandmarks();
+  // Drift-era duplicates first: pairs the lap-closing correction pulled to
+  // 1-2 m apart — above the everyday merge radius, and distance alone cannot
+  // separate them from REAL adjacent cones (tight corners pack same-color
+  // cones down to ~1 m). The recency gate can: the stale twin stopped being
+  // observed the moment association missed under drift.
+  std::size_t merged_on_freeze = 0U;
+  if (freeze_merge_stale_distance_m_ > 0.0) {
+    merged_on_freeze +=
+      mergeCloseLandmarks(freeze_merge_stale_distance_m_, loop_gap_distance_);
+  }
+  merged_on_freeze += mergeCloseLandmarks();
   if (merged_on_freeze > 0U) {
     RCLCPP_INFO(
       get_logger(),

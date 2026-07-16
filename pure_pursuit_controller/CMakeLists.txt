@@ -19,6 +19,7 @@ find_package(visualization_msgs REQUIRED)
 
 add_library(pure_pursuit_controller_core
   src/controller.cpp
+  src/steering_lookup.cpp
 )
 target_include_directories(pure_pursuit_controller_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -56,6 +57,11 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_controller test/test_controller.cpp)
   target_link_libraries(test_controller pure_pursuit_controller_core)
+
+  ament_add_gtest(test_steering_lookup test/test_steering_lookup.cpp)
+  target_link_libraries(test_steering_lookup pure_pursuit_controller_core)
+  target_compile_definitions(test_steering_lookup PRIVATE
+    "SIM_LINEAR_TABLE_PATH=\"${CMAKE_CURRENT_SOURCE_DIR}/test/data/sim_linear_lookup_table.csv\"")
 endif()
 
 ament_export_include_directories(include)

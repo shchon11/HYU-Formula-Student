@@ -131,6 +131,11 @@ if(BUILD_TESTING)
   target_include_directories(mapping_stop_classifier_test PRIVATE
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
 
+  ament_add_gtest(lap_finish_gate_test
+    test/lap_finish_gate_test.cpp)
+  target_include_directories(lap_finish_gate_test PRIVATE
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
+
   ament_lint_auto_find_test_dependencies()
 endif()
 

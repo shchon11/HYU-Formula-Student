@@ -98,7 +98,7 @@ double turnAngle(
 }
 
 bool headingAwareGraphOrder(
-  const std::vector<PlannerPoint> & input, const PlannerPoint & ego,
+  const std::vector<PlannerPoint> & input, std::size_t seed_index,
   double max_gap, std::vector<PlannerPoint> & ordered, std::string & reason)
 {
   ordered.clear();
@@ -108,15 +108,7 @@ bool headingAwareGraphOrder(
   }
 
   std::vector<bool> used(input.size(), false);
-  std::size_t current = 0U;
-  double best_start_distance = std::numeric_limits<double>::infinity();
-  for (std::size_t i = 0; i < input.size(); ++i) {
-    const double candidate_distance = distance(input[i], ego);
-    if (candidate_distance < best_start_distance) {
-      best_start_distance = candidate_distance;
-      current = i;
-    }
-  }
+  std::size_t current = std::min(seed_index, input.size() - 1U);
 
   ordered.reserve(input.size());
   used[current] = true;
@@ -211,31 +203,83 @@ void reinsertTailStragglers(std::vector<PlannerPoint> & ordered, double max_gap)
   }
 }
 
-bool orderBoundary(
-  const std::vector<PlannerPoint> & input, const PlannerPoint & ego,
-  double max_gap, std::vector<PlannerPoint> & ordered, std::string & reason)
+bool orderAttempt(
+  const std::vector<PlannerPoint> & input, std::size_t seed_index, double max_gap,
+  bool consider_input_order, std::vector<PlannerPoint> & ordered, std::string & reason)
 {
-  if (!headingAwareGraphOrder(input, ego, max_gap, ordered, reason)) {
+  if (!headingAwareGraphOrder(input, seed_index, max_gap, ordered, reason)) {
     return false;
   }
-  auto best_score = scoreBoundaryOrder(ordered);
-  const auto input_score = scoreBoundaryOrder(input);
-  if (input_score.max_gap <= max_gap && betterBoundaryOrder(input_score, best_score)) {
-    ordered = input;
-    best_score = input_score;
+  const auto greedy_score = scoreBoundaryOrder(ordered);
+  if (consider_input_order) {
+    const auto input_score = scoreBoundaryOrder(input);
+    if (input_score.max_gap <= max_gap && betterBoundaryOrder(input_score, greedy_score)) {
+      ordered = input;
+    }
   }
   reinsertTailStragglers(ordered, max_gap);
-  best_score = scoreBoundaryOrder(ordered);
+  const auto final_score = scoreBoundaryOrder(ordered);
 
-  if (best_score.self_intersections > 0U) {
+  if (final_score.self_intersections > 0U) {
     reason = "self_intersection";
     return false;
   }
-  if (best_score.max_gap > max_gap || best_score.loop_gap > max_gap) {
+  if (final_score.max_gap > max_gap || final_score.loop_gap > max_gap) {
     reason = "branch_jump";
     return false;
   }
   return true;
+}
+
+// The greedy walk is seed-sensitive: seeded at an awkward track phase it can
+// strand cones behind a gap (branch_jump) or fold the seam even though the
+// map itself is fine. Seeding only at the nearest-to-ego cone therefore made
+// the global path's very existence depend on where the car happened to be
+// when the map froze (observed live: 5 Hz rebuilds flapping between valid and
+// branch_jump on an unchanged map). Bounded retries from deterministic seeds
+// spread around the boundary; a genuinely broken map still fails from every
+// seed, so the fail-closed contract and reported reason are unchanged.
+constexpr std::size_t kMaxOrderingSeedAttempts = 24U;
+
+bool orderBoundary(
+  const std::vector<PlannerPoint> & input, const PlannerPoint & ego,
+  double max_gap, std::vector<PlannerPoint> & ordered, std::string & reason)
+{
+  if (input.empty()) {
+    reason = "no boundary points";
+    return false;
+  }
+
+  std::size_t ego_seed = 0U;
+  double best_start_distance = std::numeric_limits<double>::infinity();
+  for (std::size_t i = 0; i < input.size(); ++i) {
+    const double candidate_distance = distance(input[i], ego);
+    if (candidate_distance < best_start_distance) {
+      best_start_distance = candidate_distance;
+      ego_seed = i;
+    }
+  }
+
+  std::string first_reason;
+  if (orderAttempt(input, ego_seed, max_gap, true, ordered, first_reason)) {
+    return true;
+  }
+
+  const std::size_t attempts = std::min(kMaxOrderingSeedAttempts, input.size());
+  for (std::size_t i = 0; i < attempts; ++i) {
+    const std::size_t seed = (i * input.size()) / attempts;
+    if (seed == ego_seed) {
+      continue;
+    }
+    std::string retry_reason;
+    if (orderAttempt(input, seed, max_gap, false, ordered, retry_reason)) {
+      return true;
+    }
+  }
+
+  ordered.clear();
+  reason = first_reason;  // diagnose the ego-seeded attempt, as before
+  return false;
 }
 
 bool alignBoundaryDirections(std::vector<PlannerPoint> & blue, std::vector<PlannerPoint> & yellow)

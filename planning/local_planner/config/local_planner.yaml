@@ -41,3 +41,9 @@ local_planner_node:
     use_unknown_cones: true
     unknown_absorb_lateral_m: 0.75
     unknown_geom_deadband_m: 0.75
+    # Fold the orange/big-orange start-finish cones into the boundaries through
+    # the same conservative classification. Without this a lap-close frame that
+    # sees only the orange gate has zero boundary cones -> invalid -> brake at
+    # the finish straight. Trackdrive/autocross only; the acceleration overlay
+    # keeps its own straight-corridor fold-in and skidpad stays director-fed.
+    use_orange_cones: true

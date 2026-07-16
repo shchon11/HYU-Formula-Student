@@ -101,6 +101,20 @@ public:
     candidates_.clear();
   }
 
+  /// Relax (or tighten) the confirmation threshold at runtime. Used when an
+  /// independent geometric signal — the vehicle re-entering the lap origin —
+  /// already corroborates a loop, so fewer co-located candidates are needed.
+  /// Values below 1 are clamped to 1; residual gates are never relaxed.
+  void setRequiredCandidates(std::size_t required)
+  {
+    config_.required_candidates = std::max<std::size_t>(1U, required);
+  }
+
+  std::size_t requiredCandidates() const
+  {
+    return config_.required_candidates;
+  }
+
 private:
   LoopConfirmationDecision decision(LoopConfirmationReason reason) const
   {
@@ -135,6 +149,106 @@ private:
   LoopConfirmationConfig config_;
   std::vector<LoopCandidate> candidates_;
 };
+
+/// Gate between "the mapping lap looks done" and actually freezing the map.
+///
+/// map_converged alone is topology-dependent evidence: any confirmed loop
+/// closure sets it, and on tracks where two sections pass within sensor range
+/// (a peanut waist) that loop can be a mid-lap mini-loop that says nothing
+/// about full-lap drift or the unmapped remainder. This gate optionally
+/// requires SEAM evidence — loop candidates whose re-associated landmark sits
+/// near the lap origin, i.e. the loop that actually closes the lap — and then
+/// dwells a bounded distance so the seam accumulates constraints before the
+/// map freezes. All checks are latched once armed: driving back out of the
+/// origin radius during the dwell must not un-arm the finish.
+enum class LapFinishState
+{
+  WaitingReturn,
+  GatedByConvergence,
+  GatedBySeam,
+  Dwelling,
+  Finished
+};
+
+struct LapFinishGateConfig
+{
+  bool require_seam_loop_closure{false};
+  std::size_t seam_candidates_required{2U};
+  double finish_dwell_m{0.0};
+};
+
+class LapFinishGate
+{
+public:
+  explicit LapFinishGate(LapFinishGateConfig config = {})
+  : config_(config)
+  {
+  }
+
+  LapFinishState evaluate(
+    bool return_criteria_met, bool map_converged, std::size_t seam_candidates,
+    double traveled_m)
+  {
+    if (finished_) {
+      return LapFinishState::Finished;
+    }
+    if (!armed_) {
+      if (!return_criteria_met) {
+        return LapFinishState::WaitingReturn;
+      }
+      if (!map_converged) {
+        return LapFinishState::GatedByConvergence;
+      }
+      if (config_.require_seam_loop_closure &&
+        seam_candidates < config_.seam_candidates_required)
+      {
+        return LapFinishState::GatedBySeam;
+      }
+      armed_ = true;
+      armed_traveled_m_ = traveled_m;
+    }
+    if (traveled_m - armed_traveled_m_ >= config_.finish_dwell_m) {
+      finished_ = true;
+      return LapFinishState::Finished;
+    }
+    return LapFinishState::Dwelling;
+  }
+
+  bool armed() const
+  {
+    return armed_;
+  }
+
+  void reset()
+  {
+    armed_ = false;
+    finished_ = false;
+    armed_traveled_m_ = 0.0;
+  }
+
+private:
+  LapFinishGateConfig config_;
+  bool armed_{false};
+  bool finished_{false};
+  double armed_traveled_m_{0.0};
+};
+
+inline const char * toString(LapFinishState state)
+{
+  switch (state) {
+    case LapFinishState::WaitingReturn:
+      return "waiting_return";
+    case LapFinishState::GatedByConvergence:
+      return "gated_by_convergence";
+    case LapFinishState::GatedBySeam:
+      return "gated_by_seam";
+    case LapFinishState::Dwelling:
+      return "dwelling";
+    case LapFinishState::Finished:
+      return "finished";
+  }
+  return "unknown";
+}
 
 enum class MappingStopReason
 {

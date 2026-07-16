@@ -160,6 +160,14 @@ private:
   bool removeLandmarkAt(std::size_t landmark_index);
   bool shouldUpdateLandmarkDeletion(const rclcpp::Time & stamp, bool force_update);
   std::size_t mergeCloseLandmarks();
+  // Merge same-color landmark pairs within merge_distance. With
+  // min_last_seen_gap_m > 0 only pairs whose last observations are separated
+  // by at least that much TRAVEL merge (drift-era duplicates: association
+  // missed under drift, so the stale twin stopped being observed when its
+  // re-mapped sibling took over), and the recently-seen member's vertex is
+  // kept. Real adjacent cones are both observed continuously and never meet
+  // the gap, so a radius larger than the cone spacing stays safe.
+  std::size_t mergeCloseLandmarks(double merge_distance, double min_last_seen_gap_m);
 
   void recordRawOdometry(double stamp_sec, const g2o::SE2 & raw_odom);
   g2o::SE2 rawOdomAt(double stamp_sec) const;
@@ -406,6 +414,33 @@ private:
   double last_live_odom_publish_stamp_sec_;
   bool lifecycle_map_saved_;
   bool lap_return_criteria_satisfied_;
+
+  // Lap-finish trust gate: map_converged_ alone accepts ANY confirmed loop
+  // (on a waisted track that can be a mid-lap mini-loop); these optionally
+  // require seam evidence — candidates re-associating landmarks near the lap
+  // origin — plus a bounded dwell so the seam accumulates constraints before
+  // the map freezes. See LapFinishGate.
+  bool require_lap_seam_loop_closure_{false};
+  double lap_seam_landmark_radius_m_{10.0};
+  int lap_seam_candidates_required_{2};
+  double lap_finish_dwell_m_{0.0};
+  LapFinishGate lap_finish_gate_{};
+  std::size_t seam_loop_candidate_count_{0U};
+  // Once the vehicle has verifiably returned to the lap origin, that geometry
+  // independently corroborates a loop: optionally relax the confirmation
+  // window's candidate threshold (never its residual gates). 0 disables.
+  int loop_confirmation_required_candidates_on_lap_return_{0};
+  bool loop_confirmation_relaxed_on_lap_return_{false};
+  // The origin pose is captured while the car is standing on it, so the
+  // return check is trivially satisfied in that same update; only travel
+  // beyond this floor after capture counts as a LAP return. Guards both the
+  // relaxation trigger and the finish gate.
+  double lap_return_min_travel_m_{50.0};
+  double lap_origin_capture_traveled_m_{0.0};
+  // Freeze-time drift-duplicate sweep: same-color pairs within this radius
+  // whose last observations are separated by >= loop_gap_distance of travel
+  // merge into the recently-seen member before the map freezes. 0 disables.
+  double freeze_merge_stale_distance_m_{0.0};
 
   g2o::SE2 latest_estimate_;
   bool has_latest_pose_;

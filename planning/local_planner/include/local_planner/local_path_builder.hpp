@@ -71,6 +71,14 @@ struct PlannerConfig
   // unknown cone: split by ego-frame side. |y| below this dead-band is too
   // central to call, so the cone is dropped.
   double unknown_geom_deadband_m{0.75};
+  // Let orange/big-orange cones inform the boundaries outside the
+  // straight-corridor mission (which has its own fold-in). They take the same
+  // conservative route as unknown cones: absorbed onto a labelled boundary
+  // line when unambiguous, else split by ego side outside the dead-band. This
+  // is what keeps a path alive at the start/finish straight after a lap, where
+  // the ROI can hold nothing but the orange gate. Off by default: enable per
+  // mission via config.
+  bool use_orange_cones{false};
   // Straight-corridor mission mode (acceleration). Replaces the normal
   // two-sided/one-sided logic with straightCorridorPath: a line fitted through
   // the cones behind AND ahead of the ego, driven straight and bounded a little

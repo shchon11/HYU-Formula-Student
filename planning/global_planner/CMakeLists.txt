@@ -106,7 +106,8 @@ if(BUILD_TESTING)
       map_geometry_fail_closed_test
       bad_map_duplicate_test
       invalid_width_test
-      branch_jump_test)
+      branch_jump_test
+      raceline_smoothing_test)
     ament_add_gtest(${test_target} test/${test_target}.cpp)
     target_link_libraries(${test_target} global_planner_slam_geometry)
     target_compile_definitions(${test_target} PRIVATE

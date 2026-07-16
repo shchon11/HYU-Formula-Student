@@ -3,6 +3,7 @@
 # (L^2/2R), so shorten it, and cap speed to match the slow skidpad path.
 pure_pursuit_controller_node:
   ros__parameters:
+    steering_mode: geometric
     wheelbase_m: 1.58
     lookahead_m: 3.0
     max_steering_rad: 0.52

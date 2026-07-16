@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -16,6 +18,25 @@
 
 namespace pure_pursuit_controller
 {
+namespace
+{
+
+SteeringMode parseSteeringMode(const std::string & value)
+{
+  return value == "map" ? SteeringMode::MAP : SteeringMode::GEOMETRIC;
+}
+
+MapSpeedSource parseMapSpeedSource(const std::string & value)
+{
+  return value == "measured" ? MapSpeedSource::MEASURED : MapSpeedSource::PLANNED;
+}
+
+TireModel parseTireModel(const std::string & value)
+{
+  return value == "linear" ? TireModel::LINEAR : TireModel::PACEJKA;
+}
+
+}  // namespace
 
 class PurePursuitControllerNode final : public rclcpp::Node
 {
@@ -39,6 +60,33 @@ public:
       declare_parameter("max_acceleration_mps2", config_.max_acceleration_mps2);
     config_.brake_acceleration_mps2 =
       declare_parameter("brake_acceleration_mps2", config_.brake_acceleration_mps2);
+
+    // Lateral steering law and (MAP-only) adaptive lookahead / model+tyre table.
+    const std::string steering_mode = declare_parameter<std::string>("steering_mode", "geometric");
+    config_.steering_mode = parseSteeringMode(steering_mode);
+    config_.map_lookahead_slope_s =
+      declare_parameter("map_lookahead_slope_s", config_.map_lookahead_slope_s);
+    config_.map_lookahead_intercept_m =
+      declare_parameter("map_lookahead_intercept_m", config_.map_lookahead_intercept_m);
+    config_.map_lookahead_min_m =
+      declare_parameter("map_lookahead_min_m", config_.map_lookahead_min_m);
+    config_.map_lookahead_max_m =
+      declare_parameter("map_lookahead_max_m", config_.map_lookahead_max_m);
+    config_.map_speed_source =
+      parseMapSpeedSource(declare_parameter<std::string>("map_speed_source", "planned"));
+
+    if (config_.steering_mode == SteeringMode::MAP) {
+      lut_ = buildLookupTable();
+      if (lut_.valid()) {
+        RCLCPP_INFO(
+          get_logger(), "MAP steering: built %zu x %zu steering lookup table.",
+          lut_.steers().size(), lut_.velocities().size());
+      } else {
+        RCLCPP_ERROR(
+          get_logger(),
+          "MAP steering selected but the lookup table is invalid; the controller will brake.");
+      }
+    }
 
     const auto qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable().durability_volatile();
     command_publisher_ =
@@ -131,7 +179,7 @@ private:
       input_.odom_age_sec = ageSeconds(now, odom_receive_time_);
     }
 
-    const auto control = computeControl(input_, config_);
+    const auto control = computeControl(input_, config_, &lut_);
     ackermann_msgs::msg::AckermannDriveStamped command;
     command.header.stamp = now;
     command.header.frame_id = "map";
@@ -170,7 +218,61 @@ private:
     lookahead_marker_publisher_->publish(marker);
   }
 
+  // Declares the single-track model + tyre + grid parameters and integrates the
+  // steady-state steering table. Defaults describe the EUFS `eufs` car
+  // (robots/eufs/configDry.yaml) with the Pacejka shape factor C given as its
+  // magnitude (the plant config ships C = -1.38 under an inverted slip sign; the
+  // table stores |a_lat|, so only the magnitude matters).
+  SteeringLookup buildLookupTable()
+  {
+    VehicleModel model;
+    model.mass_kg = declare_parameter("vehicle_mass_kg", model.mass_kg);
+    model.yaw_inertia_kg_m2 = declare_parameter("yaw_inertia_kg_m2", model.yaw_inertia_kg_m2);
+    model.cg_to_front_m = declare_parameter("cg_to_front_m", model.cg_to_front_m);
+    model.cg_to_rear_m = declare_parameter("cg_to_rear_m", model.cg_to_rear_m);
+    model.front_slip_lever_arm_m =
+      declare_parameter("front_slip_lever_arm_m", model.front_slip_lever_arm_m);
+    model.cg_height_m = declare_parameter("cg_height_m", model.cg_height_m);
+    model.gravity_mps2 = declare_parameter("gravity_mps2", model.gravity_mps2);
+    model.aero_downforce_coeff =
+      declare_parameter("aero_downforce_coeff", model.aero_downforce_coeff);
+    model.tire_model = parseTireModel(declare_parameter<std::string>("tire_model", "pacejka"));
+    model.tire_mu = declare_parameter("tire_mu", model.tire_mu);
+    model.cornering_stiffness_front =
+      declare_parameter("cornering_stiffness_front", model.cornering_stiffness_front);
+    model.cornering_stiffness_rear =
+      declare_parameter("cornering_stiffness_rear", model.cornering_stiffness_rear);
+    model.pacejka_mu = declare_parameter("pacejka_mu", model.pacejka_mu);
+    model.pacejka_b_front = declare_parameter("pacejka_b_front", 12.56);
+    model.pacejka_c_front = declare_parameter("pacejka_c_front", 1.38);
+    model.pacejka_d_front = declare_parameter("pacejka_d_front", 1.60);
+    model.pacejka_e_front = declare_parameter("pacejka_e_front", -0.58);
+    model.pacejka_b_rear = declare_parameter("pacejka_b_rear", model.pacejka_b_front);
+    model.pacejka_c_rear = declare_parameter("pacejka_c_rear", model.pacejka_c_front);
+    model.pacejka_d_rear = declare_parameter("pacejka_d_rear", model.pacejka_d_front);
+    model.pacejka_e_rear = declare_parameter("pacejka_e_rear", model.pacejka_e_front);
+
+    LutGrid grid;
+    grid.steer_fine_end_rad =
+      declare_parameter("lut_steer_fine_end_rad", grid.steer_fine_end_rad);
+    grid.steer_max_rad = declare_parameter("lut_steer_max_rad", config_.max_steering_rad);
+    grid.n_steer_fine = static_cast<std::size_t>(
+      declare_parameter<int>("lut_n_steer_fine", static_cast<int>(grid.n_steer_fine)));
+    grid.n_steer_coarse = static_cast<std::size_t>(
+      declare_parameter<int>("lut_n_steer_coarse", static_cast<int>(grid.n_steer_coarse)));
+    grid.vel_min_mps = declare_parameter("lut_vel_min_mps", grid.vel_min_mps);
+    grid.vel_max_mps =
+      declare_parameter("lut_vel_max_mps", std::max(config_.max_speed_mps, 5.0));
+    grid.n_vel =
+      static_cast<std::size_t>(declare_parameter<int>("lut_n_vel", static_cast<int>(grid.n_vel)));
+    grid.sim_dt_s = declare_parameter("lut_sim_dt_s", grid.sim_dt_s);
+    grid.sim_duration_s = declare_parameter("lut_sim_duration_s", grid.sim_duration_s);
+
+    return buildSteeringLookup(model, grid);
+  }
+
   ControllerConfig config_;
+  SteeringLookup lut_;
   ControllerInput input_;
   // Assigned from get_clock()->now() before use; ages are only computed once the
   // matching *_received flag is set, so the default clock type is never mixed in.

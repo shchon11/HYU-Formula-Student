@@ -267,5 +267,108 @@ TEST(PurePursuitController, NoForwardTargetCommandsBrake)
   expectExactBrake(computeCommand(zero_target));
 }
 
+// --- MAP (Model- and Acceleration-based Pursuit) steering mode ---
+
+ControllerConfig mapConfig()
+{
+  ControllerConfig config;
+  config.steering_mode = SteeringMode::MAP;
+  config.map_lookahead_slope_s = 0.3;
+  config.map_lookahead_intercept_m = 1.0;
+  config.map_lookahead_min_m = 1.5;
+  config.map_lookahead_max_m = 8.0;
+  config.max_speed_mps = 20.0;  // keep planned speeds from clamping in these tests
+  return config;
+}
+
+SteeringLookup mapTestTable()
+{
+  VehicleModel model;  // EUFS geometry/mass defaults; fill the Pacejka tyre.
+  model.tire_model = TireModel::PACEJKA;
+  model.pacejka_mu = 1.0;
+  model.pacejka_b_front = model.pacejka_b_rear = 12.56;
+  model.pacejka_c_front = model.pacejka_c_rear = 1.38;
+  model.pacejka_d_front = model.pacejka_d_rear = 1.60;
+  model.pacejka_e_front = model.pacejka_e_rear = -0.58;
+  LutGrid grid;
+  grid.steer_max_rad = 0.52;
+  grid.vel_min_mps = 0.5;
+  grid.vel_max_mps = 20.0;
+  grid.n_vel = 40;
+  return buildSteeringLookup(model, grid);
+}
+
+TEST(MapController, NullOrInvalidLookupBrakes)
+{
+  const auto config = mapConfig();
+  auto input = readyInput(straightPath(5.0, 5.0));
+  expectExactBrake(computeCommand(input, config, nullptr));
+
+  const SteeringLookup empty;
+  expectExactBrake(computeCommand(input, config, &empty));
+}
+
+TEST(MapController, StraightPathNearZeroSteerAndTracksSpeed)
+{
+  const auto table = mapTestTable();
+  ASSERT_TRUE(table.valid());
+  const auto command = computeCommand(readyInput(straightPath(5.0, 5.0)), mapConfig(), &table);
+  EXPECT_NEAR(command.steering_angle_rad, 0.0, 1.0e-6);
+  EXPECT_GT(command.speed_mps, 0.0);
+}
+
+TEST(MapController, LeftAndRightTargetsProduceCorrectSteerSign)
+{
+  const auto table = mapTestTable();
+  ASSERT_TRUE(table.valid());
+  const auto config = mapConfig();
+
+  const std::vector<PathPoint> left_path{
+    PathPoint{0.0, 0.0, 5.0, 5.0},
+    PathPoint{2.0, 1.0, 5.0, 5.0},
+    PathPoint{4.0, 2.0, 5.0, 5.0},
+    PathPoint{6.0, 3.0, 5.0, 5.0},
+  };
+  const std::vector<PathPoint> right_path{
+    PathPoint{0.0, 0.0, 5.0, 5.0},
+    PathPoint{2.0, -1.0, 5.0, 5.0},
+    PathPoint{4.0, -2.0, 5.0, 5.0},
+    PathPoint{6.0, -3.0, 5.0, 5.0},
+  };
+  EXPECT_GT(computeCommand(readyInput(left_path), config, &table).steering_angle_rad, 0.0);
+  EXPECT_LT(computeCommand(readyInput(right_path), config, &table).steering_angle_rad, 0.0);
+}
+
+TEST(MapController, AdaptiveLookaheadClampsToBand)
+{
+  const auto config = mapConfig();  // slope 0.3, intercept 1.0, band [1.5, 8.0]
+  EXPECT_NEAR(mapLookaheadDistance(config, 0.0), 1.5, 1.0e-12);    // 1.0 -> clamped up to min
+  EXPECT_NEAR(mapLookaheadDistance(config, 10.0), 4.0, 1.0e-12);   // 1.0 + 3.0 within band
+  EXPECT_NEAR(mapLookaheadDistance(config, 100.0), 8.0, 1.0e-12);  // clamped down to max
+}
+
+TEST(MapController, PlannedSpeedPrefersVxThenSpeed)
+{
+  EXPECT_DOUBLE_EQ(plannedSpeed(PathPoint{0.0, 0.0, 3.0, 5.0}), 3.0);
+  EXPECT_DOUBLE_EQ(plannedSpeed(PathPoint{0.0, 0.0, -1.0, 5.0}), 5.0);
+  EXPECT_DOUBLE_EQ(plannedSpeed(PathPoint{0.0, 0.0, 0.0, 0.0}), 0.0);
+}
+
+TEST(MapController, InvalidMapBandBrakes)
+{
+  const auto table = mapTestTable();
+  auto config = mapConfig();
+  config.map_lookahead_max_m = 1.0;  // below min -> invalid MAP config
+  expectExactBrake(computeCommand(readyInput(straightPath(5.0, 5.0)), config, &table));
+}
+
+TEST(MapController, StopRequestStillBrakesInMapMode)
+{
+  const auto table = mapTestTable();
+  auto stopped = readyInput(straightPath(5.0, 5.0));
+  stopped.stop_requested = true;
+  expectExactBrake(computeCommand(stopped, mapConfig(), &table));
+}
+
 }
 }

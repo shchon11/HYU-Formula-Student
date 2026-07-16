@@ -61,8 +61,35 @@ install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+
+  # Deterministic synthetic-scenario fixtures vendored from ksae_local
+  # (test/test_utils + test/vendor). Test-only; never installed.
+  add_library(local_planner_test_scenarios STATIC
+    test/test_utils/synthetic_scenario.cpp
+    test/test_utils/scenario_builder.cpp
+    test/test_utils/fault_injector.cpp
+    test/test_utils/scenario_catalog.cpp
+    test/vendor/geometry.cpp)
+  target_compile_features(local_planner_test_scenarios PUBLIC cxx_std_17)
+  target_include_directories(local_planner_test_scenarios PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/test
+    ${CMAKE_CURRENT_SOURCE_DIR}/test/vendor)
+
   ament_add_gtest(local_planner_test test/local_planner_test.cpp)
   target_link_libraries(local_planner_test local_planner_core)
+
+  ament_add_gtest(local_planner_scenario_adapter_test test/scenario_adapter_test.cpp)
+  target_link_libraries(local_planner_scenario_adapter_test
+    local_planner_core local_planner_test_scenarios)
+
+  ament_add_gtest(local_planner_orange_gate_test test/orange_gate_test.cpp)
+  target_link_libraries(local_planner_orange_gate_test local_planner_core)
+
+  ament_add_gtest(local_planner_boa_golden_test test/boa_golden_test.cpp)
+  target_link_libraries(local_planner_boa_golden_test local_planner_core)
+  target_compile_definitions(local_planner_boa_golden_test PRIVATE
+    BOA_TRACK_CSV="${CMAKE_CURRENT_SOURCE_DIR}/../../eufs_sim/eufs_tracks/csv/boa_constrictor.csv"
+    BOA_GOLDEN_PATH="${CMAKE_CURRENT_SOURCE_DIR}/test/data/boa_golden.txt")
 
   ament_add_gtest(local_planner_input_policy_test test/local_planner_input_policy_test.cpp)
   target_link_libraries(local_planner_input_policy_test local_planner_core)

@@ -251,9 +251,14 @@ BuildResult buildLocalPath(const ConeSet & cones, const PlannerConfig & config)
     invalid.reason = "planner configuration is invalid";
     return invalid;
   }
+  const bool fold_orange_cones =
+    config.use_orange_cones && !config.extend_straight_to_horizon;
   if (cones.input_overflow || cones.blue.size() > kMaxBoundaryCones ||
     cones.yellow.size() > kMaxBoundaryCones ||
-    (config.use_unknown_cones && cones.unknown.size() > kMaxBoundaryCones))
+    (config.use_unknown_cones && cones.unknown.size() > kMaxBoundaryCones) ||
+    (fold_orange_cones &&
+    (cones.orange.size() > kMaxBoundaryCones ||
+    cones.big_orange.size() > kMaxBoundaryCones)))
   {
     invalid.reason = "cone input exceeds bounded planner capacity";
     return invalid;
@@ -262,10 +267,28 @@ BuildResult buildLocalPath(const ConeSet & cones, const PlannerConfig & config)
   auto blue = internal::cropToRoi(cones.blue, config);
   auto yellow = internal::cropToRoi(cones.yellow, config);
   bool had_boundary_input = !cones.blue.empty() || !cones.yellow.empty();
+  // Colourless boundary evidence: unknown-colour cones and, when enabled for
+  // the mission, the orange/big-orange start-finish cones. Both go through the
+  // same conservative classification (absorb onto an unambiguous labelled
+  // boundary line, else ego-side split outside the dead-band) so a lap-close
+  // frame that sees only the orange gate still yields boundary cones instead
+  // of "roi_no_boundary_cones" -> brake. The straight-corridor mission keeps
+  // its own fold-in below.
+  std::vector<Point2> colorless;
   if (config.use_unknown_cones && !cones.unknown.empty()) {
     const auto unknown = internal::cropToRoi(cones.unknown, config);
-    internal::classifyUnknownCones(blue, yellow, unknown, config);
+    colorless.insert(colorless.end(), unknown.begin(), unknown.end());
     had_boundary_input = had_boundary_input || !unknown.empty();
+  }
+  if (fold_orange_cones) {
+    for (const std::vector<Point2> * source : {&cones.orange, &cones.big_orange}) {
+      const auto cropped = internal::cropToRoi(*source, config);
+      colorless.insert(colorless.end(), cropped.begin(), cropped.end());
+      had_boundary_input = had_boundary_input || !cropped.empty();
+    }
+  }
+  if (!colorless.empty()) {
+    internal::classifyUnknownCones(blue, yellow, colorless, config);
   }
   // Straight-corridor missions fold in the big-orange start/finish gates. On an
   // acceleration track the gates sit ON the corridor line (y = +/- half width),

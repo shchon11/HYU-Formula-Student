@@ -86,6 +86,9 @@ void PlannerNode::declareParameters()
   declare_parameter<double>("duplicate_point_tolerance", 0.001);
   declare_parameter<double>("odom_timeout_sec", 0.5);
   declare_parameter<bool>("hold_last_valid_path", true);
+  declare_parameter<int>("raceline_smoothing_iterations", 0);
+  declare_parameter<double>("raceline_margin_m", 1.2);
+  declare_parameter<double>("raceline_alpha", 0.3);
 }
 
 void PlannerNode::loadParameters()
@@ -113,6 +116,18 @@ void PlannerNode::loadParameters()
   duplicate_point_tolerance_ = get_parameter("duplicate_point_tolerance").as_double();
   odom_timeout_sec_ = get_parameter("odom_timeout_sec").as_double();
   hold_last_valid_path_ = get_parameter("hold_last_valid_path").as_bool();
+  raceline_smoothing_iterations_ =
+    std::max(0, static_cast<int>(get_parameter("raceline_smoothing_iterations").as_int()));
+  raceline_margin_m_ = get_parameter("raceline_margin_m").as_double();
+  raceline_alpha_ = get_parameter("raceline_alpha").as_double();
+  if (!std::isfinite(raceline_margin_m_) || raceline_margin_m_ < 0.0 ||
+    !std::isfinite(raceline_alpha_) || raceline_alpha_ < 0.0)
+  {
+    RCLCPP_WARN(
+      get_logger(),
+      "raceline_margin_m/raceline_alpha invalid; raceline smoothing disabled");
+    raceline_smoothing_iterations_ = 0;
+  }
 
   min_cones_per_side_ = std::max(1, min_cones_per_side_);
   max_boundary_gap_m_ = std::max(0.0, max_boundary_gap_m_);
@@ -133,11 +148,47 @@ void PlannerNode::loadParameters()
   default_speed_mps_ = std::max(0.0, default_speed_mps_);
 }
 
+namespace
+{
+
+// FNV-1a over cone counts and millimetre-rounded positions: cheap, stable
+// content identity for "did the map actually change".
+std::uint64_t coneMapSignature(const eufs_msgs::msg::ConeArrayWithCovariance & map)
+{
+  std::uint64_t hash = 1469598103934665603ULL;
+  const auto mix = [&hash](std::uint64_t value) {
+      hash ^= value;
+      hash *= 1099511628211ULL;
+    };
+  const auto mix_cones = [&mix](const auto & cones) {
+      mix(static_cast<std::uint64_t>(cones.size()));
+      for (const auto & cone : cones) {
+        mix(static_cast<std::uint64_t>(
+          static_cast<std::int64_t>(std::llround(cone.point.x * 1000.0))));
+        mix(static_cast<std::uint64_t>(
+          static_cast<std::int64_t>(std::llround(cone.point.y * 1000.0))));
+      }
+    };
+  mix_cones(map.blue_cones);
+  mix_cones(map.yellow_cones);
+  mix_cones(map.orange_cones);
+  mix_cones(map.big_orange_cones);
+  mix_cones(map.unknown_color_cones);
+  return hash;
+}
+
+}  // namespace
+
 void PlannerNode::onConeMap(const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg)
 {
+  const std::uint64_t signature = coneMapSignature(*msg);
   latest_cone_map_ = msg;
   has_cone_map_ = true;
-  ++cone_map_version_;
+  if (!has_cone_map_signature_ || signature != cone_map_signature_) {
+    cone_map_signature_ = signature;
+    has_cone_map_signature_ = true;
+    ++cone_map_version_;
+  }
 }
 
 void PlannerNode::onEgoOdom(const nav_msgs::msg::Odometry::SharedPtr msg)
@@ -193,6 +244,16 @@ void PlannerNode::onHeartbeat()
     }
     setInvalid(reason);
     publishValidity(false, reason);
+    return;
+  }
+
+  // The path is a pure function of the cone map: with an unchanged map and a
+  // valid path there is nothing to recompute. This also keeps the published
+  // geometry stable — a rebuild re-seeds boundary ordering at the current ego
+  // position, and re-deriving the same frozen map from a moving seed was
+  // observed to flap between valid and branch_jump at the heartbeat rate.
+  if (path_valid_ && published_cone_map_version_ == cone_map_version_) {
+    publishValidity(true);
     return;
   }
 
@@ -271,7 +332,10 @@ SlamCenterlineConfig PlannerNode::centerlineConfig() const
     max_track_width_m_,
     close_loop_distance_m_,
     waypoint_spacing_m_,
-    duplicate_point_tolerance_};
+    duplicate_point_tolerance_,
+    raceline_smoothing_iterations_,
+    raceline_margin_m_,
+    raceline_alpha_};
 }
 
 eufs_msgs::msg::WaypointArrayStamped PlannerNode::buildWaypointMessage(
