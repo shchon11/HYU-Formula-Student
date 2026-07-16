@@ -18,6 +18,11 @@
 #                        none   = bridge runs, SLAM gnss_prior_enable=false
 #                        outage = RTK -> single-point at t=40s, back at t=80s
 #     EXTRA_SLAM_PARAMS  forwarded verbatim, e.g. -p optimize_every_n_keyframes:=15
+#
+#   PERCEPTION=sim overrides the default REAL perception (YOLO+LiDAR fusion).
+#   Real perception is the default on purpose: ground-truth cones have no
+#   position noise, so association-gate regressions sail through them — the
+#   2026-07-17 map-pollution regression was invisible on GT cones.
 
 # ROS Humble needs the system python; drop any conda entries from PATH.
 PATH="$(echo "$PATH" | tr ':' '\n' | grep -v conda | paste -sd:)"
@@ -38,10 +43,13 @@ GNSS_MODE="${3:-rtk}"
 shift $(( $# > 3 ? 3 : $# ))
 EXTRA_PARAMS=("$@")
 
-TRACK=small_track
+# TRACK env overrides for long-map campaigns (autocross/trackdrive_kase2026).
+TRACK="${TRACK:-small_track}"
 CSV="$SRC/eufs_sim/eufs_tracks/csv/$TRACK.csv"
 SCRIPTS="$SRC/eufs_graph_slam/scripts"
-LOG_DIR="$(dirname "$OUT_JSON")"
+# Per-run log dir: parallel/sequential runs into the same output folder must
+# not overwrite each other's slam/sim logs.
+LOG_DIR="${OUT_JSON%.json}.logs"
 mkdir -p "$LOG_DIR"
 
 source /opt/ros/humble/setup.bash
@@ -84,11 +92,17 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "== launching simulator (headless, $TRACK) =="
-# launch_group no_perception enables the simulated-perception /cones topic.
+PERCEPTION="${PERCEPTION:-real}"
+if [ "$PERCEPTION" = "real" ]; then
+    PERC_ARGS=(perception_mode:=real perception_motion_compensation_frame:=odom)
+else
+    PERC_ARGS=(launch_group:=no_perception)
+fi
+
+echo "== launching simulator (headless, $TRACK, perception=$PERCEPTION) =="
 ros2 launch eufs_launcher simulation.launch.py \
     track:=$TRACK gazebo_gui:=false rviz:=false show_rqt_gui:=false \
-    publish_gt_tf:=false pub_ground_truth:=true launch_group:=no_perception \
+    publish_gt_tf:=false pub_ground_truth:=true "${PERC_ARGS[@]}" \
     > "$LOG_DIR/sim.log" 2>&1 &
 PIDS+=($!)
 
@@ -129,6 +143,7 @@ PIDS+=($!)
 echo "== starting wheel odometry =="
 ros2 run eufs_graph_slam wheel_odometry --ros-args \
     -p use_sim_time:=true \
+    -p rear_axle_to_base_m:="${VY_ARM:-0.79}" \
     > "$LOG_DIR/wheel_odom.log" 2>&1 &
 PIDS+=($!)
 
@@ -158,7 +173,7 @@ PIDS+=($EVAL_PID)
 
 echo "== starting driver =="
 python3 "$SCRIPTS/drive_track.py" \
-    --csv "$CSV" --duration $(( ${DURATION%.*} + 30 )) \
+    --csv "$CSV" --duration $(( ${DURATION%.*} + 30 )) --speed "${DRIVE_SPEED:-4.5}" \
     > "$LOG_DIR/drive.log" 2>&1 &
 PIDS+=($!)
 
@@ -166,6 +181,15 @@ wait $EVAL_PID
 EVAL_RC=$?
 echo "== evaluator finished (rc=$EVAL_RC) =="
 tail -6 "$LOG_DIR/eval.log"
+
+echo "== one-lap freeze latency =="
+RET=$(grep -m1 "lap_return_criteria_satisfied=true" "$LOG_DIR/slam.log" | grep -oE "\[[0-9]+\.[0-9]+\]" | head -1 | tr -d '[]')
+FRZ=$(grep -m1 "Mapping lap complete" "$LOG_DIR/slam.log" | grep -oE "\[[0-9]+\.[0-9]+\]" | head -1 | tr -d '[]')
+if [ -n "$RET" ] && [ -n "$FRZ" ]; then
+    python3 -c "print(f'lap-return -> map-freeze: {$FRZ - $RET:.1f} s')"
+else
+    echo "map freeze did not happen (RET=$RET FRZ=$FRZ)"
+fi
 
 echo "== saving map (~/save_map) =="
 timeout 10 ros2 service call /graph_slam/save_map std_srvs/srv/Trigger "{}" 2>&1 | tail -3

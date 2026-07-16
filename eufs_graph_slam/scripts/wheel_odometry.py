@@ -100,6 +100,14 @@ class WheelOdometry(Node):
         self.declare_parameter("output_topic", "/wheel_odometry/car_state")
         self.declare_parameter("wheel_radius", 0.2525)   # m (eufs configDry)
         self.declare_parameter("wheelbase", 1.58)        # m
+        self.declare_parameter("track_width", 1.4)       # m (configDry axle_width)
+        # Kinematic-vy arm: with a no-slip rear axle, a body origin this far
+        # ahead of it sweeps sideways at w * arm (URDF midpoint would be
+        # 0.79 m). DEFAULT 0 = disabled: an interleaved 3x3 trial on
+        # small_track (2026-07-17) showed enabling it degrades SLAM ATE
+        # (0.3->0.5/2.9/9.8) even though the geometry is right; until the
+        # consumer-frame mismatch is understood, the honest model is vy=0.
+        self.declare_parameter("rear_axle_to_base_m", 0.0)
         self.declare_parameter("use_ins_yaw_rate", True)
         self.declare_parameter("ins_timeout", 0.3)       # s -> steering fallback
         self.declare_parameter("max_dt", 0.5)            # s, reject stale steps
@@ -152,6 +160,9 @@ class WheelOdometry(Node):
             self.get_parameter("slip_residual_fraction").value)
         self.frame_id = str(self.get_parameter("frame_id").value)
         self.child_frame_id = str(self.get_parameter("child_frame_id").value)
+        self.track_width = float(self.get_parameter("track_width").value)
+        self.rear_axle_to_base = float(
+            self.get_parameter("rear_axle_to_base_m").value)
 
         self.x = 0.0
         self.y = 0.0
@@ -241,8 +252,8 @@ class WheelOdometry(Node):
             )
         self.warned_frame = True
 
-    def yaw_rate(self, t, v, steering):
-        """INS yaw rate when fresh, else kinematic bicycle fallback."""
+    def yaw_rate(self, t, v, steering, diff_w=None):
+        """INS yaw rate when fresh, else rear-encoder differential, else bicycle."""
         if (
             self.use_ins
             and self.ins_yaw_rate is not None
@@ -259,12 +270,19 @@ class WheelOdometry(Node):
             # the log needs sbgECom >= 4.0 firmware and log_ekf_rot_accel_body
             # switched on in the driver config.
             self.get_logger().warn(
-                "%s yaw rate unavailable; falling back to bicycle-model yaw "
-                "(slip compensation paused). If it never arrives, check the "
-                "driver's log_ekf_rot_accel_body and the ELLIPSE firmware." % (
+                "%s yaw rate unavailable; falling back to rear-encoder "
+                "differential yaw (slip compensation paused). If it never "
+                "arrives, check the driver's log_ekf_rot_accel_body and the "
+                "ELLIPSE firmware." % (
                     self.get_parameter("rot_accel_topic").value)
             )
             self.used_ins_fallback = True
+        # Every wheel has its own AMK encoder, so the rear pair's speed
+        # difference observes yaw directly — unlike the bicycle model it needs
+        # no steering geometry and stays honest under understeer. The bicycle
+        # model remains only as the last resort for a dead rear encoder.
+        if diff_w is not None:
+            return diff_w
         return v * math.tan(steering) / self.wheelbase
 
     def on_wheel_speeds(self, msg):
@@ -281,6 +299,13 @@ class WheelOdometry(Node):
         # The differential split cancels in the mean; common-mode slip does not.
         rear_rpm = 0.5 * (msg.speeds.lb_speed + msg.speeds.rb_speed)
         v = rear_rpm * RPM_TO_RAD_S * self.wheel_radius
+        # Per-wheel encoders: the rear pair's split observes yaw rate without
+        # any steering geometry (fallback tier between INS and bicycle model).
+        diff_w = (
+            (msg.speeds.rb_speed - msg.speeds.lb_speed)
+            * RPM_TO_RAD_S * self.wheel_radius / self.track_width
+            if self.track_width > 1e-3 else None
+        )
 
         slip_correction = 0.0
         if (
@@ -299,10 +324,19 @@ class WheelOdometry(Node):
             slip_correction = kappa * max(1.0, abs(v - kappa * max(1.0, abs(v))))
             v -= slip_correction
 
-        w = self.yaw_rate(t, v, msg.speeds.steering)
+        w = self.yaw_rate(t, v, msg.speeds.steering, diff_w)
 
-        self.x += v * math.cos(self.yaw) * dt
-        self.y += v * math.sin(self.yaw) * dt
+        # Kinematic lateral velocity of the body origin: with a no-slip rear
+        # axle, a point rear_axle_to_base ahead of it sweeps sideways at
+        # w * arm. This is the dominant vy term the twist consumers (SLAM
+        # motion, lidar deskew, TMPC state) need in corners; true tyre-slip
+        # vy is unobservable from wheel spin and stays unmodelled.
+        vy = w * self.rear_axle_to_base
+
+        cos_y = math.cos(self.yaw)
+        sin_y = math.sin(self.yaw)
+        self.x += (v * cos_y - vy * sin_y) * dt
+        self.y += (v * sin_y + vy * cos_y) * dt
         self.yaw = math.atan2(
             math.sin(self.yaw + w * dt), math.cos(self.yaw + w * dt))
         self.last_v = v
@@ -327,6 +361,7 @@ class WheelOdometry(Node):
         out.pose.covariance[7] = sigma_v_eff * sigma_v_eff
         out.pose.covariance[35] = self.sigma_w * self.sigma_w
         out.twist.twist.linear.x = v
+        out.twist.twist.linear.y = vy
         out.twist.twist.angular.z = w
         # Body acceleration from the INS log when fresh; zeros in fallback,
         # matching the "sensor absent" semantics of the yaw-rate fallback.

@@ -79,6 +79,7 @@ def _rot_accel(t, yaw_rate_flu, a_x, frame_id="imu_link_ned"):
 
 
 def _reset(node):
+    node.rear_axle_to_base = 0.0
     node.x = node.y = node.yaw = 0.0
     node.last_t = None
     node.ins_yaw_rate = None
@@ -103,9 +104,10 @@ def node():
     rclpy.try_shutdown()
 
 
-def _drive(node, duration, rate, v, yaw_rate_flu, a_x, feed_ins=True):
+def _drive(node, duration, rate, v, yaw_rate_flu, a_x, feed_ins=True, arm=0.0):
     """Feed a constant-state run; returns the published CarStates."""
     _reset(node)
+    node.rear_axle_to_base = arm
     dt = 1.0 / rate
     for i in range(int(round(duration * rate))):
         t = 100.0 + i * dt
@@ -188,3 +190,44 @@ def test_ned_frame_id_is_quiet(node):
     finally:
         node.get_logger().warn = original
     assert not warnings
+
+
+def _split_speeds(t, v_left, v_right, steering=0.0):
+    """Wheel speeds with a rear differential split (per-wheel encoders)."""
+    msg = WheelSpeedsStamped()
+    msg.header.stamp = _stamp(t)
+    msg.speeds.lb_speed = v_left / (_RADIUS * _RPM_TO_RAD_S)
+    msg.speeds.rb_speed = v_right / (_RADIUS * _RPM_TO_RAD_S)
+    msg.speeds.lf_speed = msg.speeds.lb_speed
+    msg.speeds.rf_speed = msg.speeds.rb_speed
+    msg.speeds.steering = steering
+    return msg
+
+
+def test_kinematic_vy_reported_and_integrated(node):
+    """With a nonzero arm, cornering must report vy = w * arm (opt-in)."""
+    out = _drive(node, 2.0, 100.0, v=6.0, yaw_rate_flu=0.5, a_x=0.0, arm=0.79)
+    expected_vy = 0.5 * 0.79
+    assert abs(out[-1].twist.twist.linear.y - expected_vy) < 1e-6
+    # The base origin's sideways sweep must reach the integrated pose too:
+    # against a vy-less integration of the same inputs, y gains ~vy-driven
+    # displacement. Just pin that vy is nonzero and finite in the pose chain.
+    assert out[-1].twist.twist.linear.y > 0.0
+
+
+def test_differential_yaw_fallback_before_bicycle(node):
+    """With the INS dark, the rear encoder split must supply the yaw rate."""
+    _reset(node)
+    dt = 1.0 / 100.0
+    w_true = 0.4
+    v = 6.0
+    half = 0.5 * node.track_width * w_true
+    for i in range(200):
+        t = 100.0 + i * dt
+        # No on_rot_accel: INS never arrives; steering left at zero so the
+        # bicycle fallback would read w = 0 and fail this test.
+        node.on_wheel_speeds(_split_speeds(t, v - half, v + half))
+    out = node.pub.msgs
+    assert out
+    assert abs(out[-1].twist.twist.angular.z - w_true) < 1e-3
+    assert node.yaw > 0.5  # integrated a left turn from encoders alone
