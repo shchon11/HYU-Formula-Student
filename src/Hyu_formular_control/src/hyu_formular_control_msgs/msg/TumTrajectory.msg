@@ -1,0 +1,15 @@
+uint32 lap_cnt
+uint32 traj_cnt
+float64[50] s_loc_m
+float64[50] s_glob_m
+float64[50] x_m
+float64[50] y_m
+float64[50] psi_rad
+float64[50] kappa_radpm
+float64[50] v_mps
+float64[50] ax_mps2
+float64[50] banking_rad
+float64[50] ax_lim_mps2
+float64[50] ay_lim_mps2
+float64[50] tube_l_m
+float64[50] tube_r_m

@@ -1,0 +1,4 @@
+<launch>
+  <node pkg="hyu_formular_control" exec="hyu_formular_control" name="hyu_formular_control" output="screen">
+  </node>
+</launch>

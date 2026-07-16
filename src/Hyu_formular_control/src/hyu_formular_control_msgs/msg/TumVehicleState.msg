@@ -1,0 +1,15 @@
+uint16 se_status
+uint16 se_state
+float64 x_m
+float64 y_m
+float64 psi_rad
+float64 dpsi_radps
+float64 vx_mps
+float64 vy_mps
+float64 v_mps
+float64 beta_rad
+float64 ax_mps2
+float64 ay_mps2
+float64 ax_vel_mps2
+float64 delta_wheel_rad
+bool valid_imu

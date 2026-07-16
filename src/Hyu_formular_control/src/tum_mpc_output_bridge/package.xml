@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>tum_mpc_output_bridge</name>
+  <version>0.0.0</version>
+  <description>Convert TUM MPC force and steering requests to EUFS Ackermann acceleration commands.</description>
+  <maintainer email="simseunghwan@example.com">simseunghwan</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>ackermann_msgs</depend>
+  <depend>hyu_formular_control_msgs</depend>
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
