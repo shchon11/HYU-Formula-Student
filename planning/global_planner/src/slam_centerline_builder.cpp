@@ -118,12 +118,24 @@ void foldStartFinishMarkers(
       collapsed.push_back(marker);
     }
   }
+  // Decide every side against the ORIGINAL boundaries. Assigning against the sets
+  // as they grow lets a marker that was just folded in act as a "nearest cone"
+  // for the next one, and the gate's own two cones are closer to each other than
+  // the boundaries are to either: on autocross_kase2026 the gate is 4.2 m across
+  // while the real boundaries sit 4.75 m away, so the first marker folded into
+  // blue then out-competed the true yellow (4.77 m) for the second, and BOTH gate
+  // cones landed on the same side. The ordering walk jumps the track there and
+  // the pairing collapses -- over a quarter of the pairs fall outside the width
+  // band and the whole map is rejected as invalid_width. small_track's tighter
+  // gate (boundaries 2.7 m away) happened to survive it.
+  const std::vector<PlannerPoint> original_blue = blue_points;
+  const std::vector<PlannerPoint> original_yellow = yellow_points;
   for (const auto & marker : collapsed) {
-    std::vector<PlannerPoint> & side =
-      nearestDistance(marker, blue_points) <= nearestDistance(marker, yellow_points) ?
-      blue_points : yellow_points;
-    if (nearestDistance(marker, side) > merge_tolerance) {
-      side.push_back(marker);
+    const bool to_blue = nearestDistance(marker, original_blue) <=
+      nearestDistance(marker, original_yellow);
+    const std::vector<PlannerPoint> & original_side = to_blue ? original_blue : original_yellow;
+    if (nearestDistance(marker, original_side) > merge_tolerance) {
+      (to_blue ? blue_points : yellow_points).push_back(marker);
     }
   }
 }

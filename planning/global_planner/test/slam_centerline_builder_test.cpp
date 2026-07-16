@@ -309,4 +309,57 @@ TEST(SlamCenterlineBuilder, PathIsIndependentOfEgoPosition)
   }
 }
 
+// The start/finish gate's two cones are closer to EACH OTHER than the boundaries
+// are to either of them: the gate spans the track (~4 m) while the blue/yellow
+// lines fall back on both sides of it to leave room for the timing equipment
+// (~4.8 m on autocross_kase2026). So folding one marker in and then letting it
+// serve as a "nearest cone" when placing the next puts BOTH gate cones on the
+// SAME side: the ordering walk jumps the track there, the pairing collapses, and
+// over a quarter of the pairs leave the width band -- the whole map is rejected
+// as invalid_width and no global path is published at all. Sides must be decided
+// against the ORIGINAL boundaries. (small_track's gate sits only 2.7 m from its
+// boundaries, so it happened to survive this; the KASE tracks did not.)
+TEST(SlamCenterlineBuilder, WideStartFinishGateFoldsToOppositeSides)
+{
+  constexpr double kPiLocal = 3.14159265358979323846;
+  eufs_msgs::msg::ConeArrayWithCovariance map;
+  constexpr std::size_t kCones = 40U;
+  for (std::size_t i = 0; i < kCones; ++i) {
+    const double angle = 2.0 * kPiLocal * static_cast<double>(i) / static_cast<double>(kCones);
+    // Fall the boundaries back from the gate at angle 0, as a real gate does.
+    if (std::abs(std::atan2(std::sin(angle), std::cos(angle))) * 20.0 < 5.0) {
+      continue;
+    }
+    eufs_msgs::msg::ConeWithCovariance blue;
+    blue.point.x = 22.0 * std::cos(angle);
+    blue.point.y = 22.0 * std::sin(angle);
+    map.blue_cones.push_back(blue);
+    eufs_msgs::msg::ConeWithCovariance yellow;
+    yellow.point.x = 18.0 * std::cos(angle);
+    yellow.point.y = 18.0 * std::sin(angle);
+    map.yellow_cones.push_back(yellow);
+  }
+  for (const double offset : {0.0, 0.5}) {      // the paired timing cones
+    for (const double radius : {18.0, 22.0}) {  // across the track
+      eufs_msgs::msg::ConeWithCovariance cone;
+      cone.point.x = radius;
+      cone.point.y = offset;
+      map.big_orange_cones.push_back(cone);
+    }
+  }
+  ASSERT_EQ(map.big_orange_cones.size(), 4U);
+
+  std::vector<PlannerWaypoint> waypoints;
+  std::string reason;
+  ASSERT_TRUE(buildCenterlineFromSlamMap(map, egoAtOrigin(), fixtureConfig(), waypoints, reason))
+    << "the gate folded to one side and took the map down: " << reason;
+
+  // Both markers landed on their own side, so the centerline still runs down the
+  // middle of the corridor instead of being dragged across it at the gate.
+  for (const auto & waypoint : waypoints) {
+    ASSERT_NEAR(std::hypot(waypoint.x, waypoint.y), 20.0, 1.5)
+      << "centerline left the corridor: the gate folded to one side";
+  }
+}
+
 }  // namespace global_planner::test
