@@ -74,12 +74,19 @@ class WheelOdometry(Node):
         # not by these static floors.
         self.declare_parameter("sigma_v", 0.01)          # m/s
         self.declare_parameter("sigma_w", 0.001)         # rad/s
-        # Traction-slip compensation (mirrors eufs_models: slip_speed =
-        # peak_slip_ratio * clamp(a_x/(mu*g), -1, 1) * max(1, v)).
+        # Traction-slip compensation, mirroring eufs_models' ACHIEVED-dynamics
+        # form: kappa = peak_slip_ratio * clamp(u, -1, 1) with
+        # u = (a_x + C_drag*v^2/m) / (mu * (g + C_Down*v^2/m)) — the drag
+        # share is real drive force at constant speed, and downforce grows
+        # the grip. Defaults mirror robots/eufs/configDry.yaml; re-fit on the
+        # real car from RTK parity.
         self.declare_parameter("slip_compensation", True)
         self.declare_parameter("slip_peak_ratio", 0.15)  # tyre peak slip ratio
         self.declare_parameter("slip_mu", 1.6)           # tyre D (configDry)
         self.declare_parameter("slip_g", 9.81)
+        self.declare_parameter("slip_c_drag", 1.0)       # F_drag = C*v^2
+        self.declare_parameter("slip_c_down", 1.9)       # F_down = C*v^2
+        self.declare_parameter("slip_mass", 225.0)       # kg
         self.declare_parameter("slip_accel_lp_tau", 0.2)  # s, a_x low-pass
         # Fraction of the applied correction kept as extra sigma_v: the
         # estimate uses measured a_x against the model's commanded a, so
@@ -97,8 +104,11 @@ class WheelOdometry(Node):
         self.sigma_w = float(self.get_parameter("sigma_w").value)
         self.slip_compensation = bool(self.get_parameter("slip_compensation").value)
         self.slip_peak_ratio = float(self.get_parameter("slip_peak_ratio").value)
-        self.slip_mu_g = (float(self.get_parameter("slip_mu").value)
-                          * float(self.get_parameter("slip_g").value))
+        self.slip_mu = float(self.get_parameter("slip_mu").value)
+        self.slip_g = float(self.get_parameter("slip_g").value)
+        self.slip_c_drag = float(self.get_parameter("slip_c_drag").value)
+        self.slip_c_down = float(self.get_parameter("slip_c_down").value)
+        self.slip_mass = max(1.0, float(self.get_parameter("slip_mass").value))
         self.slip_lp_tau = float(self.get_parameter("slip_accel_lp_tau").value)
         self.slip_residual_fraction = float(
             self.get_parameter("slip_residual_fraction").value)
@@ -198,7 +208,11 @@ class WheelOdometry(Node):
             and self.imu_stamp is not None
             and abs(t - self.imu_stamp) <= self.imu_timeout
         ):
-            utilization = max(-1.0, min(1.0, self.accel_x_lp / self.slip_mu_g))
+            v_sq = v * v
+            drive_accel = self.accel_x_lp + self.slip_c_drag * v_sq / self.slip_mass
+            grip_accel = self.slip_mu * (
+                self.slip_g + self.slip_c_down * v_sq / self.slip_mass)
+            utilization = max(-1.0, min(1.0, drive_accel / grip_accel))
             kappa = self.slip_peak_ratio * utilization
             # v_meas = v_true + kappa * max(1, v_true); one fixed-point step
             # (kappa <= 0.15 makes the second iteration sub-mm/s).
