@@ -81,14 +81,21 @@ double mapLookaheadDistance(const ControllerConfig & config, double planned_spee
   return std::clamp(raw, lower, upper);
 }
 
-DriveCommand brakeCommand(const ControllerConfig & config)
+double brakeDeceleration(const ControllerConfig & config)
 {
   // Fall back to the historical -5.0 m/s^2 if the configured value is not a
   // real deceleration, so an invalid config still brings the car to a stop.
-  const double decel =
-    (std::isfinite(config.brake_acceleration_mps2) && config.brake_acceleration_mps2 < 0.0) ?
-    config.brake_acceleration_mps2 : -5.0;
-  return DriveCommand{0.0, decel, 0.0};
+  return (std::isfinite(config.brake_acceleration_mps2) && config.brake_acceleration_mps2 < 0.0) ?
+         config.brake_acceleration_mps2 : -5.0;
+}
+
+DriveCommand brakeCommand(const ControllerConfig & config)
+{
+  // Steering 0: this is the fail-safe brake, taken when the path cannot be
+  // trusted (missing, stale, invalid, no reachable target). With nothing
+  // trustworthy to aim at, straight is the only defensible answer. A PLANNED
+  // stop is not this -- see computeControl.
+  return DriveCommand{0.0, brakeDeceleration(config), 0.0};
 }
 
 std::chrono::nanoseconds commandPeriod(const ControllerConfig & config)
@@ -196,9 +203,13 @@ std::optional<TargetPoint> selectTarget(
 ControlDecision computeControl(
   const ControllerInput & input, const ControllerConfig & config, const SteeringLookup * lut)
 {
+  // The fail-safe brake, taken when the path cannot be trusted. Note the stop
+  // REQUEST is deliberately not here: a missing or stale stop input still fails
+  // safe (the car cannot know it is allowed to drive), but an asserted stop on a
+  // valid path is a planned manoeuvre and is handled below, on the path.
   if (!isValidConfig(config) || !input.path_received || !input.validity_received ||
     !input.stop_received || !input.odom_received || !input.path_frame_valid ||
-    !input.odom_frame_valid || !input.selected_path_valid || input.stop_requested ||
+    !input.odom_frame_valid || !input.selected_path_valid ||
     !isFresh(input.path_age_sec, config.input_timeout_sec) ||
     !isFresh(input.validity_age_sec, config.input_timeout_sec) ||
     !isFresh(input.stop_age_sec, config.input_timeout_sec) ||
@@ -267,6 +278,20 @@ ControlDecision computeControl(
       std::atan2(2.0 * config.wheelbase_m * target->y_body_m, lookahead_squared),
       -config.max_steering_rad, config.max_steering_rad);
   }
+
+  // Planned stop (mission complete / stop line), with a path we still trust.
+  // Brake at the vehicle's braking limit but keep STEERING ON THE PATH: the car
+  // cannot stop on the spot, so it will travel v^2/(2a) further whatever we ask
+  // for -- ~10 m from 10 m/s at 5 m/s^2. Zeroing the steering here (the fail-safe
+  // brake's answer) sends those metres straight ahead regardless of where the
+  // track goes, which drove the car off the circuit at the end of the lap. The
+  // path is valid and continues past the finish (it is a closed loop, and the
+  // publisher wraps around it), so there is always something to follow while the
+  // speed comes off.
+  if (input.stop_requested) {
+    return ControlDecision{DriveCommand{0.0, brakeDeceleration(config), steering}, target};
+  }
+
   return ControlDecision{DriveCommand{target_speed, acceleration, steering}, target};
 }
 

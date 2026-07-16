@@ -52,11 +52,56 @@ TEST(PurePursuitController, ControlDecisionExposesTargetOnlyWhileTracking)
   EXPECT_DOUBLE_EQ(tracking.target->point.y_m, 0.0);
   EXPECT_DOUBLE_EQ(tracking.command.speed_mps, 3.0);
 
-  auto braking = readyInput(straightPath());
-  braking.stop_requested = true;
-  const auto braked = computeControl(braking);
+  // The fail-safe brake tracks nothing, so it must expose no target. (A planned
+  // stop DOES keep tracking -- see PlannedStopBrakesAlongThePath.)
+  auto invalid = readyInput(straightPath());
+  invalid.selected_path_valid = false;
+  const auto braked = computeControl(invalid);
   EXPECT_FALSE(braked.target.has_value());
   expectExactBrake(braked.command);
+}
+
+// A planned stop (mission complete, stop line) must come off the throttle ALONG
+// the path. The car travels v^2/(2a) whatever is commanded -- ~10 m from 10 m/s
+// at 5 m/s^2 -- and the fail-safe brake's steering 0 sends those metres straight
+// ahead regardless of where the track goes, which drove the car off the circuit
+// at the end of the lap. Only a stop we cannot trust the path for goes straight.
+TEST(PurePursuitController, PlannedStopBrakesAlongThePath)
+{
+  const std::vector<PathPoint> left_turn{
+    PathPoint{0.0, 0.0, 3.0, 3.0},
+    PathPoint{2.0, 1.0, 3.0, 3.0},
+    PathPoint{4.0, 2.0, 3.0, 3.0},
+  };
+
+  const auto driving = computeControl(readyInput(left_turn));
+  ASSERT_TRUE(driving.target.has_value());
+  ASSERT_GT(driving.command.steering_angle_rad, 0.0);
+
+  auto stopping = readyInput(left_turn);
+  stopping.stop_requested = true;
+  const auto stopped = computeControl(stopping);
+
+  // Still tracking the path: the same steering the driving command would use.
+  ASSERT_TRUE(stopped.target.has_value());
+  EXPECT_DOUBLE_EQ(stopped.command.steering_angle_rad, driving.command.steering_angle_rad);
+  // ... while braking to a stop at the configured limit.
+  EXPECT_DOUBLE_EQ(stopped.command.speed_mps, 0.0);
+  EXPECT_DOUBLE_EQ(stopped.command.acceleration_mps2, -5.0);
+
+  // A stop asserted over a path we cannot trust still brakes straight.
+  auto stale_path = stopping;
+  stale_path.path_age_sec = 0.500001;
+  expectExactBrake(computeCommand(stale_path));
+
+  auto invalid_path = stopping;
+  invalid_path.selected_path_valid = false;
+  expectExactBrake(computeCommand(invalid_path));
+
+  // And a missing stop input still fails safe, stop_requested or not.
+  auto missing_stop = readyInput(left_turn);
+  missing_stop.stop_received = false;
+  expectExactBrake(computeCommand(missing_stop));
 }
 
 TEST(PurePursuitController, StraightPathProducesNearZeroSteer)

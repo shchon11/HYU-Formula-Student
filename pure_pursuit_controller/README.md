@@ -9,6 +9,25 @@ odometry, and stop-request inputs all use `input_timeout_sec` (default `0.5 s`);
 an age equal to the timeout is fresh, while a greater age is stale. A missing or
 stale stop request fails safe to braking even when its last value was false.
 
+## Stopping
+
+There are two kinds of stop, and they steer differently.
+
+The **fail-safe brake** is taken when the path cannot be trusted — missing,
+stale, invalid, wrong frame, or no reachable target. It commands speed `0`,
+`brake_acceleration_mps2`, and steering `0`: with nothing trustworthy to aim at,
+straight is the only defensible answer. It exposes no lookahead target.
+
+A **planned stop** (`/planning/stop_request` asserted over a path that is still
+valid and fresh — mission complete, stop line) instead brakes *along the path*:
+speed `0` and `brake_acceleration_mps2`, but steering still tracked from the
+path. The car travels `v^2 / (2a)` regardless of what is commanded — about 10 m
+from 10 m/s at 5 m/s² — so zeroing the steering sends those metres straight ahead
+whatever the track does, which takes the car off a curving circuit at the end of
+the lap. The path is valid and continues past the finish (it is a closed loop and
+the publisher wraps around it), so there is always something to follow while the
+speed comes off.
+
 ## Steering modes
 
 `steering_mode` selects the lateral law. Longitudinal control (target speed from
