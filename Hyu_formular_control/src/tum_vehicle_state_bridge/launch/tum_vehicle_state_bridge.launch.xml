@@ -1,0 +1,34 @@
+<launch>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="localization_topic" default="/localization/ego_odom"/>
+  <arg name="car_state_topic" default="/odometry_integration/car_state"/>
+  <arg name="wheel_speeds_topic" default="/ros_can/wheel_speeds"/>
+  <arg name="output_topic" default="/tmpc/vehicle_state"/>
+  <arg name="publish_rate_hz" default="100.0"/>
+  <arg name="localization_timeout_sec" default="0.2"/>
+  <arg name="car_state_timeout_sec" default="0.2"/>
+  <arg name="wheel_speeds_timeout_sec" default="0.2"/>
+  <arg name="se_status" default="2"/>
+  <arg name="se_state" default="1"/>
+  <arg name="valid_imu_default" default="true"/>
+  <arg name="min_speed_for_beta_mps" default="0.1"/>
+  <arg name="ax_vel_filter_tau_sec" default="0.1"/>
+
+  <node pkg="tum_vehicle_state_bridge" exec="tum_vehicle_state_bridge"
+        name="tum_vehicle_state_bridge" output="screen">
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+    <param name="tum_vehicle_state_bridge/localization_topic" value="$(var localization_topic)"/>
+    <param name="tum_vehicle_state_bridge/car_state_topic" value="$(var car_state_topic)"/>
+    <param name="tum_vehicle_state_bridge/wheel_speeds_topic" value="$(var wheel_speeds_topic)"/>
+    <param name="tum_vehicle_state_bridge/output_topic" value="$(var output_topic)"/>
+    <param name="tum_vehicle_state_bridge/publish_rate_hz" value="$(var publish_rate_hz)"/>
+    <param name="tum_vehicle_state_bridge/localization_timeout_sec" value="$(var localization_timeout_sec)"/>
+    <param name="tum_vehicle_state_bridge/car_state_timeout_sec" value="$(var car_state_timeout_sec)"/>
+    <param name="tum_vehicle_state_bridge/wheel_speeds_timeout_sec" value="$(var wheel_speeds_timeout_sec)"/>
+    <param name="tum_vehicle_state_bridge/se_status" value="$(var se_status)"/>
+    <param name="tum_vehicle_state_bridge/se_state" value="$(var se_state)"/>
+    <param name="tum_vehicle_state_bridge/valid_imu_default" value="$(var valid_imu_default)"/>
+    <param name="tum_vehicle_state_bridge/min_speed_for_beta_mps" value="$(var min_speed_for_beta_mps)"/>
+    <param name="tum_vehicle_state_bridge/ax_vel_filter_tau_sec" value="$(var ax_vel_filter_tau_sec)"/>
+  </node>
+</launch>

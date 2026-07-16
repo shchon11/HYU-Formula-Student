@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 # race.sh — full autonomous stack in one tmux session.
 #
-#   race [track] [sim|real] [extra sim args...]   # start (default: small_track real)
+#   race [track] [sim|real] [tmpc] [use_sim_time:=true|false] [extra sim args...]
+#                                          # start (default: small_track real)
 #   race perception [track] [extra args]   # sim+perception+SLAM+teleop only,
 #                                          # for per-tier evaluation vs GT cones
 #   race stop                              # tear down
 #   race attach                            # re-attach
+#
+# 'tmpc' swaps the planning pane to tmpc_trackdrive.launch.py: Pure Pursuit
+# drives LOCAL, the TUM TMPC takes /cmd in GLOBAL via the command selector.
+# use_sim_time:= is threaded into every stack launch (planning/TMPC chain,
+# GNSS HUD) as the single clock-domain switch; it defaults to true because
+# this script always brings up the Gazebo sim.
 #
 # Brings up sim+perception, the whole planning_bringup graph (graph_slam +
 # global/local planner + state machine + path_selector + pure-pursuit
@@ -45,9 +52,13 @@ PMODE="real"
 FILTERED=""
 HAS_MOTION_COMP_ARG=0
 EVAL_MODE=0
+TMPC_MODE=0
+USE_SIM_TIME="true"
 for tok in "$@"; do
   case "$tok" in
     perception) EVAL_MODE=1 ;;
+    tmpc) TMPC_MODE=1 ;;
+    use_sim_time:=*) USE_SIM_TIME="${tok#use_sim_time:=}" ;;
     sim|real) PMODE="$tok" ;;
     *)
       case "$tok" in
@@ -101,6 +112,10 @@ case "$TRACK" in
     AMI_STATE=12   # AMI_SKIDPAD
     MISSION_NOTE="skidpad: entry → right x2 → left x2 → exit (laps via skidpad_right/left_laps)."
     MONITOR_EXTRA="echo -n 'skidpad:     '; timeout 1 ros2 topic echo --once /skidpad/phase 2>/dev/null | grep -o 'data:.*'; "
+    if [ "$TMPC_MODE" -eq 1 ]; then
+      echo "race: 'tmpc' needs a GLOBAL phase — skidpad is local-only. Ignoring 'tmpc'." >&2
+      TMPC_MODE=0
+    fi
     ;;
   accel|acceleration*)
     # Straight-line sprint on the 'acceleration' track (accept 'accel' shorthand).
@@ -110,8 +125,21 @@ case "$TRACK" in
     PLAN_EXTRA=" acceleration:=true"
     AMI_STATE=11   # AMI_ACCELERATION
     MISSION_NOTE="acceleration: local-only straight sprint; controller brakes when the corridor cones end (finish → braking zone)."
+    if [ "$TMPC_MODE" -eq 1 ]; then
+      echo "race: 'tmpc' needs a GLOBAL phase — acceleration is local-only. Ignoring 'tmpc'." >&2
+      TMPC_MODE=0
+    fi
     ;;
 esac
+
+# Planning launch selection: the TMPC hybrid stack owns /cmd through its
+# command selector; the plain stack lets Pure Pursuit own /cmd directly.
+PLAN_LAUNCH="local_global_planning.launch.py"
+if [ "$TMPC_MODE" -eq 1 ]; then
+  PLAN_LAUNCH="tmpc_trackdrive.launch.py"
+  MISSION_NOTE="$MISSION_NOTE TMPC hybrid: PP drives LOCAL, TMPC takes /cmd in GLOBAL (selector on /tmpc/cmd_selector/status)."
+  MONITOR_EXTRA="${MONITOR_EXTRA}echo -n 'selector:    '; timeout 1 ros2 topic echo --once /tmpc/cmd_selector/status 2>/dev/null | grep -o 'data:.*'; "
+fi
 
 if [ ! -f "$WS_SETUP" ]; then
   echo "race: workspace not built ($WS_SETUP missing). Run 'fsb' first." >&2
@@ -192,7 +220,7 @@ tmux send-keys -t "$P_SIM" \
 # 1 · Full planning graph (starts its OWN graph_slam) ────────────────────────
 P_PLAN=$(tmux split-window -h -t "$P_SIM" -P -F '#{pane_id}')
 tmux send-keys -t "$P_PLAN" \
-  "$SRC echo '[② PLANNING: slam+global+local+SM+selector+controller] waiting for car…'; $WAIT_CAR; ros2 launch planning_bringup local_global_planning.launch.py graph_slam_ate_monitor:=true local_max_stamp_skew_sec:=2.0 local_max_input_age_sec:=3.0 local_max_start_distance_m:=8.0$PLAN_EXTRA" C-m
+  "$SRC echo '[② PLANNING: slam+global+local+SM+selector+controller] waiting for car…'; $WAIT_CAR; ros2 launch planning_bringup $PLAN_LAUNCH use_sim_time:=$USE_SIM_TIME graph_slam_ate_monitor:=true local_max_stamp_skew_sec:=2.0 local_max_input_age_sec:=3.0 local_max_start_distance_m:=8.0$PLAN_EXTRA" C-m
 
 # 2 · Arm the mission — then the controller drives autonomously ──────────────
 P_DRIVE=$(tmux split-window -v -t "$P_SIM" -P -F '#{pane_id}')
@@ -201,7 +229,7 @@ tmux send-keys -t "$P_DRIVE" \
 
 P_GNSS=$(tmux split-window -v -t "$P_DRIVE" -P -F '#{pane_id}')
 tmux send-keys -t "$P_GNSS" \
-  "$SRC echo '[④ GNSS HUD] waiting for ground truth…'; $WAIT_GT; ros2 launch eufs_graph_slam ins_pipeline.launch.py slam:=false use_sim_time:=true car_state_topic:=/ins_odom/car_state" C-m
+  "$SRC echo '[④ GNSS HUD] waiting for ground truth…'; $WAIT_GT; ros2 launch eufs_graph_slam ins_pipeline.launch.py slam:=false use_sim_time:=$USE_SIM_TIME car_state_topic:=/ins_odom/car_state" C-m
 
 P_MON=$(tmux split-window -v -t "$P_PLAN" -P -F '#{pane_id}')
 tmux send-keys -t "$P_MON" \

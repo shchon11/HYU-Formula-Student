@@ -104,6 +104,56 @@ ros2 launch global_planner slam_global_planner.launch.py planner_source:=csv
 The older CSV launch remains available and keeps its conservative
 `/ground_truth/odom` default.
 
+## Formula TMPC trajectory output
+
+`wpnt_publisher_node` keeps the legacy Frenet-callback rolling outputs above
+and independently builds a fixed-size Formula TMPC trajectory pair at 20 Hz.
+It publishes only while all of the following are true:
+
+- `/planning/global_path_valid` is a fresh `true` heartbeat and the accepted
+  `/global_waypoints` snapshot is valid;
+- `/planning/path_source` is a fresh `GLOBAL_FULL` or `GLOBAL_FINAL_STOP`;
+- `/car_state/frenet/odom`, `/localization/ego_odom`, and
+  `/planning/lap_count` are fresh and finite.
+
+The input timeout defaults to 0.5 s. A static global waypoint snapshot does
+not age out by itself: a false/stale validity heartbeat invalidates it, and a
+new snapshot must be accepted before publication resumes. On any invalid
+input the node publishes nothing; it never sends a zero-filled trajectory as
+though it were valid.
+
+| Topic | Type | QoS |
+| --- | --- | --- |
+| `/tmpc/trajectory_performance` | `hyu_formular_control_msgs/msg/TumTrajectory` | reliable, volatile, KeepLast 10 |
+| `/tmpc/trajectory_emergency` | `hyu_formular_control_msgs/msg/TumTrajectory` | reliable, volatile, KeepLast 10 |
+
+Each output contains exactly 50 uniformly spaced global-arc-length samples.
+The interval starts 0.5 m behind the current Frenet `s`, extends forward by a
+speed-dependent horizon, and interpolates across the closed-loop seam. The
+performance and emergency messages are validated together and use the same
+nonzero `traj_cnt` and clamped nonnegative `lap_cnt`. The emergency message
+keeps the same geometry but applies a nonnegative, monotonically non-increasing
+speed profile ending at or below 0.5 m/s. If the nominal horizon cannot brake
+safely, the builder retries the complete pair with the configured maximum
+horizon; if that still cannot stop, neither message is published.
+
+The launch selects the input heading convention from `planner_source`:
+
+- `slam`: waypoints contain ROS yaw (east-zero, counter-clockwise positive),
+  so `psi_rad` is converted with `wrap(yaw_ros - pi/2)`;
+- `csv`: the offline trajectory already contains Formula north-zero heading,
+  so only angle normalization is applied.
+
+The default GGV table comes from the installed copy of
+`trajectory_generator/inputs/veh_dyn_info/ggv.csv`. Set
+`tmpc_ggv_csv_path` to an empty string to use the equal-length fallback arrays
+in `global_planner.yaml`. A malformed file, non-increasing speed axis, or
+nonpositive limit is a startup error. Speed queries beyond the table use the
+nearest endpoint.
+
+This adapter does not consume TMPC control output, write `/cmd`, disable Pure
+Pursuit, or arbitrate command ownership. Those are separate integration steps.
+
 ## RViz debug visualization
 
 

@@ -13,6 +13,8 @@
   <depend>eufs_msgs</depend>
   <depend>std_msgs</depend>
   <depend>nav_msgs</depend>
+  <depend>ament_index_cpp</depend>
+  <depend>hyu_formular_control_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>visualization_msgs</depend>
   <exec_depend>frenet_conversion</exec_depend>

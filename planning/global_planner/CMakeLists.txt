@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.8)
 project(global_planner)
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -12,6 +15,8 @@ find_package(std_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
+find_package(ament_index_cpp REQUIRED)
+find_package(hyu_formular_control_msgs REQUIRED)
 
 add_library(global_planner_slam_geometry
   src/planner_geometry.cpp
@@ -65,20 +70,52 @@ ament_target_dependencies(planner_node
   nav_msgs
 )
 
-add_executable(wpnt_publisher_node
+add_library(global_planner_tmpc_trajectory_builder STATIC
+  src/tmpc_trajectory_builder.cpp
+)
+target_include_directories(global_planner_tmpc_trajectory_builder PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+ament_target_dependencies(global_planner_tmpc_trajectory_builder
+  eufs_msgs
+  std_msgs
+  nav_msgs
+  hyu_formular_control_msgs
+)
+
+add_library(global_planner_wpnt_publisher STATIC
   src/global_path_validity_gate.cpp
   src/path_snapshot.cpp
   src/wpnt_publisher_node.cpp
 )
-target_include_directories(wpnt_publisher_node PRIVATE
+target_include_directories(global_planner_wpnt_publisher PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(global_planner_wpnt_publisher
+  global_planner_tmpc_trajectory_builder
+)
+ament_target_dependencies(global_planner_wpnt_publisher
+  rclcpp
+  eufs_msgs
+  std_msgs
+  nav_msgs
+  geometry_msgs
+  ament_index_cpp
+  hyu_formular_control_msgs
+)
+
+add_executable(wpnt_publisher_node
+  src/wpnt_publisher_main.cpp
+)
+target_link_libraries(wpnt_publisher_node
+  global_planner_wpnt_publisher
 )
 ament_target_dependencies(wpnt_publisher_node
   rclcpp
   eufs_msgs
   std_msgs
   nav_msgs
-  geometry_msgs
+  hyu_formular_control_msgs
 )
 
 install(TARGETS
@@ -117,6 +154,49 @@ if(BUILD_TESTING)
       nav_msgs
     )
   endforeach()
+
+  ament_add_gtest(tmpc_trajectory_builder_test
+    test/tmpc_trajectory_builder_test.cpp
+  )
+  target_link_libraries(tmpc_trajectory_builder_test
+    global_planner_tmpc_trajectory_builder
+  )
+  ament_target_dependencies(tmpc_trajectory_builder_test
+    eufs_msgs
+    std_msgs
+    nav_msgs
+    hyu_formular_control_msgs
+  )
+
+  ament_add_gtest(global_path_validity_gate_test
+    test/global_path_validity_gate_test.cpp
+  )
+  target_link_libraries(global_path_validity_gate_test
+    global_planner_wpnt_publisher
+  )
+  ament_target_dependencies(global_path_validity_gate_test
+    rclcpp
+    eufs_msgs
+    std_msgs
+    nav_msgs
+    hyu_formular_control_msgs
+  )
+
+  ament_add_gtest(wpnt_publisher_tmpc_test
+    test/wpnt_publisher_tmpc_test.cpp
+  )
+  target_link_libraries(wpnt_publisher_tmpc_test
+    global_planner_wpnt_publisher
+  )
+  ament_target_dependencies(wpnt_publisher_tmpc_test
+    rclcpp
+    eufs_msgs
+    std_msgs
+    nav_msgs
+    geometry_msgs
+    ament_index_cpp
+    hyu_formular_control_msgs
+  )
 endif()
 
 ament_package()

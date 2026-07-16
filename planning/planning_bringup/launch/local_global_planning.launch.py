@@ -27,6 +27,8 @@ ARGUMENTS = (
     ("global_path_waypoints_topic", "/planning/global_path_waypoints", "Global rolling waypoint window."),
     ("global_path_topic", "/planning/global_path_waypoints/path", "Global rolling window visualization."),
     ("frenet_odom_topic", "/car_state/frenet/odom", "Frenet odometry topic."),
+    ("tmpc_performance_trajectory_topic", "/tmpc/trajectory_performance", "Formula TMPC performance trajectory."),
+    ("tmpc_emergency_trajectory_topic", "/tmpc/trajectory_emergency", "Formula TMPC emergency trajectory."),
     ("local_waypoints_topic", "/planning/local_waypoints", "Local planner waypoint output."),
     ("local_path_topic", "/planning/local_waypoints/path", "Local planner path visualization."),
     ("local_path_valid_topic", "/planning/local_path_valid", "Local-path validity heartbeat."),
@@ -49,8 +51,13 @@ ARGUMENTS = (
     ("local_max_stamp_skew_sec", "0.1", "Local planner cones/odom stamp-skew gate (sec, sim time)."),
     ("local_max_input_age_sec", "0.5", "Local planner input freshness gate (sec, sim time)."),
     ("local_max_start_distance_m", "4.0", "Max distance from ego to the local path start (m)."),
-    ("enable_controller", "true", "Start the sole /cmd writer."),
-    ("cmd_topic", "/cmd", "Controller command output."),
+    ("enable_controller", "true", "Start the Pure Pursuit controller."),
+    ("cmd_topic", "/cmd", "Command topic monitored by the HUD."),
+    (
+        "controller_cmd_topic",
+        LaunchConfiguration("cmd_topic"),
+        "Pure Pursuit command output; defaults to cmd_topic.",
+    ),
     ("enable_hud", "true", "Start the RViz stack HUD overlay aggregator."),
     ("hud_topic", "/planning/stack_hud", "Stack HUD board overlay."),
     ("hud_banner_topic", "/planning/stack_hud_banner", "Stack HUD banner overlay."),
@@ -186,6 +193,15 @@ def generate_launch_description() -> LaunchDescription:
             "global_waypoints_topic": values["global_waypoints_topic"],
             "global_path_valid_topic": values["global_path_valid_topic"],
             "global_path_reason_topic": values["global_path_reason_topic"],
+            "frenet_odom_topic": values["frenet_odom_topic"],
+            "path_source_topic": values["path_source_topic"],
+            "lap_count_topic": values["lap_count_topic"],
+            "tmpc_performance_trajectory_topic": values[
+                "tmpc_performance_trajectory_topic"
+            ],
+            "tmpc_emergency_trajectory_topic": values[
+                "tmpc_emergency_trajectory_topic"
+            ],
             "path_waypoints_topic": values["global_path_waypoints_topic"],
             "path_topic": values["global_path_topic"],
             "use_sim_time": values["use_sim_time"],
@@ -353,7 +369,7 @@ def generate_launch_description() -> LaunchDescription:
         ("/planning/selected_path_valid", values["selected_path_valid_topic"]),
         ("/planning/stop_request", values["stop_request_topic"]),
         ("/localization/ego_odom", values["ego_odom_topic"]),
-        ("/cmd", values["cmd_topic"]),
+        ("/cmd", values["controller_cmd_topic"]),
     ]
     controller = Node(
         package="pure_pursuit_controller",

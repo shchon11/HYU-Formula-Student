@@ -1,5 +1,7 @@
 #include "global_planner/global_path_validity_gate.hpp"
 
+#include <cmath>
+
 namespace wpnt_publisher
 {
 
@@ -84,7 +86,8 @@ bool GlobalPathValidityGate::validityFresh(const rclcpp::Time & current_time) co
   if (!has_global_path_valid_ || !global_path_valid_) {
     return false;
   }
-  return (current_time - last_global_path_valid_time_).seconds() <= timeout_sec_;
+  const double age_sec = (current_time - last_global_path_valid_time_).seconds();
+  return std::isfinite(age_sec) && age_sec >= 0.0 && age_sec <= timeout_sec_;
 }
 
 bool GlobalPathValidityGate::invalidate()

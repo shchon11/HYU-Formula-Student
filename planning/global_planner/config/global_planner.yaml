@@ -111,6 +111,97 @@ wpnt_publisher:
     # s-based closest point; warns on disagreement, never changes the output.
     check_segment_index: true
 
+
+    # Formula TMPC trajectory adapter. The legacy rolling outputs above remain
+    # callback-driven and unchanged; these two trajectories are independently
+    # rebuilt and published at 20 Hz only in GLOBAL_FULL/GLOBAL_FINAL_STOP.
+    ego_odom_topic: "/localization/ego_odom"
+    path_source_topic: "/planning/path_source"
+    lap_count_topic: "/planning/lap_count"
+    tmpc_performance_trajectory_topic: "/tmpc/trajectory_performance"
+    tmpc_emergency_trajectory_topic: "/tmpc/trajectory_emergency"
+    tmpc_publish_rate_hz: 20.0
+    tmpc_input_timeout_sec: 0.5
+
+    # A 3 s trajectory exceeds the Formula controller's approximately 2.46 s
+    # prediction horizon. The interval starts slightly behind the vehicle.
+    tmpc_foresight_time_sec: 3.0
+    tmpc_min_horizon_m: 10.0
+    tmpc_max_horizon_m: 30.0
+    tmpc_start_behind_m: 0.5
+    tmpc_min_sample_distance_m: 0.0001
+
+    # Flat simulation track; fixed lateral corridor half-widths handed to the
+    # TUM tube MPC. 1.0 m per side exceeds the raceline's guaranteed boundary
+    # slack (margin 1.4 m - car half-width 0.75 m = 0.65 m), so the tube can
+    # authorize up to ~0.35 m outside the corridor the raceline was solved for.
+    # TODO(tmpc): derive per-point from boundary distance, or drop to <= 0.6.
+    tmpc_banking_rad: 0.0
+    tmpc_tube_l_m: 1.0
+    tmpc_tube_r_m: 1.0
+
+    # Match the generated Formula path-matching safety check. Change these in
+    # lock-step with regenerated Formula code.
+    tmpc_emergency_decel_scale: 0.95
+    tmpc_emergency_final_speed_mps: 0.5
+    tmpc_drag_coefficient: 1.4
+    tmpc_air_density_kgpm3: 1.22
+    tmpc_vehicle_mass_kg: 225.0
+    tmpc_acceleration_utilization_limit: 1.0
+
+    # The launch sets formula_north_zero for the CSV writer and ros_yaw for the
+    # SLAM writer. Direct ros2 run defaults to the SLAM convention.
+    tmpc_input_heading_convention: "ros_yaw"
+
+    # The node defaults this path to the installed global_planner share copy of
+    # trajectory_generator/inputs/veh_dyn_info/ggv.csv. Set it to an empty
+    # string to use the fallback vectors below instead.
+    tmpc_ggv_speed_mps: [0.0, 8.5]
+    tmpc_ggv_ax_max_mps2: [11.772, 11.772]
+    tmpc_ggv_ay_max_mps2: [20.6428571429, 20.6428571429]
+    tmpc_ggv_ax_decel_max_mps2: [9.81, 9.81]
+
+frenet_odom_node:
+  ros__parameters:
+    # EUFS simulation publishes vehicle odometry on /ground_truth/odom. For a
+    # localization stack, override launch arg odom_topic:=/pf/pose/odom.
+    odom_topic: "/ground_truth/odom"
+    waypoint_topic: "/global_waypoints"
+    # Reliable volatile std_msgs/Bool heartbeat; do not use transient-local.
+    global_path_valid_topic: "/planning/global_path_valid"
+    global_path_valid_timeout_sec: 0.5
+    frenet_odom_topic: "/car_state/frenet/odom"
+    debug_topic: "/car_state/frenet/debug"
+    frenet_frame_id: "frenet"
+    closed_loop: true
+    publish_debug: true
+
+global_planner_debug_visualizer_node:
+  ros__parameters:
+    # Layer CSVs are resolved as <output_root>/<map_name>/<*_filename>.
+    # Debug-only node: pass output_root:=<...>/trajectory_generator/outputs.
+    output_root: ""
+    map_name: "peanut"
+
+    # Publishing
+    frame_id: "map"
+    markers_topic: "/global_planner/debug/markers"
+    marker_line_width: 0.1
+    close_loops: true
+
+    # Reload
+    reload_period_sec: 1.0
+
+    # Layer sources (Formula Student colours are fixed in the node:
+    #   left boundary = blue, right boundary = yellow, centerline = red,
+    #   minimum-curvature raceline = green).
+    # left/right boundaries come from the periodic-spline export
+    # (export_boundary_splines.py) so they match the track map exactly.
+    left_boundary_filename: "left_boundary_spline.csv"
+    right_boundary_filename: "right_boundary_spline.csv"
+    centerline_filename: "centerline.csv"
+    raceline_filename: "traj_race_cl.csv"
+
 frenet_odom_node:
   ros__parameters:
     # EUFS simulation publishes vehicle odometry on /ground_truth/odom. For a
