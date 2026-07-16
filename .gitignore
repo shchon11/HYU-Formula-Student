@@ -8,6 +8,7 @@ CMakeCache.txt
 *.pyc
 __pycache__/
 
+.venv-yolo/
 .vscode/
 .idea/
 .omx/
