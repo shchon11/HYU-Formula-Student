@@ -74,10 +74,13 @@ perception_node:
     # A/B on the overhauled sim (2026-07-16, driving): deskew OFF read
     # cluster lon +0.137 / FP 20.4% / cluster n collapsed 1440->393 (boxes
     # flooded to stereo); ON read +0.076 / 12.2% / matching restored. Net win.
-    # NOTE all sigmas below were re-fitted the same day at DRIVING speed on
-    # the realism pipeline (NEES had gone 4-40x overconfident); the split
-    # between residual skew, odom-TF drift in motion compensation, and true
-    # sensor noise is NOT yet decomposed — remeasure before tightening back.
+    # All sigmas below were re-fitted at DRIVING speed on the realism
+    # pipeline (NEES had gone 4-40x overconfident) and then VERIFIED on a
+    # hygienic rerun: every tier's NEES landed in the policy band
+    # (cluster 0.26 vs the 0.25 target; zncc 0.39, sparse 0.37). The
+    # residual cluster error (~0.13 lat rms, +0.08 lon) is time-alignment
+    # through the now-honestly-drifting odom TF, not sensor geometry — the
+    # deskew contract test recovers the ideal cloud to 3-6 mm.
     # cluster_range_bias_m reset to 0: the old -0.046 front-face constant was
     # measured on the ideal cloud; the realism pipeline reads +0.076 lon with
     # causes entangled, so no constant is honest right now.
