@@ -271,4 +271,42 @@ TEST(SlamCenterlineBuilder, ClosesFromEveryEgoPositionOnShippedTracks)
   }
 }
 
+// The published path must be a pure function of the cone map. The seed picks the
+// cone the boundary walk starts at, which sets the ordering and pairing phase for
+// the whole lap, so seeding at the moving car made the SAME frozen map rebuild
+// into a different line -- measured up to 0.20 m apart. Every SLAM cone
+// refinement bumps the map signature (hashed to the millimetre) and triggers a
+// rebuild, and the car has moved by then, so the path stepped ~0.2 m sideways
+// under the controller on an essentially unchanged map, and the car shook.
+// Pin the invariant outright: the ego must not move the path at all.
+TEST(SlamCenterlineBuilder, PathIsIndependentOfEgoPosition)
+{
+  const auto map = loadConeMapCsv("eufs_sim/eufs_tracks/csv/small_track.csv");
+  std::string reason;
+  std::vector<PlannerWaypoint> reference;
+  ASSERT_TRUE(
+    buildCenterlineFromSlamMap(map, egoAtOrigin(), fixtureConfig(), reference, reason)) << reason;
+  ASSERT_GE(reference.size(), 3U);
+
+  for (const auto & seed : bluePoints(map)) {
+    for (const double lateral : {0.0, 2.0}) {
+      nav_msgs::msg::Odometry odom;
+      odom.pose.pose.position.x = seed.x;
+      odom.pose.pose.position.y = seed.y + lateral;
+      odom.pose.pose.orientation.w = 1.0;
+
+      std::vector<PlannerWaypoint> candidate;
+      ASSERT_TRUE(
+        buildCenterlineFromSlamMap(map, odom, fixtureConfig(), candidate, reason)) << reason;
+      ASSERT_EQ(candidate.size(), reference.size())
+        << "ego (" << odom.pose.pose.position.x << ", " << odom.pose.pose.position.y
+        << ") changed the path";
+      for (std::size_t i = 0; i < reference.size(); ++i) {
+        ASSERT_EQ(candidate[i].x, reference[i].x) << "ego moved the path at waypoint " << i;
+        ASSERT_EQ(candidate[i].y, reference[i].y) << "ego moved the path at waypoint " << i;
+      }
+    }
+  }
+}
+
 }  // namespace global_planner::test

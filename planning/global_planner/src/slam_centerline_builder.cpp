@@ -683,15 +683,27 @@ bool buildCenterlineFromSlamMap(
     return false;
   }
 
-  // Ego-seeded attempt first (today's behavior, and the seed most likely to
-  // start the path where the car is), then deterministic alternates spread
-  // around the lap. The published path is a closed loop in the map frame, so
-  // WHERE it was seeded does not matter to consumers — only that some seed
-  // yields a valid loop. The diagnosed reason stays the ego attempt's.
+  // Seed from a FIXED reference, never the ego. The seed picks which cone the
+  // boundary walk starts at, and that sets the ordering and pairing phase for the
+  // whole lap -- so seeding at the car made the published path a function of
+  // WHERE THE CAR WAS, not of the map. Measured on small_track: the same frozen
+  // map rebuilt from two ego positions moved the line by up to 0.20 m, while 2 cm
+  // of cone jitter moves it only 0.03-0.05 m. Since every SLAM cone refinement
+  // bumps the map signature (it is hashed to the millimetre) and triggers a
+  // rebuild, and the car has moved by then, the path stepped ~0.2 m sideways
+  // under the controller on an essentially unchanged map -- which the car
+  // answered with a visible shake.
+  //
+  // The map origin is where SLAM started, i.e. the start/finish line: fixed for
+  // the whole run, on the track, and a sensible phase to begin a lap on. Its
+  // exact value does not matter to consumers anyway -- the path is a closed loop
+  // in the map frame and the wpnt_publisher wraps around it -- only that it is
+  // the SAME every rebuild. With this the path is finally what this file already
+  // claimed it was: a pure function of the cone map.
   constexpr std::size_t kMaxCenterlineSeedAttempts = 12U;
   std::string first_reason;
   if (buildCenterlineFromSeed(
-      blue_points, yellow_points, ego, config, waypoints, first_reason))
+      blue_points, yellow_points, PlannerPoint{0.0, 0.0}, config, waypoints, first_reason))
   {
     return true;
   }
