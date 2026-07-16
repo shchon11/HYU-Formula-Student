@@ -8,9 +8,10 @@
 Simulated SBG Ellipse-D GNSS/INS for the EUFS simulator.
 
 Consumes the simulator ground truth (``/ground_truth/state``) and re-emits it
-as the SBG driver's EKF outputs (``/sbg/ekf_nav`` + ``/sbg/ekf_euler``), so the
-real-hardware pipeline (sbg_odometry_bridge -> graph SLAM GNSS prior) runs
-unmodified against the simulator.
+as the SBG driver's EKF outputs (``/sbg/ekf_nav`` + ``/sbg/ekf_euler`` +
+``/sbg/ekf_rot_accel_body``), so the real-hardware pipeline (sbg_odometry_bridge
+-> graph SLAM GNSS prior, and the controller's feasibility gate) runs unmodified
+against the simulator.
 
 Error model constants come from the Ellipse-N/D datasheet (MK068EN v1.1,
 1-sigma, land application):
@@ -80,6 +81,40 @@ wrong, both load-bearing for anything that consumes the stream:
   the SLAM prior gate finally gets exercised the way the real unit will
   exercise it. ``position_valid`` is likewise gated on the *believed* accuracy.
 
+``/sbg/ekf_rot_accel_body`` (driver ``log_ekf_rot_accel_body``, sbgECom >= 4.0)
+carries the INS body-frame rotation rate and acceleration "free from gravity and
+sensor bias/scale errors" — what a controller wants for a friction-limit
+feasibility gate, since ``sbg/imu_data.accel`` still has gravity in it and leaks
+g*sin(pitch) into the longitudinal channel exactly when the car is braking
+hardest. Two things this node has to get right, both silent if wrong:
+
+* **Ground truth's ``linear_acceleration`` is NOT this quantity.** The vehicle
+  model sets ``a_x = x_dot.v_x``, the body-frame velocity *derivative*, which
+  carries the transport terms: ``v_x_dot = r*v_y + Fx/m`` and
+  ``v_y_dot = Fy/m - r*v_x`` (eufs_models/src/dynamic_bicycle.cpp). The specific
+  force an INS reports is the ``F/m`` part, so the transport terms have to come
+  back out::
+
+      a_x = gt.linear_acceleration.x - r_z * v_y
+      a_y = gt.linear_acceleration.y + r_z * v_x
+
+  This is not a detail. In a steady-state corner ``v_y_dot -> 0`` while the real
+  lateral acceleration is the whole ``r*v_x``, so forwarding ground truth
+  unconverted reports ~0 g of lateral load in precisely the sustained-cornering
+  case a feasibility gate exists to catch. test_rot_accel_body_reports_
+  centripetal_load pins it.
+
+* **Frame.** Ground truth body is ROS FLU (REP-103); the SBG body frame is
+  X-forward/Y-right/Z-down. Hence y and z flip on the way out.
+
+Output error is dominated by gravity leakage through the attitude error, g*
+``att_gm`` — the same correlated attitude state the euler output already
+reports, so the two channels cannot disagree — plus the datasheet's 14 ug
+in-run accel bias and 7 deg/h gyro bias as Gauss-Markov states. Deliberately
+not modelled: accelerometer velocity random walk (the EKF output is filtered,
+and the bandwidth is not a datasheet number) — pin it with the parity harness
+before trusting the high-frequency content.
+
 Mode control (topics override and disable the schedules):
   * ``mode_schedule``, e.g. ``"20:3,30:4"`` (t_sec:mode, relative to first GT)
   * ``correction_schedule``, e.g. ``"40:single,50:rtk_fixed"``
@@ -104,7 +139,10 @@ granularity is one GT period.
 
 Known gaps, recorded so they are chosen and not discovered: no antenna lever
 arm, and no 5 Hz measurement-update sawtooth inside mode 4 (the GM error is
-smooth).
+smooth). The rot_accel output is reported at the IMU origin, like the real
+unit's — a consumer comparing it against a CoG-referenced model still owes
+itself the ``r_z_dot * l_x`` lever-arm term, which this node cannot supply
+because it does not know where the IMU is mounted.
 """
 
 import collections
@@ -120,7 +158,7 @@ from eufs_msgs.msg import CarState
 from std_msgs.msg import String, UInt8
 
 try:
-    from sbg_driver.msg import SbgEkfEuler, SbgEkfNav, SbgEkfStatus
+    from sbg_driver.msg import SbgEkfEuler, SbgEkfNav, SbgEkfRotAccel, SbgEkfStatus
 except ImportError as exc:  # pragma: no cover - depends on runtime environment
     raise SystemExit(
         "sbg_driver messages not found. Build/source the workspace that "
@@ -164,6 +202,16 @@ class SimEllipseD(Node):
         self.ekf_euler_topic = self.declare_parameter(
             "ekf_euler_topic", "/sbg/ekf_euler"
         ).value
+        self.rot_accel_topic = self.declare_parameter(
+            "rot_accel_body_topic", "/sbg/ekf_rot_accel_body"
+        ).value
+        # Mirrors driver output.log_ekf_rot_accel_body != 0. Off on the real
+        # unit by default, and it needs ELLIPSE firmware new enough to know the
+        # log at all (sbgECom >= 4.0) — check `ros2 topic hz` on the car before
+        # trusting a sim-tuned consumer.
+        self.publish_rot_accel = self.declare_parameter(
+            "publish_rot_accel_body", True
+        ).value
 
         # Output convention: mirror the driver's output.use_enu (default NED).
         self.use_enu = self.declare_parameter("use_enu", False).value
@@ -178,6 +226,10 @@ class SimEllipseD(Node):
         # Effective rate is min(ekf_rate, /ground_truth/state rate) in SIM time;
         # wall-clock rate additionally scales with Gazebo's real-time factor.
         self.ekf_rate = self.declare_parameter("ekf_rate", 200.0).value
+        # Each sbgECom log carries its own output divider, so rot_accel_body is
+        # decimated independently of ekf_nav/ekf_euler (the recommended car
+        # config runs nav at 25 Hz and rot_accel at 100 Hz).
+        self.rot_accel_rate = self.declare_parameter("rot_accel_rate", 100.0).value
 
         # --- datasheet-derived 1-sigma constants -------------------------
         self.sigma_pos = {
@@ -214,6 +266,15 @@ class SimEllipseD(Node):
         ).value
         self.gyro_bias_dph = self.declare_parameter("gyro_bias_dph", 7.0).value
         self.gyro_arw_dpsh = self.declare_parameter("gyro_arw_dpsh", 0.18).value
+        # Residual in-run biases left on the rot_accel_body output after the EKF
+        # has estimated them out (datasheet 1-sigma: 14 ug accel, 7 deg/h gyro,
+        # the latter shared with the free-inertial ramp above). Both are an
+        # order of magnitude below the g*attitude_error leakage that dominates
+        # this channel; they are here so the budget is complete, not because
+        # they move the answer. The correlation time is an engineering estimate
+        # (in-run bias stability is quoted without one) — parity-harness bait.
+        self.accel_bias_ug = self.declare_parameter("accel_bias_ug", 14.0).value
+        self.bias_error_tau = self.declare_parameter("bias_error_tau", 60.0).value
         # Mode 3: residual velocity bias integrated into position + random walk.
         self.mode3_vel_bias = self.declare_parameter("mode3_vel_bias", 0.03).value
         self.mode3_pos_rw = self.declare_parameter("mode3_pos_rw", 0.02).value
@@ -266,6 +327,15 @@ class SimEllipseD(Node):
         self.accel_dir = [1.0, 0.0]
         self.drift_dir = [1.0, 0.0]
         self.degraded_since = None  # stamp when mode dropped below 3
+        # rot_accel_body channel: residual sensor biases (body axes) and the
+        # free-inertial attitude-error magnitude, kept in sync with the
+        # velocity divergence so the accel output degrades with it instead of
+        # staying suspiciously clean through a dropout. Its direction in the
+        # body plane is a per-episode draw, like accel_dir is in ENU.
+        self.accel_bias_gm = [0.0, 0.0, 0.0]
+        self.gyro_bias_gm = [0.0, 0.0, 0.0]
+        self.att_ramp = 0.0
+        self.accel_body_dir = [1.0, 0.0]
 
         # Believed (reported) accuracy state: the EKF covariance surrogate.
         # Each channel mirrors the realised propagation branch-for-branch with
@@ -283,10 +353,14 @@ class SimEllipseD(Node):
         self.first_stamp = None
         self.last_stamp = None
         self.last_pub_stamp = None
+        self.last_rot_pub_stamp = None
 
-        # Messages waiting out their transport latency: (due_time, nav, euler)
-        # in FIFO order, the way a serial link delivers them. Released against
-        # the ground-truth stream's clock in on_ground_truth.
+        # Messages waiting out their transport latency: (due_time, ((pub, msg),
+        # ...)) in FIFO order, the way a serial link delivers them. Released
+        # against the ground-truth stream's clock in on_ground_truth. Each log
+        # is its own sbgECom frame, so each draws its own latency and a later
+        # frame can sit behind an earlier one — head-of-line blocking is what
+        # the real link does too.
         self._outbox = collections.deque()
 
         # Datum radii for the inverse projection.
@@ -299,6 +373,11 @@ class SimEllipseD(Node):
 
         self.nav_pub = self.create_publisher(SbgEkfNav, self.ekf_nav_topic, 10)
         self.euler_pub = self.create_publisher(SbgEkfEuler, self.ekf_euler_topic, 10)
+        self.rot_accel_pub = (
+            self.create_publisher(SbgEkfRotAccel, self.rot_accel_topic, 10)
+            if self.publish_rot_accel
+            else None
+        )
         self.gt_sub = self.create_subscription(
             CarState,
             self.ground_truth_topic,
@@ -315,10 +394,25 @@ class SimEllipseD(Node):
         self.get_logger().info(
             f"Simulated Ellipse-D: {self.ground_truth_topic} -> "
             f"{self.ekf_nav_topic}+{self.ekf_euler_topic} at {self.ekf_rate} Hz "
-            f"({'ENU' if self.use_enu else 'NED'}), mode={self.mode}, "
+            + (
+                f"(+{self.rot_accel_topic} at {self.rot_accel_rate} Hz) "
+                if self.publish_rot_accel
+                else ""
+            )
+            + f"({'ENU' if self.use_enu else 'NED'}), mode={self.mode}, "
             f"correction={self.correction}"
             + (", odometer-aided" if self.odometer_aided else "")
         )
+        if self.publish_rot_accel and self.use_enu:
+            # Faithfully reproduced, not inherited by accident: see
+            # _to_output_frame. Warn rather than quietly emit swapped axes.
+            self.get_logger().warn(
+                "use_enu:=true — sbg_driver 3.3.2 applies the NED->ENU "
+                "NAVIGATION-frame swap to the BODY-frame rot_accel log, so "
+                f"{self.rot_accel_topic} carries longitudinal and lateral "
+                "exchanged. This node reproduces that so sim matches the car. "
+                "Prefer use_enu:=false and flip y/z in the consumer."
+            )
 
     # --- mode / correction control ---------------------------------------
 
@@ -359,6 +453,7 @@ class SimEllipseD(Node):
             self.degraded_since = None
         elif mode <= 2:
             self.accel_dir = self._random_unit()
+            self.accel_body_dir = self._random_unit()
             self.drift_dir = self._random_unit()
             self.degraded_since = self.last_stamp
         else:
@@ -442,6 +537,16 @@ class SimEllipseD(Node):
         self.heading_gm = self._gm_step(
             self.heading_gm, self.sigma_heading, self.heading_error_tau, dt
         )
+        # Residual sensor biases on the rot_accel_body channel (body axes).
+        sigma_ab = self.accel_bias_ug * 1e-6 * _GRAVITY
+        sigma_gb = math.radians(self.gyro_bias_dph / 3600.0)
+        for i in (0, 1, 2):
+            self.accel_bias_gm[i] = self._gm_step(
+                self.accel_bias_gm[i], sigma_ab, self.bias_error_tau, dt
+            )
+            self.gyro_bias_gm[i] = self._gm_step(
+                self.gyro_bias_gm[i], sigma_gb, self.bias_error_tau, dt
+            )
         # Datasheet gives no vertical tier table; 2x the horizontal sigma is
         # the convention this node has always reported for z — now it is also
         # what the altitude error actually does.
@@ -463,9 +568,13 @@ class SimEllipseD(Node):
             self.acc_vel_var *= decay * decay
             self.acc_hdg_lin *= decay
             self.acc_hdg_var *= decay * decay
+            self.att_ramp = 0.0
             return
 
         if self.mode == 3:
+            # Velocity is still aided, so attitude is still observable: the
+            # accel channel stays at its nominal g*att_gm leakage.
+            self.att_ramp = 0.0
             decay = math.exp(-dt / self.reacquire_tau)
             self.vel_err = [e * decay for e in self.vel_err]
             self.acc_vel_lin *= decay
@@ -489,6 +598,7 @@ class SimEllipseD(Node):
         # mode <= 2: dead reckoning.
         if self.odometer_aided and self.mode == 2:
             # Odometer speed + dual-antenna heading: datasheet 0.5 %/distance.
+            self.att_ramp = 0.0
             step = self.odometer_drift_ratio * speed * dt
             self.pos_err[0] += self.drift_dir[0] * step
             self.pos_err[1] += self.drift_dir[1] * step
@@ -503,6 +613,9 @@ class SimEllipseD(Node):
             theta = math.radians(self.attitude_error_deg) + math.radians(
                 self.gyro_bias_dph / 3600.0
             ) * t_out
+            # Same theta the rot_accel_body output leaks gravity through: the
+            # accel channel degrades with the dropout, it does not stay clean.
+            self.att_ramp = theta
             accel = _GRAVITY * math.sin(theta)
             self.vel_err[0] += self.accel_dir[0] * accel * dt
             self.vel_err[1] += self.accel_dir[1] * accel * dt
@@ -522,12 +635,90 @@ class SimEllipseD(Node):
 
     # --- publishing ----------------------------------------------------------
 
+    def _to_output_frame(self, vec_rfd):
+        """
+        Device body frame (X fwd, Y right, Z down) -> the driver's output.
+
+        With ``use_enu:=false`` the driver passes the body log through
+        untouched, which is what we want. With ``use_enu:=true`` it applies its
+        NED->ENU *navigation*-frame conversion (x=v[1], y=v[0], z=-v[2]) to
+        this *body*-frame log, exchanging longitudinal and lateral — see
+        sbg_ros2_driver message_wrapper.cpp createSbgEkfRotAccelMessage, which
+        both rot_accel topics share while only the NED one wants that swap.
+        Reproduced deliberately: this node's contract is to emit what the car's
+        stack emits, so a consumer that would break on the car breaks here too.
+        """
+        if self.use_enu:
+            return [vec_rfd[1], vec_rfd[0], -vec_rfd[2]]
+        return list(vec_rfd)
+
     def _flush_outbox(self, now):
         """Release queued messages whose transport latency has elapsed."""
         while self._outbox and self._outbox[0][0] <= now:
-            _, nav, euler = self._outbox.popleft()
-            self.nav_pub.publish(nav)
-            self.euler_pub.publish(euler)
+            _, payload = self._outbox.popleft()
+            for publisher, msg in payload:
+                publisher.publish(msg)
+
+    def _send(self, t, payload):
+        """Publish now, or queue the frame until its transport latency is up."""
+        if self.latency_mean <= 0.0:
+            for publisher, msg in payload:
+                publisher.publish(msg)
+            return
+        due = t + max(0.0, self.rng.gauss(self.latency_mean, self.latency_jitter))
+        self._outbox.append((due, payload))
+
+    def _build_rot_accel(self, msg, stamp, time_stamp):
+        """
+        Ground-truth body kinematics -> SbgEkfRotAccel (gravity-free, body).
+
+        ``CarState.linear_acceleration`` is the body-frame velocity derivative,
+        so the transport terms carried by v_x_dot/v_y_dot have to be removed to
+        recover the specific force the INS reports; without that a steady-state
+        corner reads ~0 lateral g. See the module docstring.
+        """
+        v_x, v_y = msg.twist.twist.linear.x, msg.twist.twist.linear.y
+        r_x, r_y, r_z = (
+            msg.twist.twist.angular.x,
+            msg.twist.twist.angular.y,
+            msg.twist.twist.angular.z,
+        )
+        a_x = msg.linear_acceleration.x - r_z * v_y
+        a_y = msg.linear_acceleration.y + r_z * v_x
+        a_z = msg.linear_acceleration.z
+
+        # Gravity leakage through the attitude error dominates this channel:
+        # the EKF removes gravity with the attitude it believes, so a roll/pitch
+        # error of theta leaves g*sin(theta) behind. att_gm is the same state
+        # the euler output reports, so the two channels agree by construction;
+        # att_ramp adds the free-inertial growth. The sign convention below is a
+        # choice, not a derivation — both errors are zero-mean and symmetric, so
+        # only their magnitude and correlation carry information.
+        leak = _GRAVITY * math.sin(self.att_ramp)
+        a_x += -_GRAVITY * self.att_gm[1] + self.accel_body_dir[0] * leak
+        a_y += _GRAVITY * self.att_gm[0] + self.accel_body_dir[1] * leak
+        a_x += self.accel_bias_gm[0]
+        a_y += self.accel_bias_gm[1]
+        a_z += self.accel_bias_gm[2]
+
+        # Ground truth body is ROS FLU; the SBG body frame is X fwd/Y right/Z
+        # down, so the lateral and vertical axes flip.
+        accel_rfd = [a_x, -a_y, -a_z]
+        rate_rfd = [
+            r_x + self.gyro_bias_gm[0],
+            -(r_y + self.gyro_bias_gm[1]),
+            -(r_z + self.gyro_bias_gm[2]),
+        ]
+
+        rot = SbgEkfRotAccel()
+        rot.header.stamp = stamp
+        rot.header.frame_id = "imu_link" if self.use_enu else "imu_link_ned"
+        rot.time_stamp = time_stamp
+        out_accel = self._to_output_frame(accel_rfd)
+        out_rate = self._to_output_frame(rate_rfd)
+        rot.acceleration.x, rot.acceleration.y, rot.acceleration.z = out_accel
+        rot.rate.x, rot.rate.y, rot.rate.z = out_rate
+        return rot
 
     def on_ground_truth(self, msg):
         stamp = msg.header.stamp
@@ -540,6 +731,20 @@ class SimEllipseD(Node):
         vx, vy = msg.twist.twist.linear.x, msg.twist.twist.linear.y
         self._propagate_errors(t - self.last_stamp, t, math.hypot(vx, vy))
         self.last_stamp = t
+
+        time_stamp = int((t * 1e6) % 2**32)
+
+        # rot_accel_body carries its own sbgECom output divider, so it is
+        # decimated independently of the nav/euler pair below.
+        if self.rot_accel_pub is not None and (
+            self.last_rot_pub_stamp is None
+            or (t - self.last_rot_pub_stamp) >= (1.0 / self.rot_accel_rate) - 1e-6
+        ):
+            self.last_rot_pub_stamp = t
+            self._send(
+                t,
+                ((self.rot_accel_pub, self._build_rot_accel(msg, stamp, time_stamp)),),
+            )
 
         # Decimate to the EKF output rate.
         if (
@@ -612,8 +817,6 @@ class SimEllipseD(Node):
         status.gps1_hdt_used = self.mode >= 2
         status.odo_used = bool(self.odometer_aided) and self.mode >= 2
 
-        time_stamp = int((t * 1e6) % 2**32)
-
         nav = SbgEkfNav()
         nav.header.stamp = stamp
         nav.header.frame_id = "imu_link" if self.use_enu else "imu_link_ned"
@@ -651,12 +854,7 @@ class SimEllipseD(Node):
         euler.accuracy.x = euler.accuracy.y = self.sigma_attitude
         euler.accuracy.z = heading_acc
 
-        if self.latency_mean <= 0.0:
-            self.nav_pub.publish(nav)
-            self.euler_pub.publish(euler)
-        else:
-            due = t + max(0.0, self.rng.gauss(self.latency_mean, self.latency_jitter))
-            self._outbox.append((due, nav, euler))
+        self._send(t, ((self.nav_pub, nav), (self.euler_pub, euler)))
 
 
 def main():

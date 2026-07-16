@@ -17,7 +17,10 @@ executor); publishes are captured through a stub publisher. Pinned here:
     white-noise prediction (the bridge integrates velocity into pose);
   * the free-inertial divergence the docstring promises (~0.3 m @ 8 s) is
     what both the realised ensemble and the reported sigma actually do;
-  * position_valid flips on BELIEVED accuracy, not on the realised draw.
+  * position_valid flips on BELIEVED accuracy, not on the realised draw;
+  * rot_accel_body reports the centripetal load of a steady corner, which the
+    ground-truth linear_acceleration field does NOT carry, in the SBG body
+    frame rather than ROS FLU.
 """
 import importlib.util
 import math
@@ -52,7 +55,16 @@ class _StubPub:
 
 
 def _make_state(t):
-    """Ground-truth CarState on the circle at absolute stamp t."""
+    """
+    Ground-truth CarState on the circle at absolute stamp t.
+
+    Steady state, so the body-frame velocity derivatives the vehicle model
+    publishes as ``linear_acceleration`` are both ZERO: v_x_dot = r*v_y + Fx/m
+    with v_y = 0 and constant speed, v_y_dot = Fy/m - r*v_x with the cornering
+    force exactly balancing the transport term. The real lateral load is the
+    whole r*v_x = 1.8 m/s^2 and lives nowhere in this message except implicitly
+    in twist — which is the entire reason sim_ellipse_d has to reconstruct it.
+    """
     msg = CarState()
     sec = int(t)
     msg.header.stamp = TimeMsg(sec=sec, nanosec=int(round((t - sec) * 1e9)))
@@ -63,6 +75,9 @@ def _make_state(t):
     msg.pose.pose.orientation.z = math.sin(yaw / 2.0)
     msg.pose.pose.orientation.w = math.cos(yaw / 2.0)
     msg.twist.twist.linear.x = _SPEED
+    msg.twist.twist.angular.z = _OMEGA
+    msg.linear_acceleration.x = 0.0
+    msg.linear_acceleration.y = 0.0
     return msg
 
 
@@ -85,16 +100,22 @@ def _reset(node, seed, mode_schedule, corr_schedule):
     node.alt_gm = 0.0
     node.vel_bias_vec = [0.0, 0.0]
     node.accel_dir = [1.0, 0.0]
+    node.accel_body_dir = [1.0, 0.0]
     node.drift_dir = [1.0, 0.0]
     node.degraded_since = None
+    node.accel_bias_gm = [0.0, 0.0, 0.0]
+    node.gyro_bias_gm = [0.0, 0.0, 0.0]
+    node.att_ramp = 0.0
     node.acc_pos_lin = node.acc_pos_var = 0.0
     node.acc_vel_lin = node.acc_vel_var = 0.0
     node.acc_hdg_lin = node.acc_hdg_var = 0.0
     node.first_stamp = node.last_stamp = node.last_pub_stamp = None
+    node.last_rot_pub_stamp = None
     node.latency_mean = node.latency_jitter = 0.0  # scenario tests: no delay
     node._outbox.clear()
     node.nav_pub = _StubPub()
     node.euler_pub = _StubPub()
+    node.rot_accel_pub = _StubPub()
 
 
 def _run(node, seed, duration, rate, mode_schedule=(), corr_schedule=()):
@@ -230,6 +251,69 @@ def test_position_valid_flips_on_believed_accuracy(node):
     rows = _run(node, 3, 420.0, 100.0, mode_schedule=[(5.0, 3)])
     flips = [r["t"] for r in rows if not r["valid"]]
     assert flips and 250.0 < flips[0] < 420.0
+
+
+def test_rot_accel_body_reports_centripetal_load(node):
+    """
+    Steady corner: lateral load is r*v_x, NOT ground truth's ~0 v_y_dot.
+
+    The regression this exists for is forwarding CarState.linear_acceleration
+    straight through, which reports a cornering car as pulling no lateral g —
+    silently telling a friction-limit gate that everything is feasible in the
+    exact case it is meant to catch.
+    """
+    _run(node, 7, 20.0, 200.0)
+    rows = node.rot_accel_pub.msgs
+    assert len(rows) > 100
+
+    # Ground truth carried zero lateral acceleration; the INS must not.
+    expected = _OMEGA * _SPEED  # 1.8 m/s^2
+    settled = rows[len(rows) // 2:]
+    lateral = _median([abs(m.acceleration.y) for m in settled])
+    assert abs(lateral - expected) < 0.05
+
+    # SBG body frame is Y-right, so a left turn (omega > 0) pulls the car's
+    # acceleration to the LEFT: negative on the reported axis.
+    assert all(m.acceleration.y < 0.0 for m in settled)
+
+    # Rate: Z-down, so a CCW (left) turn reports a negative yaw rate.
+    yaw_rate = _median([m.rate.z for m in settled])
+    assert abs(yaw_rate + _OMEGA) < 0.01
+
+    # Longitudinal is unloaded at constant speed, and the transport term must
+    # not leak into it: r*v_y = 0 here, so only the error budget remains.
+    assert _median([abs(m.acceleration.x) for m in settled]) < 0.05
+
+
+def test_rot_accel_body_rate_is_independent_of_nav_rate(node):
+    """Each sbgECom log has its own divider; nav at 25 Hz, rot at 100 Hz."""
+    _reset(node, 5, (), ())
+    node.ekf_rate, node.rot_accel_rate = 25.0, 100.0
+    try:
+        for i in range(400):
+            node.on_ground_truth(_make_state(_EPOCH + i / 200.0))
+        # 2 s of ground truth: ~50 nav, ~200 rot_accel.
+        assert 45 <= len(node.nav_pub.msgs) <= 55
+        assert 190 <= len(node.rot_accel_pub.msgs) <= 210
+    finally:
+        node.ekf_rate, node.rot_accel_rate = 200.0, 100.0
+
+
+def test_rot_accel_body_degrades_with_the_dropout(node):
+    """Free inertial: gravity leaks through the ramping attitude error."""
+    _run(node, 9, 40.0, 200.0, mode_schedule=[(10.0, 2)])
+    rows = node.rot_accel_pub.msgs
+    stamped = [
+        (m.header.stamp.sec + m.header.stamp.nanosec * 1e-9 - _EPOCH, m) for m in rows
+    ]
+    nominal = _median(
+        [abs(m.acceleration.x) for t, m in stamped if 5.0 <= t <= 9.0]
+    )
+    degraded = _median(
+        [abs(m.acceleration.x) for t, m in stamped if 35.0 <= t <= 39.0]
+    )
+    # 0.05 deg initial + 7 deg/h over ~28 s -> g*sin(theta) well above nominal.
+    assert degraded > 3.0 * max(nominal, 1e-6)
 
 
 def test_transport_latency_delays_arrival_not_stamp(node):
