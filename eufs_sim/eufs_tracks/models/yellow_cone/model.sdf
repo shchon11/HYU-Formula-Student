@@ -23,13 +23,26 @@
         </geometry>
         <cast_shadows>1</cast_shadows>
       </visual>
+      <!-- Collision is a primitive, not the visual mesh: ODE trimesh-vs-plane
+           narrowphase on every resting cone dominates the physics step on big
+           tracks (317 cones: RTF 0.36 -> ~1.0 headless).
+
+           The mesh is BASE-origin, not centred: its node matrix translates z by
+           +0.152 before the <scale> above, so the scaled envelope is
+           z 0.000..0.450 (xy half-extent 0.135). Reading the raw vertex array
+           alone says -0.225..+0.225 and misses that translate -- which is how
+           this cylinder first shipped centred on the link origin, 0.225 below
+           the visual. The cone then rested on its collision and the mesh hovered
+           0.225 m off the ground. Hence the pose: centre the cylinder at 0.225
+           so it spans the same 0.000..0.450 the mesh does. -->
       <collision name='collision'>
         <max_contacts>3</max_contacts>
+        <pose>0 0 0.225 0 0 0</pose>
         <geometry>
-          <mesh>
-            <uri>file://cone_yellow.dae</uri>
-            <scale>1.197896 1.205467 1.483153</scale>
-          </mesh>
+          <cylinder>
+            <radius>0.135</radius>
+            <length>0.45</length>
+          </cylinder>
         </geometry>
       </collision>
     </link>

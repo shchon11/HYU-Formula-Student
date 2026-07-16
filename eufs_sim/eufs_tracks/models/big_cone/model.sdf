@@ -22,12 +22,17 @@
         </geometry>
         <cast_shadows>1</cast_shadows>
       </visual>
+      <!-- Collision is a primitive, not the visual mesh (see blue_cone). The
+           mesh node matrix (Y-up, scale 0.00655834) puts the origin at the
+           BASE: footprint r~0.131, z 0.002..0.528 -> cylinder centered 0.265. -->
       <collision name='collision'>
         <max_contacts>3</max_contacts>
+        <pose>0 0 0.265 0 0 0</pose>
         <geometry>
-          <mesh>
-            <uri>file://cone_big.dae</uri>
-          </mesh>
+          <cylinder>
+            <radius>0.131</radius>
+            <length>0.5255</length>
+          </cylinder>
         </geometry>
       </collision>
     </link>
