@@ -1,4 +1,4 @@
-# boa_constrictor golden waypoints; regenerate with LOCAL_PLANNER_WRITE_GOLDEN=1
+# boa_constrictor golden waypoints; regenerate with HYU_LOCAL_PLANNER_WRITE_GOLDEN=1
 pose 0 0.62231212984948914 0.18953531326025685 -0.025363393109700042 valid=1 kind=1 n=41
 wp 0 0 0 0 0 5.6704792944197815e-17 0 3
 wp 0 1 0.5 2.8352396472098908e-17 0.5 5.6704792944197815e-17 0 3

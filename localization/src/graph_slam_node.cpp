@@ -130,7 +130,9 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<std::string>("slam_odom_topic", "/localization/ego_odom");
   status_topic_ = declare_parameter<std::string>("status_topic", "~/status");
   lifecycle_diagnostics_topic_ =
-    declare_parameter<std::string>("lifecycle_diagnostics_topic", "/localization/debug/lifecycle_diagnostics");
+    declare_parameter<std::string>(
+    "lifecycle_diagnostics_topic",
+    "/localization/debug/lifecycle_diagnostics");
   map_converged_topic_ =
     declare_parameter<std::string>("map_converged_topic", "~/map_converged");
   path_topic_ = declare_parameter<std::string>("path_topic", "/localization/debug/path");
