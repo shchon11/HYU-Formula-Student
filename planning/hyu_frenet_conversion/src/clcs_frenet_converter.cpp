@@ -10,7 +10,7 @@
 
 #include "geometry/clcs_exceptions.h"
 
-namespace frenet_conversion
+namespace hyu_frenet_conversion
 {
 namespace
 {
@@ -428,4 +428,4 @@ std::string toString(const VelocityFrame value)
   return value == VelocityFrame::kMap ? "map" : "body";
 }
 
-}  // namespace frenet_conversion
+}  // namespace hyu_frenet_conversion

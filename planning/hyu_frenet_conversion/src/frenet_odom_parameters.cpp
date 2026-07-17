@@ -1,6 +1,6 @@
-#include "frenet_conversion/frenet_odom_parameters.hpp"
+#include "hyu_frenet_conversion/frenet_odom_parameters.hpp"
 
-namespace frenet_conversion
+namespace hyu_frenet_conversion
 {
 namespace
 {

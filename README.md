@@ -161,7 +161,7 @@ sudo rosdep init 2>/dev/null; rosdep update   # 최초 1회
 | `sbg-driver` | INS/GNSS 브리지 (ins_pipeline) |
 | `libg2o` | graph SLAM 최적화 |
 | `rviz-2d-overlay-plugins` | RViz HUD (CTE/상태/GNSS) |
-| `eigen / boost / spdlog / omp` | frenet_conversion (CLCS) |
+| `eigen / boost / spdlog / omp` | hyu_frenet_conversion (CLCS) |
 | `pandas / opencv` | eufs_launcher·eufs_tracks (pandas), trajectory_generator·perception (opencv) |
 
 ### 1.5 패치 Gazebo 빌드 — GPU LiDAR
@@ -185,7 +185,7 @@ stock으로 뜨니, 그 상태로 써야 하면 VLP-16R 매크로에 `gpu:=false
 ### 2. 외부 소스 & 파이썬 환경
 
 ```bash
-# (a) frenet_conversion이 컴파일하는 CommonRoad-CLCS
+# (a) hyu_frenet_conversion이 컴파일하는 CommonRoad-CLCS
 git clone --depth 1 https://github.com/CommonRoad/commonroad-clcs.git ~/commonroad-clcs
 export COMMONROAD_CLCS_DIR="$HOME/commonroad-clcs"
 
@@ -450,7 +450,7 @@ planning/
   ├─ hyu_planning_bringup/    ★ planning 전체 조립 launch (아래 전부 + graph_slam + controller)
   ├─ local_planner/       라이브 콘 → 즉석 로컬 경로 (랩 1)
   ├─ global_planner/      SLAM 콘맵 → 전역 레이스라인
-  ├─ frenet_conversion/   전역경로 기준 Frenet (s,d) — CTE의 원천
+  ├─ hyu_frenet_conversion/   전역경로 기준 Frenet (s,d) — CTE의 원천
   ├─ state_machine/       랩 카운트 · local↔global 전환 · 스톱존
   ├─ path_selector/       local/global 중 컨트롤러가 따를 경로 확정
   └─ trajectory_generator/ 오프라인 raceline (CSV)

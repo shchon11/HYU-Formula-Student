@@ -39,7 +39,7 @@ def generate_launch_description():
             parameters=[LaunchConfiguration("params_file")],
         ),
         Node(
-            package="frenet_conversion",
+            package="hyu_frenet_conversion",
             executable="frenet_odom_node",
             name="frenet_odom_node",
             output="screen",

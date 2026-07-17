@@ -1,6 +1,6 @@
-#include "frenet_conversion/global_path_validity_state.hpp"
+#include "hyu_frenet_conversion/global_path_validity_state.hpp"
 
-namespace frenet_conversion
+namespace hyu_frenet_conversion
 {
 
 GlobalPathValidityState::GlobalPathValidityState(const double timeout_sec)

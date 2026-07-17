@@ -7,16 +7,16 @@
 
 #include "clcs_frenet_converter.hpp"
 #include "eufs_msgs/msg/waypoint_array_stamped.hpp"
-#include "frenet_conversion/clcs_build_diagnostics.hpp"
-#include "frenet_conversion/frenet_odom_messages.hpp"
-#include "frenet_conversion/frenet_odom_parameters.hpp"
-#include "frenet_conversion/global_path_validity_state.hpp"
+#include "hyu_frenet_conversion/clcs_build_diagnostics.hpp"
+#include "hyu_frenet_conversion/frenet_odom_messages.hpp"
+#include "hyu_frenet_conversion/frenet_odom_parameters.hpp"
+#include "hyu_frenet_conversion/global_path_validity_state.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
 
-namespace frenet_conversion
+namespace hyu_frenet_conversion
 {
 class FrenetOdomNode : public rclcpp::Node
 {
@@ -280,12 +280,12 @@ private:
   rclcpp::TimerBase::SharedPtr validity_watchdog_timer_;
 };
 
-}  // namespace frenet_conversion
+}  // namespace hyu_frenet_conversion
 
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<frenet_conversion::FrenetOdomNode>());
+  rclcpp::spin(std::make_shared<hyu_frenet_conversion::FrenetOdomNode>());
   rclcpp::shutdown();
   return 0;
 }

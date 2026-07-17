@@ -96,7 +96,7 @@ wpnt_publisher:
   ros__parameters:
     # Republishes the next `waypoint_num` global points ahead of the vehicle,
     # selecting the window by an s-based lookup over /global_waypoints using
-    # /car_state/frenet/odom (produced by the frenet_conversion package).
+    # /car_state/frenet/odom (produced by the hyu_frenet_conversion package).
     global_waypoints_topic: "/global_waypoints"
     # Reliable volatile std_msgs/Bool heartbeat; do not use transient-local.
     global_path_valid_topic: "/planning/global_path_valid"

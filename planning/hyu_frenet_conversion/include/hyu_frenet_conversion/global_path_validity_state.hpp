@@ -5,7 +5,7 @@
 
 #include "rclcpp/time.hpp"
 
-namespace frenet_conversion
+namespace hyu_frenet_conversion
 {
 
 struct GlobalPathInvalidation

@@ -1,8 +1,8 @@
-#include "frenet_conversion/clcs_build_diagnostics.hpp"
+#include "hyu_frenet_conversion/clcs_build_diagnostics.hpp"
 
 #include "rclcpp/rclcpp.hpp"
 
-namespace frenet_conversion
+namespace hyu_frenet_conversion
 {
 
 void logClcsBuildStats(const rclcpp::Logger & logger, const ClcsBuildStats & stats)

@@ -9,7 +9,7 @@
 #include "nav_msgs/msg/odometry.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
 
-namespace frenet_conversion
+namespace hyu_frenet_conversion
 {
 
 struct FrenetOutputOptions

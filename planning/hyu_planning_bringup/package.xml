@@ -13,7 +13,7 @@
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>hyu_localization</exec_depend>
   <exec_depend>global_planner</exec_depend>
-  <exec_depend>frenet_conversion</exec_depend>
+  <exec_depend>hyu_frenet_conversion</exec_depend>
   <exec_depend>state_machine</exec_depend>
   <exec_depend>local_planner</exec_depend>
   <exec_depend>path_selector</exec_depend>

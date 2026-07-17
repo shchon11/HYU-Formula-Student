@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(frenet_conversion)
+project(hyu_frenet_conversion)
 
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
@@ -43,12 +43,12 @@ if(NOT EXISTS "${CLCS_INCLUDE_DIR}/geometry/curvilinear_coordinate_system.h")
   message(FATAL_ERROR
     "CommonRoad-CLCS headers were not found under '${CLCS_INCLUDE_DIR}'.\n"
     "Set COMMONROAD_CLCS_DIR to the commonroad-clcs checkout, e.g.\n"
-    "  colcon build --packages-select frenet_conversion \\\n"
+    "  colcon build --packages-select hyu_frenet_conversion \\\n"
     "    --cmake-args -DCOMMONROAD_CLCS_DIR=/path/to/commonroad-clcs\n"
     "or export COMMONROAD_CLCS_DIR before building.")
 endif()
 
-message(STATUS "frenet_conversion: using CommonRoad-CLCS at ${COMMONROAD_CLCS_DIR}")
+message(STATUS "hyu_frenet_conversion: using CommonRoad-CLCS at ${COMMONROAD_CLCS_DIR}")
 
 # ---- Build the CLCS core as a static library (mirrors upstream cpp/CMakeLists.txt) ----
 set(CLCS_CORE_SOURCES

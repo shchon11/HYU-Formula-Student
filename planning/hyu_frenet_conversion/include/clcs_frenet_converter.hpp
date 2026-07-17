@@ -8,7 +8,7 @@
 
 #include "geometry/curvilinear_coordinate_system.h"
 
-namespace frenet_conversion
+namespace hyu_frenet_conversion
 {
 
 struct ReferenceWaypoint
@@ -150,4 +150,4 @@ private:
 VelocityFrame parseVelocityFrame(const std::string & value);
 std::string toString(VelocityFrame value);
 
-}  // namespace frenet_conversion
+}  // namespace hyu_frenet_conversion

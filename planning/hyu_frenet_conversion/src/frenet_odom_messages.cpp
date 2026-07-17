@@ -1,10 +1,10 @@
-#include "frenet_conversion/frenet_odom_messages.hpp"
+#include "hyu_frenet_conversion/frenet_odom_messages.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 
-namespace frenet_conversion
+namespace hyu_frenet_conversion
 {
 namespace
 {
