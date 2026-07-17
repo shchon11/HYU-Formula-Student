@@ -3,7 +3,7 @@
 #include <optional>
 #include <string>
 
-namespace path_selector
+namespace hyu_path_selector
 {
 
 enum class RequestedSource

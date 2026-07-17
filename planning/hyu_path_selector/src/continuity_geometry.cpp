@@ -1,4 +1,4 @@
-#include "path_selector/continuity_geometry.hpp"
+#include "hyu_path_selector/continuity_geometry.hpp"
 
 #include <cstddef>
 #include <cmath>
@@ -7,7 +7,7 @@
 
 #include "geometry_msgs/msg/pose_stamped.hpp"
 
-namespace path_selector::continuity_geometry
+namespace hyu_path_selector::continuity_geometry
 {
 
 double stampSeconds(const builtin_interfaces::msg::Time & stamp)

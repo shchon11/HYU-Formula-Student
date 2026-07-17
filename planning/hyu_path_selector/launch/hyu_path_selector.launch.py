@@ -7,7 +7,7 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description() -> LaunchDescription:
     default_params = PathJoinSubstitution(
-        [FindPackageShare("path_selector"), "config", "path_selector.yaml"]
+        [FindPackageShare("hyu_path_selector"), "config", "hyu_path_selector.yaml"]
     )
     params_file = DeclareLaunchArgument(
         "params_file",
@@ -25,9 +25,9 @@ def generate_launch_description() -> LaunchDescription:
             params_file,
             use_sim_time,
             Node(
-                package="path_selector",
-                executable="path_selector_node",
-                name="path_selector_node",
+                package="hyu_path_selector",
+                executable="hyu_path_selector_node",
+                name="hyu_path_selector_node",
                 output="screen",
                 parameters=[
                     LaunchConfiguration("params_file"),

@@ -1,11 +1,11 @@
-#include "path_selector/continuity_check.hpp"
-#include "path_selector/continuity_geometry.hpp"
+#include "hyu_path_selector/continuity_check.hpp"
+#include "hyu_path_selector/continuity_geometry.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
-namespace path_selector
+namespace hyu_path_selector
 {
 ContinuityCheck::ContinuityCheck(ContinuityThresholds thresholds)
 : thresholds_(thresholds)

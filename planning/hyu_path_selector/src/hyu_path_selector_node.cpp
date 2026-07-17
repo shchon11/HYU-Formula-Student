@@ -1,11 +1,11 @@
-#include "path_selector/path_selector_node.hpp"
+#include "hyu_path_selector/hyu_path_selector_node.hpp"
 
 #include <cmath>
 #include <functional>
 #include <sstream>
 #include <stdexcept>
 
-namespace path_selector
+namespace hyu_path_selector
 {
 namespace
 {
@@ -22,7 +22,7 @@ ContinuityThresholds declareContinuityThresholds(rclcpp::Node & node)
 }
 
 PathSelectorNode::PathSelectorNode()
-: Node("path_selector_node"),
+: Node("hyu_path_selector_node"),
   path_source_topic_(declare_parameter<std::string>(
       "path_source_topic", "/planning/path_source")),
   local_path_topic_(declare_parameter<std::string>(
@@ -44,7 +44,7 @@ PathSelectorNode::PathSelectorNode()
   handoff_ready_topic_(declare_parameter<std::string>(
       "handoff_ready_topic", "/planning/global_handoff_ready")),
   debug_topic_(declare_parameter<std::string>(
-      "debug_topic", "/planning/path_selector/debug")),
+      "debug_topic", "/planning/hyu_path_selector/debug")),
   selection_policy_(declare_parameter<double>("path_source_timeout_sec", 0.5)),
   continuity_check_(declareContinuityThresholds(*this))
 {

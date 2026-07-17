@@ -15,7 +15,7 @@
 # this script always brings up the Gazebo sim.
 #
 # Brings up sim+perception, the whole hyu_planning_bringup graph (graph_slam +
-# global/local planner + state machine + path_selector + pure-pursuit
+# global/local planner + state machine + hyu_path_selector + pure-pursuit
 # controller), then arms the mission so the CONTROLLER drives the car itself —
 # no teleop. Panes self-sequence; a monitor pane shows the live path source /
 # state / lap / cross-track error.

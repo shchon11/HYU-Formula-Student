@@ -1,4 +1,4 @@
-path_selector_node:
+hyu_path_selector_node:
   ros__parameters:
     path_source_topic: "/planning/path_source"
     local_path_topic: "/planning/local_waypoints"
@@ -10,7 +10,7 @@ path_selector_node:
     selected_path_viz_topic: "/path_waypoints/path"
     selected_validity_topic: "/planning/selected_path_valid"
     handoff_ready_topic: "/planning/global_handoff_ready"
-    debug_topic: "/planning/path_selector/debug"
+    debug_topic: "/planning/hyu_path_selector/debug"
     path_source_timeout_sec: 0.5
     input_timeout_sec: 0.5
     heartbeat_hz: 10.0

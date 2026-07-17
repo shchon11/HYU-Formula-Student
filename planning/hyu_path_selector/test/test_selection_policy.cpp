@@ -3,9 +3,9 @@
 #include <optional>
 #include <string>
 
-#include "path_selector/selection_policy.hpp"
+#include "hyu_path_selector/selection_policy.hpp"
 
-namespace path_selector
+namespace hyu_path_selector
 {
 namespace
 {

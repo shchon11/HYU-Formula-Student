@@ -26,7 +26,7 @@ Default topics:
 | `/graph_slam/status` | `std_msgs/msg/String` | reliable transient-local | `graph_slam` |
 | `/global_waypoints` | `eufs_msgs/msg/WaypointArrayStamped` | reliable transient-local | selected global waypoint writer |
 | `/planning/global_path_valid` | `std_msgs/msg/Bool` | reliable volatile | selected global waypoint writer |
-| `/path_waypoints` | `eufs_msgs/msg/WaypointArrayStamped` | reliable volatile | `path_selector_node` in integrated bringup |
+| `/path_waypoints` | `eufs_msgs/msg/WaypointArrayStamped` | reliable volatile | `hyu_path_selector_node` in integrated bringup |
 
 Only one node may write `/global_waypoints` and `/planning/global_path_valid`
 in a launch. Use `slam_hyu_global_planner.launch.py planner_source:=slam` for the
@@ -34,7 +34,7 @@ Graph SLAM path generator, or `planner_source:=csv` for the CSV publisher. Do
 not run both writers on the default topics; remap both output topics if a
 comparison launch needs both producers.
 
-In the integrated bringup, `path_selector_node` is the sole
+In the integrated bringup, `hyu_path_selector_node` is the sole
 `/path_waypoints` writer and the global window is consumed through
 `/planning/global_path_waypoints`.
 

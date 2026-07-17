@@ -7,7 +7,7 @@
 #include "nav_msgs/msg/odometry.hpp"
 #include "nav_msgs/msg/path.hpp"
 
-namespace path_selector
+namespace hyu_path_selector
 {
 
 enum class ContinuityFailure

@@ -5,9 +5,9 @@
 #include <utility>
 #include <vector>
 
-#include "path_selector/continuity_check.hpp"
+#include "hyu_path_selector/continuity_check.hpp"
 
-namespace path_selector
+namespace hyu_path_selector
 {
 namespace
 {

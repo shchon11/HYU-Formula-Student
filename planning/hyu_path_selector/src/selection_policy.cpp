@@ -1,9 +1,9 @@
-#include "path_selector/selection_policy.hpp"
+#include "hyu_path_selector/selection_policy.hpp"
 
 #include <cmath>
 #include <stdexcept>
 
-namespace path_selector
+namespace hyu_path_selector
 {
 
 SelectionPolicy::SelectionPolicy(double path_source_timeout_sec)

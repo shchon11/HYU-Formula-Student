@@ -48,7 +48,7 @@ ARGUMENTS = (
     ("selected_path_viz_topic", "/path_waypoints/path", "Selector path visualization."),
     ("selected_path_valid_topic", "/planning/selected_path_valid", "Selector validity heartbeat."),
     ("global_handoff_ready_topic", "/planning/global_handoff_ready", "Selector handoff readiness."),
-    ("selector_debug_topic", "/planning/path_selector/debug", "Selector debug output."),
+    ("selector_debug_topic", "/planning/hyu_path_selector/debug", "Selector debug output."),
     ("stop_zone_s_start_topic", "/stop_zone_s_start", "Final stop-zone start position."),
     ("stop_zone_s_end_topic", "/stop_zone_s_end", "Final stop-zone end position."),
     ("stop_zone_valid_topic", "/stop_zone_valid", "Final stop-zone validity."),
@@ -94,7 +94,7 @@ PARAMETER_FILES = (
     ("global_params_file", "hyu_global_planner", "hyu_global_planner.yaml", "Global planner and Frenet parameter file."),
     ("local_params_file", "hyu_local_planner", "hyu_local_planner.yaml", "Local planner parameter file."),
     ("state_params_file", "state_machine", "planning_state_machine.yaml", "Planning state-machine parameter file."),
-    ("selector_params_file", "path_selector", "path_selector.yaml", "Path selector parameter file."),
+    ("selector_params_file", "hyu_path_selector", "hyu_path_selector.yaml", "Path selector parameter file."),
     ("controller_params_file", "hyu_pure_pursuit", "hyu_pure_pursuit.yaml", "Pure Pursuit controller parameter file."),
 )
 
@@ -353,9 +353,9 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
     selector = Node(
-        package="path_selector",
-        executable="path_selector_node",
-        name="path_selector_node",
+        package="hyu_path_selector",
+        executable="hyu_path_selector_node",
+        name="hyu_path_selector_node",
         output="screen",
         parameters=[
             values["selector_params_file"],

@@ -117,7 +117,7 @@ class StackHud(Node):
         ego_odom_topic = p("ego_odom_topic", "/localization/ego_odom").value
         planning_debug_topic = p("planning_debug_topic", "/planning/debug").value
         selector_debug_topic = p(
-            "selector_debug_topic", "/planning/path_selector/debug").value
+            "selector_debug_topic", "/planning/hyu_path_selector/debug").value
         local_valid_topic = p(
             "local_path_valid_topic", "/planning/local_path_valid").value
         local_reason_topic = p(
@@ -334,7 +334,7 @@ class StackHud(Node):
         if s_valid:
             pick = (B_OK, OK, f"{path_source or '?'} → {candidate}")
         elif self.selected_valid.rx is None:
-            pick = (B_DIM, DIM, "waiting for path_selector")
+            pick = (B_DIM, DIM, "waiting for hyu_path_selector")
         elif not self.selected_valid.fresh(1.5):
             pick = (B_ERR, ERR,
                     f"heartbeat lost {self.selected_valid.age():.0f}s")
@@ -466,7 +466,7 @@ class StackHud(Node):
         if not st.get("selected_valid"):
             cause = st.get("selection_failure")
             if not cause or cause == "none":
-                cause = ("path_selector silent"
+                cause = ("hyu_path_selector silent"
                          if not self.selected_valid.fresh(1.5) else "no path")
             return f"✕ NO PATH → BRAKING — {cause}", ERR
         if not st.get("perception_ok") and slam != "localization":

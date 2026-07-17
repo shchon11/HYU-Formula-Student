@@ -12,10 +12,10 @@
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/string.hpp"
 
-#include "path_selector/continuity_check.hpp"
-#include "path_selector/selection_policy.hpp"
+#include "hyu_path_selector/continuity_check.hpp"
+#include "hyu_path_selector/selection_policy.hpp"
 
-namespace path_selector
+namespace hyu_path_selector
 {
 
 class PathSelectorNode : public rclcpp::Node

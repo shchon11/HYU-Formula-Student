@@ -4,9 +4,9 @@
 
 #include "builtin_interfaces/msg/time.hpp"
 #include "eufs_msgs/msg/waypoint.hpp"
-#include "path_selector/continuity_check.hpp"
+#include "hyu_path_selector/continuity_check.hpp"
 
-namespace path_selector::continuity_geometry
+namespace hyu_path_selector::continuity_geometry
 {
 
 constexpr double kGeometryEpsilon = 1.0e-9;

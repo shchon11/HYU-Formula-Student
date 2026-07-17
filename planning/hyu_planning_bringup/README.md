@@ -53,8 +53,8 @@ stack already owns the graph-SLAM outputs.
 | `/global_waypoints` | Selected `planner_source` writer |
 | `/planning/global_path_valid` | Selected `planner_source` writer |
 | `/planning/global_path_waypoints` | `wpnt_publisher` |
-| `/path_waypoints` | `path_selector_node` |
-| `/planning/selected_path_valid` | `path_selector_node` |
+| `/path_waypoints` | `hyu_path_selector_node` |
+| `/planning/selected_path_valid` | `hyu_path_selector_node` |
 | `/cmd` | Standard launch: `hyu_pure_pursuit_node`; TMPC launch: `hyu_cmd_selector` |
 
 `planner_source` is either `slam` or `csv`, so the two global writers are never

@@ -3,7 +3,7 @@
 ## 목적
 
 `planning_state_machine_node`는 Formula Student Korea 자율주행 planning 흐름에서 현재
-planning 상태를 결정하고, `path_selector_node`가 사용할 `path_source`를 publish한다.
+planning 상태를 결정하고, `hyu_path_selector_node`가 사용할 `path_source`를 publish한다.
 이 노드는 path를 생성하지 않으며, local/global 후보의 선택과 최종
 `/path_waypoints` publish는 selector가 소유한다. Pure Pursuit controller는
 selector의 유효성 heartbeat와 선택 path만 소비한다.

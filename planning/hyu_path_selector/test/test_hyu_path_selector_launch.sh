@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-log_file="$(mktemp "${TMPDIR:-/tmp}/path_selector_launch.XXXXXX.log")"
+log_file="$(mktemp "${TMPDIR:-/tmp}/hyu_path_selector_launch.XXXXXX.log")"
 launch_pid=""
 
 cleanup() {
@@ -19,7 +19,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-setsid ros2 launch path_selector path_selector.launch.py use_sim_time:=false >"$log_file" 2>&1 &
+setsid ros2 launch hyu_path_selector hyu_path_selector.launch.py use_sim_time:=false >"$log_file" 2>&1 &
 launch_pid=$!
 
 for _ in $(seq 1 50); do

@@ -71,7 +71,7 @@ flowchart LR
         LP["hyu_local_planner<br/>즉석 경로"]
         GP["hyu_global_planner<br/>레이스라인"]
         SM["state_machine<br/>랩 · 전환 · 정지"]
-        SEL["path_selector"]
+        SEL["hyu_path_selector"]
         SKID -.->|"skidpad만: 게이트된 cone_map"| LP
         LP -->|local_waypoints| SEL
         GP -->|global 윈도우| SEL
@@ -452,7 +452,7 @@ planning/
   ├─ hyu_global_planner/      SLAM 콘맵 → 전역 레이스라인
   ├─ hyu_frenet_conversion/   전역경로 기준 Frenet (s,d) — CTE의 원천
   ├─ state_machine/       랩 카운트 · local↔global 전환 · 스톱존
-  ├─ path_selector/       local/global 중 컨트롤러가 따를 경로 확정
+  ├─ hyu_path_selector/       local/global 중 컨트롤러가 따를 경로 확정
   └─ trajectory_generator/ 오프라인 raceline (CSV)
 ```
 
