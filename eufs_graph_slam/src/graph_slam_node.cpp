@@ -55,7 +55,6 @@ GraphSlamNode::GraphSlamNode()
   map_trust_info_scale_(3.0),
   min_observation_range_(0.2),
   max_observation_range_(30.0),
-  landmark_creation_max_range_(0.0),
   default_observation_sigma_(0.25),
   min_observation_variance_(0.01),
   odom_translation_sigma_(0.05),
@@ -151,12 +150,39 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<double>("association_gate_chi2", association_gate_chi2_);
   association_ambiguity_ratio_ =
     declare_parameter<double>("association_ambiguity_ratio", association_ambiguity_ratio_);
+  // Tentative-track frontend (delayed data association).
+  frontend_params_.heading_lever_sigma_rad = declare_parameter<double>(
+    "heading_lever_sigma_rad", frontend_params_.heading_lever_sigma_rad);
+  frontend_params_.track_gate_chi2 = declare_parameter<double>(
+    "track_gate_chi2", frontend_params_.track_gate_chi2);
+  frontend_params_.track_gate_max_distance_m = declare_parameter<double>(
+    "track_gate_max_distance", frontend_params_.track_gate_max_distance_m);
+  frontend_params_.promote_min_hits = declare_parameter<int>(
+    "track_promote_min_hits", frontend_params_.promote_min_hits);
+  frontend_params_.promote_max_position_sigma_m = declare_parameter<double>(
+    "track_promote_max_sigma", frontend_params_.promote_max_position_sigma_m);
+  frontend_params_.promote_hold_radius_m = declare_parameter<double>(
+    "track_promote_hold_radius", frontend_params_.promote_hold_radius_m);
+  frontend_params_.promote_hold_stale_travel_m = declare_parameter<double>(
+    "track_promote_hold_stale_travel", frontend_params_.promote_hold_stale_travel_m);
+  frontend_params_.kill_consecutive_misses = declare_parameter<int>(
+    "track_kill_consecutive_misses", frontend_params_.kill_consecutive_misses);
+  frontend_params_.kill_unpromoted_travel_m = declare_parameter<double>(
+    "track_kill_unpromoted_travel", frontend_params_.kill_unpromoted_travel_m);
+  // Robust kernel on observation edges (dcs | huber | none).
+  observation_robust_kernel_ = declare_parameter<std::string>(
+    "observation_robust_kernel", observation_robust_kernel_);
+  observation_dcs_phi_ = declare_parameter<double>(
+    "observation_dcs_phi", observation_dcs_phi_);
   relocalize_search_radius_ =
     declare_parameter<double>("relocalize_search_radius", relocalize_search_radius_);
   relocalize_search_yaw_ =
     declare_parameter<double>("relocalize_search_yaw", relocalize_search_yaw_);
   relocalize_inlier_distance_ =
     declare_parameter<double>("relocalize_inlier_distance", relocalize_inlier_distance_);
+
+  declareRecoveryParameters();
+
   association_inflation_per_meter_ =
     declare_parameter<double>(
     "association_inflation_per_meter",
@@ -165,9 +191,6 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<double>("association_max_inflation", association_max_inflation_);
   landmark_merge_distance_ =
     declare_parameter<double>("landmark_merge_distance", landmark_merge_distance_);
-  landmark_creation_max_range_ =
-    declare_parameter<double>(
-    "landmark_creation_max_range", landmark_creation_max_range_);
   min_observation_range_ =
     declare_parameter<double>("min_observation_range", min_observation_range_);
   max_observation_range_ =
@@ -309,6 +332,8 @@ GraphSlamNode::GraphSlamNode()
   gnss_prior_rearm_max_residual_ =
     declare_parameter<double>("gnss_prior_rearm_max_residual", 2.0);
   gnss_prior_min_sigma_ = declare_parameter<double>("gnss_prior_min_sigma", 0.25);
+  gnss_prior_mapping_sigma_scale_ =
+    declare_parameter<double>("gnss_prior_mapping_sigma_scale", 4.0);
   gnss_prior_innovation_max_residual_ =
     declare_parameter<double>("gnss_prior_innovation_max_residual", 2.0);
   gnss_prior_min_interval_ =
@@ -329,6 +354,12 @@ GraphSlamNode::GraphSlamNode()
   relocalize_inlier_distance_ = std::max(0.05, relocalize_inlier_distance_);
   association_inflation_per_meter_ = std::max(0.0, association_inflation_per_meter_);
   association_max_inflation_ = std::max(0.0, association_max_inflation_);
+  frontend_params_.association_max_distance_m = association_max_distance_;
+  frontend_params_.association_gate_chi2 = association_gate_chi2_;
+  frontend_params_.association_ambiguity_ratio = association_ambiguity_ratio_;
+  frontend_params_.association_inflation_per_meter = association_inflation_per_meter_;
+  frontend_params_.association_max_inflation = association_max_inflation_;
+  frontend_ = std::make_unique<TentativeTrackFrontend>(frontend_params_);
   landmark_merge_distance_ = std::max(0.0, landmark_merge_distance_);
   landmark_confirm_observations_ = std::max(0, landmark_confirm_observations_);
   loop_gap_distance_ = std::max(0.0, loop_gap_distance_);
@@ -438,6 +469,7 @@ GraphSlamNode::GraphSlamNode()
   // Latched status so planning (local vs global) and RViz always see the
   // current SLAM lifecycle even when subscribing late.
   status_pub_ = create_publisher<std_msgs::msg::String>(status_topic_, transient_qos);
+  timing_pub_ = create_publisher<std_msgs::msg::String>("~/timing", 1);
   lifecycle_diagnostics_pub_ =
     create_publisher<std_msgs::msg::String>(lifecycle_diagnostics_topic_, transient_qos);
   converged_pub_ = create_publisher<std_msgs::msg::Bool>(map_converged_topic_, transient_qos);
@@ -535,6 +567,64 @@ GraphSlamNode::GraphSlamNode()
   publishStatus();
 }
 
+void GraphSlamNode::declareRecoveryParameters()
+{
+  auto_relocalize_enable_ =
+    declare_parameter<bool>("auto_relocalize_enable", auto_relocalize_enable_);
+  auto_relocalize_min_visible_cones_ = declare_parameter<int>(
+    "auto_relocalize_min_visible_cones", auto_relocalize_min_visible_cones_);
+  auto_relocalize_lost_frames_ = declare_parameter<int>(
+    "auto_relocalize_lost_frames", auto_relocalize_lost_frames_);
+  auto_relocalize_min_inliers_ = declare_parameter<int>(
+    "auto_relocalize_min_inliers", auto_relocalize_min_inliers_);
+  auto_relocalize_search_radius_ = declare_parameter<double>(
+    "auto_relocalize_search_radius", auto_relocalize_search_radius_);
+  auto_relocalize_max_search_radius_ = declare_parameter<double>(
+    "auto_relocalize_max_search_radius", auto_relocalize_max_search_radius_);
+  auto_relocalize_cooldown_sec_ = declare_parameter<double>(
+    "auto_relocalize_cooldown_sec", auto_relocalize_cooldown_sec_);
+  auto_relocalize_gnss_holdoff_sec_ = declare_parameter<double>(
+    "auto_relocalize_gnss_holdoff_sec", auto_relocalize_gnss_holdoff_sec_);
+
+  gate_anchor_enable_ =
+    declare_parameter<bool>("gate_anchor_enable", gate_anchor_enable_);
+  gate_anchor_cluster_radius_m_ = declare_parameter<double>(
+    "gate_anchor_cluster_radius_m", gate_anchor_cluster_radius_m_);
+  gate_anchor_pair_tolerance_m_ = declare_parameter<double>(
+    "gate_anchor_pair_tolerance_m", gate_anchor_pair_tolerance_m_);
+  gate_anchor_min_pair_separation_m_ = declare_parameter<double>(
+    "gate_anchor_min_pair_separation_m", gate_anchor_min_pair_separation_m_);
+  gate_anchor_max_pair_separation_m_ = declare_parameter<double>(
+    "gate_anchor_max_pair_separation_m", gate_anchor_max_pair_separation_m_);
+  gate_anchor_min_inliers_ = declare_parameter<int>(
+    "gate_anchor_min_inliers", gate_anchor_min_inliers_);
+  gate_anchor_min_correction_m_ = declare_parameter<double>(
+    "gate_anchor_min_correction_m", gate_anchor_min_correction_m_);
+  gate_anchor_max_correction_m_ = declare_parameter<double>(
+    "gate_anchor_max_correction_m", gate_anchor_max_correction_m_);
+  gate_anchor_cooldown_travel_m_ = declare_parameter<double>(
+    "gate_anchor_cooldown_travel_m", gate_anchor_cooldown_travel_m_);
+
+  auto_relocalize_min_visible_cones_ = std::max(1, auto_relocalize_min_visible_cones_);
+  auto_relocalize_lost_frames_ = std::max(1, auto_relocalize_lost_frames_);
+  auto_relocalize_min_inliers_ = std::max(2, auto_relocalize_min_inliers_);
+  auto_relocalize_search_radius_ = std::max(0.5, auto_relocalize_search_radius_);
+  auto_relocalize_max_search_radius_ =
+    std::max(auto_relocalize_search_radius_, auto_relocalize_max_search_radius_);
+  auto_relocalize_cooldown_sec_ = std::max(0.0, auto_relocalize_cooldown_sec_);
+  auto_relocalize_current_radius_ = auto_relocalize_search_radius_;
+  gate_anchor_cluster_radius_m_ = std::max(0.1, gate_anchor_cluster_radius_m_);
+  gate_anchor_pair_tolerance_m_ = std::max(0.05, gate_anchor_pair_tolerance_m_);
+  gate_anchor_min_pair_separation_m_ = std::max(0.5, gate_anchor_min_pair_separation_m_);
+  gate_anchor_max_pair_separation_m_ =
+    std::max(gate_anchor_min_pair_separation_m_, gate_anchor_max_pair_separation_m_);
+  gate_anchor_min_inliers_ = std::max(2, gate_anchor_min_inliers_);
+  gate_anchor_min_correction_m_ = std::max(0.0, gate_anchor_min_correction_m_);
+  gate_anchor_max_correction_m_ =
+    std::max(gate_anchor_min_correction_m_, gate_anchor_max_correction_m_);
+  gate_anchor_cooldown_travel_m_ = std::max(0.0, gate_anchor_cooldown_travel_m_);
+}
+
 void GraphSlamNode::configureOptimizer()
 {
   optimizer_.setVerbose(false);
@@ -555,6 +645,9 @@ void GraphSlamNode::resetGraph()
   poses_.clear();
   landmarks_.clear();
   last_observations_.clear();
+  if (frontend_) {
+    frontend_->reset();
+  }
   {
     std::lock_guard<std::mutex> lock(odom_buffer_mutex_);
     raw_odom_buffer_.clear();
@@ -607,12 +700,39 @@ void GraphSlamNode::resetGraph()
   last_optimization_time_sec_ = -1.0;
   last_visual_publish_time_sec_ = -1.0;
   last_landmark_delete_time_sec_ = -1.0;
+  lost_frames_ = 0;
+  healthy_streak_ = 0;
+  auto_relocalize_current_radius_ = auto_relocalize_search_radius_;
+  last_auto_relocalize_attempt_sec_ = -1.0e18;
+  last_gate_anchor_traveled_m_ = -1.0e18;
 }
 
 void GraphSlamNode::stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg)
 {
   const rclcpp::Time stamp = stampOrNow(msg->header.stamp, get_clock());
   const g2o::SE2 raw_odom = poseFromCarState(*msg);
+  // Physical-plausibility gate on the motion input: a raw-odometry step
+  // faster than any FS car can move is upstream corruption, and one such
+  // sample is enough to found landmarks hundreds of meters off track
+  // (2026-07-18 autopsy: wild ghosts at 177-393 m survived every
+  // pose-conditioned guard because the pose itself had jumped). Drop it
+  // LOUDLY so the producer is identifiable from the log.
+  {
+    std::lock_guard<std::mutex> buffer_lock(odom_buffer_mutex_);
+    if (!raw_odom_buffer_.empty()) {
+      const double dt = stamp.seconds() - raw_odom_buffer_.back().first;
+      const double dist =
+        (raw_odom.translation() - raw_odom_buffer_.back().second.translation()).norm();
+      if (dt > 0.0 && dt < 1.0 && dist / dt > 30.0) {
+        RCLCPP_ERROR(
+          get_logger(),
+          "IMPOSSIBLE MOTION on %s: %.2f m in %.3f s (%.0f m/s) at stamp %.3f "
+          "— dropping sample; upstream odometry is corrupt",
+          car_state_topic_.c_str(), dist, dt, dist / dt, stamp.seconds());
+        return;
+      }
+    }
+  }
   recordRawOdometry(stamp.seconds(), raw_odom);
   last_odom_stamp_sec_ = stamp.seconds();
 
@@ -650,6 +770,7 @@ void GraphSlamNode::stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg)
 void GraphSlamNode::conesCallback(
   const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg)
 {
+  const auto tic = std::chrono::steady_clock::now();
   std::lock_guard<std::mutex> lock(graph_mutex_);
 
   if (poses_.empty()) {
@@ -676,6 +797,51 @@ void GraphSlamNode::conesCallback(
     last_map_update_stamp_sec_ = stamp.seconds();
     publishGraphVisuals(stamp);
   }
+
+  maybeAutoRelocalize(update, stamp);
+
+  // Perception-to-estimate latency JSON, consumed by the race harness
+  // for latency scoring. Includes the
+  // in-line optimizer time — that spike IS this backend's latency story.
+  publishTiming(
+    std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - tic).count(),
+    update);
+}
+
+void GraphSlamNode::publishTiming(double elapsed_ms, const ObservationUpdate & update)
+{
+  if (!timing_pub_) {
+    return;
+  }
+  frame_times_ms_.push_back(elapsed_ms);
+  if (frame_times_ms_.size() > 400U) {
+    frame_times_ms_.erase(frame_times_ms_.begin());
+  }
+  std::vector<double> sorted = frame_times_ms_;
+  std::sort(sorted.begin(), sorted.end());
+  const auto percentile = [&sorted](double p) {
+      if (sorted.empty()) {return 0.0;}
+      const std::size_t index = static_cast<std::size_t>(
+        p * static_cast<double>(sorted.size() - 1U));
+      return sorted[index];
+    };
+
+  std::ostringstream out;
+  out << std::fixed << std::setprecision(2)
+      << "{\"backend\":\"graph\""
+      << ",\"mode\":\"" << (localization_mode_ ? "localization" : "mapping") << "\""
+      << ",\"landmarks\":" << landmarks_.size()
+      << ",\"poses\":" << poses_.size()
+      << ",\"matched\":" << update.matched_landmarks
+      << ",\"tracks\":" << (frontend_ ? frontend_->tracks().size() : 0U)
+      << ",\"frame_ms\":" << elapsed_ms
+      << ",\"frame_ms_p50\":" << percentile(0.5)
+      << ",\"frame_ms_p99\":" << percentile(0.99)
+      << ",\"traveled_m\":" << traveled_distance_ << "}";
+  std_msgs::msg::String timing;
+  timing.data = out.str();
+  timing_pub_->publish(timing);
 }
 
 void GraphSlamNode::initialPoseCallback(
@@ -700,10 +866,7 @@ void GraphSlamNode::initialPoseCallback(
   // map frame, degraded GNSS). Suppress GNSS priors so they cannot yank the
   // pose back; they re-arm in maybeAddGnssPrior once GNSS agrees again.
   if (gnss_prior_enable_ && gnss_prior_suppress_duration_ > 0.0) {
-    gnss_prior_suppressed_ = true;
-    gnss_prior_suppress_until_sec_ =
-      stampOrNow(msg->header.stamp, get_clock()).seconds() +
-      gnss_prior_suppress_duration_;
+    suppressGnssPriors(stampOrNow(msg->header.stamp, get_clock()).seconds());
     RCLCPP_INFO(
       get_logger(),
       "Manual relocalization: GNSS priors suppressed for %.0f s, then until "
@@ -712,6 +875,266 @@ void GraphSlamNode::initialPoseCallback(
   }
 
   relocalizeTo(pose);
+}
+
+void GraphSlamNode::suppressGnssPriors(double now_sec)
+{
+  if (!(gnss_prior_enable_ && gnss_prior_suppress_duration_ > 0.0)) {
+    return;
+  }
+  gnss_prior_suppressed_ = true;
+  gnss_prior_suppress_until_sec_ = now_sec + gnss_prior_suppress_duration_;
+}
+
+bool GraphSlamNode::matchGateFromObservations(
+  const std::vector<ConeObservation> & observations,
+  bool restrict_to_lap_origin,
+  g2o::SE2 * pose_out,
+  int * inliers_out) const
+{
+  std::vector<GatePoint> gate_obs;
+  std::vector<GatePoint> all_obs;
+  all_obs.reserve(observations.size());
+  for (const ConeObservation & obs : observations) {
+    const GatePoint p{obs.measurement.x(), obs.measurement.y()};
+    all_obs.push_back(p);
+    // The observation side tolerates the big/small-orange misclassification
+    // (same colour, size-only distinction — routine at range for vision): a
+    // gate cone momentarily seen as Orange must not cost the anchor. The
+    // LANDMARK side below stays BigOrange-only: map colours are majority-
+    // voted (robust), and small-orange lane markings elsewhere on a track
+    // must never form a false gate constellation.
+    if (obs.color == ConeColor::BigOrange || obs.color == ConeColor::Orange) {
+      gate_obs.push_back(p);
+    }
+  }
+  if (gate_obs.size() < 2U) {
+    return false;
+  }
+
+  std::vector<GatePoint> gate_landmarks;
+  std::vector<GatePoint> all_landmarks;
+  all_landmarks.reserve(landmarks_.size());
+  for (const LandmarkRecord & lm : landmarks_) {
+    const Eigen::Vector2d est = lm.vertex->estimate();
+    all_landmarks.push_back(GatePoint{est.x(), est.y()});
+    if (lm.color != ConeColor::BigOrange) {
+      continue;
+    }
+    // While mapping, big-orange landmarks founded far from the lap origin
+    // are drift-era duplicates of the gate itself; matching against them
+    // would anchor the pose to the drift instead of closing it.
+    if (restrict_to_lap_origin && lap_origin_captured_ &&
+      (est - lap_origin_.translation()).norm() > lap_seam_landmark_radius_m_)
+    {
+      continue;
+    }
+    gate_landmarks.push_back(GatePoint{est.x(), est.y()});
+  }
+  if (gate_landmarks.size() < 2U) {
+    return false;
+  }
+
+  GateMatchParams params;
+  params.cluster_radius_m = gate_anchor_cluster_radius_m_;
+  params.pair_tolerance_m = gate_anchor_pair_tolerance_m_;
+  params.min_pair_separation_m = gate_anchor_min_pair_separation_m_;
+  params.max_pair_separation_m = gate_anchor_max_pair_separation_m_;
+  params.inlier_distance_m = relocalize_inlier_distance_;
+  params.min_inliers = gate_anchor_min_inliers_;
+
+  GateMatchResult result;
+  if (!matchGateConstellation(
+      gate_obs, gate_landmarks, all_obs, all_landmarks, params, &result))
+  {
+    return false;
+  }
+  if (pose_out != nullptr) {
+    *pose_out = g2o::SE2(result.pose.x, result.pose.y, result.pose.theta);
+  }
+  if (inliers_out != nullptr) {
+    *inliers_out = result.inliers;
+  }
+  return true;
+}
+
+bool GraphSlamNode::maybeApplyGateAnchor(
+  const std::vector<ConeObservation> & observations,
+  const g2o::SE2 & observation_pose,
+  const g2o::SE2 & keyframe_to_observation,
+  const PoseRecord & pose)
+{
+  if (!gate_anchor_enable_ || localization_mode_ || !lap_origin_captured_) {
+    return false;
+  }
+  // Standing on the gate at capture trivially matches it; only a LAP return
+  // counts (same floor the lap-finish gate uses).
+  if (traveled_distance_ - lap_origin_capture_traveled_m_ < lap_return_min_travel_m_) {
+    return false;
+  }
+  if (traveled_distance_ - last_gate_anchor_traveled_m_ < gate_anchor_cooldown_travel_m_) {
+    return false;
+  }
+
+  g2o::SE2 gate_pose;
+  int inliers = 0;
+  if (!matchGateFromObservations(observations, true, &gate_pose, &inliers)) {
+    return false;
+  }
+
+  const double correction_norm =
+    (gate_pose.translation() - observation_pose.translation()).norm();
+  const double yaw_correction = std::abs(
+    normalizeAngle(
+      gate_pose.rotation().angle() - observation_pose.rotation().angle()));
+  if (correction_norm > gate_anchor_max_correction_m_) {
+    RCLCPP_WARN(
+      get_logger(),
+      "Orange-gate anchor rejected: implied correction %.1f m exceeds the "
+      "%.1f m sanity bound (mis-association more likely than drift)",
+      correction_norm, gate_anchor_max_correction_m_);
+    return false;
+  }
+  if (correction_norm < gate_anchor_min_correction_m_ && yaw_correction < 0.2) {
+    // Inside the association gate's reach: the normal loop-closure path is
+    // already handling it, and it does so with proper per-cone covariances.
+    return false;
+  }
+
+  // Re-seed the current keyframe estimate onto the gate-aligned pose. The
+  // odometry edge to the previous keyframe now carries the full drift as
+  // residual, which is exactly what a loop closure is: the optimizer
+  // redistributes it along the elastic chain (hundreds of odometry edges at
+  // sigma ~2-5 cm absorb meters of drift for less chi2 than stretching a few
+  // cone edges by the same amount). With the estimate corrected, THIS frame's
+  // observations associate with the first-lap landmarks, so the seam
+  // accumulates ordinary loop candidates and the existing confirmation /
+  // freeze machinery proceeds unchanged.
+  pose.vertex->setEstimate(gate_pose * keyframe_to_observation.inverse());
+  last_gate_anchor_traveled_m_ = traveled_distance_;
+  ++gate_anchor_count_;
+  keyframes_since_last_optimization_ =
+    std::max(keyframes_since_last_optimization_, optimize_every_n_keyframes_);
+  RCLCPP_WARN(
+    get_logger(),
+    "Orange-gate anchor: closed %.1f m / %.2f rad of drift at the lap seam "
+    "(%d cones verify the gate-aligned pose; anchor #%zu)",
+    correction_norm, yaw_correction, inliers, gate_anchor_count_);
+  return true;
+}
+
+void GraphSlamNode::maybeAutoRelocalize(
+  const ObservationUpdate & update, const rclcpp::Time & stamp)
+{
+  // Only against a frozen map: while mapping, unmatched cones legitimately
+  // found new landmarks, so "nothing associated" is not a lost signature.
+  if (!auto_relocalize_enable_ || !localization_mode_ ||
+    poses_.empty() || landmarks_.empty())
+  {
+    return;
+  }
+  if (last_observations_.size() <
+    static_cast<std::size_t>(auto_relocalize_min_visible_cones_))
+  {
+    return;  // too few cones to judge either way
+  }
+  // A single match while lost is routinely an aliased cone; require two
+  // before a frame counts as healthy, and require a STREAK of healthy
+  // frames before the escalated search radius de-escalates.
+  if (update.matched_landmarks >= 2U) {
+    lost_frames_ = 0;
+    if (++healthy_streak_ >= 5) {
+      auto_relocalize_current_radius_ = auto_relocalize_search_radius_;
+    }
+    return;
+  }
+  healthy_streak_ = 0;
+  if (update.matched_landmarks == 1U) {
+    return;  // ambiguous: neither healthy nor further into lost
+  }
+
+  ++lost_frames_;
+  if (lost_frames_ < auto_relocalize_lost_frames_) {
+    return;
+  }
+  const double now = stamp.seconds();
+
+  // A recently ACCEPTED GNSS prior (it passed the sigma gate and, post-
+  // convergence, the innovation gate above) means the pose is externally
+  // corroborated to within the innovation budget. A zero-association streak
+  // under a healthy anchor is a perception hiccup or local map sparsity, not
+  // "lost" — and a scan-match jump against noisy real-perception cones is
+  // exactly how a healthy run acquires a 10+ m excursion (observed 8 false
+  // relocalizations in one 300 s RTK lap set, 2026-07-17). Relocalization
+  // stays armed for the case it exists for: anchors absent, rejected, or
+  // suppressed — a real outage or a correlated INS excursion.
+  if (gnss_prior_enable_ && !gnss_prior_suppressed_ &&
+    now - last_gnss_prior_stamp_sec_ < auto_relocalize_gnss_holdoff_sec_)
+  {
+    return;
+  }
+
+  // Seed with the current estimate; a matched orange gate replaces it with a
+  // drift-independent global fix (and then only needs a small refinement).
+  // A gate sighting is rare and brief — one frame per lap — so it bypasses
+  // the attempt cooldown instead of gambling that they coincide.
+  g2o::SE2 seed = poses_.back().vertex->estimate();
+  double radius = auto_relocalize_current_radius_;
+  bool gate_seeded = false;
+  g2o::SE2 gate_pose;
+  if (gate_anchor_enable_ &&
+    matchGateFromObservations(last_observations_, false, &gate_pose, nullptr))
+  {
+    seed = gate_pose;
+    radius = std::min(radius, 2.0);
+    gate_seeded = true;
+  }
+  if (!gate_seeded &&
+    now - last_auto_relocalize_attempt_sec_ < auto_relocalize_cooldown_sec_)
+  {
+    return;
+  }
+  last_auto_relocalize_attempt_sec_ = now;
+
+  // The acceptance bar cannot exceed what is visible: perception often
+  // serves only 3-5 cones per frame, and demanding a fixed 4 inliers has
+  // rejected poses where ALL visible cones fit. Require 3/4 of the visible
+  // set, floored at 3, capped at the configured count.
+  const int required_inliers = std::min(
+    auto_relocalize_min_inliers_,
+    std::max(
+      3, static_cast<int>(std::ceil(
+        0.75 *
+        static_cast<double>(last_observations_.size())))));
+
+  int inliers = 0;
+  const g2o::SE2 refined = scanMatchNear(seed, radius, relocalize_search_yaw_, &inliers);
+  if (inliers < required_inliers) {
+    RCLCPP_WARN(
+      get_logger(),
+      "Auto relocalization attempt failed: %d/%zu inliers (< %d) at radius "
+      "%.1f m%s; escalating",
+      inliers, last_observations_.size(), required_inliers,
+      radius, gate_seeded ? " (gate-seeded)" : "");
+    auto_relocalize_current_radius_ = std::min(
+      auto_relocalize_max_search_radius_, auto_relocalize_current_radius_ * 2.0);
+    return;
+  }
+
+  // A recovered pose is a competing absolute reference, exactly like a
+  // manual /initialpose click: keep GNSS priors from yanking it back until
+  // they agree with the cone-anchored pose again.
+  suppressGnssPriors(now);
+  relocalizeAt(refined);
+  ++auto_relocalize_count_;
+  lost_frames_ = 0;
+  healthy_streak_ = 0;
+  auto_relocalize_current_radius_ = auto_relocalize_search_radius_;
+  RCLCPP_WARN(
+    get_logger(),
+    "Auto relocalization #%zu: recovered with %d/%zu inliers%s",
+    auto_relocalize_count_, inliers, last_observations_.size(),
+    gate_seeded ? " from an orange-gate seed" : "");
 }
 
 g2o::SE2 GraphSlamNode::latestRawOdom() const
@@ -723,25 +1146,22 @@ g2o::SE2 GraphSlamNode::latestRawOdom() const
   return raw_odom_buffer_.back().second;
 }
 
-g2o::SE2 GraphSlamNode::scanMatchNearClick(const g2o::SE2 & click) const
+g2o::SE2 GraphSlamNode::gridSearchPose(
+  const g2o::SE2 & seed, double radius, double xy_step,
+  double yaw_span, double yaw_step, double inlier_distance,
+  int * best_inliers_out) const
 {
-  if (last_observations_.empty() || landmarks_.empty() ||
-    relocalize_search_radius_ <= 0.0)
-  {
-    return click;
-  }
-
-  // Brute-force search over a window around the click: for each candidate
+  // Brute-force search over a window around the seed: for each candidate
   // pose, transform the latest cones into the map and count how many land
-  // within relocalize_inlier_distance of a fixed landmark. Best inlier count
+  // within inlier_distance of a fixed landmark. Best inlier count
   // (tie-broken by residual) wins.
-  const int n_xy = 8;
-  const int n_yaw = 8;
-  const double dxy = relocalize_search_radius_ / n_xy;
-  const double dyaw = relocalize_search_yaw_ > 0.0 ? relocalize_search_yaw_ / n_yaw : 0.0;
-  const double inlier_sq = relocalize_inlier_distance_ * relocalize_inlier_distance_;
+  const int n_xy = xy_step > 0.0 ?
+    static_cast<int>(std::ceil(radius / xy_step)) : 0;
+  const int n_yaw = yaw_step > 0.0 ?
+    static_cast<int>(std::ceil(yaw_span / yaw_step)) : 0;
+  const double inlier_sq = inlier_distance * inlier_distance;
 
-  g2o::SE2 best = click;
+  g2o::SE2 best = seed;
   int best_inliers = -1;
   double best_residual = std::numeric_limits<double>::max();
 
@@ -749,9 +1169,9 @@ g2o::SE2 GraphSlamNode::scanMatchNearClick(const g2o::SE2 & click) const
     for (int iy = -n_xy; iy <= n_xy; ++iy) {
       for (int iw = -n_yaw; iw <= n_yaw; ++iw) {
         const g2o::SE2 cand(
-          click.translation().x() + ix * dxy,
-          click.translation().y() + iy * dxy,
-          normalizeAngle(click.rotation().angle() + iw * dyaw));
+          seed.translation().x() + ix * xy_step,
+          seed.translation().y() + iy * xy_step,
+          normalizeAngle(seed.rotation().angle() + iw * yaw_step));
 
         int inliers = 0;
         double residual = 0.0;
@@ -777,26 +1197,69 @@ g2o::SE2 GraphSlamNode::scanMatchNearClick(const g2o::SE2 & click) const
           best_residual = residual;
           best = cand;
         }
-
-        if (dyaw == 0.0) {
-          break;
-        }
       }
     }
   }
 
+  if (best_inliers_out != nullptr) {
+    *best_inliers_out = std::max(0, best_inliers);
+  }
+  return best;
+}
+
+g2o::SE2 GraphSlamNode::scanMatchNear(
+  const g2o::SE2 & seed, double radius, double yaw_span,
+  int * inliers_out) const
+{
+  if (last_observations_.empty() || landmarks_.empty() || radius <= 0.0) {
+    if (inliers_out != nullptr) {
+      *inliers_out = 0;
+    }
+    return seed;
+  }
+
+  // Coarse pass finds the basin with a step-matched (widened) inlier ring so
+  // the true pose cannot fall between grid points; the fine pass localizes
+  // with the real inlier distance. Two stages keep a 16 m search tractable
+  // where a single fine grid would be ~100x the work.
+  const double coarse_step = std::max(0.4, radius / 8.0);
+  const double coarse_yaw_step = std::max(0.05, yaw_span / 8.0);
+  const double coarse_inlier =
+    std::max(relocalize_inlier_distance_, 0.75 * coarse_step);
+  const g2o::SE2 coarse = gridSearchPose(
+    seed, radius, coarse_step, yaw_span, coarse_yaw_step, coarse_inlier,
+    nullptr);
+
+  int inliers = 0;
+  const g2o::SE2 fine = gridSearchPose(
+    coarse, 1.5 * coarse_step, 0.15, 1.5 * coarse_yaw_step, 0.03,
+    relocalize_inlier_distance_, &inliers);
+
+  if (inliers_out != nullptr) {
+    *inliers_out = inliers;
+  }
   RCLCPP_INFO(
     get_logger(),
-    "Relocalization scan-match: %d/%zu cones fit the map at the best pose",
-    best_inliers, last_observations_.size());
-  return best;
+    "Relocalization scan-match: %d/%zu cones fit the map at the best pose "
+    "(radius %.1f m)",
+    inliers, last_observations_.size(), radius);
+  return fine;
 }
 
 void GraphSlamNode::relocalizeTo(const g2o::SE2 & click)
 {
+  // Scan-match the latest cones against the fixed map near the click to find
+  // the best-fit starting pose. The operator asserts the car is near the
+  // click, so the result is applied regardless of the inlier count (the
+  // automatic path in maybeAutoRelocalize gates on it instead).
+  relocalizeAt(scanMatchNear(click, relocalize_search_radius_, relocalize_search_yaw_, nullptr));
+}
+
+void GraphSlamNode::relocalizeAt(const g2o::SE2 & pose)
+{
   // Drop the current pose trajectory (and its odometry/observation edges),
   // keeping the map. In localization mode this re-anchors the drifted
-  // odometry to the fixed map; the operator asserts the car is near the click.
+  // odometry to the fixed map.
   for (PoseRecord & record : poses_) {
     if (optimizer_.vertex(record.graph_id) == record.vertex) {
       optimizer_.removeVertex(record.vertex);
@@ -807,9 +1270,6 @@ void GraphSlamNode::relocalizeTo(const g2o::SE2 & click)
   last_cone_pose_graph_id_ = -1;
   last_optimization_time_sec_ = -1.0;
 
-  // (B) Scan-match the latest cones against the fixed map near the click to
-  // find the best-fit starting pose.
-  const g2o::SE2 pose = scanMatchNearClick(click);
   const bool can_refine = !last_observations_.empty() && !landmarks_.empty();
 
   auto * vertex = new g2o::VertexSE2();
@@ -1108,8 +1568,22 @@ void GraphSlamNode::maybeAddGnssPrior(
   // 3) Sigma floor: an rtk_fixed report of 0.01 m would carry information
   //    1e4 and let one anchor out-vote the cone map; the floor keeps any
   //    single prior's pull bounded regardless of what the INS believes.
-  const double sigma_x = std::max(fix.sigma_x, gnss_prior_min_sigma_);
-  const double sigma_y = std::max(fix.sigma_y, gnss_prior_min_sigma_);
+  // 4) Mapping-phase de-weighting: pre-convergence the graph is elastic and
+  //    has no innovation gate, so a 1 Hz anchor stream whose realized error
+  //    is time-correlated (Gauss-Markov, tens of seconds) drags the whole
+  //    map sideways in optimizer-sized steps. Landmarks shift under the
+  //    incoming observations, associations split, and duplicated cones are
+  //    born — the probabilistic mapping failure observed in race runs
+  //    (map 117-162 vs 71 GT, ego snapping 4 cm while stationary). During
+  //    mapping the anchors' only real job is bounding gross odometry drift,
+  //    which a weak pull does fine; full anchor strength returns with the
+  //    frozen map, where the innovation gate stands guard.
+  double mapping_scale = 1.0;
+  if (!map_converged_) {
+    mapping_scale = std::max(1.0, gnss_prior_mapping_sigma_scale_);
+  }
+  const double sigma_x = std::max(fix.sigma_x, gnss_prior_min_sigma_) * mapping_scale;
+  const double sigma_y = std::max(fix.sigma_y, gnss_prior_min_sigma_) * mapping_scale;
   Eigen::Matrix2d information = Eigen::Matrix2d::Zero();
   information(0, 0) = 1.0 / (sigma_x * sigma_x);
   information(1, 1) = 1.0 / (sigma_y * sigma_y);
@@ -1132,7 +1606,7 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
   bool force_process)
 {
   if (poses_.empty()) {
-    return ObservationUpdate{0U, 0U, 0U};
+    return ObservationUpdate{0U, 0U, 0U, 0U};
   }
 
   PoseRecord & pose = poses_.back();
@@ -1145,7 +1619,7 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
   const bool update_deletions = shouldUpdateLandmarkDeletion(stamp, add_edges);
 
   if (!add_edges && !update_landmarks && !update_deletions) {
-    return ObservationUpdate{0U, 0U, 0U};
+    return ObservationUpdate{0U, 0U, 0U, 0U};
   }
 
   if (!add_edges &&
@@ -1164,9 +1638,35 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
   // Interpolate raw odometry at the cone stamp so measurements are expressed
   // relative to the keyframe vertex even when the message arrives between
   // keyframes; at speed the uncorrected offset reaches keyframe_distance.
+  // A stamp OUTSIDE the buffer span cannot be interpolated — rawOdomAt
+  // clamps to the buffer edge, which places the whole frame's cones at a
+  // pose from a different time (the 2026-07-17 autopsy found promoted
+  // landmarks hundreds of meters off track from exactly such frames).
+  {
+    std::lock_guard<std::mutex> buffer_lock(odom_buffer_mutex_);
+    if (raw_odom_buffer_.empty() ||
+      stamp.seconds() < raw_odom_buffer_.front().first - 0.5 ||
+      stamp.seconds() > raw_odom_buffer_.back().first + 0.5)
+    {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "Dropping cone frame: stamp %.3f outside odometry buffer span",
+        stamp.seconds());
+      return ObservationUpdate{0U, 0U, 0U, 0U};
+    }
+  }
   const g2o::SE2 raw_at_observation = rawOdomAt(stamp.seconds());
   const g2o::SE2 keyframe_to_observation = pose.raw_odom.inverse() * raw_at_observation;
-  const g2o::SE2 observation_pose = pose.vertex->estimate() * keyframe_to_observation;
+  g2o::SE2 observation_pose = pose.vertex->estimate() * keyframe_to_observation;
+
+  // Orange-gate seam anchor: runs BEFORE association so that when it closes
+  // a beyond-the-gate drift, this same frame's cones already associate with
+  // the first-lap landmarks instead of founding another round of duplicates.
+  if (add_edges &&
+    maybeApplyGateAnchor(observations, observation_pose, keyframe_to_observation, pose))
+  {
+    observation_pose = pose.vertex->estimate() * keyframe_to_observation;
+  }
 
   if (add_edges && !process_every_cone_message_) {
     last_cone_pose_graph_id_ = pose.graph_id;
@@ -1177,150 +1677,207 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
   bool loop_closure_edge = false;
   std::vector<std::size_t> observed_landmark_indices;
   observed_landmark_indices.reserve(observations.size());
-  // Greedy in-frame exclusivity: each landmark may be matched by at most one
-  // cone per frame (indices track landmarks_; entries for landmarks created
-  // within this frame are appended as claimed).
-  std::vector<bool> claimed(landmarks_.size(), false);
 
+  // Delayed data association (tentative_track_frontend.hpp): observations
+  // are matched frame-globally against confirmed landmarks and tentative
+  // tracks; unmatched ones found tracks OUTSIDE the graph and only enter it
+  // once confirmed and converged. Promotion replays the track's observation
+  // history against the original keyframes, so the delay costs no
+  // information. This replaces the legacy per-observation NN founding
+  // pipeline and all of its creation heuristics.
+  std::vector<FrontendObservation> frontend_observations;
+  frontend_observations.reserve(observations.size());
   for (const ConeObservation & observation : observations) {
-    ConeObservation keyframe_observation = observation;
-    keyframe_observation.measurement = keyframe_to_observation * observation.measurement;
-    keyframe_observation.covariance =
-      covarianceInMapFrame(keyframe_to_observation, observation.covariance);
-
-    const Eigen::Vector2d map_point = observation_pose * observation.measurement;
-    const Eigen::Matrix2d map_covariance =
+    FrontendObservation frontend_observation;
+    frontend_observation.map_point = observation_pose * observation.measurement;
+    frontend_observation.map_covariance =
       covarianceInMapFrame(observation_pose, observation.covariance);
+    frontend_observation.keyframe_measurement =
+      keyframe_to_observation * observation.measurement;
+    frontend_observation.keyframe_covariance =
+      covarianceInMapFrame(keyframe_to_observation, observation.covariance);
+    frontend_observation.pose_graph_id = pose.graph_id;
+    frontend_observation.range_m = observation.measurement.norm();
+    frontend_observation.color = static_cast<std::uint8_t>(observation.color);
+    frontend_observations.push_back(frontend_observation);
+  }
 
-    bool ambiguous = false;
-    const int landmark_index =
-      findAssociatedLandmark(map_point, map_covariance, observation.color, &ambiguous, &claimed);
-    if (ambiguous) {
-      // Two landmarks explain this cone almost equally well; fusing or
-      // spawning a duplicate would corrupt the map, so skip it this frame.
-      const auto decision = loop_confirmation_window_.rejectAmbiguousAssociation();
-      ++loop_rejected_count_;
+  std::vector<FrontendConfirmedLandmark> confirmed_view;
+  confirmed_view.reserve(landmarks_.size());
+  for (const LandmarkRecord & existing : landmarks_) {
+    confirmed_view.push_back(
+      FrontendConfirmedLandmark{
+        existing.vertex->estimate(), existing.covariance,
+        existing.last_seen_traveled});
+  }
+
+  // Track misses only count while the track should be observable from the
+  // CURRENT pose (occlusion cannot be modelled, but FOV/range exits must
+  // not eat the miss budget).
+  const auto track_expected_visible =
+    [this, &observation_pose](const Eigen::Vector2d & point) {
+      const Eigen::Vector2d relative = observation_pose.inverse() * point;
+      const double range = relative.norm();
+      if (range < min_observation_range_ || range > landmark_delete_max_range_) {
+        return false;
+      }
+      if (landmark_delete_fov_ > 0.0 &&
+        landmark_delete_fov_ < 2.0 * std::acos(-1.0) &&
+        std::abs(std::atan2(relative.y(), relative.x())) > 0.5 * landmark_delete_fov_)
+      {
+        return false;
+      }
+      return true;
+    };
+
+  const FrontendFrameResult frame = frontend_->processFrame(
+    frontend_observations, confirmed_view, traveled_distance_,
+    track_expected_visible);
+  const std::size_t matched_landmarks = frame.confirmed_matches.size();
+
+  for (std::size_t i = 0U; i < frame.ambiguous_observations.size(); ++i) {
+    // Two landmarks explain a cone almost equally well; fusing or spawning
+    // a duplicate would corrupt the map, so the frontend dropped it.
+    const auto decision = loop_confirmation_window_.rejectAmbiguousAssociation();
+    ++loop_rejected_count_;
+    loop_candidate_window_count_ = decision.candidate_count;
+    last_loop_confirmation_reason_ = decision.reason;
+    RCLCPP_INFO_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      5000,
+      "Loop confirmation rejected: reason=%s loop_candidates=%zu "
+      "loop_confirmed=%zu loop_rejected=%zu",
+      toString(last_loop_confirmation_reason_),
+      loop_candidate_count_,
+      loop_confirmed_count_,
+      loop_rejected_count_);
+    publishLifecycleDiagnostics();
+  }
+
+  for (const FrontendConfirmedMatch & match : frame.confirmed_matches) {
+    const FrontendObservation & frontend_observation =
+      frontend_observations[match.observation_index];
+    const ConeObservation & observation = observations[match.observation_index];
+    LandmarkRecord & landmark = landmarks_[match.landmark_index];
+    voteLandmarkColor(landmark, observation.color);
+    const bool stale_loop_candidate =
+      add_edges && loop_gap_distance_ > 0.0 &&
+      traveled_distance_ - landmark.last_seen_traveled >= loop_gap_distance_;
+    if (stale_loop_candidate) {
+      const double residual_m =
+        (landmark.vertex->estimate() - frontend_observation.map_point).norm();
+      // Seam evidence: this candidate re-associates a landmark that sits at
+      // the lap origin, i.e. it is part of the loop that closes the LAP,
+      // not a mid-lap mini-loop (a peanut waist). The lap-finish gate can
+      // require this before freezing the map.
+      if (lap_origin_captured_ &&
+        residual_m <= loop_confirmation_config_.max_residual_m &&
+        (landmark.vertex->estimate() - lap_origin_.translation()).norm() <=
+        lap_seam_landmark_radius_m_)
+      {
+        ++seam_loop_candidate_count_;
+      }
+      const auto decision = loop_confirmation_window_.observeCandidate(
+        LoopCandidate{traveled_distance_, stamp.seconds(), residual_m});
+      ++loop_candidate_count_;
       loop_candidate_window_count_ = decision.candidate_count;
       last_loop_confirmation_reason_ = decision.reason;
-      RCLCPP_INFO_THROTTLE(
-        get_logger(),
-        *get_clock(),
-        5000,
-        "Loop confirmation rejected: reason=%s loop_candidates=%zu "
-        "loop_confirmed=%zu loop_rejected=%zu",
-        toString(last_loop_confirmation_reason_),
-        loop_candidate_count_,
-        loop_confirmed_count_,
-        loop_rejected_count_);
+      if (decision.reason != LoopConfirmationReason::PendingThreshold &&
+        decision.reason != LoopConfirmationReason::Confirmed)
+      {
+        ++loop_rejected_count_;
+      }
+      if (decision.confirmed) {
+        loop_closure_edge = true;
+        loop_confirmation_ready_for_optimize_ = true;
+        RCLCPP_INFO(
+          get_logger(),
+          "Loop confirmation threshold reached: residual=%.3f m "
+          "loop_candidates=%zu loop_candidate_window=%zu loop_confirmed=%zu "
+          "loop_rejected=%zu; waiting for optimization",
+          residual_m,
+          loop_candidate_count_,
+          loop_candidate_window_count_,
+          loop_confirmed_count_,
+          loop_rejected_count_);
+      } else {
+        RCLCPP_INFO_THROTTLE(
+          get_logger(),
+          *get_clock(),
+          5000,
+          "Loop confirmation %s: residual=%.3f m loop_candidates=%zu "
+          "loop_candidate_window=%zu loop_confirmed=%zu loop_rejected=%zu",
+          toString(last_loop_confirmation_reason_),
+          residual_m,
+          loop_candidate_count_,
+          loop_candidate_window_count_,
+          loop_confirmed_count_,
+          loop_rejected_count_);
+      }
       publishLifecycleDiagnostics();
-      continue;
     }
-
-    LandmarkRecord * landmark = nullptr;
-    std::size_t observed_index = 0U;
-    bool has_observed_index = false;
-
-    if (landmark_index >= 0) {
-      observed_index = static_cast<std::size_t>(landmark_index);
-      has_observed_index = true;
-      if (observed_index < claimed.size()) {
-        claimed[observed_index] = true;
-      }
-      landmark = &landmarks_[observed_index];
-      voteLandmarkColor(*landmark, observation.color);
-      const bool stale_loop_candidate =
-        add_edges && loop_gap_distance_ > 0.0 &&
-        traveled_distance_ - landmark->last_seen_traveled >= loop_gap_distance_;
-      if (stale_loop_candidate) {
-        const double residual_m = (landmark->vertex->estimate() - map_point).norm();
-        // Seam evidence: this candidate re-associates a landmark that sits at
-        // the lap origin, i.e. it is part of the loop that closes the LAP,
-        // not a mid-lap mini-loop (a peanut waist). The lap-finish gate can
-        // require this before freezing the map.
-        if (lap_origin_captured_ &&
-          residual_m <= loop_confirmation_config_.max_residual_m &&
-          (landmark->vertex->estimate() - lap_origin_.translation()).norm() <=
-          lap_seam_landmark_radius_m_)
-        {
-          ++seam_loop_candidate_count_;
-        }
-        const auto decision = loop_confirmation_window_.observeCandidate(
-          LoopCandidate{traveled_distance_, stamp.seconds(), residual_m});
-        ++loop_candidate_count_;
-        loop_candidate_window_count_ = decision.candidate_count;
-        last_loop_confirmation_reason_ = decision.reason;
-        if (decision.reason != LoopConfirmationReason::PendingThreshold &&
-          decision.reason != LoopConfirmationReason::Confirmed)
-        {
-          ++loop_rejected_count_;
-        }
-        if (decision.confirmed) {
-          loop_closure_edge = true;
-          loop_confirmation_ready_for_optimize_ = true;
-          RCLCPP_INFO(
-            get_logger(),
-            "Loop confirmation threshold reached: residual=%.3f m "
-            "loop_candidates=%zu loop_candidate_window=%zu loop_confirmed=%zu "
-            "loop_rejected=%zu; waiting for optimization",
-            residual_m,
-            loop_candidate_count_,
-            loop_candidate_window_count_,
-            loop_confirmed_count_,
-            loop_rejected_count_);
-        } else {
-          RCLCPP_INFO_THROTTLE(
-            get_logger(),
-            *get_clock(),
-            5000,
-            "Loop confirmation %s: residual=%.3f m loop_candidates=%zu "
-            "loop_candidate_window=%zu loop_confirmed=%zu loop_rejected=%zu",
-            toString(last_loop_confirmation_reason_),
-            residual_m,
-            loop_candidate_count_,
-            loop_candidate_window_count_,
-            loop_confirmed_count_,
-            loop_rejected_count_);
-        }
-        publishLifecycleDiagnostics();
-      }
-      landmark->last_seen_traveled = traveled_distance_;
-      if (update_landmarks &&
-        updateLandmarkEstimate(*landmark, map_point, map_covariance))
-      {
-        ++updated_landmarks;
-      }
-    } else if (add_edges) {
-      // A landmark's first observation SETS its position, and the pose's
-      // heading error leverages with range: 1 deg of unoptimized heading at
-      // 15 m bakes 26 cm into the map that later edges must fight. Far
-      // measurements still serve as UPDATES to existing landmarks (the
-      // association above has no such gate); they just cannot found one.
-      // 0 disables the gate.
-      if (landmark_creation_max_range_ > 0.0 &&
-        observation.measurement.norm() > landmark_creation_max_range_)
-      {
-        continue;
-      }
-      landmark = addLandmark(map_point, map_covariance, observation.color);
-      if (landmark != nullptr) {
-        observed_index = landmarks_.size() - 1U;
-        has_observed_index = true;
-        claimed.push_back(true);  // a sibling cone must not merge into it
-      }
+    landmark.last_seen_traveled = traveled_distance_;
+    if (update_landmarks &&
+      updateLandmarkEstimate(
+        landmark, frontend_observation.map_point, frontend_observation.map_covariance))
+    {
+      ++updated_landmarks;
     }
-
-    if (landmark == nullptr) {
-      continue;
-    }
-
-    if (has_observed_index) {
-      observed_landmark_indices.push_back(observed_index);
-    }
-
+    observed_landmark_indices.push_back(match.landmark_index);
     if (add_edges) {
-      addObservationEdge(keyframe_observation, pose.vertex, *landmark);
+      ConeObservation keyframe_observation = observation;
+      keyframe_observation.measurement = frontend_observation.keyframe_measurement;
+      keyframe_observation.covariance = frontend_observation.keyframe_covariance;
+      addObservationEdge(keyframe_observation, pose.vertex, landmark);
       ++added_edges;
     }
+  }
+
+  for (const FrontendPromotion & promotion : frame.promotions) {
+    // Geometric-impossibility veto: a cone we are supposedly observing
+    // cannot be farther than the sensor range from the current pose. Such a
+    // track was born from corrupted geometry; drop it instead of freezing
+    // it into the map (it would fail the global planner's width check).
+    if ((promotion.position - observation_pose.translation()).norm() >
+      max_observation_range_ + 5.0)
+    {
+      RCLCPP_WARN(
+        get_logger(),
+        "Vetoing impossible landmark promotion %.0f m from the pose",
+        (promotion.position - observation_pose.translation()).norm());
+      continue;
+    }
+    LandmarkRecord * landmark = addLandmark(
+      promotion.position, promotion.covariance,
+      static_cast<ConeColor>(promotion.color));
+    if (landmark == nullptr) {
+      continue;  // localization mode (frozen map) or landmark cap
+    }
+    // Replay the confirmed track's observation history into the graph
+    // against the keyframes that actually saw it.
+    for (const FrontendPendingObservation & pending : promotion.observations) {
+      g2o::VertexSE2 * pending_vertex = nullptr;
+      for (auto it = poses_.rbegin(); it != poses_.rend(); ++it) {
+        if (it->graph_id == pending.pose_graph_id) {
+          pending_vertex = it->vertex;
+          break;
+        }
+        if (it->graph_id < pending.pose_graph_id) {
+          break;
+        }
+      }
+      if (pending_vertex == nullptr) {
+        continue;  // keyframe pruned from the localization window
+      }
+      ConeObservation replay;
+      replay.measurement = pending.keyframe_measurement;
+      replay.covariance = pending.keyframe_covariance;
+      replay.color = static_cast<ConeColor>(promotion.color);
+      addObservationEdge(replay, pending_vertex, *landmark);
+      ++added_edges;
+    }
+    observed_landmark_indices.push_back(landmarks_.size() - 1U);
   }
 
   if (loop_closure_edge) {
@@ -1351,7 +1908,7 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
     observations.size(),
     deleted_landmarks);
 
-  return ObservationUpdate{added_edges, updated_landmarks, deleted_landmarks};
+  return ObservationUpdate{added_edges, updated_landmarks, deleted_landmarks, matched_landmarks};
 }
 
 std::vector<GraphSlamNode::ConeObservation> GraphSlamNode::extractConeObservations(
@@ -1693,7 +2250,18 @@ void GraphSlamNode::addObservationEdge(
   }
   edge->setInformation(information);
 
-  if (robust_kernel_delta_ > 0.0) {
+  // DCS (default): the closed-form switchable constraint. A wrong
+  // association's edge is smoothly down-weighted by s = min(1, 2*phi /
+  // (phi + chi2)) instead of dragging the map; correct edges (chi2 <= phi)
+  // are untouched. Requires a warm start, which the incremental optimize
+  // cadence and the gate-anchor re-seed provide; the optimizer is Levenberg,
+  // which tolerates DCS's redescending (negative-curvature) outlier region.
+  // Odometry and GNSS-prior edges keep their own kernels — never DCS.
+  if (observation_robust_kernel_ == "dcs" && observation_dcs_phi_ > 0.0) {
+    auto * robust_kernel = new g2o::RobustKernelDCS();
+    robust_kernel->setDelta(observation_dcs_phi_);
+    edge->setRobustKernel(robust_kernel);
+  } else if (observation_robust_kernel_ == "huber" && robust_kernel_delta_ > 0.0) {
     auto * robust_kernel = new g2o::RobustKernelHuber();
     robust_kernel->setDelta(robust_kernel_delta_);
     edge->setRobustKernel(robust_kernel);
@@ -2161,14 +2729,46 @@ bool GraphSlamNode::optimizeGraph()
     return false;
   }
 
+  const g2o::SE2 pose_before = poses_.back().vertex->estimate();
+  // A landmark whose observation edges the DCS kernel has all switched off
+  // is effectively unconstrained: one LM step can fling its vertex hundreds
+  // of meters (2026-07-18 autopsy: ghosts at 100-322 m with clean odometry
+  // and no creation-guard hits). Snapshot positions so impossible per-step
+  // jumps can be culled after the solve — no physical cone moves 10 m in
+  // one optimization cycle (legit loop-closure corrections are meters).
+  std::vector<Eigen::Vector2d> landmarks_before;
+  landmarks_before.reserve(landmarks_.size());
+  for (const LandmarkRecord & landmark : landmarks_) {
+    landmarks_before.push_back(landmark.vertex->estimate());
+  }
   optimizer_.initializeOptimization();
   const int completed_iterations = optimizer_.optimize(optimization_iterations_);
-  RCLCPP_DEBUG(
-    get_logger(),
-    "g2o optimization completed %d iterations for %zu poses and %zu landmarks",
-    completed_iterations,
-    poses_.size(),
-    landmarks_.size());
+  for (std::size_t i = landmarks_.size(); i-- > 0U;) {
+    if (i < landmarks_before.size() &&
+      (landmarks_[i].vertex->estimate() - landmarks_before[i]).norm() > 10.0)
+    {
+      RCLCPP_WARN(
+        get_logger(),
+        "Culling landmark flung %.0f m by one optimize step (unconstrained "
+        "vertex — all edges likely switched off)",
+        (landmarks_[i].vertex->estimate() - landmarks_before[i]).norm());
+      removeLandmarkAt(i);
+    }
+  }
+  // Correction-step autopsy: every optimizer run that moves the live pose by
+  // centimeters is a step the planner (and every in-flight observation)
+  // experiences as a jump. This is the number that explains "the map and the
+  // car twitch" — keep it visible and correlate it with duplicate births.
+  const double correction_m =
+    (poses_.back().vertex->estimate().translation() - pose_before.translation()).norm();
+  if (correction_m > 0.05) {
+    RCLCPP_WARN(
+      get_logger(),
+      "optimizer moved the live pose %.3f m in one step "
+      "(%d iters, %zu poses, %zu landmarks, converged=%d)",
+      correction_m, completed_iterations, poses_.size(), landmarks_.size(),
+      map_converged_ ? 1 : 0);
+  }
   return completed_iterations > 0;
 }
 
@@ -2716,6 +3316,12 @@ void GraphSlamNode::enterLocalizationMode(const std::string & reason)
       "Merged %zu duplicate landmark(s) while freezing the map; %zu remain",
       merged_on_freeze, landmarks_.size());
   }
+  // Unpromoted tracks die with the mapping phase: the frozen map accepts no
+  // new landmarks, so keeping them would only absorb observations that the
+  // localization matcher needs.
+  if (frontend_) {
+    frontend_->reset();
+  }
 
   // Freeze the map: landmarks become the fixed reference, mapping paths
   // (addLandmark / deletion / merge / Kalman updates) are disabled by the
@@ -2827,7 +3433,10 @@ void GraphSlamNode::publishLifecycleDiagnostics()
       << " lap_return_criteria_satisfied="
       << (lap_return_criteria_satisfied_ ? "true" : "false")
       << " odometry_fresh="
-      << (classifyMappingStopState() == MappingStopReason::OdometryDropout ? "false" : "true");
+      << (classifyMappingStopState() == MappingStopReason::OdometryDropout ? "false" : "true")
+      << " lost_frames=" << lost_frames_
+      << " auto_relocalizations=" << auto_relocalize_count_
+      << " gate_anchors=" << gate_anchor_count_;
   diagnostics.data = out.str();
   lifecycle_diagnostics_pub_->publish(diagnostics);
   RCLCPP_INFO_THROTTLE(

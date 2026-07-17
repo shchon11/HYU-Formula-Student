@@ -26,6 +26,51 @@ graph_slam:
     association_max_distance: 1.2
     association_gate_chi2: 5.991
     association_ambiguity_ratio: 0.85
+
+    # Automatic relocalization (localization mode only). Association failure
+    # is an ABSORBING state: once the pose drifts past the gate, no amount of
+    # further driving brings it back, and the manual /initialpose search
+    # (+-2 m) cannot reach a GNSS-outage-sized excursion. Lost = cones
+    # visible but zero associations for N consecutive frames (the frozen map
+    # creates no landmarks to absorb them); recovery scan-matches around the
+    # current estimate with an escalating radius, gated on the inlier count
+    # so a bad fit is never applied. An orange-gate match (below) overrides
+    # the seed with a drift-independent global fix.
+    auto_relocalize_enable: true
+    auto_relocalize_min_visible_cones: 3
+    auto_relocalize_lost_frames: 10
+    auto_relocalize_min_inliers: 4
+    auto_relocalize_search_radius: 4.0
+    # While GNSS priors are being accepted (sigma+innovation gated), the pose
+    # is externally corroborated and the relocalizer stays disarmed; it only
+    # fires when anchors have been absent/rejected this long (real outage).
+    auto_relocalize_gnss_holdoff_sec: 3.0
+    auto_relocalize_max_search_radius: 16.0
+    auto_relocalize_cooldown_sec: 3.0
+
+    # Orange-gate global anchor: the big-orange start-gate cones exist
+    # nowhere else on the track, so matching their observed constellation
+    # (two gate sides = a rigid 2-point body) against the mapped one yields
+    # an SE2 fix whose validity does not depend on drift size — the one
+    # loop closure per-cone NN association can never provide. While mapping,
+    # a verified match beyond gate_anchor_min_correction_m re-seeds the
+    # current keyframe onto the gate-aligned pose so the optimizer closes
+    # the lap seam instead of duplicating the map (the GNSS-fault failure
+    # mode); in localization mode it seeds the auto relocalization.
+    # Left/right correspondence and the 180-degree flip are disambiguated by
+    # counting how many of ALL visible cones the candidate pose explains.
+    # Observations tolerate the big/small-orange misclassification (routine
+    # for vision at range); the map side stays big-orange-only so small
+    # orange lane markings can never form a false gate.
+    gate_anchor_enable: true
+    gate_anchor_cluster_radius_m: 1.5
+    gate_anchor_pair_tolerance_m: 0.5
+    gate_anchor_min_pair_separation_m: 2.0
+    gate_anchor_max_pair_separation_m: 9.0
+    gate_anchor_min_inliers: 4
+    gate_anchor_min_correction_m: 2.4
+    gate_anchor_max_correction_m: 60.0
+    gate_anchor_cooldown_travel_m: 5.0
     # Gate inflation grows with distance driven since a landmark was last
     # seen (drift is distance-proportional; keyframe density must not change
     # the gate). 0.01 m^2/m -> ~3.2 m gate radius after a 165 m lap.
@@ -33,16 +78,45 @@ graph_slam:
     association_max_inflation: 4.0
     min_observation_range: 0.2
     max_observation_range: 30.0
-    # New landmarks may only be FOUNDED by observations closer than this; far
-    # observations still update existing landmarks through association. A
-    # first observation sets the landmark position, so unoptimized heading
-    # error leverages with range (1 deg @ 15 m = 26 cm baked into the map).
-    # 0.0 = disabled (legacy behavior). 12 matches perception's vision cap:
-    # inside it every founding measurement is LiDAR-grade.
-    landmark_creation_max_range: 12.0
+
+    # ---- Delayed data association (tentative-track frontend) -------------
+    # Observations no longer found landmarks directly. An unmatched cone
+    # founds a TENTATIVE track outside the graph; only a track with enough
+    # hits AND a converged position is promoted to a landmark, and promotion
+    # replays its buffered observations against the original keyframes (the
+    # delay costs no information). This retires the legacy creation
+    # heuristics (creation_max_range / near_range / crowd_radius /
+    # founding_heading_sigma) — a bad track dies without ever touching the
+    # map. Values follow the MOT/cone-SLAM literature (Dissanayake tentative
+    # lists, ORB-SLAM probation, AMZ counters).
+    # Correlated heading-lever error: promotion demands the track's CLOSEST
+    # sighting have lever sigma below the cap, so far-only tracks (born at
+    # 10 m+) cannot promote until a near pass refines them.
+    heading_lever_sigma_rad: 0.035
+    track_gate_chi2: 9.21
+    track_gate_max_distance: 2.4
+    track_promote_min_hits: 3
+    track_promote_max_sigma: 0.35
+    # A confirmable track sitting within this radius of a confirmed landmark
+    # is a drift-offset re-sighting of that cone (the old "offset twin"):
+    # promotion is HELD until loop closure resolves the drift.
+    track_promote_hold_radius: 2.0
+    # Hold only against a STALE neighbour (a fresh one = two real cones).
+    track_promote_hold_stale_travel: 5.0
+    track_kill_consecutive_misses: 3
+    track_kill_unpromoted_travel: 25.0
+
     use_cone_covariance: true
     default_observation_sigma: 0.25
     min_observation_variance: 0.01
+    # Robust backend on cone observation edges: DCS (Dynamic Covariance
+    # Scaling, Agarwal ICRA'13) = closed-form switchable constraints. A
+    # mis-associated edge is smoothly switched off (weight 2*phi/(phi+chi2))
+    # instead of dragging the map; inlier edges (chi2 <= phi) are untouched.
+    # phi=1.0 is the literature default (safe band ~0.1-10). Set to "huber"
+    # to fall back to the legacy kernel, "none" to disable.
+    observation_robust_kernel: dcs
+    observation_dcs_phi: 1.0
     robust_kernel_delta: 1.0
 
     # Floors only — with use_odom_covariance the channel's own reported sigma
@@ -64,7 +138,11 @@ graph_slam:
     # the anchor fades out gracefully on RTK dropout while odometry keeps flowing.
     gnss_prior_enable: true
     gnss_prior_topic: /gnss/odom
-    gnss_prior_max_position_sigma: 0.5
+    # Accept DEGRADED fixes with their honest (large) sigma instead of
+    # dropping them: a 1-2 m anchor at 2 Hz still bounds a sustained GM
+    # excursion, which is what prevents the drifted second-copy overlay
+    # (2026-07-18 F1: 57 ghosts with anchors gated off entirely).
+    gnss_prior_max_position_sigma: 3.0
     gnss_prior_max_age: 0.3
     gnss_prior_robust_delta: 1.0
     # Believed-not-realized INS (2026-07-16 fidelity pass): the reported sigma
@@ -75,7 +153,12 @@ graph_slam:
     # map has converged, reject fixes that disagree with the cone-anchored
     # pose by more than the rearm budget.
     gnss_prior_min_sigma: 0.25
-    gnss_prior_min_interval: 1.0
+    # Pre-convergence the anchors only need to bound gross odometry drift;
+    # at full strength their correlated (GM) error drags the elastic graph in
+    # optimizer steps and splits associations (duplicate cones, the race
+    # mapping failure). x4 keeps the pull ~16x weaker until the map freezes.
+    gnss_prior_mapping_sigma_scale: 2.0
+    gnss_prior_min_interval: 0.5
     gnss_prior_innovation_max_residual: 2.0
     # A manual /initialpose (RViz 2D Pose Estimate) suppresses the priors so an
     # RTK fix cannot yank the pose straight back to GNSS; they re-arm after
@@ -93,7 +176,12 @@ graph_slam:
     optimize_every_n_keyframes: 1
     optimize_min_interval: 0.1
     max_optimization_poses: 4000
-    optimization_iterations: 10
+    # 10 -> 30 (same autopsy): every logged optimizer call exhausted its 10
+    # iterations — the graph ran chronically unconverged, so each call
+    # published a different partial solution and the live pose stepped
+    # 0.06-0.29 m per call (the visible map/ego stutter, and the pose noise
+    # behind the far-range duplicate births above).
+    optimization_iterations: 30
     process_every_cone_message: false
 
     # 3 (the confirm threshold) was trialed 2026-07-16 in the map-pollution

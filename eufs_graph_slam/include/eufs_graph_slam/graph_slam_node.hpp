@@ -30,7 +30,9 @@
 #include "eufs_msgs/msg/car_state.hpp"
 #include "eufs_msgs/msg/cone_array_with_covariance.hpp"
 #include "eufs_msgs/msg/cone_with_covariance.hpp"
+#include "eufs_graph_slam/gate_anchor.hpp"
 #include "eufs_graph_slam/slam_lifecycle_classifiers.hpp"
+#include "eufs_graph_slam/tentative_track_frontend.hpp"
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "geometry_msgs/msg/quaternion.hpp"
 #include "nav_msgs/msg/odometry.hpp"
@@ -96,8 +98,13 @@ private:
     std::size_t added_edges;
     std::size_t updated_landmarks;
     std::size_t deleted_landmarks;
+    // Observations that associated with an EXISTING landmark this frame.
+    // Zero while cones are visible is the lost signature in localization
+    // mode (the frozen map creates no new landmarks to absorb them).
+    std::size_t matched_landmarks;
   };
 
+  void declareRecoveryParameters();
   void configureOptimizer();
   void resetGraph();
 
@@ -107,7 +114,44 @@ private:
   void initialPoseCallback(
     const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
   void relocalizeTo(const g2o::SE2 & pose);
-  g2o::SE2 scanMatchNearClick(const g2o::SE2 & click) const;
+  // Re-anchor the trajectory at an already-verified pose (no scan-match).
+  void relocalizeAt(const g2o::SE2 & pose);
+  // Coarse-to-fine grid search of the latest cone observations against the
+  // map around seed; reports the fine pass's inlier count for acceptance
+  // gating (the manual /initialpose path applies the result regardless —
+  // the operator asserted the neighbourhood — the automatic path must not).
+  g2o::SE2 scanMatchNear(
+    const g2o::SE2 & seed, double radius, double yaw_span,
+    int * inliers_out) const;
+  g2o::SE2 gridSearchPose(
+    const g2o::SE2 & seed, double radius, double xy_step,
+    double yaw_span, double yaw_step, double inlier_distance,
+    int * best_inliers_out) const;
+  // Lost detection + automatic recovery against the frozen map: cones are
+  // visible but none associate for N consecutive frames -> re-localize via
+  // (orange-gate seed, else escalating-radius grid search), gated on the
+  // scan-match inlier count.
+  void maybeAutoRelocalize(const ObservationUpdate & update, const rclcpp::Time & stamp);
+  // Orange-gate constellation match: orange/big-orange observations (the
+  // big/small distinction is size-only and misclassifies at range) against
+  // the big-orange landmarks (optionally only those near the lap origin, to
+  // exclude drift-era duplicate gates while mapping). Drift-magnitude
+  // independent — see gate_anchor.hpp.
+  bool matchGateFromObservations(
+    const std::vector<ConeObservation> & observations,
+    bool restrict_to_lap_origin,
+    g2o::SE2 * pose_out,
+    int * inliers_out) const;
+  // Mapping-lap seam closure beyond the association gate: when the gate
+  // match implies a correction too large for per-cone association to ever
+  // recover, re-seed the current keyframe estimate so the optimizer closes
+  // the loop instead of duplicating the map. Returns true if applied.
+  bool maybeApplyGateAnchor(
+    const std::vector<ConeObservation> & observations,
+    const g2o::SE2 & observation_pose,
+    const g2o::SE2 & keyframe_to_observation,
+    const PoseRecord & pose);
+  void suppressGnssPriors(double now_sec);
   g2o::SE2 latestRawOdom() const;
 
   g2o::SE2 poseFromCarState(const eufs_msgs::msg::CarState & msg) const;
@@ -223,6 +267,9 @@ private:
   MappingStopReason classifyMappingStopState();
   void publishLifecycleDiagnostics();
   void publishStatus();
+  // Per-frame perception-to-estimate latency on ~/timing, schema-compatible
+  // for external latency monitoring.
+  void publishTiming(double elapsed_ms, const ObservationUpdate & update);
 
   static double normalizeAngle(double angle);
   static double yawFromQuaternion(const geometry_msgs::msg::Quaternion & q);
@@ -245,6 +292,7 @@ private:
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr status_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr timing_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr lifecycle_diagnostics_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr converged_pub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_srv_;
@@ -288,6 +336,11 @@ private:
   double gnss_prior_max_age_;
   double gnss_prior_robust_delta_;
   double gnss_prior_min_sigma_;
+  // Pre-convergence anchor de-weighting (sigma multiplier): during mapping
+  // the elastic graph has no innovation gate, and full-strength anchors
+  // chasing the INS's time-correlated error shift landmarks under the
+  // incoming observations until associations split (duplicate cones).
+  double gnss_prior_mapping_sigma_scale_{4.0};
   double gnss_prior_innovation_max_residual_;
   double gnss_prior_min_interval_;
   double last_gnss_prior_stamp_sec_;
@@ -306,16 +359,68 @@ private:
   double association_max_distance_;
   double association_gate_chi2_;
   double association_ambiguity_ratio_;
+  // Delayed data association frontend (tentative tracks): observations found
+  // tracks outside the graph; only confirmed, converged tracks become
+  // landmarks. Replaces the legacy founding heuristics (creation range cap,
+  // near/far split rule, crowd radius, soft founding covariance).
+  FrontendParams frontend_params_{};
+  std::unique_ptr<TentativeTrackFrontend> frontend_;
+  // Robust kernel on cone observation edges: "dcs" (Dynamic Covariance
+  // Scaling, Agarwal ICRA'13 — the closed-form equivalent of switchable
+  // constraints) lets the optimizer down-weight a wrong association instead
+  // of letting it distort the map; "huber" keeps the legacy kernel; "none"
+  // disables. Odometry edges are NEVER robustified (they are the gradient
+  // backbone; see the robust-SLAM literature).
+  std::string observation_robust_kernel_{"dcs"};
+  double observation_dcs_phi_{1.0};
   double relocalize_search_radius_;
   double relocalize_search_yaw_;
   double relocalize_inlier_distance_;
+
+  // Automatic relocalization (localization mode only). Association failure
+  // is an absorbing state: once the pose is outside the gate nothing pulls
+  // it back, so the node must notice and recover on its own.
+  bool auto_relocalize_enable_{true};
+  int auto_relocalize_min_visible_cones_{3};
+  int auto_relocalize_lost_frames_{10};
+  int auto_relocalize_min_inliers_{4};
+  double auto_relocalize_search_radius_{4.0};
+  double auto_relocalize_max_search_radius_{16.0};
+  double auto_relocalize_cooldown_sec_{3.0};
+  // Disarm auto-relocalization while GNSS priors are being ACCEPTED: a
+  // corroborated pose with zero associations is a perception hiccup, not
+  // "lost". 3 s = three missed 1 Hz anchor intervals before re-arming.
+  double auto_relocalize_gnss_holdoff_sec_{3.0};
+  int lost_frames_{0};
+  // Consecutive frames with >= 2 associations. A SINGLE match while lost is
+  // routinely an aliased cone (on a 10 m kidnap some cone always falls in
+  // some wrong landmark's gate), so one match must neither clear the lost
+  // counter nor de-escalate the search radius.
+  int healthy_streak_{0};
+  double auto_relocalize_current_radius_{4.0};
+  double last_auto_relocalize_attempt_sec_{-1.0e18};
+  std::size_t auto_relocalize_count_{0U};
+
+  // Orange-gate global anchor (see gate_anchor.hpp).
+  bool gate_anchor_enable_{true};
+  double gate_anchor_cluster_radius_m_{1.5};
+  double gate_anchor_pair_tolerance_m_{0.5};
+  double gate_anchor_min_pair_separation_m_{2.0};
+  double gate_anchor_max_pair_separation_m_{9.0};
+  int gate_anchor_min_inliers_{4};
+  // Below min the normal association gate is already closing the loop; above
+  // max the match is more likely a mis-association than real drift.
+  double gate_anchor_min_correction_m_{2.4};
+  double gate_anchor_max_correction_m_{60.0};
+  double gate_anchor_cooldown_travel_m_{5.0};
+  double last_gate_anchor_traveled_m_{-1.0e18};
+  std::size_t gate_anchor_count_{0U};
   double association_inflation_per_meter_;
   double association_max_inflation_;
   double landmark_merge_distance_;
   double map_trust_info_scale_;
   double min_observation_range_;
   double max_observation_range_;
-  double landmark_creation_max_range_;
   double default_observation_sigma_;
   double min_observation_variance_;
   double odom_translation_sigma_;
@@ -444,6 +549,9 @@ private:
 
   g2o::SE2 latest_estimate_;
   bool has_latest_pose_;
+
+  // Ring buffer of cone-frame processing times for the ~/timing publisher.
+  std::vector<double> frame_times_ms_;
 
   // Raw odometry samples (stamp seconds, pose) for observation-time
   // interpolation between keyframes. Guarded by odom_buffer_mutex_: the

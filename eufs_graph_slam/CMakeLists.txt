@@ -128,6 +128,9 @@ if(BUILD_TESTING)
   ament_add_pytest_test(wheel_odometry_tests test/test_wheel_odometry.py
     TIMEOUT 120
   )
+  ament_add_pytest_test(sbg_bridge_fallback_tests test/test_sbg_bridge_fallback.py
+    TIMEOUT 120
+  )
 
   ament_add_gtest(loop_confirmation_test
     test/loop_confirmation_test.cpp)
@@ -143,6 +146,17 @@ if(BUILD_TESTING)
     test/lap_finish_gate_test.cpp)
   target_include_directories(lap_finish_gate_test PRIVATE
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
+
+  ament_add_gtest(gate_anchor_test
+    test/gate_anchor_test.cpp)
+  target_include_directories(gate_anchor_test PRIVATE
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
+
+  ament_add_gtest(tentative_track_frontend_test
+    test/tentative_track_frontend_test.cpp)
+  target_include_directories(tentative_track_frontend_test PRIVATE
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
+  target_link_libraries(tentative_track_frontend_test Eigen3::Eigen)
 
   ament_lint_auto_find_test_dependencies()
 endif()
