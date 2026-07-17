@@ -343,6 +343,7 @@ class LidarRealism(Node):
                 self.rng.random(n),
             )
 
+        distorted = False
         if self.distortion:
             cloud_stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
             twist = self._current_twist(cloud_stamp)
@@ -357,8 +358,16 @@ class LidarRealism(Node):
                 v_sx = vx - omega * self.sensor_y
                 v_sy = vy + omega * self.sensor_x
                 xyz = distort(xyz, tau, v_sx, v_sy, omega)
+                distorted = True
 
-        self._publish(msg, xyz[keep], intensity[keep], ring[keep], tau[keep])
+        # The time field is the deskew protocol: downstream inverts the
+        # distortion whenever it is populated. Publishing real tau on an
+        # UNDISTORTED cloud makes the consumer inject the full v*tau smear
+        # it was built to remove — zero it so the inverse degenerates to
+        # the identity.
+        publish_tau = tau[keep] if distorted else np.zeros(
+            int(np.count_nonzero(keep)), dtype=tau.dtype)
+        self._publish(msg, xyz[keep], intensity[keep], ring[keep], publish_tau)
 
     def _publish(self, msg, xyz, intensity, ring, tau):
         n = xyz.shape[0]

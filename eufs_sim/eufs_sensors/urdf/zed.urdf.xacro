@@ -154,8 +154,15 @@
           <always_on>true</always_on>
           <update_rate>30.0</update_rate>
           <visualize>false</visualize>
+          <!-- Poses are RELATIVE to the sensor's reference link, which is
+               already the LEFT camera frame (y=+0.06 from center). The old
+               "0 +/-0.06" poses double-applied the left offset: left
+               rendered from center+0.12, right from center+0.00 — the whole
+               rig shifted +6 cm laterally vs the TF the projection uses
+               (baseline stayed 0.12 so ZNCC depth never noticed). Left must
+               be at the reference itself, right at -baseline. -->
           <camera name="left">
-            <pose>0 0.06 0 0 0 0</pose>
+            <pose>0 0 0 0 0 0</pose>
             <horizontal_fov>1.91986</horizontal_fov>
             <image>
               <width>1280</width>
@@ -173,7 +180,7 @@
             </noise>
           </camera>
           <camera name="right">
-            <pose>0 -0.06 0 0 0 0</pose>
+            <pose>0 -0.12 0 0 0 0</pose>
             <horizontal_fov>1.91986</horizontal_fov>
             <image>
               <width>1280</width>

@@ -563,6 +563,19 @@ class PerceptionNode(Node):
         else:
             image_stamp = self._bbox_stamp(bbox_msg)
             detections = self._extract_detections(bbox_msg, camera_info)
+            # A stale bbox must degrade exactly like a missing one: keep the
+            # LiDAR backbone and publish uncoloured. Letting _scene_at
+            # return None here used to drop the cluster loop entirely — a
+            # YOLO stall silently removed ALL accurate cones for its whole
+            # duration instead of just the colours.
+            age = abs(self._stamp_sec(image_stamp) - self._stamp_sec(stamp))
+            if age > self.max_cluster_age_sec:
+                self._warn_throttled(
+                    "cluster_age",
+                    f"Newest bbox frame is {age:.2f}s from the cloud stamp "
+                    f"(limit {self.max_cluster_age_sec}s); publishing "
+                    f"uncoloured cones")
+                detections, image_stamp = [], stamp
         t("detections")
 
         scene = self._scene_at(frame, image_stamp, camera_matrix)
