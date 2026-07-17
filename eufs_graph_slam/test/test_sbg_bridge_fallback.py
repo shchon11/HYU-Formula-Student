@@ -106,6 +106,7 @@ def _reset(node):
     node._last_int_t = None
     node._last_vel_enu = None
     node._started = False
+    node._georeferenced = False
     node._last_pub_nav_t = None
     node._yaw = None
     node._yaw_sigma = node.default_heading_sigma
@@ -249,6 +250,25 @@ def test_hold_branch_publishes_huge_sigma(node):
     assert math.sqrt(out[-1].pose.covariance[0]) == pytest.approx(1.0e3)
     # Heading was still fed fresh, so its sigma stays tight.
     assert math.sqrt(out[-1].pose.covariance[35]) == pytest.approx(0.02)
+
+
+def test_dr_only_start_feeds_motion_but_holds_anchor(node):
+    """Covered boot: no absolute fix, but heading + wheels start motion."""
+    _reset(node)
+    node.allow_dr_start = True
+    rate, v = 20.0, 5.0
+    # Never reaches start_min_solution_mode (4); stays at AHRS mode 2.
+    _drive(node, 100.0, 1.0, rate, mode=2, v=v)
+
+    # Motion output flowed on the provisional origin...
+    assert node.car_state_pub.msgs
+    assert node._started and not node._georeferenced
+    # ...but the georeferenced anchor stayed silent (no datum yet).
+    assert not node.gnss_odom_pub.msgs
+    # First real fix georeferences and the anchor begins.
+    _drive(node, 101.0, 0.5, rate, mode=4, v=v)
+    assert node._georeferenced
+    assert node.gnss_odom_pub.msgs
 
 
 def test_velocity_dropout_at_mode3_uses_wheels(node):

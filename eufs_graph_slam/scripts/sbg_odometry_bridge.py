@@ -151,6 +151,11 @@ class SbgOdometryBridge(Node):
         # Degradation policy (see module docstring for the solution_mode ladder).
         # Wait for one absolute fix (mode >= start_min_solution_mode) before
         # emitting anything, so the SLAM origin is georeferenced.
+        # Allow a dead-reckoning-only start when no absolute fix is available
+        # yet (covered boot / cold GNSS). Motion output begins on a provisional
+        # origin; the georeferenced anchor waits for a real fix. Without this
+        # the bridge never publishes and the whole state chain sits silent.
+        self.allow_dr_start = self.declare_parameter("allow_dr_start", True).value
         self.start_min_solution_mode = self.declare_parameter(
             "start_min_solution_mode", 4
         ).value
@@ -231,6 +236,10 @@ class SbgOdometryBridge(Node):
         self._last_int_t = None
         self._last_vel_enu = None
         self._started = False
+        # True once the origin datum is fixed from a real absolute fix; the
+        # /gnss/odom anchor only publishes when georeferenced (a DR-only start
+        # runs un-georeferenced until a fix arrives).
+        self._georeferenced = False
         # Stamp of the last nav message that reached the publishers, for the
         # monotonicity gate below.
         self._last_pub_nav_t = None
@@ -392,26 +401,65 @@ class SbgOdometryBridge(Node):
 
         # Startup gate: georeference the origin from the first good absolute fix.
         if not self._started:
-            if not (msg.status.position_valid and mode >= self.start_min_solution_mode):
+            have_absolute = (
+                msg.status.position_valid and mode >= self.start_min_solution_mode
+            )
+            if have_absolute:
+                if self._origin_lat is None:
+                    self._set_origin(msg.latitude, msg.longitude)
+                east0, north0 = self._project_enu(msg.latitude, msg.longitude)
+                self._odom_xy = [east0, north0]
+                self._odom_yaw = self._yaw
+                self._last_int_t = t
+                self._started = True
+                self._georeferenced = True
+                self.get_logger().info(
+                    f"Started (RTK): origin datum "
+                    f"({self._origin_lat*180/math.pi:.7f}, "
+                    f"{self._origin_lon*180/math.pi:.7f}), ENU=(0,0)"
+                )
+            elif self.allow_dr_start and self._can_dead_reckon(t, mode):
+                # DR-only start: no absolute fix yet (covered boot, cold GNSS),
+                # but heading + wheels are live. SLAM consumes CarState as
+                # deltas, so a provisional (0,0) origin is harmless — start
+                # feeding motion NOW instead of leaving the whole stack with
+                # no state input. The /gnss/odom anchor stays gated until a
+                # real fix georeferences the origin (below).
+                self._odom_xy = [0.0, 0.0]
+                self._odom_yaw = self._yaw
+                self._last_int_t = t
+                self._started = True
+                self._georeferenced = False
+                self.get_logger().warn(
+                    "Started (DR-only): no absolute fix yet; motion output on "
+                    "a provisional origin, GNSS anchor held until a fix arrives"
+                )
+            else:
                 self._warn_throttle(
-                    f"waiting for absolute fix to start "
-                    f"(mode={mode}, position_valid={msg.status.position_valid})"
+                    f"waiting to start (mode={mode}, "
+                    f"position_valid={msg.status.position_valid}, "
+                    f"dr={self._can_dead_reckon(t, mode)})"
                 )
                 self._publish_health(mode, msg.status, anchored=False, started=False)
                 self._publish_status_board(
                     t, mode, None, anchored=False, fault=False, started=False
                 )
                 return
+        elif not self._georeferenced and (
+            msg.status.position_valid and mode >= self.start_min_solution_mode
+        ):
+            # A real fix arrived after a DR-only start: georeference the datum
+            # so /gnss/odom can begin. The absolute origin is taken here, and
+            # the CarState motion frame stays as it was — SLAM's own map frame
+            # is provisional either way, and its GNSS prior suppress/rearm
+            # machinery reconciles the resulting offset.
             if self._origin_lat is None:
                 self._set_origin(msg.latitude, msg.longitude)
-            east0, north0 = self._project_enu(msg.latitude, msg.longitude)
-            self._odom_xy = [east0, north0]
-            self._odom_yaw = self._yaw
-            self._last_int_t = t
-            self._started = True
+            self._georeferenced = True
             self.get_logger().info(
-                f"Started: origin datum ({self._origin_lat*180/math.pi:.7f}, "
-                f"{self._origin_lon*180/math.pi:.7f}), ENU=(0,0)"
+                f"Georeferenced after DR start: origin datum "
+                f"({self._origin_lat*180/math.pi:.7f}, "
+                f"{self._origin_lon*180/math.pi:.7f})"
             )
 
         # Below the minimum odometry mode the ENU nav solution is unusable.
@@ -437,7 +485,12 @@ class SbgOdometryBridge(Node):
             return
 
         # --- relative odometry: integrate (jump-free) --------------------
-        east, north = self._project_enu(msg.latitude, msg.longitude)
+        # ENU position needs a georeferenced datum; a DR-only start has none
+        # yet (and its anchor is gated off below), so skip the projection.
+        east, north = (
+            self._project_enu(msg.latitude, msg.longitude)
+            if self._georeferenced else (0.0, 0.0)
+        )
         dt = t - self._last_int_t if self._last_int_t is not None else 0.0
         self._last_int_t = t
         velocity_ok = (
@@ -497,8 +550,13 @@ class SbgOdometryBridge(Node):
         )
 
         # --- global anchor: raw absolute ENU + mode-tiered covariance ----
+        # Never anchor before the origin datum is georeferenced: a DR-only
+        # start has a provisional (0,0) origin, so an ENU position projected
+        # against a not-yet-set datum would be meaningless.
         anchored = (
-            msg.status.position_valid and mode >= self.absolute_min_solution_mode
+            self._georeferenced
+            and msg.status.position_valid
+            and mode >= self.absolute_min_solution_mode
         )
         if anchored:
             # The driver reports 0.0 accuracy for "not computed"; that must
@@ -510,8 +568,12 @@ class SbgOdometryBridge(Node):
                 pos_sigma_e, pos_sigma_n = pos_sigma_n, pos_sigma_e
         else:
             pos_sigma_e = pos_sigma_n = _HUGE_SIGMA
-        self._publish_gnss_odom(stamp, east, north, self._odom_yaw,
-                                pos_sigma_e, pos_sigma_n, yaw_sigma)
+        # Before georeferencing (DR-only start) the ENU position is a
+        # provisional (0,0), not a real fix — suppress the anchor entirely
+        # rather than publish a meaningless huge-sigma point.
+        if self._georeferenced:
+            self._publish_gnss_odom(stamp, east, north, self._odom_yaw,
+                                    pos_sigma_e, pos_sigma_n, yaw_sigma)
 
         self._publish_health(
             mode, msg.status, anchored=anchored, started=True,
