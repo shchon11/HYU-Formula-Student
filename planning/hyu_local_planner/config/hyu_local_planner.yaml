@@ -1,0 +1,62 @@
+hyu_local_planner_node:
+  ros__parameters:
+    source_mode: slam_map
+    cones_topic: /cones
+    slam_map_topic: /localization/cone_map
+    odom_topic: /localization/ego_odom
+    slam_status_topic: /graph_slam/status
+    waypoints_topic: /planning/local_waypoints
+    path_topic: /planning/local_waypoints/path
+    validity_topic: /planning/local_path_valid
+    # std_msgs/String heartbeat: why the path is invalid ("" while valid).
+    reason_topic: /planning/local_path_reason
+    max_stamp_skew_sec: 0.1
+    max_input_age_sec: 0.5
+    heartbeat_hz: 10.0
+    roi_min_x: -1.0
+    roi_max_x: 20.0
+    roi_abs_y: 8.0
+    endpoint_match_tolerance_m: 0.05
+    min_track_width_m: 2.0
+    max_track_width_m: 6.0
+    duplicate_tolerance_m: 0.05
+    min_forward_projection_m: 0.10
+    max_traversal_gap_m: 6.0
+    # Corridor centerline midpoint chaining gap; below inter-corridor
+    # spacing so folded/return passages never join the path (peanut/hairpin).
+    centerline_max_link_gap_m: 6.0
+    max_heading_change_rad: 1.047
+    max_u_turn_heading_change_rad: 2.618
+    waypoint_spacing_m: 0.5
+    max_start_distance_m: 4.0
+    two_sided_horizon_m: 20.0
+    fallback_horizon_m: 8.0
+    fallback_offset_m: 1.5
+    two_sided_speed_mps: 4.5
+    fallback_speed_mps: 3.0
+    # Unknown-colour cone handling. Absorb perception/SLAM colour drop-outs
+    # (unknown_color_cones) onto the nearest boundary. Conservative: a cone is
+    # taken only within unknown_absorb_lateral_m of one boundary's local line;
+    # with no boundary in reach it is split by ego side beyond the dead-band.
+    use_unknown_cones: true
+    unknown_absorb_lateral_m: 0.75
+    unknown_geom_deadband_m: 0.75
+    # Fold the orange/big-orange start-finish cones into the boundaries through
+    # the same conservative classification. Without this a lap-close frame that
+    # sees only the orange gate has zero boundary cones -> invalid -> brake at
+    # the finish straight. Trackdrive/autocross only; the acceleration overlay
+    # keeps its own straight-corridor fold-in and skidpad stays director-fed.
+    use_orange_cones: true
+    # Live-cone extension: stitch fresh perception cones (/cones) beyond the
+    # SLAM map frontier so the path does not end at the last confirmed
+    # landmark when the car outruns the map. The map always wins: live cones
+    # within live_merge_radius_m of any map cone are dropped, stale frames
+    # (older than live_cone_max_age_sec) fall back to map-only. With
+    # live_extension_as_unknown: false the perception colors are trusted
+    # directly, so live cones can pair into a two-sided path beyond the
+    # frontier on their own; a color flip is still caught by the width /
+    # midpoint-clearance / fold gates downstream.
+    use_live_cone_extension: true
+    live_cone_max_age_sec: 0.4
+    live_merge_radius_m: 1.0
+    live_extension_as_unknown: false

@@ -92,7 +92,7 @@ ARGUMENTS = (
 PARAMETER_FILES = (
     ("graph_slam_params_file", "hyu_localization", "graph_slam.yaml", "Graph SLAM parameter file."),
     ("global_params_file", "hyu_global_planner", "hyu_global_planner.yaml", "Global planner and Frenet parameter file."),
-    ("local_params_file", "local_planner", "local_planner.yaml", "Local planner parameter file."),
+    ("local_params_file", "hyu_local_planner", "hyu_local_planner.yaml", "Local planner parameter file."),
     ("state_params_file", "state_machine", "planning_state_machine.yaml", "Planning state-machine parameter file."),
     ("selector_params_file", "path_selector", "path_selector.yaml", "Path selector parameter file."),
     ("controller_params_file", "hyu_pure_pursuit", "hyu_pure_pursuit.yaml", "Pure Pursuit controller parameter file."),
@@ -254,11 +254,11 @@ def generate_launch_description() -> LaunchDescription:
     local_params_selected = PythonExpression(
         [
             "'",
-            _params_file("local_planner", "local_planner_skidpad.yaml"),
+            _params_file("hyu_local_planner", "hyu_local_planner_skidpad.yaml"),
             "' if '",
             values["skidpad"],
             "' == 'true' else ('",
-            _params_file("local_planner", "local_planner_acceleration.yaml"),
+            _params_file("hyu_local_planner", "hyu_local_planner_acceleration.yaml"),
             "' if '",
             values["acceleration"],
             "' == 'true' else '",
@@ -281,10 +281,10 @@ def generate_launch_description() -> LaunchDescription:
             "')",
         ]
     )
-    local_planner = Node(
-        package="local_planner",
-        executable="local_planner_node",
-        name="local_planner_node",
+    hyu_local_planner = Node(
+        package="hyu_local_planner",
+        executable="hyu_local_planner_node",
+        name="hyu_local_planner_node",
         output="screen",
         parameters=[
             local_params_selected,
@@ -432,7 +432,7 @@ def generate_launch_description() -> LaunchDescription:
         graph_slam,
         hyu_global_planner,
         skidpad_director,
-        local_planner,
+        hyu_local_planner,
         state_machine,
         selector,
         controller,

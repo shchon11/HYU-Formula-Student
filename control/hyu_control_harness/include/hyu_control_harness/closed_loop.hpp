@@ -4,7 +4,7 @@
 #include <vector>
 
 #include "hyu_control_harness/track.hpp"
-#include "local_planner/local_path_builder.hpp"
+#include "hyu_local_planner/local_path_builder.hpp"
 #include "hyu_pure_pursuit/controller.hpp"
 #include "hyu_pure_pursuit/steering_lookup.hpp"
 
@@ -13,7 +13,7 @@ namespace hyu_control_harness
 
 // Closed-loop chain mirrored from the live stack:
 //   cone map (csv, ground truth) -> ego-frame transform with the *measured* pose
-//   -> local_planner::buildLocalPath -> map-frame path -> pure pursuit (MAP or
+//   -> hyu_local_planner::buildLocalPath -> map-frame path -> pure pursuit (MAP or
 //   geometric steering) -> command queue (plant control delay) -> steering-rate
 //   limit -> eufs DynamicBicycle plant.
 // The measured pose models the localization chain: sampled at odom_rate_hz,
@@ -45,15 +45,15 @@ struct HarnessConfig
   hyu_pure_pursuit::ControllerConfig controller;
   hyu_pure_pursuit::VehicleModel lut_model;
   hyu_pure_pursuit::LutGrid lut_grid;
-  local_planner::PlannerConfig planner;
+  hyu_local_planner::PlannerConfig planner;
 };
 
 // Defaults mirroring the shipped trackdrive configs
-// (hyu_pure_pursuit.yaml / local_planner.yaml).
+// (hyu_pure_pursuit.yaml / hyu_local_planner.yaml).
 hyu_pure_pursuit::ControllerConfig trackdriveControllerConfig();
 hyu_pure_pursuit::VehicleModel trackdriveLutModel();
 hyu_pure_pursuit::LutGrid trackdriveLutGrid();
-local_planner::PlannerConfig trackdrivePlannerConfig();
+hyu_local_planner::PlannerConfig trackdrivePlannerConfig();
 
 struct HarnessResult
 {

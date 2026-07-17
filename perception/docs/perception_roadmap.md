@@ -676,7 +676,7 @@ blaming on my changes.**
 - Everything measured here is **small_track, one host, driving ~6 m/s**. The
   §2.1 warning applies to the whole §4 table, not just the curve.
 - `/cones` under-curves the skidpad left circle (`log_planner_diagnostics: true`
-  is temporarily on in `local_planner_skidpad.yaml` for this; remove when done).
+  is temporarily on in `hyu_local_planner_skidpad.yaml` for this; remove when done).
 - Colour-correct varies 54–95 % run to run. SLAM's `voteLandmarkColor` should
   absorb this — verify rather than fix in perception.
 - The fitted curve is one track, one run. Validate on another track before

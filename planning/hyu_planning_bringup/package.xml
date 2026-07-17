@@ -15,7 +15,7 @@
   <exec_depend>hyu_global_planner</exec_depend>
   <exec_depend>hyu_frenet_conversion</exec_depend>
   <exec_depend>state_machine</exec_depend>
-  <exec_depend>local_planner</exec_depend>
+  <exec_depend>hyu_local_planner</exec_depend>
   <exec_depend>path_selector</exec_depend>
   <exec_depend>hyu_pure_pursuit</exec_depend>
   <exec_depend>rclpy</exec_depend>

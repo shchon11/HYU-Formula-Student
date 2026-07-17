@@ -68,7 +68,7 @@ flowchart LR
     subgraph PLAN["🧠 PLANNING"]
         direction TB
         SKID["skidpad_director<br/>미션 phase 콘 게이트"]
-        LP["local_planner<br/>즉석 경로"]
+        LP["hyu_local_planner<br/>즉석 경로"]
         GP["hyu_global_planner<br/>레이스라인"]
         SM["state_machine<br/>랩 · 전환 · 정지"]
         SEL["path_selector"]
@@ -268,7 +268,7 @@ race skidpad sim             # simulated perception으로도 동일하게 동작
 |---|---|---|
 | 원별 바퀴 수 | `pbring skidpad:=true skidpad_right_laps:=N skidpad_left_laps:=N` | 2 / 2 |
 | 콘 여유 (바깥 바이어스) | skidpad_director 파라미터 `circle_outward_bias_m` | 0.5 m |
-| 주행 속도 | `planning/local_planner/config/local_planner_skidpad.yaml` | 4.0 m/s |
+| 주행 속도 | `planning/hyu_local_planner/config/hyu_local_planner_skidpad.yaml` | 4.0 m/s |
 | 컨트롤러 (lookahead·상한) | `hyu_pure_pursuit/config/hyu_pure_pursuit_skidpad.yaml` | 3.0 m / 4.0 m/s |
 
 진행 단계는 `/skidpad/phase`로 확인 (모니터 pane에 표시됨).
@@ -291,10 +291,10 @@ x=+20에서 끝나고 경로는 그 1 m쯤 뒤에서 무효화되므로, 하드 
 
 | 항목 | 위치 | 기본값 |
 |---|---|---|
-| 스프린트 속도 | `planning/local_planner/config/local_planner_acceleration.yaml` (`two_sided_speed_mps`) | 12 m/s |
+| 스프린트 속도 | `planning/hyu_local_planner/config/hyu_local_planner_acceleration.yaml` (`two_sided_speed_mps`) | 12 m/s |
 | 감속 성능 (in-path·하드브레이크) | `hyu_pure_pursuit_acceleration.yaml` (`min_acceleration_mps2`, `brake_acceleration_mps2`) | −3 m/s² |
 | 상한·전진가속 | `hyu_pure_pursuit_acceleration.yaml` (`max_speed_mps`, `max_acceleration_mps2`) | 12 m/s / +3 m/s² |
-| 직진 코리도 모드 (인지 지연 보정) | `local_planner_acceleration.yaml` (`extend_straight_to_horizon`, `roi_min_x`, `straight_extension_cap_m`) | on / −15 m / 5 m |
+| 직진 코리도 모드 (인지 지연 보정) | `hyu_local_planner_acceleration.yaml` (`extend_straight_to_horizon`, `roi_min_x`, `straight_extension_cap_m`) | on / −15 m / 5 m |
 
 > **직진 코리도 모드**: 인지가 느리면 차가 매핑된 콘 frontier를 앞질러(앞쪽 콘 없음) 경로가 순간 무효화 → **중간중간 제동 펄스**가 생깁니다. 이 모드는 two-sided/one-sided 로직 대신, **이미 지나온 콘(뒤)까지 포함해 코리도 중심선을 직선 fit**하고 ego에서 앞으로 투영합니다. frontier를 앞질러도 뒤쪽 콘으로 직선을 유지하므로 경로가 안 끊겨 제동 펄스가 사라집니다. 뒤쪽 콘을 ROI에 남기려고 `roi_min_x`를 −15로 넓혔습니다(지연 허용치 ≈ \|roi_min_x\|). 그리고 마지막 콘에서 `straight_extension_cap_m`(5 m)까지만 이으므로, 코리도가 그만큼 뒤로 빠지면 경로가 무효화돼 **정상 제동·정지**합니다(마지막 콘 x=+20 → 제동 ~x=+23, 12 m/s로 정지 ~x=+47). **직진 트랙에서만 안전** (곡선이면 벽으로 직진 → accel 프로필에서만 on).
 
@@ -448,7 +448,7 @@ scripts/                  race.sh (자율 전체 스택 tmux 런처) + fsk-shell
 tools/gazebo-patches/     GPU LiDAR용 패치 Gazebo 11.10.2 빌드 킷 (SkyX 돔 제거 · 해상도 노브 → ~/opt/gazebo11-fsk)
 planning/
   ├─ hyu_planning_bringup/    ★ planning 전체 조립 launch (아래 전부 + graph_slam + controller)
-  ├─ local_planner/       라이브 콘 → 즉석 로컬 경로 (랩 1)
+  ├─ hyu_local_planner/       라이브 콘 → 즉석 로컬 경로 (랩 1)
   ├─ hyu_global_planner/      SLAM 콘맵 → 전역 레이스라인
   ├─ hyu_frenet_conversion/   전역경로 기준 Frenet (s,d) — CTE의 원천
   ├─ state_machine/       랩 카운트 · local↔global 전환 · 스톱존

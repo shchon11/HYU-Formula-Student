@@ -96,6 +96,6 @@ of motion while Graph SLAM reports `mapping` or `mapping_converged`, calls
 `/graph_slam/load_map`, and requires `localization` plus `GLOBAL_FULL` and a
 further 10 m. The `global-to-local-and-brake` scenario calls
 `/graph_slam/start_mapping`, verifies the `GLOBAL` to `LOCAL` fallback, then
-signals exactly one owned `/local_planner_node`; stale local validity must make
+signals exactly one owned `/hyu_local_planner_node`; stale local validity must make
 the selector invalid and the controller must publish speed `0` with
 acceleration `-5` within one second.

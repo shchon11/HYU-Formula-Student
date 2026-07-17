@@ -9,7 +9,7 @@ realtime single-threaded — fast enough for grid sweeps.
 ```
 ground-truth cone map (eufs_tracks csv)
   -> ego-frame transform with the MEASURED pose      (= slam_map source mode)
-  -> local_planner::buildLocalPath                    (real lap-1 planner, allow_partial_boundary)
+  -> hyu_local_planner::buildLocalPath                    (real lap-1 planner, allow_partial_boundary)
   -> map-frame path -> pure pursuit (MAP / geometric) (real controller + steering LUT)
   -> command queue, 0.2 s control delay               (eufs_plugins controlDelay)
   -> steering-rate limit, 1.04 rad/s                  (steeringLockTime 1 s)
@@ -43,7 +43,7 @@ latency noiseless loop is too optimistic to tune against.
 Prints one JSON object (laps, lap times, CTE RMSE/max, cone-line violation
 fraction, steering-rate stats, planner-invalid fraction, DNF reason). Exit code
 1 on DNF. `map_harness --help` lists every key; defaults mirror the shipped
-trackdrive configs (`hyu_pure_pursuit.yaml`, `local_planner.yaml`).
+trackdrive configs (`hyu_pure_pursuit.yaml`, `hyu_local_planner.yaml`).
 
 Grid sweeps (cartesian product, parallel, ranked summary + CSV):
 

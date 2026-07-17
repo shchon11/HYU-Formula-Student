@@ -11,7 +11,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(ament_cmake REQUIRED)
 find_package(eufs_models REQUIRED)
 find_package(hyu_pure_pursuit REQUIRED)
-find_package(local_planner REQUIRED)
+find_package(hyu_local_planner REQUIRED)
 
 add_library(hyu_control_harness_core
   src/track.cpp
@@ -26,7 +26,7 @@ target_link_libraries(hyu_control_harness_core
 )
 ament_target_dependencies(hyu_control_harness_core
   eufs_models
-  local_planner
+  hyu_local_planner
 )
 
 add_executable(map_harness src/map_harness_main.cpp)

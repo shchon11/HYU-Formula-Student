@@ -48,7 +48,7 @@ struct MeasuredState
   double v{0.0};
 };
 
-local_planner::Point2 toEgoFrame(const MeasuredState & ego, const Vec2 & p)
+hyu_local_planner::Point2 toEgoFrame(const MeasuredState & ego, const Vec2 & p)
 {
   const double cosine = std::cos(ego.yaw);
   const double sine = std::sin(ego.yaw);
@@ -57,7 +57,7 @@ local_planner::Point2 toEgoFrame(const MeasuredState & ego, const Vec2 & p)
   return {cosine * dx + sine * dy, -sine * dx + cosine * dy};
 }
 
-ppc::PathPoint toMapFrame(const MeasuredState & ego, const local_planner::PathWaypoint & wp)
+ppc::PathPoint toMapFrame(const MeasuredState & ego, const hyu_local_planner::PathWaypoint & wp)
 {
   const double cosine = std::cos(ego.yaw);
   const double sine = std::sin(ego.yaw);
@@ -143,13 +143,13 @@ ppc::LutGrid trackdriveLutGrid()
   return grid;
 }
 
-local_planner::PlannerConfig trackdrivePlannerConfig()
+hyu_local_planner::PlannerConfig trackdrivePlannerConfig()
 {
-  local_planner::PlannerConfig config;
+  hyu_local_planner::PlannerConfig config;
   config.two_sided_speed_mps = 4.5;
   config.fallback_speed_mps = 3.0;
   config.use_orange_cones = true;
-  // The node defaults this to true in slam_map mode (local_planner_node.cpp);
+  // The node defaults this to true in slam_map mode (hyu_local_planner_node.cpp);
   // the harness feeds the planner a full ground-truth map, i.e. slam_map mode.
   config.allow_partial_boundary = true;
   return config;
@@ -307,7 +307,7 @@ HarnessResult runMapHarness(const HarnessConfig & config, const Track & track)
       next_control_t += control_period_s;
       ++control_cycles;
 
-      local_planner::ConeSet cones;
+      hyu_local_planner::ConeSet cones;
       for (const Vec2 & c : track.blue) {
         cones.blue.push_back(toEgoFrame(measured, c));
       }
@@ -321,7 +321,7 @@ HarnessResult runMapHarness(const HarnessConfig & config, const Track & track)
         cones.big_orange.push_back(toEgoFrame(measured, c));
       }
 
-      const auto build = local_planner::buildLocalPath(cones, config.planner);
+      const auto build = hyu_local_planner::buildLocalPath(cones, config.planner);
       if (!build.valid) {
         ++invalid_cycles;
         result.last_planner_reason = build.reason;

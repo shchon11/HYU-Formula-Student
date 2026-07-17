@@ -15,7 +15,7 @@
 
   <depend>eufs_models</depend>
   <depend>hyu_pure_pursuit</depend>
-  <depend>local_planner</depend>
+  <depend>hyu_local_planner</depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
 
