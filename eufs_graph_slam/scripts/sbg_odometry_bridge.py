@@ -27,10 +27,18 @@ never stops the odometry:
   * ``/odometry_integration/car_state`` (eufs_msgs/CarState) -- **relative
     odometry**. Pose is the ENU velocity+heading *integrated* here, so it is
     jump-free even when RTK re-acquisition makes the absolute position step.
-    graph_slam_node differences this between keyframes. Published only while
-    the solution is at least ``min_odom_solution_mode`` (default 3: velocity
-    valid). In mode 2 (AHRS) publication stops — the held position would look
-    like confident zero motion to the graph while the car may be moving.
+    graph_slam_node differences this between keyframes. Below
+    ``min_odom_solution_mode`` (default 3) the ENU velocity is unusable, but
+    mode 2 (AHRS) still has a valid heading by definition — so the SAME
+    integrator falls back to wheel-speed dead reckoning (rear mean x AHRS
+    heading, sigma widened to ``odom_sigma_mode2``) instead of stopping.
+    Cutting the motion input here is what used to kill SLAM: the pose froze
+    while the car kept moving, and the re-entry jump exceeded the cone
+    association gate, after which nothing could pull the pose back. One
+    integrator, source-switched per tick, keeps the position continuous
+    through arbitrary mode flapping. Publication stops only when dead
+    reckoning is impossible too (mode <= 1: heading drifts freely; or stale
+    wheel speeds / heading).
   * ``/gnss/odom`` (nav_msgs/Odometry) -- **global anchor**. Pose is the raw
     ekf_nav absolute ENU position with a mode-tiered covariance (tight only at
     mode 4 / RTK, huge otherwise). graph_slam_node adds this as a unary GPS
@@ -55,7 +63,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, ReliabilityPolicy
 
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
-from eufs_msgs.msg import CarState
+from eufs_msgs.msg import CarState, WheelSpeedsStamped
 from nav_msgs.msg import Odometry
 from std_msgs.msg import ColorRGBA
 from visualization_msgs.msg import Marker, MarkerArray
@@ -80,6 +88,13 @@ _WGS84_A = 6378137.0
 _WGS84_E2 = 6.69437999014e-3
 
 _HUGE_SIGMA = 1.0e3  # 1-sigma [m] that makes a covariance-gated prior negligible
+
+# ekf_euler age beyond which the published yaw sigma is inflated: heading is
+# sampled asynchronously, so if euler stops the last yaw would otherwise be
+# republished forever with its old (tight) sigma.
+_HEADING_STALE_S = 0.5
+
+_RPM_TO_RAD_S = 2.0 * math.pi / 60.0
 
 
 def _normalize_angle(angle):
@@ -164,9 +179,39 @@ class SbgOdometryBridge(Node):
             "default_heading_sigma", 0.02
         ).value
         # Odometry (relative) 1-sigma per tier used for the CarState covariance.
+        # mode2 is the wheel+AHRS dead-reckoning tier. Measured in the
+        # fault-injection harness (small_track, 40 s AHRS outage): DR error
+        # ~0.7 % of distance — mode-3 grade — so it shares mode 3's sigma. Do
+        # NOT soften it "to be safe": at 0.5 the graph went limp during the
+        # outage and mapped a warped lap segment (ATE 3.3 m, 35 false
+        # landmarks); at 0.2 the same run held together (ATE 0.28 m, clean
+        # map). The unmodelled slip bias rides in this number too — this path
+        # applies no traction-slip compensation.
         self.odom_sigma_mode4 = self.declare_parameter("odom_sigma_mode4", 0.05).value
         self.odom_sigma_mode3 = self.declare_parameter("odom_sigma_mode3", 0.20).value
-        self.odom_sigma_mode2 = self.declare_parameter("odom_sigma_mode2", 10.0).value
+        self.odom_sigma_mode2 = self.declare_parameter("odom_sigma_mode2", 0.20).value
+        # Per-edge trust floor from reported velocity accuracy (its 1 s
+        # displacement error): degrades motion-edge stiffness with the
+        # CORRECTION grade, which the mode tier alone cannot see.
+        self.vel_accuracy_horizon_sec = self.declare_parameter(
+            "vel_accuracy_horizon_sec", 1.0).value
+
+        # Wheel+AHRS dead-reckoning fallback (mode 2). Heading is valid in
+        # AHRS mode by definition; wheel speeds come from the CAN bus and do
+        # not care about GNSS. Together they keep the relative odometry
+        # flowing so the cone-anchored SLAM pose never free-runs.
+        self.ahrs_fallback_enable = self.declare_parameter(
+            "ahrs_fallback_enable", True
+        ).value
+        self.wheel_speeds_topic = self.declare_parameter(
+            "wheel_speeds_topic", "/ros_can/wheel_speeds"
+        ).value
+        self.wheel_radius = self.declare_parameter("wheel_radius", 0.2525).value
+        # Wheel-speed / heading staleness beyond which dead reckoning is not
+        # attempted and the bridge faults (stops publishing) as before.
+        self.wheel_speed_timeout = self.declare_parameter(
+            "wheel_speed_timeout", 0.3
+        ).value
 
         # Local tangent-plane origin (radians) and curvature radii, set from the
         # datum or the first valid fix.
@@ -186,12 +231,21 @@ class SbgOdometryBridge(Node):
         self._last_int_t = None
         self._last_vel_enu = None
         self._started = False
+        # Stamp of the last nav message that reached the publishers, for the
+        # monotonicity gate below.
+        self._last_pub_nav_t = None
 
         # Latest heading solution.
         self._yaw = None
+        self._yaw_rate_estimate = 0.0
         self._yaw_sigma = self.default_heading_sigma
         self._yaw_stamp = None
         self._heading_valid = False
+
+        # Latest wheel-speed sample (rear-axle mean [m/s], stamp [s]) for the
+        # dead-reckoning fallback.
+        self._wheel_speed = None
+        self._wheel_stamp = None
 
         sensor_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.car_state_pub = self.create_publisher(CarState, self.car_state_topic, 10)
@@ -219,6 +273,16 @@ class SbgOdometryBridge(Node):
         )
         self.nav_sub = self.create_subscription(
             SbgEkfNav, self.ekf_nav_topic, self.on_nav, sensor_qos
+        )
+        self.wheel_sub = (
+            self.create_subscription(
+                WheelSpeedsStamped,
+                self.wheel_speeds_topic,
+                self.on_wheel_speeds,
+                sensor_qos,
+            )
+            if self.ahrs_fallback_enable
+            else None
         )
 
         self.get_logger().info(
@@ -265,11 +329,47 @@ class SbgOdometryBridge(Node):
     # --- callbacks -------------------------------------------------------
 
     def on_euler(self, msg):
+        prev_yaw = self._yaw
+        prev_stamp = self._yaw_stamp
         self._yaw = self._yaw_to_enu(msg.angle.z)
         acc = msg.accuracy.z
         self._yaw_sigma = acc if acc > 0.0 else self.default_heading_sigma
         self._yaw_stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         self._heading_valid = bool(msg.status.heading_valid)
+        # Yaw rate for the twist output, differentiated from the heading
+        # stream (light low-pass: per-sample diff noise at 200 Hz would
+        # jitter the controllers' feedforward).
+        if prev_yaw is not None and prev_stamp is not None:
+            dt = self._yaw_stamp - prev_stamp
+            if 0.0 < dt < 0.5:
+                raw = (self._yaw - prev_yaw + math.pi) % (2.0 * math.pi) - math.pi
+                alpha = dt / (0.05 + dt)
+                self._yaw_rate_estimate += alpha * (raw / dt - self._yaw_rate_estimate)
+
+    def on_wheel_speeds(self, msg):
+        # Rear-axle mean: the differential split cancels exactly in the mean
+        # (same rationale as wheel_odometry.py). RPM on the wire.
+        rear_rpm = 0.5 * (msg.speeds.lb_speed + msg.speeds.rb_speed)
+        self._wheel_speed = rear_rpm * _RPM_TO_RAD_S * self.wheel_radius
+        self._wheel_stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+
+    def _can_dead_reckon(self, t, mode):
+        """
+        Check that wheel+AHRS dead reckoning has live inputs.
+
+        Mode 2 is the floor: below it (VERTICAL_GYRO) the heading itself
+        drifts freely and integrating wheel speed under it would confidently
+        walk the pose in a wrong direction.
+        """
+        return (
+            self.ahrs_fallback_enable
+            and mode >= 2
+            and self._heading_valid
+            and self._yaw_stamp is not None
+            and abs(t - self._yaw_stamp) <= self.wheel_speed_timeout
+            and self._wheel_stamp is not None
+            and abs(t - self._wheel_stamp) <= self.wheel_speed_timeout
+        )
 
     def on_nav(self, msg):
         mode = msg.status.solution_mode
@@ -278,6 +378,16 @@ class SbgOdometryBridge(Node):
 
         if self._yaw is None:
             self._warn_throttle("no SBG heading (ekf_euler) received yet")
+            return
+
+        # A backward (or duplicate) stamp makes graph_slam_node's
+        # recordRawOdometry clear its whole interpolation buffer, orphaning
+        # the cone frames waiting in it — drop the message here instead.
+        if self._last_pub_nav_t is not None and t <= self._last_pub_nav_t:
+            self._warn_throttle(
+                f"non-monotonic nav stamp ({t:.3f} <= {self._last_pub_nav_t:.3f}), "
+                "dropping"
+            )
             return
 
         # Startup gate: georeference the origin from the first good absolute fix.
@@ -304,8 +414,12 @@ class SbgOdometryBridge(Node):
                 f"{self._origin_lon*180/math.pi:.7f}), ENU=(0,0)"
             )
 
-        # Fault below the minimum odometry mode: stop feeding SLAM.
-        if mode < self.min_odom_solution_mode:
+        # Below the minimum odometry mode the ENU nav solution is unusable.
+        # Degrade to wheel+AHRS dead reckoning on the SAME integrator (so the
+        # position stays continuous through mode flapping); fault — stop
+        # feeding SLAM — only when dead reckoning is impossible too.
+        below_min_odom = mode < self.min_odom_solution_mode
+        if below_min_odom and not self._can_dead_reckon(t, mode):
             self._warn_throttle(f"solution_mode={mode}: below min_odom, holding output")
             self._publish_health(mode, msg.status, anchored=False, started=True)
             if self._odom_xy is not None:
@@ -316,43 +430,93 @@ class SbgOdometryBridge(Node):
             self._publish_status_board(
                 t, mode, None, anchored=False, fault=True, started=True
             )
+            # Keep the integration clock ticking so re-entry does not step
+            # across the whole outage in one dt (max_dt would drop it anyway).
+            self._last_int_t = t
+            self._last_vel_enu = None
             return
 
         # --- relative odometry: integrate (jump-free) --------------------
         east, north = self._project_enu(msg.latitude, msg.longitude)
         dt = t - self._last_int_t if self._last_int_t is not None else 0.0
         self._last_int_t = t
-        velocity_ok = bool(msg.status.velocity_valid) and mode >= 3
+        velocity_ok = (
+            bool(msg.status.velocity_valid) and mode >= 3 and not below_min_odom
+        )
+        dead_reckoning = False
+        held = False
         if velocity_ok and 0.0 < dt <= self.max_dt:
             ve, vn = self._vel_enu(msg.velocity)
             prev = self._last_vel_enu or (ve, vn)
             self._odom_xy[0] += 0.5 * (prev[0] + ve) * dt
             self._odom_xy[1] += 0.5 * (prev[1] + vn) * dt
             self._last_vel_enu = (ve, vn)
-        else:
-            # Hold position (mode 2 / gap) - only heading stays fresh; drop
-            # the stale velocity so re-entry does not trapezoid across a gap.
+        elif self._can_dead_reckon(t, mode) and 0.0 < dt <= self.max_dt:
+            # Wheel+AHRS dead reckoning: covers mode 2 and momentary
+            # velocity dropouts at mode >= 3. Euler at the EKF rate is
+            # sub-mm accurate per step; drop the stale ENU velocity so
+            # re-entry does not trapezoid across the gap.
+            self._odom_xy[0] += self._wheel_speed * math.cos(self._yaw) * dt
+            self._odom_xy[1] += self._wheel_speed * math.sin(self._yaw) * dt
             self._last_vel_enu = None
+            dead_reckoning = True
+        else:
+            # Hold position (gap / no fallback) - only heading stays fresh.
+            # The frozen pose must not reach the graph with the tier sigma:
+            # the car may still be moving, and confident zero-motion edges
+            # are exactly what warps the map.
+            self._last_vel_enu = None
+            held = True
         self._odom_yaw = self._yaw
 
-        odom_sigma = self._odom_sigma_for_mode(mode)
-        self._publish_car_state(stamp, self._odom_xy, self._odom_yaw, odom_sigma)
+        # Heading staleness: the DR path hard-gates on euler age, but the
+        # velocity path would republish an arbitrarily old yaw otherwise.
+        yaw_sigma = self._yaw_sigma
+        if t - self._yaw_stamp > _HEADING_STALE_S:
+            yaw_sigma = _HUGE_SIGMA
+
+        if held:
+            odom_sigma = _HUGE_SIGMA
+        elif dead_reckoning:
+            odom_sigma = max(self.odom_sigma_mode2, self._odom_sigma_for_mode(mode))
+        else:
+            odom_sigma = self._odom_sigma_for_mode(mode)
+        # Correction-grade honesty: solution mode alone is too coarse — at
+        # mode 4 with SINGLE corrections the realized position error is a
+        # metres-scale GM excursion while the mode tier still claims 0.05 m.
+        # SLAM then trusts stiff wrong motion, and the map pays (2026-07-18
+        # F1 autocross: 56 ghosts from exactly this). The reported velocity
+        # accuracy tracks the correction grade, so scale the per-edge trust
+        # with its 1 s displacement error.
+        vel_acc = max(msg.velocity_accuracy.x, msg.velocity_accuracy.y)
+        if vel_acc > 0.0:
+            odom_sigma = max(odom_sigma, vel_acc * self.vel_accuracy_horizon_sec)
+        self._last_pub_nav_t = t
+        self._publish_car_state(
+            stamp, self._odom_xy, self._odom_yaw, odom_sigma, yaw_sigma
+        )
 
         # --- global anchor: raw absolute ENU + mode-tiered covariance ----
         anchored = (
             msg.status.position_valid and mode >= self.absolute_min_solution_mode
         )
         if anchored:
-            pos_sigma_e = msg.position_accuracy.x or self.default_position_sigma
-            pos_sigma_n = msg.position_accuracy.y or self.default_position_sigma
+            # The driver reports 0.0 accuracy for "not computed"; that must
+            # not map to the tightest tier.
+            acc_e, acc_n = msg.position_accuracy.x, msg.position_accuracy.y
+            pos_sigma_e = acc_e if acc_e > 0.0 else _HUGE_SIGMA
+            pos_sigma_n = acc_n if acc_n > 0.0 else _HUGE_SIGMA
             if self.convention == "ned":
                 pos_sigma_e, pos_sigma_n = pos_sigma_n, pos_sigma_e
         else:
             pos_sigma_e = pos_sigma_n = _HUGE_SIGMA
         self._publish_gnss_odom(stamp, east, north, self._odom_yaw,
-                                pos_sigma_e, pos_sigma_n)
+                                pos_sigma_e, pos_sigma_n, yaw_sigma)
 
-        self._publish_health(mode, msg.status, anchored=anchored, started=True)
+        self._publish_health(
+            mode, msg.status, anchored=anchored, started=True,
+            dead_reckoning=dead_reckoning,
+        )
         self._publish_markers(
             stamp, east, north, max(pos_sigma_e, pos_sigma_n), mode,
             anchored=anchored, fault=False,
@@ -360,6 +524,7 @@ class SbgOdometryBridge(Node):
         self._publish_status_board(
             t, mode, max(pos_sigma_e, pos_sigma_n),
             anchored=anchored, fault=False, started=True,
+            dead_reckoning=dead_reckoning,
         )
 
     # --- publishing ------------------------------------------------------
@@ -371,7 +536,7 @@ class SbgOdometryBridge(Node):
             return self.odom_sigma_mode3
         return self.odom_sigma_mode2
 
-    def _publish_car_state(self, header, xy, yaw, trans_sigma):
+    def _publish_car_state(self, header, xy, yaw, trans_sigma, yaw_sigma):
         state = CarState()
         state.header = header
         state.header.frame_id = self.world_frame
@@ -382,10 +547,22 @@ class SbgOdometryBridge(Node):
         state.pose.pose.orientation.w = math.cos(0.5 * yaw)
         state.pose.covariance[0] = trans_sigma * trans_sigma
         state.pose.covariance[7] = trans_sigma * trans_sigma
-        state.pose.covariance[35] = self._yaw_sigma * self._yaw_sigma
+        state.pose.covariance[35] = yaw_sigma * yaw_sigma
+        # Body twist: consumers downstream of SLAM (pure pursuit / TMPC
+        # speed loops, frenet odom) read velocity from this message. An
+        # empty twist reads as v=0 — the controller's speed loop runs open
+        # and launches the car off track (2026-07-18 full-pipeline autopsy).
+        cos_y = math.cos(-yaw)
+        sin_y = math.sin(-yaw)
+        ve, vn = self._last_vel_enu or (0.0, 0.0)
+        state.twist.twist.linear.x = cos_y * ve - sin_y * vn
+        state.twist.twist.linear.y = sin_y * ve + cos_y * vn
+        state.twist.twist.angular.z = self._yaw_rate_estimate
         self.car_state_pub.publish(state)
 
-    def _publish_gnss_odom(self, header, east, north, yaw, sigma_e, sigma_n):
+    def _publish_gnss_odom(
+        self, header, east, north, yaw, sigma_e, sigma_n, yaw_sigma
+    ):
         odom = Odometry()
         odom.header = header
         odom.header.frame_id = self.world_frame
@@ -396,16 +573,18 @@ class SbgOdometryBridge(Node):
         odom.pose.pose.orientation.w = math.cos(0.5 * yaw)
         odom.pose.covariance[0] = sigma_e * sigma_e
         odom.pose.covariance[7] = sigma_n * sigma_n
-        odom.pose.covariance[35] = self._yaw_sigma * self._yaw_sigma
+        odom.pose.covariance[35] = yaw_sigma * yaw_sigma
         self.gnss_odom_pub.publish(odom)
 
     @staticmethod
-    def _state_style(mode, sigma, anchored, fault, started):
+    def _state_style(mode, sigma, anchored, fault, started, dead_reckoning=False):
         """(rgb, state word) shared by the map markers and the HUD board."""
         if not started:
             return (0.55, 0.55, 0.55), "WAITING FOR FIX"
         if fault:
             return (0.9, 0.1, 0.1), "FAULT"
+        if dead_reckoning:
+            return (0.95, 0.6, 0.1), "DEAD RECKONING"
         if not anchored:
             return (0.55, 0.55, 0.55), "NO ANCHOR (INS)"
         if sigma <= 0.05:
@@ -414,7 +593,9 @@ class SbgOdometryBridge(Node):
             return (0.9, 0.8, 0.1), "RTK FLOAT"
         return (0.95, 0.5, 0.1), "SINGLE POINT"
 
-    def _publish_status_board(self, t, mode, sigma, anchored, fault, started):
+    def _publish_status_board(
+        self, t, mode, sigma, anchored, fault, started, dead_reckoning=False
+    ):
         """Render a fixed HUD below the ATE overlay via rviz_2d_overlay."""
         if self.overlay_pub is None:
             return
@@ -422,7 +603,8 @@ class SbgOdometryBridge(Node):
             return
         self._last_board_t = t
 
-        rgb, state = self._state_style(mode, sigma, anchored, fault, started)
+        rgb, state = self._state_style(
+            mode, sigma, anchored, fault, started, dead_reckoning)
         mode_names = {0: "UNINITIALIZED", 1: "VERT_GYRO", 2: "AHRS",
                       3: "NAV_VELOCITY", 4: "NAV_POSITION"}
         if anchored and sigma is not None:
@@ -492,13 +674,18 @@ class SbgOdometryBridge(Node):
 
         self.marker_pub.publish(markers)
 
-    def _publish_health(self, mode, status, anchored, started):
+    def _publish_health(self, mode, status, anchored, started, dead_reckoning=False):
         names = {0: "UNINITIALIZED", 1: "VERTICAL_GYRO", 2: "AHRS",
                  3: "NAV_VELOCITY", 4: "NAV_POSITION"}
         if not started:
             level, text = DiagnosticStatus.WARN, "waiting for absolute fix"
         elif anchored:
             level, text = DiagnosticStatus.OK, "GNSS-anchored (mode 4)"
+        elif dead_reckoning:
+            level, text = (
+                DiagnosticStatus.WARN,
+                "degraded: wheel+AHRS dead reckoning, no GNSS",
+            )
         elif mode >= self.min_odom_solution_mode:
             level, text = DiagnosticStatus.WARN, "degraded: odometry only, no anchor"
         else:
