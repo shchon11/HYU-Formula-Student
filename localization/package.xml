@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>eufs_graph_slam</name>
+  <name>hyu_localization</name>
   <version>0.1.0</version>
   <description>g2o-based 2D graph SLAM node for the EUFS simulator cone map.</description>
 

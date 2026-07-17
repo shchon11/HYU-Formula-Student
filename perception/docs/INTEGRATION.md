@@ -14,7 +14,7 @@ intent to be checked, not a measured result.
 
 ## What this is
 
-`eufs_perception_baseline` implements the three-tier perception pipeline from
+`hyu_perception` implements the three-tier perception pipeline from
 the IIT Bombay Racing Driverless paper (arXiv 2408.06113), adapted to this
 project's own cone-pose detector.
 
@@ -29,7 +29,7 @@ project's own cone-pose detector.
        + /zed/{left,right}/camera_info
        + timestamped /tf
     -> /cones                   eufs_msgs/ConeArrayWithCovariance, base_footprint
-    -> eufs_graph_slam -> /graph_slam/map -> global_planner -> pure_pursuit -> /cmd
+    -> hyu_localization -> /graph_slam/map -> global_planner -> pure_pursuit -> /cmd
 ```
 
 ### Tier routing
@@ -211,7 +211,7 @@ The four you are most likely to touch:
 
 ## Interface to GraphSLAM
 
-Checked against `eufs_graph_slam/src/graph_slam_node.cpp` on this branch:
+Checked against `hyu_localization/src/graph_slam_node.cpp` on this branch:
 
 | SLAM requires | perception emits | |
 |---|---|---|
@@ -239,7 +239,7 @@ Nothing here has run in the simulator. In priority order:
 1. **Build it.** The two new messages (`ConeKeypoints`, `ConeKeypointsArray`) have
    never been compiled.
    ```bash
-   colcon build --packages-up-to eufs_msgs eufs_perception_baseline eufs_graph_slam
+   colcon build --packages-up-to eufs_msgs hyu_perception hyu_localization
    ```
 
 2. **Run the ROS tests.** Five test files (`test_perception_three_tier.py`,
@@ -248,7 +248,7 @@ Nothing here has run in the simulator. In priority order:
    executed** — they need `std_msgs`/`sensor_msgs`. Only the 37 pure-geometry
    tests ran, and they pass.
    ```bash
-   colcon test --packages-select eufs_perception_baseline
+   colcon test --packages-select hyu_perception
    ```
 
 3. **Confirm the pipeline actually produces cones.**
@@ -270,7 +270,7 @@ Nothing here has run in the simulator. In priority order:
    against PnP depth on a *synthetic* right image built from that same PnP depth —
    it proves the plumbing, not the accuracy.
    ```bash
-   ros2 run eufs_perception_baseline evaluate_perception_tiers.py --duration 60
+   ros2 run hyu_perception evaluate_perception_tiers.py --duration 60
    ```
    This measures against `/ground_truth/track` — the *unfiltered* full track —
    rather than `/ground_truth/cones`, which is itself FOV/range-filtered by the

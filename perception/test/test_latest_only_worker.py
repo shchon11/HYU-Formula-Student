@@ -1,7 +1,7 @@
 import threading
 import unittest
 
-from eufs_perception_baseline.latest_only_worker import LatestOnlyWorker
+from hyu_perception.latest_only_worker import LatestOnlyWorker
 
 
 class _GuardCondition:

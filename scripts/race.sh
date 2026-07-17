@@ -175,23 +175,23 @@ if [ "$EVAL_MODE" -eq 1 ]; then
 
   P_SLAM=$(tmux split-window -h -t "$P_SIM" -P -F '#{pane_id}')
   tmux send-keys -t "$P_SLAM" \
-    "$SRC echo '[② INS + GRAPH SLAM] waiting for car…'; $WAIT_CAR; ros2 launch eufs_graph_slam ins_pipeline.launch.py ${INS_MODE_SCHED:+mode_schedule:=$INS_MODE_SCHED} ${INS_CORR_SCHED:+correction_schedule:=$INS_CORR_SCHED}" C-m
+    "$SRC echo '[② INS + GRAPH SLAM] waiting for car…'; $WAIT_CAR; ros2 launch hyu_localization ins_pipeline.launch.py ${INS_MODE_SCHED:+mode_schedule:=$INS_MODE_SCHED} ${INS_CORR_SCHED:+correction_schedule:=$INS_CORR_SCHED}" C-m
 
   # teleop arms AMI_MANUAL itself, so no separate mission pane is needed.
   P_TELE=$(tmux split-window -v -t "$P_SIM" -P -F '#{pane_id}')
   tmux send-keys -t "$P_TELE" \
-    "$SRC echo '[③ TELEOP — drive a lap. arms AMI_MANUAL itself]'; $WAIT_CAR; sleep 3; ros2 run eufs_teleop teleop" C-m
+    "$SRC echo '[③ TELEOP — drive a lap. arms AMI_MANUAL itself]'; $WAIT_CAR; sleep 3; ros2 run hyu_teleop teleop" C-m
 
   # --duration 0 collects until Ctrl-C, so it can start now and be stopped when
   # the lap is done; the report prints on Ctrl-C. A fixed --duration would force
   # guessing the lap time before the car has even moved.
   P_EVAL=$(tmux split-window -v -t "$P_TELE" -P -F '#{pane_id}')
   tmux send-keys -t "$P_EVAL" \
-    "$SRC echo '[④ EVALUATOR] collecting… drive a lap in pane ③, then Ctrl-C HERE for the per-tier report.'; until ros2 topic list 2>/dev/null | grep -q /cones; do sleep 2; done; ros2 run eufs_perception_baseline evaluate_perception_tiers.py --duration 0" C-m
+    "$SRC echo '[④ EVALUATOR] collecting… drive a lap in pane ③, then Ctrl-C HERE for the per-tier report.'; until ros2 topic list 2>/dev/null | grep -q /cones; do sleep 2; done; ros2 run hyu_perception evaluate_perception_tiers.py --duration 0" C-m
 
   P_MON=$(tmux split-window -v -t "$P_SLAM" -P -F '#{pane_id}')
   tmux send-keys -t "$P_MON" \
-    "$SRC echo '[⑤ MONITOR] rates are WALL clock: ros2 topic hz cannot read sim time.'; echo '   At RTF ~0.35 a 10 Hz sim topic reads ~3.5 here. That is CORRECT, not slow.'; echo '   Divide by RTF, or use: ros2 run eufs_perception_baseline measure_sim_rates.py 25'; until ros2 topic list 2>/dev/null | grep -q /cones; do sleep 2; done; while true; do printf '\\n== %s (wall Hz) ==\\n' \"\$(date +%H:%M:%S)\"; for t in /yolo_bounding_boxes /yolo_cone_keypoints /cones /fusion/debug/cone_provenance /ground_truth/cones /ground_truth/track /graph_slam/map; do printf '%-32s ' \"\$t\"; r=\$(timeout 6 env PYTHONUNBUFFERED=1 ros2 topic hz \"\$t\" 2>/dev/null | grep -m1 -o 'average rate: [0-9.]*'); if [ -n \"\$r\" ]; then echo \"\$r\"; elif timeout 3 ros2 topic echo --once \"\$t\" >/dev/null 2>&1; then echo 'alive (slow)'; else echo '(silent)'; fi; done; sleep 3; done" C-m
+    "$SRC echo '[⑤ MONITOR] rates are WALL clock: ros2 topic hz cannot read sim time.'; echo '   At RTF ~0.35 a 10 Hz sim topic reads ~3.5 here. That is CORRECT, not slow.'; echo '   Divide by RTF, or use: ros2 run hyu_perception measure_sim_rates.py 25'; until ros2 topic list 2>/dev/null | grep -q /cones; do sleep 2; done; while true; do printf '\\n== %s (wall Hz) ==\\n' \"\$(date +%H:%M:%S)\"; for t in /yolo_bounding_boxes /yolo_cone_keypoints /cones /fusion/debug/cone_provenance /ground_truth/cones /ground_truth/track /graph_slam/map; do printf '%-32s ' \"\$t\"; r=\$(timeout 6 env PYTHONUNBUFFERED=1 ros2 topic hz \"\$t\" 2>/dev/null | grep -m1 -o 'average rate: [0-9.]*'); if [ -n \"\$r\" ]; then echo \"\$r\"; elif timeout 3 ros2 topic echo --once \"\$t\" >/dev/null 2>&1; then echo 'alive (slow)'; else echo '(silent)'; fi; done; sleep 3; done" C-m
 
   tmux select-layout -t "$SESSION" tiled
   tmux select-pane   -t "$P_TELE"
@@ -229,7 +229,7 @@ tmux send-keys -t "$P_DRIVE" \
 
 P_GNSS=$(tmux split-window -v -t "$P_DRIVE" -P -F '#{pane_id}')
 tmux send-keys -t "$P_GNSS" \
-  "$SRC echo '[④ INS: sim Ellipse-D + SBG bridge (GNSS anchor + HUD)] waiting for ground truth…'; $WAIT_GT; ros2 launch eufs_graph_slam ins_pipeline.launch.py slam:=false use_sim_time:=$USE_SIM_TIME" C-m
+  "$SRC echo '[④ INS: sim Ellipse-D + SBG bridge (GNSS anchor + HUD)] waiting for ground truth…'; $WAIT_GT; ros2 launch hyu_localization ins_pipeline.launch.py slam:=false use_sim_time:=$USE_SIM_TIME" C-m
 
 P_MON=$(tmux split-window -v -t "$P_PLAN" -P -F '#{pane_id}')
 tmux send-keys -t "$P_MON" \

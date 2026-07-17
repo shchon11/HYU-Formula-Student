@@ -9,7 +9,7 @@ Start the simulator, then in a terminal:
 
 ```bash
 source install/setup.zsh
-ros2 run eufs_teleop teleop
+ros2 run hyu_teleop teleop
 ```
 
 The node sets the `MANUAL` mission automatically (`auto_mission` parameter),

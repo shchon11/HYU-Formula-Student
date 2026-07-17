@@ -16,7 +16,7 @@
 
 class QLabel;
 
-namespace fsk_rviz_presets
+namespace hyu_rviz_presets
 {
 
 class GnssModePanel : public rviz_common::Panel
@@ -39,4 +39,4 @@ private:
   QLabel * status_label_{nullptr};
 };
 
-}  // namespace fsk_rviz_presets
+}  // namespace hyu_rviz_presets

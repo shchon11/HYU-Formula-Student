@@ -9,17 +9,17 @@
 #include <cmath>
 #include <vector>
 
-#include "eufs_graph_slam/gate_anchor.hpp"
+#include "hyu_localization/gate_anchor.hpp"
 
 namespace
 {
 
-using eufs_graph_slam::GateMatchParams;
-using eufs_graph_slam::GateMatchResult;
-using eufs_graph_slam::GatePoint;
-using eufs_graph_slam::GateSe2;
-using eufs_graph_slam::clusterCentroids;
-using eufs_graph_slam::matchGateConstellation;
+using hyu_localization::GateMatchParams;
+using hyu_localization::GateMatchResult;
+using hyu_localization::GatePoint;
+using hyu_localization::GateSe2;
+using hyu_localization::clusterCentroids;
+using hyu_localization::matchGateConstellation;
 
 GatePoint toBody(const GateSe2 & pose, const GatePoint & map_point)
 {

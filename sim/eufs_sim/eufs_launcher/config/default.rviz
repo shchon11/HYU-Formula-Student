@@ -27,7 +27,7 @@ Panels:
     Name: Time
     SyncMode: 0
     SyncSource: Velodyne
-  - Class: fsk_rviz_presets/GnssModePanel
+  - Class: hyu_rviz_presets/GnssModePanel
     Name: GNSS/RTK Mode
 Visualization Manager:
   Class: ""

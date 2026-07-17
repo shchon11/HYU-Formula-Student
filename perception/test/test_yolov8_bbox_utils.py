@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from eufs_perception_baseline.yolov8_bbox_utils import (
+from hyu_perception.yolov8_bbox_utils import (
     detections_from_ultralytics_results,
     looks_like_coco_pretrained_yolov8_weight,
     normalize_color,

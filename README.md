@@ -110,7 +110,7 @@ flowchart LR
     class PP,CAR ctrl
 ```
 
-- **PERCEPTION**은 카메라·LiDAR만 소비해 `/cones`(색·위치·공분산) 하나로 요약합니다. 콘마다 provenance(`cluster_camera`/`cluster_only`/`sparse`/`monocular_zncc`)가 붙고, 운용 범위는 **robust-inside-10 m** — 비전 계열(sparse·ZNCC)은 12 m에서 캡(10 m 존 진입 전 2 m 온램프), LiDAR 클러스터는 캡 없음. LiDAR는 콘 앞면만 보므로 전방 range bias(+0.046 m)를 보정합니다. 수치와 근거는 전부 `eufs_perception_baseline/config/perception.yaml` 주석에 있습니다. sim 모드에선 Gazebo 플러그인이 이 토픽을 직접 냅니다.
+- **PERCEPTION**은 카메라·LiDAR만 소비해 `/cones`(색·위치·공분산) 하나로 요약합니다. 콘마다 provenance(`cluster_camera`/`cluster_only`/`sparse`/`monocular_zncc`)가 붙고, 운용 범위는 **robust-inside-10 m** — 비전 계열(sparse·ZNCC)은 12 m에서 캡(10 m 존 진입 전 2 m 온램프), LiDAR 클러스터는 캡 없음. LiDAR는 콘 앞면만 보므로 전방 range bias(+0.046 m)를 보정합니다. 수치와 근거는 전부 `hyu_perception/config/perception.yaml` 주석에 있습니다. sim 모드에선 Gazebo 플러그인이 이 토픽을 직접 냅니다.
 - **SLAM**은 `/cones` + 휠 odometry + (RTK일 때만) GNSS prior로 콘 랜드마크 포즈그래프를 풀어 **cone_map과 ego_odom**을 만들고, 루프 클로저가 확정되면 localization으로 전환합니다.
 - **PLANNING**에서 state_machine이 랩·상태 기반으로 `path_source`를 정하고, selector가 local/global 중 하나를 `/path_waypoints`로 확정 — **컨트롤러는 항상 이 토픽 하나만** 봅니다. skidpad 미션에선 director가 cone_map을 phase별로 걸러 local planner에 공급합니다.
 
@@ -139,7 +139,7 @@ mkdir -p ~/fsk && cd ~/fsk
 git clone <repo-url> src        # 이 저장소가 워크스페이스의 src/가 됩니다
 # (선택) 시스템 g2o(ros-humble-libg2o) 대신 소스 g2o를 쓰려면:
 #   git clone https://github.com/RainerKuemmerle/g2o.git ~/fsk/g2o
-#   — eufs_graph_slam이 시스템 g2o가 없으면 <워크스페이스>/g2o를 자동 탐지
+#   — hyu_localization이 시스템 g2o가 없으면 <워크스페이스>/g2o를 자동 탐지
 ```
 
 ### 1. 시스템 의존성 (apt)
@@ -202,7 +202,7 @@ python3 -m pip install --user quadprog
 
 > 기본 `race`는 CUDA YOLO+LiDAR perception을 실행합니다. GraphSLAM이 `map` TF를 소유하므로 real perception의 cross-time 보정 프레임은 기본 `odom`입니다. Gazebo simulated `/cones`만 쓰려면 `race sim` 또는 `perception_mode:=sim`을 명시합니다.
 >
-> **검출기는 YOLO26n-pose 콘 검출기로 저장소에 포함**되어 있습니다 (`eufs_perception_baseline/models/cone_pose_8kpt/weights/best.pt` — bbox+클래스+콘 키포인트 동시 출력; `fsoco_yolov8n`은 비교용 레거시). race/simfull 경유로 모델을 바꾸는 방법은 **가중치 파일 교체 또는 `perception.launch.py`의 기본값 수정** 두 가지뿐입니다 — `yolo_model_path:=<file>`은 simulation.launch.py가 선언하지 않는 인자라 조용히 무시되고, `perception.yaml`의 `model_path`는 launch가 항상 덮어써서(bare `ros2 run` 전용) 역시 조용히 무시됩니다.
+> **검출기는 YOLO26n-pose 콘 검출기로 저장소에 포함**되어 있습니다 (`hyu_perception/models/cone_pose_8kpt/weights/best.pt` — bbox+클래스+콘 키포인트 동시 출력; `fsoco_yolov8n`은 비교용 레거시). race/simfull 경유로 모델을 바꾸는 방법은 **가중치 파일 교체 또는 `perception.launch.py`의 기본값 수정** 두 가지뿐입니다 — `yolo_model_path:=<file>`은 simulation.launch.py가 선언하지 않는 인자라 조용히 무시되고, `perception.yaml`의 `model_path`는 launch가 항상 덮어써서(bare `ros2 run` 전용) 역시 조용히 무시됩니다.
 
 ### 3. 빌드
 
@@ -313,7 +313,7 @@ pane 5개: ①sim+perception(provenance 마커 on) ②graph_slam ③teleop(AMI_M
 리포트가 나옵니다. 채점 기준은 `/ground_truth/track`(월드 전체 콘) — `/ground_truth/cones`는
 sim 플러그인이 이미 FOV/거리 필터링을 해서, 그걸 기준 삼으면 파이프라인이 아니라 계측기의
 한계를 재게 됩니다. sim-time 레이트 확인은
-`ros2 run eufs_perception_baseline measure_sim_rates.py 25` (메시지 stamp 간격 기준이라
+`ros2 run hyu_perception measure_sim_rates.py 25` (메시지 stamp 간격 기준이라
 RTF 보정 불필요).
 
 ### 🪨 노면 (bump) · 차체 자세
@@ -360,7 +360,7 @@ pbring planner_source:=csv           # global을 오프라인 raceline CSV로
 # 저장맵으로 localization 바로 시작 (랩1 탐험 생략) — 맵은 /graph_slam/save_map이
 # map_<날짜>_<시각>.csv로 저장하므로 최신 파일을 지정:
 pbring graph_slam_localization_mode:=true \
-       graph_slam_load_map_path:=$(ls -t $EUFS_MASTER/src/eufs_graph_slam/map/map_*.csv | head -1)
+       graph_slam_load_map_path:=$(ls -t $EUFS_MASTER/src/hyu_localization/map/map_*.csv | head -1)
 ```
 
 ### 진행 확인
@@ -373,7 +373,7 @@ ros2 topic echo --once /ros_can/state_str
 ### INS/SBG 파이프라인 (선택)
 실제 하드웨어 GNSS/INS 경로를 시뮬에서 검증할 때:
 ```bash
-ros2 launch eufs_graph_slam ins_pipeline.launch.py
+ros2 launch hyu_localization ins_pipeline.launch.py
 ```
 
 `race`는 GNSS HUD만 채우도록 `ins_pipeline.launch.py slam:=false`를
@@ -381,7 +381,7 @@ ros2 launch eufs_graph_slam ins_pipeline.launch.py
 싶으면 같은 방식으로 graph_slam 중복 없이 실행하세요:
 
 ```bash
-ros2 launch eufs_graph_slam ins_pipeline.launch.py slam:=false
+ros2 launch hyu_localization ins_pipeline.launch.py slam:=false
 ```
 
 ---
@@ -429,7 +429,7 @@ ros2 service call /graph_slam/save_map       std_srvs/srv/Trigger               
 `race`/`simfull`이 정리된 config로 RViz를 띄웁니다 (또는 `rv`). 디스플레이는 **Sensors / Perception / SLAM / Planning / HUD** 그룹, 콘은 실제 3D 메시.
 
 - **HUD**: **Stack HUD 보드**(좌상단) — perception/SLAM/global/local/selector/control/mission/tracking을 스테이지별 색상(●초록 정상 · ▲노랑 주의 · ✕빨강 장애 · ○회색 대기)으로 표시하고, 막힌 스테이지는 **실패 이유를 그 줄에 그대로** 보여줌 (예: `GLOBAL ✕ boundary gap 13.5 m exceeds 12 m`). **배너**(상단 중앙) — "지금 차가 뭘 하는지" 한 줄: `LAP 1 · MAPPING · LOCAL · 2.9 m/s` → `RACING · GLOBAL · lap 2/4` → `⚑ FINISHED`, 문제 시 빨간 `✕ NO PATH → BRAKING — <이유>`. `GNSS`는 INS 파이프라인 실행 시 보드 아래 채워짐
-- **원클릭 프리셋**: 아무 RViz에서나 `Add → By display type → fsk_rviz_presets → FSK Full Stack` — 토픽·QoS까지 세팅된 그룹이 통째로 추가
+- **원클릭 프리셋**: 아무 RViz에서나 `Add → By display type → hyu_rviz_presets → FSK Full Stack` — 토픽·QoS까지 세팅된 그룹이 통째로 추가
 
 ---
 
@@ -438,10 +438,10 @@ ros2 service call /graph_slam/save_map       std_srvs/srv/Trigger               
 ```
 eufs_sim/                 시뮬레이터 (Gazebo, 차량 URDF, 센서, 플러그인, 런처)
 eufs_msgs/                EUFS 메시지/서비스
-eufs_graph_slam/          graph SLAM + INS/SBG 브리지 + CTE 모니터
-eufs_perception_baseline/ YOLO26n-pose + LiDAR 융합 → /cones (provenance별)
-eufs_teleop/              키보드 주행
-fsk_rviz_presets/         RViz 원클릭 디스플레이 그룹
+hyu_localization/          graph SLAM + INS/SBG 브리지 + CTE 모니터
+hyu_perception/ YOLO26n-pose + LiDAR 융합 → /cones (provenance별)
+hyu_teleop/              키보드 주행
+hyu_rviz_presets/         RViz 원클릭 디스플레이 그룹
 pure_pursuit_controller/  경로 추종 제어 → /cmd (planning과 분리된 control 계층)
 sbg_ros2_driver/          SBG INS/GNSS ROS 드라이버 (vendored v3.3.2 — apt 버전은 overlay에 가려짐)
 scripts/                  race.sh (자율 전체 스택 tmux 런처) + fsk-shellrc
@@ -498,7 +498,7 @@ stock gzserver로 `gpu_ray`를 돌리면 SkyX 하늘 돔이 레이저 depth pass
 <summary><b><code>ros2 topic hz</code>가 이상하게 낮음</b></summary>
 
 `hz`는 벽시계 기준 → Gazebo RTF만큼 낮게 보입니다. 알고리즘은 sim-time 기반이라 무관.
-sim-time 실제 레이트는 `ros2 run eufs_perception_baseline measure_sim_rates.py 25`로
+sim-time 실제 레이트는 `ros2 run hyu_perception measure_sim_rates.py 25`로
 재세요(메시지 stamp 간격 기준). 패치 Gazebo + GPU LiDAR의 정상 RTF는 ~0.97입니다(CPU ray
 시절 0.35) — 눈에 띄게 낮으면 패치 미활성(`patched gazebo active` 로그 확인)이나 YOLO
 CPU 폴백(`nvidia-smi`)을 의심하세요.

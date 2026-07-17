@@ -13,7 +13,7 @@ race-car plugin's synthetic localisation car state is disabled in the robot
 xacro (publishLocalisationCarState=false) — this pipeline plus wheel
 odometry is the only state-estimation source, in sim and on the car alike.
 
-    ros2 launch eufs_graph_slam ins_pipeline.launch.py \
+    ros2 launch hyu_localization ins_pipeline.launch.py \
         mode_schedule:="30:3,45:4" correction_schedule:="60:single,70:rtk_fixed"
 """
 
@@ -110,7 +110,7 @@ def generate_launch_description():
                 ],
             ),
             Node(
-                package="eufs_graph_slam",
+                package="hyu_localization",
                 executable="sbg_odometry_bridge",
                 name="sbg_odometry_bridge",
                 output="screen",
@@ -125,7 +125,7 @@ def generate_launch_description():
                 PythonLaunchDescriptionSource(
                     PathJoinSubstitution(
                         [
-                            FindPackageShare("eufs_graph_slam"),
+                            FindPackageShare("hyu_localization"),
                             "launch",
                             "graph_slam.launch.py",
                         ]

@@ -166,7 +166,7 @@ are **not** directly comparable to what it will print.
 
 The proposal was to replace tiers with a world-frame tracker doing position
 EKF, M-of-N existence, colour voting, and TENTATIVE→CONFIRMED→LOCKED states.
-All four are already in `eufs_graph_slam`:
+All four are already in `hyu_localization`:
 
 ```cpp
 struct LandmarkRecord {

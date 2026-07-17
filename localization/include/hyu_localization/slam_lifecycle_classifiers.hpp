@@ -12,7 +12,7 @@
 #include <cstddef>
 #include <vector>
 
-namespace eufs_graph_slam
+namespace hyu_localization
 {
 
 enum class LoopConfirmationReason
@@ -358,6 +358,6 @@ inline const char * toString(LoopConfirmationReason reason)
   return "unknown";
 }
 
-}  // namespace eufs_graph_slam
+}  // namespace hyu_localization
 
 #endif  // EUFS_GRAPH_SLAM__SLAM_LIFECYCLE_CLASSIFIERS_HPP_

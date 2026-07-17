@@ -52,7 +52,7 @@ TEST(InvalidWidth, WidespreadWidthFailureFailsClosed)
 // brittle per-cone width gate used to mask as "invalid_width".
 TEST(InvalidWidth, LocalOutliersDoNotMaskTheRealReason)
 {
-  const auto map = loadConeMapCsv("eufs_graph_slam/map/map_20260713_002645.csv");
+  const auto map = loadConeMapCsv("hyu_localization/map/map_20260713_002645.csv");
   std::vector<PlannerWaypoint> waypoints{{1.0, 2.0, 3.0, 4.0, 5.0}};
   std::string reason;
 

@@ -68,11 +68,11 @@ from eufs_msgs.msg import (
 try:
     from sensor_msgs_py import point_cloud2
 except ImportError:  # pragma: no cover - exercised only on older distros
-    from eufs_perception_baseline import point_cloud2_compat as point_cloud2
+    from hyu_perception import point_cloud2_compat as point_cloud2
 
 import tf2_ros
 
-from eufs_perception_baseline.fusion_core import (
+from hyu_perception.fusion_core import (
     bearing_aligned_covariance,
     camera_point_from_depth,
     monocular_depth_from_bbox,
@@ -81,7 +81,7 @@ from eufs_perception_baseline.fusion_core import (
     stereo_relative_depth_sigma,
     zncc_disparity,
 )
-from eufs_perception_baseline.ros_image_utils import image_message_to_numpy
+from hyu_perception.ros_image_utils import image_message_to_numpy
 
 CONE_COLORS = ("blue", "yellow", "orange", "big_orange", "unknown")
 

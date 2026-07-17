@@ -17,15 +17,15 @@ from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image
 
-from eufs_perception_baseline.ros_image_utils import (
+from hyu_perception.ros_image_utils import (
     image_message_to_numpy,
     numpy_to_image_message,
 )
-from eufs_perception_baseline.latest_only_worker import (
+from hyu_perception.latest_only_worker import (
     LatestOnlyWorker,
     WorkerCompletion,
 )
-from eufs_perception_baseline.yolov8_bbox_utils import (
+from hyu_perception.yolov8_bbox_utils import (
     detections_from_ultralytics_results,
     looks_like_coco_pretrained_yolov8_weight,
     parse_class_map,

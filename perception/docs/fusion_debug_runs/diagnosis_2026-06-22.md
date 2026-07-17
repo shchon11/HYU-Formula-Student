@@ -2,7 +2,7 @@
 
 ## Scope
 
-Executed the scenarios from `eufs_perception_baseline/docs/fusion_debug_scenarios.md`
+Executed the scenarios from `hyu_perception/docs/fusion_debug_scenarios.md`
 against the currently running host ROS2 simulation/perception graph. No runtime code was changed.
 
 Evidence files:
@@ -153,7 +153,7 @@ Run perception with sparse thresholds relaxed:
 
 ```bash
 LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7 \
-  ros2 launch eufs_perception_baseline perception_baseline.launch.py \
+  ros2 launch hyu_perception perception_baseline.launch.py \
   bbox_source:=yolov8 \
   use_sim_time:=true \
   python_executable:=/home/dohyun/anaconda3/envs/eufs/bin/python3 \

@@ -55,7 +55,7 @@ fsb() {
 race()    { "$EUFS_MASTER/src/scripts/race.sh" "$@"; }
 simfull() { ros2 launch eufs_launcher simulation.launch.py perception_mode:=sim rviz:=true "$@"; }
 pbring()  { ros2 launch planning_bringup local_global_planning.launch.py "$@"; }
-teleop()  { ros2 run eufs_teleop teleop "$@"; }
+teleop()  { ros2 run hyu_teleop teleop "$@"; }
 
 # --- helpers ------------------------------------------------------------------
 mission()  { ros2 service call /ros_can/set_mission eufs_msgs/srv/SetCanState "{ami_state: ${1:-14}}"; }

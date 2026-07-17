@@ -1,6 +1,6 @@
 # EUFS Graph SLAM
 
-`eufs_graph_slam` is a ROS 2 Humble package that builds a 2D g2o graph from EUFS simulator car state and cone observations.
+`hyu_localization` is a ROS 2 Humble package that builds a 2D g2o graph from EUFS simulator car state and cone observations.
 
 The node subscribes to:
 
@@ -51,16 +51,16 @@ From the EUFS workspace root:
 
 ```bash
 source /opt/ros/humble/setup.zsh
-colcon build --symlink-install --packages-up-to eufs_graph_slam
+colcon build --symlink-install --packages-up-to hyu_localization
 source install/setup.zsh
 ```
 
-`--packages-up-to` builds workspace dependencies such as `eufs_msgs` before building `eufs_graph_slam`.
+`--packages-up-to` builds workspace dependencies such as `eufs_msgs` before building `hyu_localization`.
 
 The package first tries `find_package(g2o CONFIG)`. If that is not available, it vendors a sibling g2o source tree at `../g2o` relative to `eufs_simulator`. For a different location, pass:
 
 ```bash
-colcon build --symlink-install --packages-up-to eufs_graph_slam \
+colcon build --symlink-install --packages-up-to hyu_localization \
   --cmake-args -DG2O_VENDOR_SOURCE_DIR=/path/to/g2o
 ```
 
@@ -69,7 +69,7 @@ colcon build --symlink-install --packages-up-to eufs_graph_slam \
 Start the simulator with simulated perception, then run:
 
 ```bash
-ros2 launch eufs_graph_slam graph_slam.launch.py
+ros2 launch hyu_localization graph_slam.launch.py
 ```
 
 Useful services:
@@ -98,9 +98,9 @@ against a known map. The loaded map is published once on the configured
 `/localization/cone_map` topic.
 
 ```bash
-ros2 launch eufs_graph_slam graph_slam.launch.py \
+ros2 launch hyu_localization graph_slam.launch.py \
   localization_mode:=true \
-  load_map_path:=<workspace>/eufs_graph_slam/map/small_track_slam.csv
+  load_map_path:=<workspace>/hyu_localization/map/small_track_slam.csv
 ```
 
 If localization is lost, use RViz's **2D Pose Estimate** tool (fixed frame
@@ -138,14 +138,14 @@ The map and odometry output topics are launch parameters. For an older tool
 that still expects the legacy Graph SLAM names, start with:
 
 ```bash
-ros2 launch eufs_graph_slam graph_slam.launch.py \
+ros2 launch hyu_localization graph_slam.launch.py \
   map_topic:=/graph_slam/map \
   slam_odom_topic:=/graph_slam/odom
 ```
 
 ## Wheel-encoder odometry
 
-`ros2 run eufs_graph_slam wheel_odometry` integrates rear wheel speeds (RPM,
+`ros2 run hyu_localization wheel_odometry` integrates rear wheel speeds (RPM,
 `/ros_can/wheel_speeds`) with an IMU yaw rate (`/imu/data`; bicycle-model
 steering fallback) into `/wheel_odometry/car_state` — a GNSS-independent
 odometry source for `car_state_topic`, keeping the GNSS prior as the only
@@ -254,5 +254,5 @@ harness.
 Example:
 
 ```bash
-./eufs_graph_slam/scripts/run_experiment.sh /tmp/slam_report.json 120 1
+./hyu_localization/scripts/run_experiment.sh /tmp/slam_report.json 120 1
 ```

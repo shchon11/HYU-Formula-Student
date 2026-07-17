@@ -8,10 +8,10 @@ from pathlib import Path
 
 
 ROOT = Path("/home/dohyun/FS/HYU-Formula-Student")
-OUT = ROOT / "eufs_perception_baseline/docs/fusion_debug_runs/grid_exp_2026-06-22"
+OUT = ROOT / "hyu_perception/docs/fusion_debug_runs/grid_exp_2026-06-22"
 EXE = (
     ROOT
-    / "install/eufs_perception_baseline/lib/eufs_perception_baseline/perception_baseline_node"
+    / "install/hyu_perception/lib/hyu_perception/perception_baseline_node"
 )
 PYTHON = Path("/home/dohyun/anaconda3/envs/eufs/bin/python3")
 

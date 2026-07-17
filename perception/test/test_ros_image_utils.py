@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 from std_msgs.msg import Header
 
-from eufs_perception_baseline.ros_image_utils import (
+from hyu_perception.ros_image_utils import (
     image_message_to_numpy,
     numpy_to_image_message,
 )

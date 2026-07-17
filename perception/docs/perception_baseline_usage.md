@@ -1,6 +1,6 @@
 # Perception Baseline Usage
 
-이 문서는 HYU Formula Student workspace에서 `eufs_perception_baseline`을
+이 문서는 HYU Formula Student workspace에서 `hyu_perception`을
 실행하고, ROS topic으로 결과를 확인하는 방법을 정리한다.
 
 기준 workspace:
@@ -11,7 +11,7 @@
 
 ## 1. Package Purpose
 
-`eufs_perception_baseline`은 perception module의 baseline package이다.
+`hyu_perception`은 perception module의 baseline package이다.
 
 현재 package는 SLAM 출력 형식을 고정하고, IIT Bombay 논문의 우선순위를 따른
 three-tier baseline으로 실제 cone observation을 `/cones`에 publish한다. Tier 1은
@@ -124,7 +124,7 @@ yolo_class_map: blue_cone:blue,yellow_cone:yellow,orange_cone:orange,large_orang
 
 ```bash
 LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7 \
-  ros2 launch eufs_perception_baseline perception_baseline.launch.py \
+  ros2 launch hyu_perception perception_baseline.launch.py \
   bbox_source:=yolov8 \
   yolo_image_topic:=/zed/left/image_rect_color \
   yolo_camera_info_topic:=/zed/left/camera_info \
@@ -163,8 +163,8 @@ SLAM 연결 확인용 모드이다.
 ## 3. Important Files
 
 ```text
-eufs_perception_baseline/
-  eufs_perception_baseline/
+hyu_perception/
+  hyu_perception/
     latest_only_worker.py
     perception_baseline_node.py
     yolov8_bbox_node.py
@@ -606,7 +606,7 @@ source /workspace/install/setup.bash
 Fusion:
 
 ```bash
-ros2 launch eufs_perception_baseline perception_baseline.launch.py \
+ros2 launch hyu_perception perception_baseline.launch.py \
   output_cones_topic:=/cones \
   output_frame:=base_footprint \
   motion_compensation_frame:=odom \
@@ -618,7 +618,7 @@ YOLOv8 + fusion:
 
 ```bash
 LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7 \
-  ros2 launch eufs_perception_baseline perception_baseline.launch.py \
+  ros2 launch hyu_perception perception_baseline.launch.py \
   bbox_source:=yolov8 \
   use_sim_time:=true \
   python_executable:=python3 \
@@ -634,7 +634,7 @@ LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7 \
 Oracle adapter:
 
 ```bash
-ros2 launch eufs_perception_baseline perception_baseline.launch.py \
+ros2 launch hyu_perception perception_baseline.launch.py \
   oracle_cones_topic:=/camera_0/cones \
   output_cones_topic:=/cones \
   output_frame:=base_footprint \
@@ -645,7 +645,7 @@ ros2 launch eufs_perception_baseline perception_baseline.launch.py \
 Graph SLAM:
 
 ```bash
-ros2 launch eufs_graph_slam graph_slam.launch.py \
+ros2 launch hyu_localization graph_slam.launch.py \
   publish_tf:=true \
   use_sim_time:=true
 ```

@@ -1,4 +1,4 @@
-# eufs_perception_baseline Pipeline Verification Report
+# hyu_perception Pipeline Verification Report
 
 > **Historical report (superseded 2026-07-10).** 이 문서는 수정 전 상태의 실패
 > 증거를 보존한다. 현재 구현은 `sensor_msgs_py`가 없을 때 package-local
@@ -9,13 +9,13 @@
 
 검증 일시: 2026-06-03 16:08 KST
 재검증 일시: 2026-06-03 16:26 KST (`conda` environment: `eufs`)
-대상 경로: `/home/dohyun/FS/HYU-Formula-Student/eufs_perception_baseline`
+대상 경로: `/home/dohyun/FS/HYU-Formula-Student/hyu_perception`
 
 ## 결론
 
-`conda activate eufs` 기준으로 다시 확인해도, 현재 이 환경에서는 `eufs_perception_baseline` 파이프라인이 문제없이 동작한다고 볼 수 없다.
+`conda activate eufs` 기준으로 다시 확인해도, 현재 이 환경에서는 `hyu_perception` 파이프라인이 문제없이 동작한다고 볼 수 없다.
 
-다만 이전 검증의 Python 환경 해석은 정정한다. `eufs` conda 환경은 Python 3.8.20이라 ROS Galactic의 `rclpy` import는 가능하다. 하지만 실제 노드 실행은 여전히 import 단계에서 실패한다. 남는 실패 지점은 `eufs_perception_baseline/perception_baseline_node.py`의 `sensor_msgs_py` import이다.
+다만 이전 검증의 Python 환경 해석은 정정한다. `eufs` conda 환경은 Python 3.8.20이라 ROS Galactic의 `rclpy` import는 가능하다. 하지만 실제 노드 실행은 여전히 import 단계에서 실패한다. 남는 실패 지점은 `hyu_perception/perception_baseline_node.py`의 `sensor_msgs_py` import이다.
 
 또한 루트 README와 `scripts/hyu-docker`는 ROS 2 Humble Docker 환경을 기준으로 하지만, 현재 호스트에서는 `docker` 명령이 없어 의도된 simulator + fusion + SLAM end-to-end 검증을 수행할 수 없었다. 현재 호스트에서 source 가능한 ROS는 Galactic이고, 이번 재검증은 `conda` environment `eufs` + `/opt/ros/galactic/setup.bash` 조합으로 수행했다.
 
@@ -34,7 +34,7 @@
 
 확인한 파일:
 
-- `eufs_perception_baseline/perception_baseline_node.py`
+- `hyu_perception/perception_baseline_node.py`
 - `launch/perception_baseline.launch.py`
 - `config/perception_baseline.yaml`
 - `package.xml`
@@ -73,13 +73,13 @@ ModuleNotFoundError: No module named 'sensor_msgs_py'
 ```bash
 conda run -n eufs bash -lc \
   'source /opt/ros/galactic/setup.bash &&
-   colcon build --symlink-install --packages-select eufs_perception_baseline'
+   colcon build --symlink-install --packages-select hyu_perception'
 ```
 
 결과:
 
 ```text
-Finished <<< eufs_perception_baseline [0.71s]
+Finished <<< hyu_perception [0.71s]
 Summary: 1 package finished [0.81s]
 ```
 
@@ -93,15 +93,15 @@ Summary: 1 package finished [0.81s]
 conda run -n eufs bash -lc \
   'source /opt/ros/galactic/setup.bash &&
    source install/setup.bash &&
-   ros2 pkg prefix eufs_perception_baseline &&
-   ros2 pkg executables eufs_perception_baseline'
+   ros2 pkg prefix hyu_perception &&
+   ros2 pkg executables hyu_perception'
 ```
 
 결과:
 
 ```text
-/home/dohyun/FS/HYU-Formula-Student/install/eufs_perception_baseline
-eufs_perception_baseline perception_baseline_node
+/home/dohyun/FS/HYU-Formula-Student/install/hyu_perception
+hyu_perception perception_baseline_node
 ```
 
 판정: 통과.
@@ -117,7 +117,7 @@ conda run -n eufs bash -lc \
   'source /opt/ros/galactic/setup.bash &&
    source install/setup.bash &&
    export ROS_LOG_DIR=/home/dohyun/FS/HYU-Formula-Student/log/ros &&
-   ros2 launch eufs_perception_baseline perception_baseline.launch.py --show-args'
+   ros2 launch hyu_perception perception_baseline.launch.py --show-args'
 ```
 
 결과:
@@ -148,7 +148,7 @@ conda run -n eufs bash -lc \
   'source /opt/ros/galactic/setup.bash &&
    source install/setup.bash &&
    export ROS_LOG_DIR=/home/dohyun/FS/HYU-Formula-Student/log/ros &&
-   timeout 5 ros2 launch eufs_perception_baseline perception_baseline.launch.py \
+   timeout 5 ros2 launch hyu_perception perception_baseline.launch.py \
    fusion_enabled:=false oracle_cones_topic:=/camera_0/cones'
 ```
 
@@ -174,7 +174,7 @@ conda run -n eufs bash -lc \
   'source /opt/ros/galactic/setup.bash &&
    source install/setup.bash &&
    export ROS_LOG_DIR=/home/dohyun/FS/HYU-Formula-Student/log/ros &&
-   timeout 5 ros2 run eufs_perception_baseline perception_baseline_node \
+   timeout 5 ros2 run hyu_perception perception_baseline_node \
    --ros-args -p fusion_enabled:=false -p oracle_cones_topic:=/camera_0/cones'
 ```
 
@@ -193,8 +193,8 @@ ModuleNotFoundError: No module named 'sensor_msgs_py'
 ```bash
 conda run -n eufs bash -lc \
   'source /opt/ros/galactic/setup.bash &&
-   colcon test --packages-select eufs_perception_baseline --event-handlers console_direct+ &&
-   colcon test-result --test-result-base build/eufs_perception_baseline --verbose'
+   colcon test --packages-select hyu_perception --event-handlers console_direct+ &&
+   colcon test-result --test-result-base build/hyu_perception --verbose'
 ```
 
 결과:
@@ -232,8 +232,8 @@ Summary: 0 tests, 0 errors, 0 failures, 0 skipped
 
 위치:
 
-- `eufs_perception_baseline/perception_baseline_node.py:18`
-- `eufs_perception_baseline/perception_baseline_node.py:408`
+- `hyu_perception/perception_baseline_node.py:18`
+- `hyu_perception/perception_baseline_node.py:408`
 
 현상:
 
@@ -308,7 +308,7 @@ OSError: [Errno 30] Read-only file system: '/home/dohyun/.ros/log/...'
 
 위치:
 
-- `eufs_perception_baseline/perception_baseline_node.py:557`
+- `hyu_perception/perception_baseline_node.py:557`
 
 현재 코드:
 
@@ -331,7 +331,7 @@ launch argument로 노출된 일부 parameter만 launch에서 전달된다. YAML
 
 위치:
 
-- `eufs_perception_baseline/perception_baseline_node.py:577`
+- `hyu_perception/perception_baseline_node.py:577`
 
 `projection_model == "eufs_bbox"`일 때만 특수 변환을 하고, 그 외 값은 그대로 projection한다. 잘못된 parameter 값이 들어가도 경고 없이 부정확한 `/cones`가 나올 수 있다.
 
@@ -339,9 +339,9 @@ launch argument로 노출된 일부 parameter만 launch에서 전달된다. YAML
 
 위치:
 
-- `eufs_perception_baseline/perception_baseline_node.py:293`
-- `eufs_perception_baseline/perception_baseline_node.py:325-326`
-- `eufs_perception_baseline/perception_baseline_node.py:643-648`
+- `hyu_perception/perception_baseline_node.py:293`
+- `hyu_perception/perception_baseline_node.py:325-326`
+- `hyu_perception/perception_baseline_node.py:643-648`
 
 LiDAR->base, LiDAR->camera TF가 없으면 fusion은 skip된다. 코드가 throttled warning은 남기지만, live topic 검증 없이 `/cones`가 비어 있거나 publish되지 않는 원인을 구분하기 어렵다.
 

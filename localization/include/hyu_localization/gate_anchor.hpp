@@ -14,7 +14,7 @@
 #include <limits>
 #include <vector>
 
-namespace eufs_graph_slam
+namespace hyu_localization
 {
 
 // Orange-gate global anchor: recover an absolute SE2 pose from the start
@@ -228,6 +228,6 @@ inline bool matchGateConstellation(
   return true;
 }
 
-}  // namespace eufs_graph_slam
+}  // namespace hyu_localization
 
 #endif  // EUFS_GRAPH_SLAM__GATE_ANCHOR_HPP_

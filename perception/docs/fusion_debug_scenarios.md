@@ -47,7 +47,7 @@ source /opt/ros/galactic/setup.bash
 source install/setup.bash
 
 LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7 \
-  ros2 launch eufs_perception_baseline perception_baseline.launch.py \
+  ros2 launch hyu_perception perception_baseline.launch.py \
   bbox_source:=yolov8 \
   use_sim_time:=true \
   python_executable:=/home/dohyun/anaconda3/envs/eufs/bin/python3 \
@@ -174,7 +174,7 @@ self_mask_abs_y: 0.8
 
 ```bash
 LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7 \
-  ros2 launch eufs_perception_baseline perception_baseline.launch.py \
+  ros2 launch hyu_perception perception_baseline.launch.py \
   bbox_source:=yolov8 \
   use_sim_time:=true \
   python_executable:=/home/dohyun/anaconda3/envs/eufs/bin/python3 \
@@ -218,7 +218,7 @@ RViz에서는 아래를 같이 켠다.
 
 ```bash
 LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7 \
-  ros2 launch eufs_perception_baseline perception_baseline.launch.py \
+  ros2 launch hyu_perception perception_baseline.launch.py \
   bbox_source:=yolov8 \
   use_sim_time:=true \
   python_executable:=/home/dohyun/anaconda3/envs/eufs/bin/python3 \
@@ -233,7 +233,7 @@ LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7 \
 
 ```bash
 LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7 \
-  ros2 launch eufs_perception_baseline perception_baseline.launch.py \
+  ros2 launch hyu_perception perception_baseline.launch.py \
   bbox_source:=yolov8 \
   use_sim_time:=true \
   python_executable:=/home/dohyun/anaconda3/envs/eufs/bin/python3 \
@@ -247,7 +247,7 @@ LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7 \
 
 ```bash
 LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7 \
-  ros2 launch eufs_perception_baseline perception_baseline.launch.py \
+  ros2 launch hyu_perception perception_baseline.launch.py \
   bbox_source:=yolov8 \
   use_sim_time:=true \
   python_executable:=/home/dohyun/anaconda3/envs/eufs/bin/python3 \

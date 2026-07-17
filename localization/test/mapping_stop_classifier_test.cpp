@@ -4,11 +4,11 @@
 // license that can be found in the LICENSE file or at
 // https://opensource.org/licenses/MIT.
 
-#include "eufs_graph_slam/slam_lifecycle_classifiers.hpp"
+#include "hyu_localization/slam_lifecycle_classifiers.hpp"
 
 #include <gtest/gtest.h>
 
-namespace eufs_graph_slam
+namespace hyu_localization
 {
 namespace
 {
@@ -96,4 +96,4 @@ TEST(MappingStopClassifierTest, ClassifiesAmbiguousLoopAssociation)
 }
 
 }  // namespace
-}  // namespace eufs_graph_slam
+}  // namespace hyu_localization

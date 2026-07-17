@@ -3,7 +3,7 @@ import struct
 from dataclasses import dataclass
 import unittest
 
-from eufs_perception_baseline.point_cloud2_compat import read_points
+from hyu_perception.point_cloud2_compat import read_points
 
 
 @dataclass

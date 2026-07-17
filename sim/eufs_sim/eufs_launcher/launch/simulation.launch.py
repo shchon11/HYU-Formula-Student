@@ -301,13 +301,13 @@ def generate_launch_description():
             description="Determines which launch files are used in the state_machine node"),
         *perception_argument_declarations,
 
-        # --- eufs_perception_baseline node integration ---
+        # --- hyu_perception node integration ---
         DeclareLaunchArgument(
             name='perception',
             default_value='false',
-            description="Launch eufs_perception_baseline with the simulator"),
+            description="Launch hyu_perception with the simulator"),
 
-        # These wrap eufs_perception_baseline's launch interface. Anything the
+        # These wrap hyu_perception's launch interface. Anything the
         # baseline does not declare cannot be forwarded: an IncludeLaunchDescription
         # that passes an unknown argument fails the whole launch. The tier-era
         # knobs (bbox_source, monocular/stereo_fallback_enabled, python_executable)
@@ -379,7 +379,7 @@ def generate_launch_description():
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 PathJoinSubstitution([
-                    get_package_share_directory('eufs_perception_baseline'),
+                    get_package_share_directory('hyu_perception'),
                     'launch',
                     'perception.launch.py'
                 ]),

@@ -10,9 +10,9 @@
 
 #include <vector>
 
-#include "eufs_graph_slam/tentative_track_frontend.hpp"
+#include "hyu_localization/tentative_track_frontend.hpp"
 
-namespace eufs_graph_slam
+namespace hyu_localization
 {
 namespace
 {
@@ -298,4 +298,4 @@ TEST(TentativeTrackFrontend, ColorMajorityVoteSurvivesMislabels)
 }
 
 }  // namespace
-}  // namespace eufs_graph_slam
+}  // namespace hyu_localization

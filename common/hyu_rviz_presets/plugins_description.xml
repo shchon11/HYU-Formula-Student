@@ -1,41 +1,41 @@
-<library path="fsk_rviz_presets">
-  <class name="fsk_rviz_presets/PerceptionStack"
-         type="fsk_rviz_presets::PerceptionStack"
+<library path="hyu_rviz_presets">
+  <class name="hyu_rviz_presets/PerceptionStack"
+         type="hyu_rviz_presets::PerceptionStack"
          base_class_type="rviz_common::Display">
     <description>
       One-click group: live fusion cone detections (/cones/viz) as 3D cone meshes.
     </description>
   </class>
-  <class name="fsk_rviz_presets/SlamStack"
-         type="fsk_rviz_presets::SlamStack"
+  <class name="hyu_rviz_presets/SlamStack"
+         type="hyu_rviz_presets::SlamStack"
          base_class_type="rviz_common::Display">
     <description>
       One-click group: graph SLAM cone map, pose-graph path and ego odometry.
     </description>
   </class>
-  <class name="fsk_rviz_presets/PlanningStack"
-         type="fsk_rviz_presets::PlanningStack"
+  <class name="hyu_rviz_presets/PlanningStack"
+         type="hyu_rviz_presets::PlanningStack"
          base_class_type="rviz_common::Display">
     <description>
       One-click group: global raceline (/global_waypoints/path) and local window (/path_waypoints/path).
     </description>
   </class>
-  <class name="fsk_rviz_presets/HudStack"
-         type="fsk_rviz_presets::HudStack"
+  <class name="hyu_rviz_presets/HudStack"
+         type="hyu_rviz_presets::HudStack"
          base_class_type="rviz_common::Display">
     <description>
       One-click group: Path CTE / SLAM status / GNSS text HUD overlays (non-overlapping stack).
     </description>
   </class>
-  <class name="fsk_rviz_presets/FullStack"
-         type="fsk_rviz_presets::FullStack"
+  <class name="hyu_rviz_presets/FullStack"
+         type="hyu_rviz_presets::FullStack"
          base_class_type="rviz_common::Display">
     <description>
       Everything at once: FSK Perception + SLAM + Planning + HUD groups.
     </description>
   </class>
-  <class name="fsk_rviz_presets/GnssModePanel"
-         type="fsk_rviz_presets::GnssModePanel"
+  <class name="hyu_rviz_presets/GnssModePanel"
+         type="hyu_rviz_presets::GnssModePanel"
          base_class_type="rviz_common::Panel">
     <description>
       Buttons to set the simulated SBG Ellipse-D GNSS/RTK correction

@@ -55,7 +55,7 @@ Usage
 -----
 Run the sim with perception and debug enabled, drive a lap, then:
 
-    ros2 run eufs_perception_baseline evaluate_perception_tiers.py --duration 60
+    ros2 run hyu_perception evaluate_perception_tiers.py --duration 60
 
 or against a bag:
 

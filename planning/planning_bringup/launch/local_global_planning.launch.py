@@ -90,7 +90,7 @@ ARGUMENTS = (
 )
 
 PARAMETER_FILES = (
-    ("graph_slam_params_file", "eufs_graph_slam", "graph_slam.yaml", "Graph SLAM parameter file."),
+    ("graph_slam_params_file", "hyu_localization", "graph_slam.yaml", "Graph SLAM parameter file."),
     ("global_params_file", "global_planner", "global_planner.yaml", "Global planner and Frenet parameter file."),
     ("local_params_file", "local_planner", "local_planner.yaml", "Local planner parameter file."),
     ("state_params_file", "state_machine", "planning_state_machine.yaml", "Planning state-machine parameter file."),
@@ -163,7 +163,7 @@ def generate_launch_description() -> LaunchDescription:
     graph_slam = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution(
-                [FindPackageShare("eufs_graph_slam"), "launch", "graph_slam.launch.py"]
+                [FindPackageShare("hyu_localization"), "launch", "graph_slam.launch.py"]
             )
         ),
         condition=IfCondition(values["start_graph_slam"]),

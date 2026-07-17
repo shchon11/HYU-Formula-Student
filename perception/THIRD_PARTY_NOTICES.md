@@ -2,7 +2,7 @@
 
 ## MIT/Delft ReKTNet
 
-`eufs_perception_baseline/rektnet.py` implements the network topology,
+`hyu_perception/rektnet.py` implements the network topology,
 preprocessing, semantic keypoint order, and checkpoint naming contract published
 by the MIT/Delft Driverless computer-vision team.
 

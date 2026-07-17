@@ -46,7 +46,7 @@ EXTRA_PARAMS=("$@")
 # TRACK env overrides for long-map campaigns (autocross/trackdrive_kase2026).
 TRACK="${TRACK:-small_track}"
 CSV="$SRC/eufs_sim/eufs_tracks/csv/$TRACK.csv"
-SCRIPTS="$SRC/eufs_graph_slam/scripts"
+SCRIPTS="$SRC/hyu_localization/scripts"
 # Per-run log dir: parallel/sequential runs into the same output folder must
 # not overwrite each other's slam/sim logs.
 LOG_DIR="${OUT_JSON%.json}.logs"
@@ -61,12 +61,12 @@ export ROS_LOCALHOST_ONLY=1
 kill_harness() {
     # ros2 run/launch wrappers do not reliably forward signals to their
     # children, so kill the underlying processes by pattern as well.
-    pkill -9 -f "install/eufs_graph_slam/lib/eufs_graph_slam/graph_slam_node" 2>/dev/null
+    pkill -9 -f "install/hyu_localization/lib/hyu_localization/graph_slam_node" 2>/dev/null
     pkill -9 -f "scripts/evaluate_slam.py" 2>/dev/null
     pkill -9 -f "scripts/drive_track.py" 2>/dev/null
     pkill -9 -f "sim_ellipse_d" 2>/dev/null
     pkill -9 -f "sbg_odometry_bridge" 2>/dev/null
-    pkill -9 -f "eufs_graph_slam/wheel_odometry" 2>/dev/null
+    pkill -9 -f "hyu_localization/wheel_odometry" 2>/dev/null
     pkill -9 -x gzserver 2>/dev/null
     pkill -9 -f spawner.py 2>/dev/null
     # Leftover sim launch trees keep latching stale /robot_description,
@@ -135,13 +135,13 @@ if [ "$GNSS_MODE" = "outage" ]; then
 fi
 
 echo "== starting INS pipeline (sim Ellipse-D + SBG bridge, gnss=$GNSS_MODE) =="
-ros2 launch eufs_graph_slam ins_pipeline.launch.py \
+ros2 launch hyu_localization ins_pipeline.launch.py \
     "${INS_ARGS[@]}" \
     > "$LOG_DIR/ins.log" 2>&1 &
 PIDS+=($!)
 
 echo "== starting wheel odometry =="
-ros2 run eufs_graph_slam wheel_odometry --ros-args \
+ros2 run hyu_localization wheel_odometry --ros-args \
     -p use_sim_time:=true \
     -p rear_axle_to_base_m:="${VY_ARM:-0.79}" \
     > "$LOG_DIR/wheel_odom.log" 2>&1 &
@@ -153,9 +153,9 @@ if [ "$GNSS_MODE" = "none" ]; then
 fi
 
 echo "== starting graph SLAM (input: $SLAM_INPUT) =="
-ros2 run eufs_graph_slam graph_slam_node --ros-args \
+ros2 run hyu_localization graph_slam_node --ros-args \
     -r __node:=graph_slam \
-    --params-file "$SRC/eufs_graph_slam/config/graph_slam.yaml" \
+    --params-file "$SRC/hyu_localization/config/graph_slam.yaml" \
     -p use_sim_time:=true \
     -p car_state_topic:=$SLAM_INPUT \
     "${GNSS_PARAMS[@]}" \

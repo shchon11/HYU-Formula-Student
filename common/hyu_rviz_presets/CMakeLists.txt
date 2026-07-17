@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(fsk_rviz_presets)
+project(hyu_rviz_presets)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -13,8 +13,8 @@ find_package(std_msgs REQUIRED)
 
 set(CMAKE_AUTOMOC ON)
 qt5_wrap_cpp(MOC_FILES
-  include/fsk_rviz_presets/stack_displays.hpp
-  include/fsk_rviz_presets/gnss_mode_panel.hpp
+  include/hyu_rviz_presets/stack_displays.hpp
+  include/hyu_rviz_presets/gnss_mode_panel.hpp
 )
 
 add_library(${PROJECT_NAME} SHARED

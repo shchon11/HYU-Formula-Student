@@ -1,4 +1,4 @@
-# eufs_perception_baseline
+# hyu_perception
 
 HYU Formula Student simulator와 graph SLAM을 연결하기 위한 ROS 2 perception
 baseline package이다.
@@ -10,7 +10,7 @@ baseline package이다.
 camera / YOLO bbox / simulator bbox / LiDAR / TF
         |
         v
-eufs_perception_baseline
+hyu_perception
         |
         v
 /cones
@@ -116,7 +116,7 @@ source /home/dohyun/anaconda3/etc/profile.d/conda.sh
 conda activate eufs
 source /opt/ros/galactic/setup.bash
 
-colcon build --packages-up-to eufs_launcher eufs_perception_baseline --symlink-install
+colcon build --packages-up-to eufs_launcher hyu_perception --symlink-install
 source install/setup.bash
 ```
 
@@ -191,7 +191,7 @@ conda activate eufs
 source /opt/ros/galactic/setup.bash
 source install/setup.bash
 
-ros2 launch eufs_perception_baseline perception_baseline.launch.py \
+ros2 launch hyu_perception perception_baseline.launch.py \
   bbox_source:=yolov8 \
   use_sim_time:=true \
   python_executable:=/home/dohyun/anaconda3/envs/eufs/bin/python3 \
@@ -318,8 +318,8 @@ SLAM integration 확인용 모드이다. 실제 perception을 거치지 않고 s
 ## Main Files
 
 ```text
-eufs_perception_baseline/
-  eufs_perception_baseline/
+hyu_perception/
+  hyu_perception/
     perception_baseline_node.py
     fusion_core.py
     sync_buffer.py
@@ -337,9 +337,9 @@ eufs_perception_baseline/
 
 ## Core Logic
 
-ROS orchestration은 `eufs_perception_baseline/perception_baseline_node.py`, 순수
-geometry는 `eufs_perception_baseline/fusion_core.py`, ReKTNet/PnP/right-ROI
-propagation은 `eufs_perception_baseline/rektnet.py`에 있다.
+ROS orchestration은 `hyu_perception/perception_baseline_node.py`, 순수
+geometry는 `hyu_perception/fusion_core.py`, ReKTNet/PnP/right-ROI
+propagation은 `hyu_perception/rektnet.py`에 있다.
 
 - `_try_publish_fusion()`: bbox/cloud queue front 중 늦은 timestamp를 anchor로
   삼고 반대 stream의 predecessor/successor 중 nearest를 one-to-one으로 매칭한
@@ -395,8 +395,8 @@ parameter를 사용한다. 여기에 range-dependent term과 `min_variance` clam
 적용된다. 기본값은 초기값일 뿐이며 bag/vehicle 측정으로 재조정해야 한다.
 
 YOLOv8 bbox detector 구현은
-`eufs_perception_baseline/yolov8_bbox_node.py`와
-`eufs_perception_baseline/yolov8_bbox_utils.py`에 있다.
+`hyu_perception/yolov8_bbox_node.py`와
+`hyu_perception/yolov8_bbox_utils.py`에 있다.
 
 - `yolov8_bbox_node`: ROS Image를 OpenCV image로 변환하고 YOLOv8 inference 실행
 - `detections_from_ultralytics_results()`: YOLO 결과를 pixel bbox detection으로 변환

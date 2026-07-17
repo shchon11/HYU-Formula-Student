@@ -47,7 +47,7 @@ def generate_launch_description():
                 "params_file",
                 default_value=PathJoinSubstitution(
                     [
-                        FindPackageShare("eufs_graph_slam"),
+                        FindPackageShare("hyu_localization"),
                         "config",
                         "graph_slam.yaml",
                     ]
@@ -175,7 +175,7 @@ def generate_launch_description():
             # body-rate/acceleration log, identical wiring in sim and on the
             # car. Publishes the graph_slam default car_state_topic.
             Node(
-                package="eufs_graph_slam",
+                package="hyu_localization",
                 executable="wheel_odometry",
                 name="wheel_odometry",
                 output="screen",
@@ -183,7 +183,7 @@ def generate_launch_description():
                 condition=IfCondition(LaunchConfiguration("wheel_odometry")),
             ),
             Node(
-                package="eufs_graph_slam",
+                package="hyu_localization",
                 executable="graph_slam_node",
                 name="graph_slam",
                 output="screen",
@@ -208,7 +208,7 @@ def generate_launch_description():
                 ],
             ),
             Node(
-                package="eufs_graph_slam",
+                package="hyu_localization",
                 executable="slam_gui",
                 name="slam_gui",
                 output="screen",
@@ -216,7 +216,7 @@ def generate_launch_description():
                 condition=IfCondition(gui),
             ),
             Node(
-                package="eufs_graph_slam",
+                package="hyu_localization",
                 executable="ate_monitor",
                 name="ate_monitor",
                 output="screen",

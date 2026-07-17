@@ -1,13 +1,13 @@
 // Copyright 2026 HYU Formula Student.
 
-#include "fsk_rviz_presets/stack_displays.hpp"
+#include "hyu_rviz_presets/stack_displays.hpp"
 
 #include <QTimer>
 
 #include "rviz_common/display_context.hpp"
 #include "rviz_common/properties/property.hpp"
 
-namespace fsk_rviz_presets
+namespace hyu_rviz_presets
 {
 
 void PresetGroup::onInitialize()
@@ -134,17 +134,17 @@ void HudStack::populate()
 void FullStack::populate()
 {
   setName("FSK Full Stack");
-  addChildDisplay("fsk_rviz_presets/PerceptionStack", "FSK Perception");
-  addChildDisplay("fsk_rviz_presets/SlamStack", "FSK SLAM");
-  addChildDisplay("fsk_rviz_presets/PlanningStack", "FSK Planning");
-  addChildDisplay("fsk_rviz_presets/HudStack", "FSK HUD");
+  addChildDisplay("hyu_rviz_presets/PerceptionStack", "FSK Perception");
+  addChildDisplay("hyu_rviz_presets/SlamStack", "FSK SLAM");
+  addChildDisplay("hyu_rviz_presets/PlanningStack", "FSK Planning");
+  addChildDisplay("hyu_rviz_presets/HudStack", "FSK HUD");
 }
 
-}  // namespace fsk_rviz_presets
+}  // namespace hyu_rviz_presets
 
 #include <pluginlib/class_list_macros.hpp>  // NOLINT
-PLUGINLIB_EXPORT_CLASS(fsk_rviz_presets::PerceptionStack, rviz_common::Display)
-PLUGINLIB_EXPORT_CLASS(fsk_rviz_presets::SlamStack, rviz_common::Display)
-PLUGINLIB_EXPORT_CLASS(fsk_rviz_presets::PlanningStack, rviz_common::Display)
-PLUGINLIB_EXPORT_CLASS(fsk_rviz_presets::HudStack, rviz_common::Display)
-PLUGINLIB_EXPORT_CLASS(fsk_rviz_presets::FullStack, rviz_common::Display)
+PLUGINLIB_EXPORT_CLASS(hyu_rviz_presets::PerceptionStack, rviz_common::Display)
+PLUGINLIB_EXPORT_CLASS(hyu_rviz_presets::SlamStack, rviz_common::Display)
+PLUGINLIB_EXPORT_CLASS(hyu_rviz_presets::PlanningStack, rviz_common::Display)
+PLUGINLIB_EXPORT_CLASS(hyu_rviz_presets::HudStack, rviz_common::Display)
+PLUGINLIB_EXPORT_CLASS(hyu_rviz_presets::FullStack, rviz_common::Display)

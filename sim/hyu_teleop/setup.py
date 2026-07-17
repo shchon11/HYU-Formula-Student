@@ -1,6 +1,6 @@
 from setuptools import setup
 
-package_name = 'eufs_teleop'
+package_name = 'hyu_teleop'
 
 setup(
     name=package_name,
@@ -19,7 +19,7 @@ setup(
     license='MIT',
     entry_points={
         'console_scripts': [
-            'teleop = eufs_teleop.teleop_node:main',
+            'teleop = hyu_teleop.teleop_node:main',
         ],
     },
 )

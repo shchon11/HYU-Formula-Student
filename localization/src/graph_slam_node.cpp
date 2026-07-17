@@ -6,7 +6,7 @@
 // SIZE_OK: This integration only preserves topic/config compatibility; splitting
 // the legacy monolithic graph SLAM node is outside this focused scope.
 
-#include "eufs_graph_slam/graph_slam_node.hpp"
+#include "hyu_localization/graph_slam_node.hpp"
 
 #include <g2o/core/block_solver.h>
 #include <g2o/core/optimization_algorithm_levenberg.h>
@@ -35,7 +35,7 @@
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "visualization_msgs/msg/marker.hpp"
 
-namespace eufs_graph_slam
+namespace hyu_localization
 {
 
 GraphSlamNode::GraphSlamNode()
@@ -138,7 +138,7 @@ GraphSlamNode::GraphSlamNode()
   map_frame_ = declare_parameter<std::string>("map_frame", "map");
   odom_frame_ = declare_parameter<std::string>("odom_frame", "odom");
   slam_base_frame_ = declare_parameter<std::string>("slam_base_frame", "base_footprint");
-  g2o_output_path_ = declare_parameter<std::string>("g2o_output_path", "/tmp/eufs_graph_slam.g2o");
+  g2o_output_path_ = declare_parameter<std::string>("g2o_output_path", "/tmp/hyu_localization.g2o");
   map_save_dir_ = declare_parameter<std::string>("map_save_dir", "/tmp");
 
   keyframe_distance_ = declare_parameter<double>("keyframe_distance", keyframe_distance_);
@@ -3693,4 +3693,4 @@ std::string GraphSlamNode::colorName(ConeColor color)
   return "unknown";
 }
 
-}  // namespace eufs_graph_slam
+}  // namespace hyu_localization

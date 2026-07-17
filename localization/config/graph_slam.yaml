@@ -228,7 +228,7 @@ graph_slam:
     visual_publish_min_interval: 0.5
     marker_scale: 0.3
 
-    g2o_output_path: /tmp/eufs_graph_slam.g2o
+    g2o_output_path: /tmp/hyu_localization.g2o
 
     # Localization-only mode: load a saved cone map (CSV) as a fixed reference
     # and optimise only the pose against it (no mapping/deletion/merge).

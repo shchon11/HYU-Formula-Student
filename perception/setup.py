@@ -1,6 +1,6 @@
 from setuptools import setup
 
-package_name = "eufs_perception_baseline"
+package_name = "hyu_perception"
 
 setup(
     name=package_name,
@@ -71,11 +71,11 @@ setup(
         "console_scripts": [
             (
                 "perception_node = "
-                "eufs_perception_baseline.perception_node:main"
+                "hyu_perception.perception_node:main"
             ),
             (
                 "yolov8_bbox_node = "
-                "eufs_perception_baseline.yolov8_bbox_node:main"
+                "hyu_perception.yolov8_bbox_node:main"
             ),
         ],
     },

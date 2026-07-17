@@ -3,7 +3,7 @@ import unittest
 
 import numpy as np
 
-from eufs_perception_baseline.fusion_core import (
+from hyu_perception.fusion_core import (
     bbox_height_disparity_prior,
     bearing_aligned_covariance,
     camera_point_from_depth,

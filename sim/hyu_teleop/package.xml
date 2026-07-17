@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>eufs_teleop</name>
+  <name>hyu_teleop</name>
   <version>0.1.0</version>
   <description>Comfortable keyboard teleoperation for the EUFS simulator with
     driving-game style control shaping (speed-sensitive steering, auto

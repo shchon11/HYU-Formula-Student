@@ -12,7 +12,7 @@ cone range.
 import threading
 import unittest
 
-from eufs_perception_baseline.perception_node import PerceptionNode
+from hyu_perception.perception_node import PerceptionNode
 
 
 class _Stamp:

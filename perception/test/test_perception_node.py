@@ -9,7 +9,7 @@ import unittest
 
 import numpy as np
 
-from eufs_perception_baseline.perception_node import (
+from hyu_perception.perception_node import (
     Cone,
     Detection,
     PerceptionNode,
@@ -331,7 +331,7 @@ class CovarianceMarkerTest(unittest.TestCase):
 
     def test_axes_and_angle_follow_the_covariance(self):
         node = _node()
-        from eufs_perception_baseline.fusion_core import bearing_aligned_covariance
+        from hyu_perception.fusion_core import bearing_aligned_covariance
         for degrees in (0, 30, 45, -60, 90):
             with self.subTest(degrees=degrees):
                 theta = math.radians(degrees)
@@ -365,7 +365,7 @@ class ProjectionTest(unittest.TestCase):
     K = np.asarray([[448.13, 0.0, 640.0], [0.0, 448.13, 360.0], [0.0, 0.0, 1.0]])
 
     def test_back_projection_and_projection_round_trip(self):
-        from eufs_perception_baseline.fusion_core import camera_point_from_depth
+        from hyu_perception.fusion_core import camera_point_from_depth
         for model in ("eufs_bbox", "pinhole"):
             node = _node(projection_model=model, min_project_depth=0.1)
             for u, v, depth in ((640.0, 360.0, 10.0), (200.0, 300.0, 7.0),

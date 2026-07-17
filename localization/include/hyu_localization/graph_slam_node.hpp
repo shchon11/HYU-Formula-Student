@@ -30,9 +30,9 @@
 #include "eufs_msgs/msg/car_state.hpp"
 #include "eufs_msgs/msg/cone_array_with_covariance.hpp"
 #include "eufs_msgs/msg/cone_with_covariance.hpp"
-#include "eufs_graph_slam/gate_anchor.hpp"
-#include "eufs_graph_slam/slam_lifecycle_classifiers.hpp"
-#include "eufs_graph_slam/tentative_track_frontend.hpp"
+#include "hyu_localization/gate_anchor.hpp"
+#include "hyu_localization/slam_lifecycle_classifiers.hpp"
+#include "hyu_localization/tentative_track_frontend.hpp"
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "geometry_msgs/msg/quaternion.hpp"
 #include "nav_msgs/msg/odometry.hpp"
@@ -45,7 +45,7 @@
 #include "tf2_ros/transform_broadcaster.h"
 #include "visualization_msgs/msg/marker_array.hpp"
 
-namespace eufs_graph_slam
+namespace hyu_localization
 {
 
 class GraphSlamNode : public rclcpp::Node
@@ -590,6 +590,6 @@ private:
   mutable std::mutex gnss_mutex_;
 };
 
-}  // namespace eufs_graph_slam
+}  // namespace hyu_localization
 
 #endif  // EUFS_GRAPH_SLAM__GRAPH_SLAM_NODE_HPP_

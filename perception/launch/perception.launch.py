@@ -6,7 +6,7 @@ RektNet model and a pairing gate to configure. None of that exists any more, so
 neither do its arguments. What is left is the handful of things that genuinely
 differ between the simulator and the car.
 
-    ros2 launch eufs_perception_baseline perception.launch.py
+    ros2 launch hyu_perception perception.launch.py
 
 Everything else lives in config/perception.yaml, next to the comment explaining
 why it has the value it has.
@@ -26,7 +26,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
-PACKAGE = "eufs_perception_baseline"
+PACKAGE = "hyu_perception"
 
 
 def _config() -> str:

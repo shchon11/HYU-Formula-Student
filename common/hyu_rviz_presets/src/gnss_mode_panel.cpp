@@ -1,6 +1,6 @@
 // Copyright 2026 HYU Formula Student.
 
-#include "fsk_rviz_presets/gnss_mode_panel.hpp"
+#include "hyu_rviz_presets/gnss_mode_panel.hpp"
 
 #include <utility>
 #include <vector>
@@ -16,7 +16,7 @@
 #include "rviz_common/display_context.hpp"
 #include "rviz_common/ros_integration/ros_node_abstraction_iface.hpp"
 
-namespace fsk_rviz_presets
+namespace hyu_rviz_presets
 {
 
 namespace
@@ -122,6 +122,6 @@ void GnssModePanel::publishSolutionMode(int mode)
   status_label_->setText(QString("Set solution_mode → %1").arg(mode));
 }
 
-}  // namespace fsk_rviz_presets
+}  // namespace hyu_rviz_presets
 
-PLUGINLIB_EXPORT_CLASS(fsk_rviz_presets::GnssModePanel, rviz_common::Panel)
+PLUGINLIB_EXPORT_CLASS(hyu_rviz_presets::GnssModePanel, rviz_common::Panel)

@@ -19,7 +19,7 @@
 #include <utility>
 #include <vector>
 
-namespace eufs_graph_slam
+namespace hyu_localization
 {
 
 // Delayed data association frontend (tentative tracks).
@@ -539,6 +539,6 @@ private:
   std::vector<TentativeTrack> tracks_;
 };
 
-}  // namespace eufs_graph_slam
+}  // namespace hyu_localization
 
 #endif  // EUFS_GRAPH_SLAM__TENTATIVE_TRACK_FRONTEND_HPP_

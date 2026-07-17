@@ -76,9 +76,9 @@ global path 생성의 입력이 되는 **원 4개(중심·반지름)** 와 **ski
 | `has_orange_candidates` | orange ≥ 6 | 직선 모델 비활성. **yellow/blue를 straight로 강제 배정 금지** |
 | `corridor_fit_valid` | frame 확보 후 side별 ≥ 3개 ∧ side별 종방향 spread ≥ 3 m ∧ fit 검사 통과 (§5 Step 5) | 직선 모델 비활성 + status (orange ≥ 6이어도 4개가 한쪽에 몰리면 실패해야 한다) |
 
-**선행 조건**: 실차 경로에서는 `eufs_graph_slam`이 landmark marginal covariance
+**선행 조건**: 실차 경로에서는 `hyu_localization`이 landmark marginal covariance
 포함 EUFS 7-컬럼 CSV exporter가 필요하다. 현 저장소 확인 결과(2026-07,
-`eufs_graph_slam/src/graph_slam_node.cpp` grep) `save_graph` 서비스는 g2o 그래프
+`hyu_localization/src/graph_slam_node.cpp` grep) `save_graph` 서비스는 g2o 그래프
 저장뿐으로 해당 exporter는 없다. exporter 확보 전까지 실맵 검증은 불가능하다.
 
 **주의**: CSV의 landmark별 2×2 marginal covariance는 SLAM pose 불확실성으로

@@ -7,8 +7,8 @@ from unittest.mock import patch
 import numpy as np
 from sensor_msgs.msg import Image
 
-from eufs_perception_baseline.latest_only_worker import WorkerCompletion
-from eufs_perception_baseline.yolov8_bbox_node import (
+from hyu_perception.latest_only_worker import WorkerCompletion
+from hyu_perception.yolov8_bbox_node import (
     YoloComputation,
     YoloJob,
     YoloV8BBoxNode,
@@ -182,7 +182,7 @@ class YoloV8BBoxNodeTest(unittest.TestCase):
         image = self._image_message()
 
         with patch.object(YoloV8BBoxNode, "get_logger", return_value=logger), patch(
-            "eufs_perception_baseline.yolov8_bbox_node.image_message_to_numpy",
+            "hyu_perception.yolov8_bbox_node.image_message_to_numpy",
             side_effect=ValueError("bad encoding"),
         ):
             node._image_callback(image)
@@ -196,7 +196,7 @@ class YoloV8BBoxNodeTest(unittest.TestCase):
         image = self._image_message()
 
         with patch.object(YoloV8BBoxNode, "get_logger", return_value=logger), patch(
-            "eufs_perception_baseline.yolov8_bbox_node.image_message_to_numpy",
+            "hyu_perception.yolov8_bbox_node.image_message_to_numpy",
             return_value=np.zeros((1, 1, 3), dtype=np.uint8),
         ):
             node._image_callback(image)
@@ -211,10 +211,10 @@ class YoloV8BBoxNodeTest(unittest.TestCase):
         image = self._image_message()
 
         with patch.object(YoloV8BBoxNode, "get_logger", return_value=logger), patch(
-            "eufs_perception_baseline.yolov8_bbox_node.image_message_to_numpy",
+            "hyu_perception.yolov8_bbox_node.image_message_to_numpy",
             return_value=np.zeros((1, 1, 3), dtype=np.uint8),
         ), patch(
-            "eufs_perception_baseline.yolov8_bbox_node."
+            "hyu_perception.yolov8_bbox_node."
             "detections_from_ultralytics_results",
             side_effect=ValueError("malformed result"),
         ):
@@ -229,10 +229,10 @@ class YoloV8BBoxNodeTest(unittest.TestCase):
         image = self._image_message()
 
         with patch(
-            "eufs_perception_baseline.yolov8_bbox_node.image_message_to_numpy",
+            "hyu_perception.yolov8_bbox_node.image_message_to_numpy",
             return_value=np.zeros((1, 1, 3), dtype=np.uint8),
         ), patch(
-            "eufs_perception_baseline.yolov8_bbox_node."
+            "hyu_perception.yolov8_bbox_node."
             "detections_from_ultralytics_results",
             return_value=[],
         ):

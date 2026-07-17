@@ -1,6 +1,6 @@
 import unittest
 
-from eufs_perception_baseline.sync_buffer import TimestampBuffer
+from hyu_perception.sync_buffer import TimestampBuffer
 
 
 class TimestampBufferTest(unittest.TestCase):

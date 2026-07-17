@@ -13,7 +13,7 @@
 
 #include "rviz_common/display_group.hpp"
 
-namespace fsk_rviz_presets
+namespace hyu_rviz_presets
 {
 
 /// DisplayGroup that fills itself with a preset list of child displays.
@@ -85,4 +85,4 @@ protected:
   void populate() override;
 };
 
-}  // namespace fsk_rviz_presets
+}  // namespace hyu_rviz_presets

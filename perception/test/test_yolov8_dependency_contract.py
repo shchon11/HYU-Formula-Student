@@ -10,7 +10,7 @@ class YoloV8DependencyContractTest(unittest.TestCase):
         self.readme = (package_root / "README.md").read_text()
         self.production_sources = "\n".join(
             path.read_text()
-            for path in (package_root / "eufs_perception_baseline").glob(
+            for path in (package_root / "hyu_perception").glob(
                 "*.py"
             )
         )

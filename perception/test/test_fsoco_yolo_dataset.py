@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from eufs_perception_baseline.fsoco_yolo_dataset import (
+from hyu_perception.fsoco_yolo_dataset import (
     ConversionError,
     FSOCO_CLASSES,
     convert_dataset,

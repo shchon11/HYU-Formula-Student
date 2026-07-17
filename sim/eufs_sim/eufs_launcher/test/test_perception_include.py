@@ -21,13 +21,13 @@ SIM_LAUNCH = os.path.join(os.path.dirname(__file__), "..", "launch",
 
 def _baseline_launch_path():
     return os.path.join(
-        get_package_share_directory("eufs_perception_baseline"),
+        get_package_share_directory("hyu_perception"),
         "launch", "perception.launch.py")
 
 
 def _included_file_and_args(source):
-    """The filename and launch_arguments of the eufs_perception_baseline include."""
-    anchor = source.index("get_package_share_directory('eufs_perception_baseline')")
+    """The filename and launch_arguments of the hyu_perception include."""
+    anchor = source.index("get_package_share_directory('hyu_perception')")
     block = source[anchor:]
     end = block.index("launch_arguments=[")
     filename = re.findall(r"'([\w.]+\.launch\.py)'", block[:end])

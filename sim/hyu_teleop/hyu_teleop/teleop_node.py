@@ -49,7 +49,7 @@ HELP = (
 
 class TeleopNode(Node):
     def __init__(self):
-        super().__init__('eufs_teleop')
+        super().__init__('hyu_teleop')
 
         self.declare_parameter('cmd_topic', '/cmd')
         self.declare_parameter('car_state_topic', '/wheel_odometry/car_state')
@@ -284,7 +284,7 @@ def read_keys(handle_key, stop_event):
 
 def main():
     if not sys.stdin.isatty():
-        print('eufs_teleop needs an interactive terminal', file=sys.stderr)
+        print('hyu_teleop needs an interactive terminal', file=sys.stderr)
         return 1
 
     # The EUFS launcher forces ROS_LOCALHOST_ONLY=1 on the simulator; a

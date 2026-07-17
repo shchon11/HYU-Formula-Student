@@ -139,7 +139,7 @@ source /opt/ros/galactic/setup.bash
 source install/setup.bash
 
 LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7 \
-ros2 launch eufs_perception_baseline perception_baseline.launch.py \
+ros2 launch hyu_perception perception_baseline.launch.py \
   bbox_source:=yolov8 \
   yolo_model_path:=/home/dohyun/FS/artifacts/yolov8/fsoco_yolov8n/weights/best.pt \
   yolo_class_map:=blue_cone:blue,yellow_cone:yellow,orange_cone:orange,large_orange_cone:big_orange,unknown_cone:unknown \
