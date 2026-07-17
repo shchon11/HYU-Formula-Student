@@ -75,4 +75,10 @@ install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}
 )
 
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_osqp_wrapper test/test_osqp_wrapper.cpp)
+  target_link_libraries(test_osqp_wrapper hyu_tum_codegen)
+endif()
+
 ament_package()

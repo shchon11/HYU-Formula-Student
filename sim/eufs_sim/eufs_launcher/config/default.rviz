@@ -363,7 +363,7 @@ Visualization Manager:
             Filter size: 10
             History Policy: Keep Last
             Reliability Policy: Reliable
-            Value: /global_waypoints/path
+            Value: /planning/global_waypoints/path
           Value: true
         - Alpha: 1
           Buffer Length: 1
