@@ -40,11 +40,11 @@ double VehicleModel::getSlipAngle(const State &x, const Input &u, bool is_front)
          u.delta;
 }
 
-eufs_msgs::msg::WheelSpeeds VehicleModel::getWheelSpeeds(const State &state, const Input &input) {
+hyu_msgs::msg::WheelSpeeds VehicleModel::getWheelSpeeds(const State &state, const Input &input) {
   float PI = 3.14159265;
   float wheel_circumference = 2 * PI * _param.tire.radius;
 
-  eufs_msgs::msg::WheelSpeeds wheel_speeds;
+  hyu_msgs::msg::WheelSpeeds wheel_speeds;
 
   wheel_speeds.steering = input.delta;
 

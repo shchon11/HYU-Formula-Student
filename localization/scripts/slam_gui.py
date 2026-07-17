@@ -36,7 +36,7 @@ from rclpy.qos import (  # noqa: E402
     ReliabilityPolicy,
 )
 
-from eufs_msgs.msg import ConeArrayWithCovariance  # noqa: E402
+from hyu_msgs.msg import ConeArrayWithCovariance  # noqa: E402
 from rcl_interfaces.srv import SetParameters  # noqa: E402
 from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType  # noqa: E402
 from std_srvs.srv import Trigger  # noqa: E402

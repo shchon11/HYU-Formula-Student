@@ -23,7 +23,7 @@ option(BUILD_SHARED_LIBS ON)
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(yaml-cpp REQUIRED)
-find_package(eufs_msgs REQUIRED)
+find_package(hyu_msgs REQUIRED)
 
 # build library
 add_library(${PROJECT_NAME}
@@ -37,7 +37,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 target_link_libraries(eufs_models
   ${YAML_CPP_LIBRARIES})
 ament_target_dependencies(eufs_models
-  "eufs_msgs"
+  "hyu_msgs"
   "yaml-cpp")
 
 # export library
@@ -47,7 +47,7 @@ ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 
 ament_export_dependencies(ament_cmake)
 ament_export_dependencies(yaml-cpp)
-ament_export_dependencies(eufs_msgs)
+ament_export_dependencies(hyu_msgs)
 
 install(
   DIRECTORY include/

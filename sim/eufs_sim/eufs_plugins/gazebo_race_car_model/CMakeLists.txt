@@ -8,7 +8,7 @@ add_library(gazebo_race_car_model SHARED
 find_package(gazebo_dev REQUIRED)
 find_package(gazebo_ros REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(eufs_msgs REQUIRED)
+find_package(hyu_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -25,7 +25,7 @@ ament_target_dependencies(gazebo_race_car_model
   "gazebo_ros"
   "ament_index_cpp"
   "rclcpp"
-  "eufs_msgs"
+  "hyu_msgs"
   "nav_msgs"
   "geometry_msgs"
   "sensor_msgs"

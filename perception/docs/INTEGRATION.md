@@ -21,14 +21,14 @@ project's own cone-pose detector.
 ```
 /zed/left/image_rect_color
     -> yolov8_bbox_node        (YOLO26n-pose: box + keypoints, one forward pass)
-    -> /yolo_bounding_boxes     eufs_msgs/BoundingBoxes
-       /yolo_cone_keypoints     eufs_msgs/ConeKeypointsArray   (same header stamp)
+    -> /yolo_bounding_boxes     hyu_msgs/BoundingBoxes
+       /yolo_cone_keypoints     hyu_msgs/ConeKeypointsArray   (same header stamp)
     -> perception_baseline_node
        + /velodyne_points
        + /zed/{left,right}/image_rect_color
        + /zed/{left,right}/camera_info
        + timestamped /tf
-    -> /cones                   eufs_msgs/ConeArrayWithCovariance, base_footprint
+    -> /cones                   hyu_msgs/ConeArrayWithCovariance, base_footprint
     -> hyu_localization -> /graph_slam/map -> hyu_global_planner -> pure_pursuit -> /cmd
 ```
 
@@ -239,7 +239,7 @@ Nothing here has run in the simulator. In priority order:
 1. **Build it.** The two new messages (`ConeKeypoints`, `ConeKeypointsArray`) have
    never been compiled.
    ```bash
-   colcon build --packages-up-to eufs_msgs hyu_perception hyu_localization
+   colcon build --packages-up-to hyu_msgs hyu_perception hyu_localization
    ```
 
 2. **Run the ROS tests.** Five test files (`test_perception_three_tier.py`,

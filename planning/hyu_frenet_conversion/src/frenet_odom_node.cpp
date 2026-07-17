@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "clcs_frenet_converter.hpp"
-#include "eufs_msgs/msg/waypoint_array_stamped.hpp"
+#include "hyu_msgs/msg/waypoint_array_stamped.hpp"
 #include "hyu_frenet_conversion/clcs_build_diagnostics.hpp"
 #include "hyu_frenet_conversion/frenet_odom_messages.hpp"
 #include "hyu_frenet_conversion/frenet_odom_parameters.hpp"
@@ -32,7 +32,7 @@ public:
       parameters_.odom_topic, rclcpp::QoS(rclcpp::KeepLast(20)).reliable(),
       std::bind(&FrenetOdomNode::odomCallback, this, std::placeholders::_1));
 
-    waypoint_sub_ = create_subscription<eufs_msgs::msg::WaypointArrayStamped>(
+    waypoint_sub_ = create_subscription<hyu_msgs::msg::WaypointArrayStamped>(
       parameters_.waypoint_topic, rclcpp::QoS(1).reliable().transient_local(),
       std::bind(&FrenetOdomNode::waypointsCallback, this, std::placeholders::_1));
 
@@ -77,7 +77,7 @@ public:
   }
 
 private:
-  void waypointsCallback(const eufs_msgs::msg::WaypointArrayStamped::SharedPtr msg)
+  void waypointsCallback(const hyu_msgs::msg::WaypointArrayStamped::SharedPtr msg)
   {
     const auto raw_waypoints = toReferenceWaypoints(*msg);
     if (raw_waypoints.size() < 3) {
@@ -273,7 +273,7 @@ private:
   GlobalPathValidityState global_path_validity_{0.5};
 
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
-  rclcpp::Subscription<eufs_msgs::msg::WaypointArrayStamped>::SharedPtr waypoint_sub_;
+  rclcpp::Subscription<hyu_msgs::msg::WaypointArrayStamped>::SharedPtr waypoint_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr global_path_valid_sub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr frenet_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr debug_pub_;

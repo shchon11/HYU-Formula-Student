@@ -15,16 +15,16 @@ namespace
 constexpr double kNowSec = 10.0;
 constexpr double kReceiveSec = 9.8;
 
-eufs_msgs::msg::WaypointArrayStamped makePath(
+hyu_msgs::msg::WaypointArrayStamped makePath(
   const std::vector<std::pair<double, double>> & points,
   const std::string & frame = "map")
 {
-  eufs_msgs::msg::WaypointArrayStamped path;
+  hyu_msgs::msg::WaypointArrayStamped path;
   path.header.frame_id = frame;
   path.header.stamp.sec = 9;
   path.header.stamp.nanosec = 800000000U;
   for (std::size_t i = 0; i < points.size(); ++i) {
-    eufs_msgs::msg::Waypoint waypoint;
+    hyu_msgs::msg::Waypoint waypoint;
     waypoint.position.x = points[i].first;
     waypoint.position.y = points[i].second;
     waypoint.x_m = points[i].first;

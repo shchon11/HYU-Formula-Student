@@ -23,7 +23,7 @@
        and the lidar realism bridge (scripts/lidar_realism.py). -->
   <exec_depend>rclpy</exec_depend>
   <exec_depend>std_msgs</exec_depend>
-  <exec_depend>eufs_msgs</exec_depend>
+  <exec_depend>hyu_msgs</exec_depend>
   <exec_depend>sbg_driver</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>sensor_msgs_py</exec_depend>

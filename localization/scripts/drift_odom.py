@@ -23,7 +23,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 
-from eufs_msgs.msg import CarState
+from hyu_msgs.msg import CarState
 
 
 class DriftOdom(Node):

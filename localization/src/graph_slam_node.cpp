@@ -461,7 +461,7 @@ GraphSlamNode::GraphSlamNode()
   }
 
   const auto transient_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
-  map_pub_ = create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(map_topic_, transient_qos);
+  map_pub_ = create_publisher<hyu_msgs::msg::ConeArrayWithCovariance>(map_topic_, transient_qos);
   odom_pub_ = create_publisher<nav_msgs::msg::Odometry>(slam_odom_topic_, 10);
   path_pub_ = create_publisher<nav_msgs::msg::Path>(path_topic_, transient_qos);
   marker_pub_ =
@@ -517,12 +517,12 @@ GraphSlamNode::GraphSlamNode()
   rclcpp::SubscriptionOptions graph_options;
   graph_options.callback_group = graph_callback_group_;
 
-  car_state_sub_ = create_subscription<eufs_msgs::msg::CarState>(
+  car_state_sub_ = create_subscription<hyu_msgs::msg::CarState>(
     car_state_topic_,
     rclcpp::SensorDataQoS(),
     std::bind(&GraphSlamNode::stateCallback, this, std::placeholders::_1),
     state_options);
-  cones_sub_ = create_subscription<eufs_msgs::msg::ConeArrayWithCovariance>(
+  cones_sub_ = create_subscription<hyu_msgs::msg::ConeArrayWithCovariance>(
     cones_topic_,
     rclcpp::SensorDataQoS(),
     std::bind(&GraphSlamNode::conesCallback, this, std::placeholders::_1),
@@ -707,7 +707,7 @@ void GraphSlamNode::resetGraph()
   last_gate_anchor_traveled_m_ = -1.0e18;
 }
 
-void GraphSlamNode::stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg)
+void GraphSlamNode::stateCallback(const hyu_msgs::msg::CarState::SharedPtr msg)
 {
   const rclcpp::Time stamp = stampOrNow(msg->header.stamp, get_clock());
   const g2o::SE2 raw_odom = poseFromCarState(*msg);
@@ -768,7 +768,7 @@ void GraphSlamNode::stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg)
 }
 
 void GraphSlamNode::conesCallback(
-  const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg)
+  const hyu_msgs::msg::ConeArrayWithCovariance::SharedPtr msg)
 {
   const auto tic = std::chrono::steady_clock::now();
   std::lock_guard<std::mutex> lock(graph_mutex_);
@@ -1331,7 +1331,7 @@ void GraphSlamNode::onOptimizeTimer()
   maybeOptimize();
 }
 
-g2o::SE2 GraphSlamNode::poseFromCarState(const eufs_msgs::msg::CarState & msg) const
+g2o::SE2 GraphSlamNode::poseFromCarState(const hyu_msgs::msg::CarState & msg) const
 {
   return g2o::SE2(
     msg.pose.pose.position.x,
@@ -1602,7 +1602,7 @@ void GraphSlamNode::maybeAddGnssPrior(
 }
 
 GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
-  const eufs_msgs::msg::ConeArrayWithCovariance & msg,
+  const hyu_msgs::msg::ConeArrayWithCovariance & msg,
   bool force_process)
 {
   if (poses_.empty()) {
@@ -1912,7 +1912,7 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
 }
 
 std::vector<GraphSlamNode::ConeObservation> GraphSlamNode::extractConeObservations(
-  const eufs_msgs::msg::ConeArrayWithCovariance & msg) const
+  const hyu_msgs::msg::ConeArrayWithCovariance & msg) const
 {
   std::vector<ConeObservation> observations;
 
@@ -1921,7 +1921,7 @@ std::vector<GraphSlamNode::ConeObservation> GraphSlamNode::extractConeObservatio
     const auto & cones,
     ConeColor color)
     {
-      for (const eufs_msgs::msg::ConeWithCovariance & cone : cones) {
+      for (const hyu_msgs::msg::ConeWithCovariance & cone : cones) {
         if (!std::isfinite(cone.point.x) || !std::isfinite(cone.point.y)) {
           continue;
         }
@@ -1949,7 +1949,7 @@ std::vector<GraphSlamNode::ConeObservation> GraphSlamNode::extractConeObservatio
 }
 
 Eigen::Matrix2d GraphSlamNode::covarianceFromCone(
-  const eufs_msgs::msg::ConeWithCovariance & cone) const
+  const hyu_msgs::msg::ConeWithCovariance & cone) const
 {
   const auto default_covariance =
     Eigen::Matrix2d::Identity() * default_observation_sigma_ * default_observation_sigma_;
@@ -2831,7 +2831,7 @@ void GraphSlamNode::publishLiveEstimate(
 
 void GraphSlamNode::publishMap(const rclcpp::Time & stamp)
 {
-  eufs_msgs::msg::ConeArrayWithCovariance msg;
+  hyu_msgs::msg::ConeArrayWithCovariance msg;
   msg.header.frame_id = map_frame_;
   msg.header.stamp = stamp;
 
@@ -2842,7 +2842,7 @@ void GraphSlamNode::publishMap(const rclcpp::Time & stamp)
       continue;
     }
 
-    eufs_msgs::msg::ConeWithCovariance cone;
+    hyu_msgs::msg::ConeWithCovariance cone;
     const Eigen::Vector2d estimate = landmark.vertex->estimate();
     cone.point.x = estimate.x();
     cone.point.y = estimate.y();

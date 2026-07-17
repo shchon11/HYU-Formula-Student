@@ -59,13 +59,13 @@ The GUI publishes vehicle command onto this topic using [ackermann_msgs/Ackerman
 
 | Name | Type | Purpose |
 | ---- | ---- | ------- |
-| `/ros_can/set_mission` | [eufs_msgs/CanState](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/CanState.msg) | Sends a mission request to the [state_machine](../eufs_plugins/gazebo_race_car_model/src/state_machine.cpp). Note that in the CanState message only the AMI state is used. |
+| `/ros_can/set_mission` | [hyu_msgs/CanState](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/CanState.msg) | Sends a mission request to the [state_machine](../eufs_plugins/gazebo_race_car_model/src/state_machine.cpp). Note that in the CanState message only the AMI state is used. |
 
 ### ROS 2 Subscribers
 
 | Name | Type | Purpose |
 | ---- | ---- | ------- |
-| `/ros_can/state` | [eufs_msgs/CanState](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/CanState.msg) | Obtains the simulated vehicle's current AS and AMI state and displays it on the GUI. |
+| `/ros_can/state` | [hyu_msgs/CanState](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/CanState.msg) | Obtains the simulated vehicle's current AS and AMI state and displays it on the GUI. |
 
 ### ROS 2 Clients
 

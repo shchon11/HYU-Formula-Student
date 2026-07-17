@@ -7,7 +7,7 @@
 #include <system_error>
 #include <utility>
 
-#include "eufs_msgs/msg/waypoint.hpp"
+#include "hyu_msgs/msg/waypoint.hpp"
 
 namespace hyu_global_planner
 {
@@ -20,7 +20,7 @@ GlobalPlannerTrajectoryPublisherNode::GlobalPlannerTrajectoryPublisherNode()
 
   const auto latched_qos = rclcpp::QoS(1).reliable().transient_local();
   global_waypoints_pub_ =
-    create_publisher<eufs_msgs::msg::WaypointArrayStamped>(
+    create_publisher<hyu_msgs::msg::WaypointArrayStamped>(
     global_waypoints_topic_,
     latched_qos);
   const auto heartbeat_qos = rclcpp::QoS(1).reliable();
@@ -120,16 +120,16 @@ TrajectoryValidationOptions GlobalPlannerTrajectoryPublisherNode::trajectoryVali
     duplicate_point_tolerance_, min_waypoint_count_, recompute_s_if_invalid_};
 }
 
-eufs_msgs::msg::WaypointArrayStamped GlobalPlannerTrajectoryPublisherNode::buildWaypointMessage(
+hyu_msgs::msg::WaypointArrayStamped GlobalPlannerTrajectoryPublisherNode::buildWaypointMessage(
   const std::vector<TrajectoryPoint> & points)
 {
-  eufs_msgs::msg::WaypointArrayStamped msg;
+  hyu_msgs::msg::WaypointArrayStamped msg;
   msg.header.stamp = now();
   msg.header.frame_id = frame_id_;
   msg.waypoints.reserve(points.size());
 
   for (const auto & point : points) {
-    eufs_msgs::msg::Waypoint waypoint;
+    hyu_msgs::msg::Waypoint waypoint;
     waypoint.position.x = point.x;
     waypoint.position.y = point.y;
     waypoint.position.z = 0.0;

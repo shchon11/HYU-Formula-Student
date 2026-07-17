@@ -14,7 +14,7 @@ hyu_perception
         |
         v
 /cones
-  type: eufs_msgs/msg/ConeArrayWithCovariance
+  type: hyu_msgs/msg/ConeArrayWithCovariance
   frame: base_footprint
 ```
 
@@ -400,7 +400,7 @@ YOLOv8 bbox detector 구현은
 
 - `yolov8_bbox_node`: ROS Image를 OpenCV image로 변환하고 YOLOv8 inference 실행
 - `detections_from_ultralytics_results()`: YOLO 결과를 pixel bbox detection으로 변환
-- output: `eufs_msgs/msg/BoundingBoxes`
+- output: `hyu_msgs/msg/BoundingBoxes`
 - timestamp policy: `header`와 `image_header` 모두 원본 `Image.header` 사용
 
 Image 변환은 `CvBridge` 대신 `ros_image_utils.py`의 명시적

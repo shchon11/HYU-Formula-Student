@@ -66,12 +66,12 @@ phase로 defer되어 있다.
 | Topic | Type | 설명 |
 | --- | --- | --- |
 | `/car_state/frenet/odom` | `nav_msgs/msg/Odometry` | Frenet odometry. `pose.pose.position.x`를 `current_s`, `pose.pose.position.y`를 `current_d`로 저장한다. |
-| `/global_waypoints` | `eufs_msgs/msg/WaypointArrayStamped` | reliable transient-local QoS로 받는 latched global waypoint snapshot. non-empty snapshot만 accept한다. |
+| `/global_waypoints` | `hyu_msgs/msg/WaypointArrayStamped` | reliable transient-local QoS로 받는 latched global waypoint snapshot. non-empty snapshot만 accept한다. |
 | `/graph_slam/status` | `std_msgs/msg/String` | reliable transient-local QoS로 받는 Graph SLAM lifecycle state. 최신 latched 값이 `localization`일 때만 global path를 사용할 수 있다. status message age만으로 demote하지 않는다. |
 | `/planning/global_path_valid` | `std_msgs/msg/Bool` | reliable volatile QoS로 받는 global path validity heartbeat. `false` 또는 timeout이면 기존 waypoint snapshot을 invalidation하고 새 snapshot을 기다린다. |
 | `/planning/local_path_valid` | `std_msgs/msg/Bool` | reliable volatile QoS로 받는 local planner validity heartbeat. 값, 수신 여부, 수신 시각, freshness를 debug에 기록하며 state/STOP 전이에는 사용하지 않는다. |
 | `/planning/global_handoff_ready` | `std_msgs/msg/Bool` | reliable volatile QoS로 받는 selector continuity heartbeat. fresh true가 연속 dwell을 만족할 때만 LOCAL에서 GLOBAL로 진입한다. |
-| `/cones` | `eufs_msgs/msg/ConeArrayWithCovariance` | `base_footprint` 기준 local perception cone observation. 색상별 cone 개수와 freshness를 저장한다. |
+| `/cones` | `hyu_msgs/msg/ConeArrayWithCovariance` | `base_footprint` 기준 local perception cone observation. 색상별 cone 개수와 freshness를 저장한다. |
 | `/stop_zone_s_start` | `std_msgs/msg/Float64` | stop zone 시작 지점의 global path projection `s` |
 | `/stop_zone_s_end` | `std_msgs/msg/Float64` | stop zone 끝 지점의 global path projection `s` |
 | `/stop_zone_valid` | `std_msgs/msg/Bool` | stop zone detector 결과 유효 여부 |

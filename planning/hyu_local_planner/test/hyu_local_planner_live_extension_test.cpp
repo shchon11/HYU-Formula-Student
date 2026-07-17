@@ -23,9 +23,9 @@ using test_support::ShutdownGuard;
 using test_support::currentStamp;
 using test_support::spinUntil;
 
-eufs_msgs::msg::ConeWithCovariance coneAt(double x, double y)
+hyu_msgs::msg::ConeWithCovariance coneAt(double x, double y)
 {
-  eufs_msgs::msg::ConeWithCovariance cone;
+  hyu_msgs::msg::ConeWithCovariance cone;
   cone.point.x = x;
   cone.point.y = y;
   return cone;
@@ -174,9 +174,9 @@ TEST(LiveExtension, NodeStitchesLiveConesOntoSlamPath)
 
   double max_waypoint_x = 0.0;
   const auto waypoint_subscription = driver->create_subscription<
-    eufs_msgs::msg::WaypointArrayStamped>(
+    hyu_msgs::msg::WaypointArrayStamped>(
     "/t_live_ext/waypoints", rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
-    [&max_waypoint_x](const eufs_msgs::msg::WaypointArrayStamped::SharedPtr message) {
+    [&max_waypoint_x](const hyu_msgs::msg::WaypointArrayStamped::SharedPtr message) {
       for (const auto & waypoint : message->waypoints) {
         max_waypoint_x = std::max(max_waypoint_x, waypoint.x_m);
       }

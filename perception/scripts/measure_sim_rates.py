@@ -16,7 +16,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image, PointCloud2
-from eufs_msgs.msg import BoundingBoxes, ConeArrayWithCovariance
+from hyu_msgs.msg import BoundingBoxes, ConeArrayWithCovariance
 
 QOS = QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=20,
                  reliability=ReliabilityPolicy.BEST_EFFORT)

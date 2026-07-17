@@ -4,12 +4,12 @@
 
 The node subscribes to:
 
-- `/odometry_integration/car_state` (`eufs_msgs/msg/CarState`) for SE2 keyframe motion
-- `/cones` (`eufs_msgs/msg/ConeArrayWithCovariance`) for local cone observations in `base_footprint`
+- `/odometry_integration/car_state` (`hyu_msgs/msg/CarState`) for SE2 keyframe motion
+- `/cones` (`hyu_msgs/msg/ConeArrayWithCovariance`) for local cone observations in `base_footprint`
 
 It publishes:
 
-- `/localization/cone_map` (`eufs_msgs/msg/ConeArrayWithCovariance`)
+- `/localization/cone_map` (`hyu_msgs/msg/ConeArrayWithCovariance`)
 - `/localization/ego_odom` (`nav_msgs/msg/Odometry`)
 - `/graph_slam/path` (`nav_msgs/msg/Path`)
 - `/graph_slam/markers` (`visualization_msgs/msg/MarkerArray`)
@@ -25,7 +25,7 @@ disabled so `base_footprint` has one parent.
 Graph SLAM owns the localization outputs consumed by the planning integration:
 
 - `/localization/cone_map` is a reliable transient-local
-  `eufs_msgs/msg/ConeArrayWithCovariance` map snapshot.
+  `hyu_msgs/msg/ConeArrayWithCovariance` map snapshot.
 - `/localization/ego_odom` is the live `nav_msgs/msg/Odometry` ego pose stream.
 - `/graph_slam/status` remains Graph-SLAM-owned lifecycle state with values
   `mapping`, `mapping_converged`, and `localization`.
@@ -55,7 +55,7 @@ colcon build --symlink-install --packages-up-to hyu_localization
 source install/setup.zsh
 ```
 
-`--packages-up-to` builds workspace dependencies such as `eufs_msgs` before building `hyu_localization`.
+`--packages-up-to` builds workspace dependencies such as `hyu_msgs` before building `hyu_localization`.
 
 The package first tries `find_package(g2o CONFIG)`. If that is not available, it vendors a sibling g2o source tree at `../g2o` relative to `eufs_simulator`. For a different location, pass:
 

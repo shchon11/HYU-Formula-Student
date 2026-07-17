@@ -15,15 +15,15 @@ namespace hyu_state_machine
 namespace
 {
 
-eufs_msgs::msg::WaypointArrayStamped makePath(
+hyu_msgs::msg::WaypointArrayStamped makePath(
   const std::vector<double> & s_values,
   const std::vector<std::pair<double, double>> & xy,
   const std::string & frame_id = "map")
 {
-  eufs_msgs::msg::WaypointArrayStamped msg;
+  hyu_msgs::msg::WaypointArrayStamped msg;
   msg.header.frame_id = frame_id;
   for (std::size_t index = 0; index < s_values.size(); ++index) {
-    eufs_msgs::msg::Waypoint waypoint;
+    hyu_msgs::msg::Waypoint waypoint;
     waypoint.s_m = s_values[index];
     waypoint.x_m = xy[index].first;
     waypoint.y_m = xy[index].second;

@@ -1,5 +1,5 @@
 ## Fusion outputs
-Type: eufs_msgs/msg/ConeArrayWithCovariance
+Type: hyu_msgs/msg/ConeArrayWithCovariance
 Publisher count: 1
 Subscription count: 0
 Type: visualization_msgs/msg/MarkerArray

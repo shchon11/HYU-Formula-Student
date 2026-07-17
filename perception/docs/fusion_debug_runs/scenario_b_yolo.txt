@@ -1,5 +1,5 @@
 ## Scenario B - yolo topic info
-Type: eufs_msgs/msg/BoundingBoxes
+Type: hyu_msgs/msg/BoundingBoxes
 Publisher count: 1
 Subscription count: 1
 

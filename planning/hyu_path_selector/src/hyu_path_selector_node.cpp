@@ -59,10 +59,10 @@ PathSelectorNode::PathSelectorNode()
   path_source_sub_ = create_subscription<std_msgs::msg::String>(
     path_source_topic_, reliable_qos,
     std::bind(&PathSelectorNode::onPathSource, this, std::placeholders::_1));
-  local_path_sub_ = create_subscription<eufs_msgs::msg::WaypointArrayStamped>(
+  local_path_sub_ = create_subscription<hyu_msgs::msg::WaypointArrayStamped>(
     local_path_topic_, reliable_qos,
     std::bind(&PathSelectorNode::onLocalPath, this, std::placeholders::_1));
-  global_path_sub_ = create_subscription<eufs_msgs::msg::WaypointArrayStamped>(
+  global_path_sub_ = create_subscription<hyu_msgs::msg::WaypointArrayStamped>(
     global_path_topic_, reliable_qos,
     std::bind(&PathSelectorNode::onGlobalPath, this, std::placeholders::_1));
   local_validity_sub_ = create_subscription<std_msgs::msg::Bool>(
@@ -75,7 +75,7 @@ PathSelectorNode::PathSelectorNode()
     odometry_topic_, odometry_qos,
     std::bind(&PathSelectorNode::onOdometry, this, std::placeholders::_1));
 
-  selected_path_pub_ = create_publisher<eufs_msgs::msg::WaypointArrayStamped>(
+  selected_path_pub_ = create_publisher<hyu_msgs::msg::WaypointArrayStamped>(
     selected_path_topic_, reliable_qos);
   selected_path_viz_pub_ = create_publisher<nav_msgs::msg::Path>(
     selected_path_viz_topic_, reliable_qos);
@@ -108,7 +108,7 @@ void PathSelectorNode::onPathSource(const std_msgs::msg::String::SharedPtr messa
 }
 
 void PathSelectorNode::onLocalPath(
-  const eufs_msgs::msg::WaypointArrayStamped::SharedPtr message)
+  const hyu_msgs::msg::WaypointArrayStamped::SharedPtr message)
 {
   std::lock_guard<std::mutex> lock(state_mutex_);
   state_.local.path = *message;
@@ -116,7 +116,7 @@ void PathSelectorNode::onLocalPath(
 }
 
 void PathSelectorNode::onGlobalPath(
-  const eufs_msgs::msg::WaypointArrayStamped::SharedPtr message)
+  const hyu_msgs::msg::WaypointArrayStamped::SharedPtr message)
 {
   std::lock_guard<std::mutex> lock(state_mutex_);
   state_.global.path = *message;
@@ -187,7 +187,7 @@ void PathSelectorNode::publishHeartbeat()
       continuity.ready,
       state.global_entry_handoff_consumed});
 
-  const eufs_msgs::msg::WaypointArrayStamped * selected_path = nullptr;
+  const hyu_msgs::msg::WaypointArrayStamped * selected_path = nullptr;
   if (decision.valid() && decision.selected_candidate == SelectedCandidate::Local) {
     selected_path = &*local_trimmed.path;
   }

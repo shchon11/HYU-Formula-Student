@@ -4,7 +4,7 @@ if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.27.0")
   cmake_policy(SET CMP0148 OLD)
 endif()
 
-project(eufs_msgs)
+project(hyu_msgs)
 
 # Default to C++14
 if(NOT CMAKE_CXX_STANDARD)

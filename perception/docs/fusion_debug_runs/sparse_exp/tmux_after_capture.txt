@@ -3,7 +3,7 @@ e_node:6: DeprecationWarning: pkg_resources is deprecated as an API. See https:/
 /setuptools.pypa.io/en/latest/pkg_resources.html
   from pkg_resources import load_entry_point
 [INFO] [1782121980.136147518] [perception_sparse_experiment]: Publishing SLAM co
-ne observations on /cones_sparse_exp as eufs_msgs/msg/ConeArrayWithCovariance
+ne observations on /cones_sparse_exp as hyu_msgs/msg/ConeArrayWithCovariance
 [INFO] [1782121980.136383551] [perception_sparse_experiment]: Publishing RViz co
 ne markers on /cones_sparse_exp/viz as visualization_msgs/msg/MarkerArray
 [INFO] [1782121980.136551936] [perception_sparse_experiment]: Fusion inputs: ima

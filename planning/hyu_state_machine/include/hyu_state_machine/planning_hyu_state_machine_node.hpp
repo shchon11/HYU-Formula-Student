@@ -7,8 +7,8 @@
 #include <string>
 #include <vector>
 
-#include "eufs_msgs/msg/cone_array_with_covariance.hpp"
-#include "eufs_msgs/msg/waypoint_array_stamped.hpp"
+#include "hyu_msgs/msg/cone_array_with_covariance.hpp"
+#include "hyu_msgs/msg/waypoint_array_stamped.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "hyu_state_machine/global_path_readiness.hpp"
@@ -34,7 +34,7 @@ public:
   LapTrackingPolicy(double closure_tolerance_m, double closing_duplicate_tolerance_m);
 
   bool observeGraphSlamStatus(const std::string & status);
-  bool acceptPath(const eufs_msgs::msg::WaypointArrayStamped & msg);
+  bool acceptPath(const hyu_msgs::msg::WaypointArrayStamped & msg);
   bool observeFrenetSample(
     double s, double receive_time_sec, double freshness_timeout_sec, double cooldown_sec);
   void refresh(double current_time_sec, double freshness_timeout_sec);
@@ -129,13 +129,13 @@ public:
 
 private:
   void onFrenetOdom(const nav_msgs::msg::Odometry::SharedPtr msg);
-  void onGlobalWaypoints(const eufs_msgs::msg::WaypointArrayStamped::SharedPtr msg);
+  void onGlobalWaypoints(const hyu_msgs::msg::WaypointArrayStamped::SharedPtr msg);
   void onGraphSlamStatus(const std_msgs::msg::String::SharedPtr msg);
   void onGlobalPathValid(const std_msgs::msg::Bool::SharedPtr msg);
   void onLocalPathValid(const std_msgs::msg::Bool::SharedPtr msg);
   void onGlobalHandoffReady(const std_msgs::msg::Bool::SharedPtr msg);
-  void onCones(const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg);
-  void onSlamConeMap(const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg);
+  void onCones(const hyu_msgs::msg::ConeArrayWithCovariance::SharedPtr msg);
+  void onSlamConeMap(const hyu_msgs::msg::ConeArrayWithCovariance::SharedPtr msg);
   void onEgoOdom(const nav_msgs::msg::Odometry::SharedPtr msg);
   void onStopZoneSStart(const std_msgs::msg::Float64::SharedPtr msg);
   void onStopZoneSEnd(const std_msgs::msg::Float64::SharedPtr msg);
@@ -239,13 +239,13 @@ private:
   rclcpp::Time last_stop_zone_valid_time_;
 
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr frenet_odom_sub_;
-  rclcpp::Subscription<eufs_msgs::msg::WaypointArrayStamped>::SharedPtr global_waypoints_sub_;
+  rclcpp::Subscription<hyu_msgs::msg::WaypointArrayStamped>::SharedPtr global_waypoints_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr graph_slam_status_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr global_path_valid_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr local_path_valid_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr global_handoff_ready_sub_;
-  rclcpp::Subscription<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr cone_map_sub_;
-  rclcpp::Subscription<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr slam_cone_map_sub_;
+  rclcpp::Subscription<hyu_msgs::msg::ConeArrayWithCovariance>::SharedPtr cone_map_sub_;
+  rclcpp::Subscription<hyu_msgs::msg::ConeArrayWithCovariance>::SharedPtr slam_cone_map_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr ego_odom_sub_;
   rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr stop_zone_s_start_sub_;
   rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr stop_zone_s_end_sub_;

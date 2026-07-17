@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict
 
 import rclpy
-from eufs_msgs.msg import (
+from hyu_msgs.msg import (
     BoundingBox,
     BoundingBoxes,
     ConeKeypoints,

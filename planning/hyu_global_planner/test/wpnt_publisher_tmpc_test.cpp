@@ -9,7 +9,7 @@
 #include <thread>
 #include <vector>
 
-#include "eufs_msgs/msg/waypoint_array_stamped.hpp"
+#include "hyu_msgs/msg/waypoint_array_stamped.hpp"
 #include "hyu_tmpc_msgs/msg/tum_trajectory.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "nav_msgs/msg/path.hpp"
@@ -24,19 +24,19 @@ namespace
 using namespace std::chrono_literals;
 using TumTrajectory = hyu_tmpc_msgs::msg::TumTrajectory;
 
-eufs_msgs::msg::WaypointArrayStamped makeCircularPath()
+hyu_msgs::msg::WaypointArrayStamped makeCircularPath()
 {
   constexpr std::size_t kCount = 100U;
   constexpr double kRadius = 20.0;
   constexpr double kPi = 3.14159265358979323846;
   const double segment_length = 2.0 * kRadius * std::sin(kPi / static_cast<double>(kCount));
 
-  eufs_msgs::msg::WaypointArrayStamped path;
+  hyu_msgs::msg::WaypointArrayStamped path;
   path.header.frame_id = "map";
   path.waypoints.reserve(kCount);
   for (std::size_t i = 0; i < kCount; ++i) {
     const double theta = 2.0 * kPi * static_cast<double>(i) / static_cast<double>(kCount);
-    eufs_msgs::msg::Waypoint waypoint;
+    hyu_msgs::msg::Waypoint waypoint;
     waypoint.x_m = kRadius * std::cos(theta);
     waypoint.y_m = kRadius * std::sin(theta);
     waypoint.position.x = waypoint.x_m;
@@ -96,7 +96,7 @@ protected:
       rclcpp::NodeOptions().parameter_overrides(overrides));
     driver_ = std::make_shared<rclcpp::Node>("wpnt_publisher_tmpc_test_driver");
 
-    global_pub_ = driver_->create_publisher<eufs_msgs::msg::WaypointArrayStamped>(
+    global_pub_ = driver_->create_publisher<hyu_msgs::msg::WaypointArrayStamped>(
       "/test_tmpc/global_waypoints",
       rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local());
     valid_pub_ = driver_->create_publisher<std_msgs::msg::Bool>(
@@ -122,9 +122,9 @@ protected:
         ++emergency_count_;
         last_emergency_ = *msg;
       });
-    rolling_sub_ = driver_->create_subscription<eufs_msgs::msg::WaypointArrayStamped>(
+    rolling_sub_ = driver_->create_subscription<hyu_msgs::msg::WaypointArrayStamped>(
       "/test_tmpc/rolling_waypoints", rclcpp::QoS(10).reliable(),
-      [this](eufs_msgs::msg::WaypointArrayStamped::ConstSharedPtr msg) {
+      [this](hyu_msgs::msg::WaypointArrayStamped::ConstSharedPtr msg) {
         ++rolling_count_;
         last_rolling_ = *msg;
       });
@@ -218,7 +218,7 @@ protected:
   rclcpp::executors::SingleThreadedExecutor executor_;
   std::shared_ptr<wpnt_publisher::WpntPublisher> node_;
   rclcpp::Node::SharedPtr driver_;
-  rclcpp::Publisher<eufs_msgs::msg::WaypointArrayStamped>::SharedPtr global_pub_;
+  rclcpp::Publisher<hyu_msgs::msg::WaypointArrayStamped>::SharedPtr global_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr valid_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr frenet_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr ego_pub_;
@@ -226,14 +226,14 @@ protected:
   rclcpp::Publisher<std_msgs::msg::Int32>::SharedPtr lap_pub_;
   rclcpp::Subscription<TumTrajectory>::SharedPtr performance_sub_;
   rclcpp::Subscription<TumTrajectory>::SharedPtr emergency_sub_;
-  rclcpp::Subscription<eufs_msgs::msg::WaypointArrayStamped>::SharedPtr rolling_sub_;
+  rclcpp::Subscription<hyu_msgs::msg::WaypointArrayStamped>::SharedPtr rolling_sub_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr rolling_path_sub_;
   std::size_t performance_count_{0U};
   std::size_t emergency_count_{0U};
   TumTrajectory last_performance_;
   TumTrajectory last_emergency_;
   std::size_t rolling_count_{0U};
-  eufs_msgs::msg::WaypointArrayStamped last_rolling_;
+  hyu_msgs::msg::WaypointArrayStamped last_rolling_;
   std::size_t rolling_path_count_{0U};
   nav_msgs::msg::Path last_rolling_path_;
   std::string current_source_{"LOCAL"};

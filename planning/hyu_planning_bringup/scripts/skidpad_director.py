@@ -27,7 +27,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile
 
-from eufs_msgs.msg import ConeArrayWithCovariance, ConeWithCovariance
+from hyu_msgs.msg import ConeArrayWithCovariance, ConeWithCovariance
 from nav_msgs.msg import Odometry
 from std_msgs.msg import String
 

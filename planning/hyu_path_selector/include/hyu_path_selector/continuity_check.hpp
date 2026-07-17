@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <optional>
 
-#include "eufs_msgs/msg/waypoint_array_stamped.hpp"
+#include "hyu_msgs/msg/waypoint_array_stamped.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "nav_msgs/msg/path.hpp"
 
@@ -34,7 +34,7 @@ enum class ContinuityFailure
 
 struct CandidateInput
 {
-  std::optional<eufs_msgs::msg::WaypointArrayStamped> path;
+  std::optional<hyu_msgs::msg::WaypointArrayStamped> path;
   double path_receive_time_sec{0.0};
   bool validity_received{false};
   bool validity{false};
@@ -55,7 +55,7 @@ struct CandidateValidation
 
 struct TrimResult
 {
-  std::optional<eufs_msgs::msg::WaypointArrayStamped> path;
+  std::optional<hyu_msgs::msg::WaypointArrayStamped> path;
   std::size_t original_start_index{0U};
   ContinuityFailure failure{ContinuityFailure::NotImplemented};
 
@@ -109,11 +109,11 @@ public:
     double receive_now_sec,
     double stamp_now_sec) const;
   TrimResult trimAtEgoNearestPoint(
-    const eufs_msgs::msg::WaypointArrayStamped & path,
+    const hyu_msgs::msg::WaypointArrayStamped & path,
     const nav_msgs::msg::Odometry & odometry) const;
   ContinuityResult evaluate(const ContinuityInputs & inputs) const;
   nav_msgs::msg::Path toPath(
-    const eufs_msgs::msg::WaypointArrayStamped & waypoints) const;
+    const hyu_msgs::msg::WaypointArrayStamped & waypoints) const;
 
   const ContinuityThresholds & thresholds() const;
 

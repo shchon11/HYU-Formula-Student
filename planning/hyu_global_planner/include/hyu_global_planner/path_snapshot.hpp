@@ -6,8 +6,8 @@
 #include <string>
 #include <vector>
 
-#include "eufs_msgs/msg/waypoint.hpp"
-#include "eufs_msgs/msg/waypoint_array_stamped.hpp"
+#include "hyu_msgs/msg/waypoint.hpp"
+#include "hyu_msgs/msg/waypoint_array_stamped.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "std_msgs/msg/header.hpp"
 
@@ -16,7 +16,7 @@ namespace wpnt_publisher
 
 struct PathSnapshot
 {
-  std::vector<eufs_msgs::msg::Waypoint> waypoints;
+  std::vector<hyu_msgs::msg::Waypoint> waypoints;
   std::vector<double> xs;
   std::vector<double> ys;
   std::vector<double> s;
@@ -40,7 +40,7 @@ struct PathSnapshotBuildResult
 };
 
 PathSnapshotBuildResult makePathSnapshot(
-  const eufs_msgs::msg::WaypointArrayStamped & msg,
+  const hyu_msgs::msg::WaypointArrayStamped & msg,
   const PathSnapshotOptions & options);
 
 nav_msgs::msg::Path buildPathMessage(

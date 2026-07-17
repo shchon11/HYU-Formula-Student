@@ -10,7 +10,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(eufs_msgs REQUIRED)
+find_package(hyu_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -27,7 +27,7 @@ target_include_directories(hyu_global_planner_slam_geometry PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 ament_target_dependencies(hyu_global_planner_slam_geometry
-  eufs_msgs
+  hyu_msgs
   nav_msgs
 )
 
@@ -40,7 +40,7 @@ target_include_directories(hyu_global_planner_trajectory_publisher_node PRIVATE
 )
 ament_target_dependencies(hyu_global_planner_trajectory_publisher_node
   rclcpp
-  eufs_msgs
+  hyu_msgs
   std_msgs
 )
 
@@ -65,7 +65,7 @@ target_include_directories(planner_node PRIVATE
 target_link_libraries(planner_node hyu_global_planner_slam_geometry)
 ament_target_dependencies(planner_node
   rclcpp
-  eufs_msgs
+  hyu_msgs
   std_msgs
   nav_msgs
 )
@@ -77,7 +77,7 @@ target_include_directories(hyu_global_planner_tmpc_trajectory_builder PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 ament_target_dependencies(hyu_global_planner_tmpc_trajectory_builder
-  eufs_msgs
+  hyu_msgs
   std_msgs
   nav_msgs
   hyu_tmpc_msgs
@@ -96,7 +96,7 @@ target_link_libraries(hyu_global_planner_wpnt_publisher
 )
 ament_target_dependencies(hyu_global_planner_wpnt_publisher
   rclcpp
-  eufs_msgs
+  hyu_msgs
   std_msgs
   nav_msgs
   geometry_msgs
@@ -112,7 +112,7 @@ target_link_libraries(wpnt_publisher_node
 )
 ament_target_dependencies(wpnt_publisher_node
   rclcpp
-  eufs_msgs
+  hyu_msgs
   std_msgs
   nav_msgs
   hyu_tmpc_msgs
@@ -150,7 +150,7 @@ if(BUILD_TESTING)
     target_compile_definitions(${test_target} PRIVATE
       GLOBAL_PLANNER_SRC_ROOT="${GLOBAL_PLANNER_SRC_ROOT}")
     ament_target_dependencies(${test_target}
-      eufs_msgs
+      hyu_msgs
       nav_msgs
     )
   endforeach()
@@ -162,7 +162,7 @@ if(BUILD_TESTING)
     hyu_global_planner_tmpc_trajectory_builder
   )
   ament_target_dependencies(tmpc_trajectory_builder_test
-    eufs_msgs
+    hyu_msgs
     std_msgs
     nav_msgs
     hyu_tmpc_msgs
@@ -176,7 +176,7 @@ if(BUILD_TESTING)
   )
   ament_target_dependencies(global_path_validity_gate_test
     rclcpp
-    eufs_msgs
+    hyu_msgs
     std_msgs
     nav_msgs
     hyu_tmpc_msgs
@@ -190,7 +190,7 @@ if(BUILD_TESTING)
   )
   ament_target_dependencies(wpnt_publisher_tmpc_test
     rclcpp
-    eufs_msgs
+    hyu_msgs
     std_msgs
     nav_msgs
     geometry_msgs

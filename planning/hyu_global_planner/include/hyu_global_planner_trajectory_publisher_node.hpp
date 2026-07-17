@@ -8,7 +8,7 @@
 #include "hyu_global_planner/trajectory_csv.hpp"
 #include "rclcpp/rclcpp.hpp"
 
-#include "eufs_msgs/msg/waypoint_array_stamped.hpp"
+#include "hyu_msgs/msg/waypoint_array_stamped.hpp"
 #include "std_msgs/msg/bool.hpp"
 
 namespace hyu_global_planner
@@ -25,7 +25,7 @@ private:
   bool resolveTrajectoryPath(
     std::filesystem::path & resolved_path, std::string & error_message) const;
   TrajectoryValidationOptions trajectoryValidationOptions() const;
-  eufs_msgs::msg::WaypointArrayStamped buildWaypointMessage(
+  hyu_msgs::msg::WaypointArrayStamped buildWaypointMessage(
     const std::vector<TrajectoryPoint> & points);
   void setGlobalPathValid(bool valid);
   void publishValidityHeartbeat();
@@ -55,7 +55,7 @@ private:
   bool global_path_is_valid_{false};
   bool true_heartbeat_ready_{true};
 
-  rclcpp::Publisher<eufs_msgs::msg::WaypointArrayStamped>::SharedPtr global_waypoints_pub_;
+  rclcpp::Publisher<hyu_msgs::msg::WaypointArrayStamped>::SharedPtr global_waypoints_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr global_path_valid_pub_;
   rclcpp::TimerBase::SharedPtr reload_timer_;
   rclcpp::TimerBase::SharedPtr valid_heartbeat_timer_;

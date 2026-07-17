@@ -31,7 +31,7 @@ from rclpy.qos import (
 )
 
 from ackermann_msgs.msg import AckermannDriveStamped
-from eufs_msgs.msg import CarState, ConeArrayWithCovariance
+from hyu_msgs.msg import CarState, ConeArrayWithCovariance
 from nav_msgs.msg import Odometry
 
 

@@ -28,7 +28,7 @@
  * @brief ground truth cone Gazebo plugin
  *
  * @details Provides ground truth cones in simulation in the form of
- *`eufs_msgs/ConeArrayWithCovariance`. Can also simulate the perception stack by publishing cones
+ *`hyu_msgs/ConeArrayWithCovariance`. Can also simulate the perception stack by publishing cones
  *with noise.
  **/
 
@@ -37,9 +37,9 @@
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <cmath>
-#include <eufs_msgs/msg/car_state.hpp>
-#include <eufs_msgs/msg/cone_array_with_covariance.hpp>
-#include <eufs_msgs/msg/cone_with_covariance.hpp>
+#include <hyu_msgs/msg/car_state.hpp>
+#include <hyu_msgs/msg/cone_array_with_covariance.hpp>
+#include <hyu_msgs/msg/cone_with_covariance.hpp>
 #include <gazebo/common/Plugin.hh>
 #include <gazebo/common/Time.hh>
 #include <gazebo/gazebo.hh>
@@ -70,23 +70,23 @@ class GazeboCameraCones : public gazebo::ModelPlugin {
 
   void UpdateChild();
 
-  eufs_msgs::msg::ConeArrayWithCovariance processCones(
-      eufs_msgs::msg::ConeArrayWithCovariance cones_to_process);
+  hyu_msgs::msg::ConeArrayWithCovariance processCones(
+      hyu_msgs::msg::ConeArrayWithCovariance cones_to_process);
 
-  std::vector<eufs_msgs::msg::ConeWithCovariance>
-  fovCones(std::vector<eufs_msgs::msg::ConeWithCovariance> conesToCheck);
+  std::vector<hyu_msgs::msg::ConeWithCovariance>
+  fovCones(std::vector<hyu_msgs::msg::ConeWithCovariance> conesToCheck);
 
   // Add noise to the cone arrays
-  eufs_msgs::msg::ConeArrayWithCovariance addConeNoise(
-      eufs_msgs::msg::ConeArrayWithCovariance &cones_message);
-  void addNoiseToConeArray(std::vector<eufs_msgs::msg::ConeWithCovariance> &cone_array);
+  hyu_msgs::msg::ConeArrayWithCovariance addConeNoise(
+      hyu_msgs::msg::ConeArrayWithCovariance &cones_message);
+  void addNoiseToConeArray(std::vector<hyu_msgs::msg::ConeWithCovariance> &cone_array);
   double GaussianKernel(double mu, double sigma);
   bool shouldDetectCone();
 
   // Returns random cone colour with probability `weights`
   std::string pickColorWithProbability(const YAML::Node weights);
-  std::map<std::string, std::vector<eufs_msgs::msg::ConeWithCovariance>> swapConeColors(
-    std::map<std::string, std::vector<eufs_msgs::msg::ConeWithCovariance>> color_map);
+  std::map<std::string, std::vector<hyu_msgs::msg::ConeWithCovariance>> swapConeColors(
+    std::map<std::string, std::vector<hyu_msgs::msg::ConeWithCovariance>> color_map);
 
   // Helper function for parameters
   bool getBoolParameter(sdf::ElementPtr _sdf, const char *element, bool default_value,
@@ -101,11 +101,11 @@ class GazeboCameraCones : public gazebo::ModelPlugin {
 
 
   // Helper functions for determining whether a cone is in range
-  bool inRangeOfCamera(eufs_msgs::msg::ConeWithCovariance cone);
-  bool inFOVOfCamera(eufs_msgs::msg::ConeWithCovariance cone);
+  bool inRangeOfCamera(hyu_msgs::msg::ConeWithCovariance cone);
+  bool inFOVOfCamera(hyu_msgs::msg::ConeWithCovariance cone);
 
   // Publishers
-  rclcpp::Publisher<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr camera_cones_pub_;
+  rclcpp::Publisher<hyu_msgs::msg::ConeArrayWithCovariance>::SharedPtr camera_cones_pub_;
 
   // Gazebo variables
   gazebo::physics::ModelPtr track_model;

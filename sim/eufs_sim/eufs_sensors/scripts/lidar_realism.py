@@ -86,7 +86,7 @@ import tf2_ros
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 
-from eufs_msgs.msg import CarState
+from hyu_msgs.msg import CarState
 from sensor_msgs.msg import PointCloud2, PointField
 from sensor_msgs_py import point_cloud2
 

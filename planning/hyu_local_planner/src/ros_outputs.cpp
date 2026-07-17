@@ -49,7 +49,7 @@ LocalPlannerOutput::LocalPlannerOutput(
 : max_input_age_sec_(max_input_age_sec)
 {
   const auto output_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable().durability_volatile();
-  waypoints_publisher_ = node.create_publisher<eufs_msgs::msg::WaypointArrayStamped>(
+  waypoints_publisher_ = node.create_publisher<hyu_msgs::msg::WaypointArrayStamped>(
     topics.waypoints, output_qos);
   path_publisher_ = node.create_publisher<nav_msgs::msg::Path>(topics.path, output_qos);
   validity_publisher_ = node.create_publisher<std_msgs::msg::Bool>(topics.validity, output_qos);
@@ -66,7 +66,7 @@ void LocalPlannerOutput::publishPath(
   const builtin_interfaces::msg::Time & stamp, const SteadyTime receive_time)
 {
   const auto metadata = odomMetadata(odom, receive_time);
-  eufs_msgs::msg::WaypointArrayStamped waypoint_array;
+  hyu_msgs::msg::WaypointArrayStamped waypoint_array;
   waypoint_array.header.frame_id = "map";
   waypoint_array.header.stamp = stamp;
   nav_msgs::msg::Path path;
@@ -77,7 +77,7 @@ void LocalPlannerOutput::publishPath(
   for (const auto & source : result.waypoints) {
     const Point2 map_point = egoToMap({source.x, source.y}, metadata);
     const double map_heading = normalizeAngle(metadata.yaw + source.psi);
-    eufs_msgs::msg::Waypoint waypoint;
+    hyu_msgs::msg::Waypoint waypoint;
     waypoint.position.x = map_point.x;
     waypoint.position.y = map_point.y;
     waypoint.position.z = 0.0;

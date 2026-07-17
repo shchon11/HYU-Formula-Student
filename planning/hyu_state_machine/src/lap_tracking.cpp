@@ -10,7 +10,7 @@ namespace
 {
 
 void resolveWaypointXY(
-  const eufs_msgs::msg::Waypoint & waypoint, double & x, double & y)
+  const hyu_msgs::msg::Waypoint & waypoint, double & x, double & y)
 {
   x = waypoint.x_m;
   y = waypoint.y_m;
@@ -46,7 +46,7 @@ bool LapTrackingPolicy::observeGraphSlamStatus(const std::string & status)
   return count_discovery_lap;
 }
 
-bool LapTrackingPolicy::acceptPath(const eufs_msgs::msg::WaypointArrayStamped & msg)
+bool LapTrackingPolicy::acceptPath(const hyu_msgs::msg::WaypointArrayStamped & msg)
 {
   const auto reject = [this]() {
       path_valid_ = false;

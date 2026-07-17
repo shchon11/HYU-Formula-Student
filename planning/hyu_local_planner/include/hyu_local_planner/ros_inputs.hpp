@@ -12,7 +12,7 @@
 #include <vector>
 
 #include <builtin_interfaces/msg/time.hpp>
-#include <eufs_msgs/msg/cone_array_with_covariance.hpp>
+#include <hyu_msgs/msg/cone_array_with_covariance.hpp>
 #include <geometry_msgs/msg/quaternion.hpp>
 #include <message_filters/subscriber.h>
 #include <message_filters/sync_policies/approximate_time.h>
@@ -27,7 +27,7 @@
 namespace hyu_local_planner
 {
 
-using ConeArray = eufs_msgs::msg::ConeArrayWithCovariance;
+using ConeArray = hyu_msgs::msg::ConeArrayWithCovariance;
 using Odometry = nav_msgs::msg::Odometry;
 using SteadyTime = std::chrono::steady_clock::time_point;
 

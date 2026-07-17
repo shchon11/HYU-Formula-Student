@@ -54,14 +54,14 @@ TEST(SlamCenterlineBuilder, ClosedLoopWithSeamNearEgoBuildsValidCenterline)
   constexpr double kInner = 18.0;
   constexpr double kOuter = 22.0;
   constexpr int kCones = 40;
-  eufs_msgs::msg::ConeArrayWithCovariance map;
+  hyu_msgs::msg::ConeArrayWithCovariance map;
   for (int i = 0; i < kCones; ++i) {
     const double angle = 2.0 * kPi * static_cast<double>(i) / static_cast<double>(kCones);
-    eufs_msgs::msg::ConeWithCovariance blue;
+    hyu_msgs::msg::ConeWithCovariance blue;
     blue.point.x = kInner * std::cos(angle);
     blue.point.y = kInner * std::sin(angle);
     map.blue_cones.push_back(blue);
-    eufs_msgs::msg::ConeWithCovariance yellow;
+    hyu_msgs::msg::ConeWithCovariance yellow;
     yellow.point.x = kOuter * std::cos(angle);
     yellow.point.y = kOuter * std::sin(angle);
     map.yellow_cones.push_back(yellow);
@@ -115,14 +115,14 @@ TEST(SlamCenterlineBuilder, SeamPhaseOffsetLoopDoesNotFoldBackAtSeam)
   constexpr double kOuter = 22.0;
   constexpr int kCones = 40;
   constexpr double kYellowPhaseOffset = 0.75 * 2.0 * kPi / static_cast<double>(kCones);
-  eufs_msgs::msg::ConeArrayWithCovariance map;
+  hyu_msgs::msg::ConeArrayWithCovariance map;
   for (int i = 0; i < kCones; ++i) {
     const double angle = 2.0 * kPi * static_cast<double>(i) / static_cast<double>(kCones);
-    eufs_msgs::msg::ConeWithCovariance blue;
+    hyu_msgs::msg::ConeWithCovariance blue;
     blue.point.x = kInner * std::cos(angle);
     blue.point.y = kInner * std::sin(angle);
     map.blue_cones.push_back(blue);
-    eufs_msgs::msg::ConeWithCovariance yellow;
+    hyu_msgs::msg::ConeWithCovariance yellow;
     yellow.point.x = kOuter * std::cos(angle + kYellowPhaseOffset);
     yellow.point.y = kOuter * std::sin(angle + kYellowPhaseOffset);
     map.yellow_cones.push_back(yellow);
@@ -326,7 +326,7 @@ TEST(SlamCenterlineBuilder, PathIsIndependentOfEgoPosition)
 TEST(SlamCenterlineBuilder, WideStartFinishGateFoldsToOppositeSides)
 {
   constexpr double kPiLocal = 3.14159265358979323846;
-  eufs_msgs::msg::ConeArrayWithCovariance map;
+  hyu_msgs::msg::ConeArrayWithCovariance map;
   constexpr std::size_t kCones = 40U;
   for (std::size_t i = 0; i < kCones; ++i) {
     const double angle = 2.0 * kPiLocal * static_cast<double>(i) / static_cast<double>(kCones);
@@ -334,18 +334,18 @@ TEST(SlamCenterlineBuilder, WideStartFinishGateFoldsToOppositeSides)
     if (std::abs(std::atan2(std::sin(angle), std::cos(angle))) * 20.0 < 5.0) {
       continue;
     }
-    eufs_msgs::msg::ConeWithCovariance blue;
+    hyu_msgs::msg::ConeWithCovariance blue;
     blue.point.x = 22.0 * std::cos(angle);
     blue.point.y = 22.0 * std::sin(angle);
     map.blue_cones.push_back(blue);
-    eufs_msgs::msg::ConeWithCovariance yellow;
+    hyu_msgs::msg::ConeWithCovariance yellow;
     yellow.point.x = 18.0 * std::cos(angle);
     yellow.point.y = 18.0 * std::sin(angle);
     map.yellow_cones.push_back(yellow);
   }
   for (const double offset : {0.0, 0.5}) {      // the paired timing cones
     for (const double radius : {18.0, 22.0}) {  // across the track
-      eufs_msgs::msg::ConeWithCovariance cone;
+      hyu_msgs::msg::ConeWithCovariance cone;
       cone.point.x = radius;
       cone.point.y = offset;
       map.big_orange_cones.push_back(cone);

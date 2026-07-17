@@ -6,7 +6,7 @@
 #include <cmath>
 #include <string>
 #include "eufs_models/vehicle_state.hpp"
-#include "eufs_msgs/msg/wheel_speeds.hpp"
+#include "hyu_msgs/msg/wheel_speeds.hpp"
 #include "yaml-cpp/yaml.h"
 
 namespace eufs {
@@ -83,9 +83,9 @@ class Noise {
     return new_state;
   }
 
-  eufs_msgs::msg::WheelSpeeds applyNoiseToWheelSpeeds(
-      const eufs_msgs::msg::WheelSpeeds &wheel_speeds) {
-    eufs_msgs::msg::WheelSpeeds new_wheel_speeds = wheel_speeds;
+  hyu_msgs::msg::WheelSpeeds applyNoiseToWheelSpeeds(
+      const hyu_msgs::msg::WheelSpeeds &wheel_speeds) {
+    hyu_msgs::msg::WheelSpeeds new_wheel_speeds = wheel_speeds;
 
     // Add noise to wheel speed, then quantize the way the CAN feed does.
     new_wheel_speeds.lf_speed =

@@ -42,8 +42,8 @@ namespace eufs_plugins {
 
 StateMachine::StateMachine(std::shared_ptr<rclcpp::Node> rosnode) : rosnode(rosnode) {
   // init state machine state
-  as_state_ = eufs_msgs::msg::CanState::AS_OFF;
-  ami_state_ = eufs_msgs::msg::CanState::AMI_NOT_SELECTED;
+  as_state_ = hyu_msgs::msg::CanState::AS_OFF;
+  ami_state_ = hyu_msgs::msg::CanState::AMI_NOT_SELECTED;
   mission_completed_ = false;
   in_transition_ = false;
 
@@ -59,61 +59,61 @@ StateMachine::StateMachine(std::shared_ptr<rclcpp::Node> rosnode) : rosnode(rosn
   ebs_srv_ = rosnode->create_service<std_srvs::srv::Trigger>(
       "/ros_can/ebs",
       std::bind(&StateMachine::requestEBS, this, std::placeholders::_1, std::placeholders::_2));
-  set_mission_srv_ = rosnode->create_service<eufs_msgs::srv::SetCanState>(
+  set_mission_srv_ = rosnode->create_service<hyu_msgs::srv::SetCanState>(
       "/ros_can/set_mission",
       std::bind(&StateMachine::setMission, this, std::placeholders::_1,  std::placeholders::_2));
 
   // Publishers
-  state_pub_ = rosnode->create_publisher<eufs_msgs::msg::CanState>("/ros_can/state", 1);
+  state_pub_ = rosnode->create_publisher<hyu_msgs::msg::CanState>("/ros_can/state", 1);
   state_pub_str_ = rosnode->create_publisher<std_msgs::msg::String>("/ros_can/state_str", 1);
 }
 
 StateMachine::~StateMachine() {}
 
-bool StateMachine::setMission(std::shared_ptr<eufs_msgs::srv::SetCanState::Request> request,
-                              std::shared_ptr<eufs_msgs::srv::SetCanState::Response> response) {
-  if (ami_state_ != eufs_msgs::msg::CanState::AMI_NOT_SELECTED) {
+bool StateMachine::setMission(std::shared_ptr<hyu_msgs::srv::SetCanState::Request> request,
+                              std::shared_ptr<hyu_msgs::srv::SetCanState::Response> response) {
+  if (ami_state_ != hyu_msgs::msg::CanState::AMI_NOT_SELECTED) {
     RCLCPP_WARN(rosnode->get_logger(),
                 "state_machine :: failed to set mission as a mission was set previously.");
     return false;
   }
 
   switch (request->ami_state) {
-    case eufs_msgs::msg::CanState::AMI_ACCELERATION:
-      ami_state_ = eufs_msgs::msg::CanState::AMI_ACCELERATION;
+    case hyu_msgs::msg::CanState::AMI_ACCELERATION:
+      ami_state_ = hyu_msgs::msg::CanState::AMI_ACCELERATION;
       break;
-    case eufs_msgs::msg::CanState::AMI_SKIDPAD:
-      ami_state_ = eufs_msgs::msg::CanState::AMI_SKIDPAD;
+    case hyu_msgs::msg::CanState::AMI_SKIDPAD:
+      ami_state_ = hyu_msgs::msg::CanState::AMI_SKIDPAD;
       break;
-    case eufs_msgs::msg::CanState::AMI_AUTOCROSS:
-      ami_state_ = eufs_msgs::msg::CanState::AMI_AUTOCROSS;
+    case hyu_msgs::msg::CanState::AMI_AUTOCROSS:
+      ami_state_ = hyu_msgs::msg::CanState::AMI_AUTOCROSS;
       break;
-    case eufs_msgs::msg::CanState::AMI_TRACK_DRIVE:
-      ami_state_ = eufs_msgs::msg::CanState::AMI_TRACK_DRIVE;
+    case hyu_msgs::msg::CanState::AMI_TRACK_DRIVE:
+      ami_state_ = hyu_msgs::msg::CanState::AMI_TRACK_DRIVE;
       break;
-    case eufs_msgs::msg::CanState::AMI_AUTONOMOUS_DEMO:
-      ami_state_ = eufs_msgs::msg::CanState::AMI_AUTONOMOUS_DEMO;
+    case hyu_msgs::msg::CanState::AMI_AUTONOMOUS_DEMO:
+      ami_state_ = hyu_msgs::msg::CanState::AMI_AUTONOMOUS_DEMO;
       break;
-    case eufs_msgs::msg::CanState::AMI_ADS_INSPECTION:
-      ami_state_ = eufs_msgs::msg::CanState::AMI_ADS_INSPECTION;
+    case hyu_msgs::msg::CanState::AMI_ADS_INSPECTION:
+      ami_state_ = hyu_msgs::msg::CanState::AMI_ADS_INSPECTION;
       break;
-    case eufs_msgs::msg::CanState::AMI_ADS_EBS:
-      ami_state_ = eufs_msgs::msg::CanState::AMI_ADS_EBS;
+    case hyu_msgs::msg::CanState::AMI_ADS_EBS:
+      ami_state_ = hyu_msgs::msg::CanState::AMI_ADS_EBS;
       break;
-    case eufs_msgs::msg::CanState::AMI_DDT_INSPECTION_A:
-      ami_state_ = eufs_msgs::msg::CanState::AMI_DDT_INSPECTION_A;
+    case hyu_msgs::msg::CanState::AMI_DDT_INSPECTION_A:
+      ami_state_ = hyu_msgs::msg::CanState::AMI_DDT_INSPECTION_A;
       break;
-    case eufs_msgs::msg::CanState::AMI_DDT_INSPECTION_B:
-      ami_state_ = eufs_msgs::msg::CanState::AMI_DDT_INSPECTION_B;
+    case hyu_msgs::msg::CanState::AMI_DDT_INSPECTION_B:
+      ami_state_ = hyu_msgs::msg::CanState::AMI_DDT_INSPECTION_B;
       break;
-    case eufs_msgs::msg::CanState::AMI_JOYSTICK:
-      ami_state_ = eufs_msgs::msg::CanState::AMI_JOYSTICK;
+    case hyu_msgs::msg::CanState::AMI_JOYSTICK:
+      ami_state_ = hyu_msgs::msg::CanState::AMI_JOYSTICK;
       break;
-    case eufs_msgs::msg::CanState::AMI_MANUAL:
-      ami_state_ = eufs_msgs::msg::CanState::AMI_MANUAL;
+    case hyu_msgs::msg::CanState::AMI_MANUAL:
+      ami_state_ = hyu_msgs::msg::CanState::AMI_MANUAL;
       break;
     default:
-      ami_state_ = eufs_msgs::msg::CanState::AMI_NOT_SELECTED;
+      ami_state_ = hyu_msgs::msg::CanState::AMI_NOT_SELECTED;
       break;
   }
   response->success = true;
@@ -124,8 +124,8 @@ bool StateMachine::resetState(std::shared_ptr<std_srvs::srv::Trigger::Request> r
                               std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
   (void)request;   // suppress unused parameter warning
   (void)response;  // suppress unused parameter warning
-  as_state_ = eufs_msgs::msg::CanState::AS_OFF;
-  ami_state_ = eufs_msgs::msg::CanState::AMI_NOT_SELECTED;
+  as_state_ = hyu_msgs::msg::CanState::AS_OFF;
+  ami_state_ = hyu_msgs::msg::CanState::AMI_NOT_SELECTED;
   mission_completed_ = false;
   response->success = true;
   in_transition_ = false;
@@ -136,17 +136,17 @@ bool StateMachine::requestEBS(std::shared_ptr<std_srvs::srv::Trigger::Request> r
                               std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
   (void)request;   // suppress unused parameter warning
   (void)response;  // suppress unused parameter warning
-  if (ami_state_ == eufs_msgs::msg::CanState::AMI_MANUAL ||
-      ami_state_ == eufs_msgs::msg::CanState::AMI_NOT_SELECTED) {
+  if (ami_state_ == hyu_msgs::msg::CanState::AMI_MANUAL ||
+      ami_state_ == hyu_msgs::msg::CanState::AMI_NOT_SELECTED) {
     RCLCPP_WARN(rosnode->get_logger(), "state_machine :: EBS is unavailable in current state");
     return false;
   }
-  if (as_state_ == eufs_msgs::msg::CanState::AS_EMERGENCY_BRAKE) {
+  if (as_state_ == hyu_msgs::msg::CanState::AS_EMERGENCY_BRAKE) {
     RCLCPP_WARN(rosnode->get_logger(), "state_machine :: EBS is already active");
     return false;
   }
 
-  as_state_ = eufs_msgs::msg::CanState::AS_EMERGENCY_BRAKE;
+  as_state_ = hyu_msgs::msg::CanState::AS_EMERGENCY_BRAKE;
   mission_completed_ = false;
   response->success = true;
   in_transition_ = false;
@@ -155,39 +155,39 @@ bool StateMachine::requestEBS(std::shared_ptr<std_srvs::srv::Trigger::Request> r
 
 void StateMachine::updateState(gazebo::common::Time current_time) {
   switch (as_state_) {
-    case eufs_msgs::msg::CanState::AS_OFF:
-      if (ami_state_ != eufs_msgs::msg::CanState::AMI_NOT_SELECTED &&
-          ami_state_ != eufs_msgs::msg::CanState::AMI_MANUAL) {
+    case hyu_msgs::msg::CanState::AS_OFF:
+      if (ami_state_ != hyu_msgs::msg::CanState::AMI_NOT_SELECTED &&
+          ami_state_ != hyu_msgs::msg::CanState::AMI_MANUAL) {
         // now transition to new state
-        as_state_ = eufs_msgs::msg::CanState::AS_READY;
+        as_state_ = hyu_msgs::msg::CanState::AS_READY;
         RCLCPP_DEBUG(rosnode->get_logger(), "state_machine :: switching to AS_READY state");
       }
       break;
 
-    case eufs_msgs::msg::CanState::AS_READY:
+    case hyu_msgs::msg::CanState::AS_READY:
       if (!in_transition_) {
         transition_begin_ = current_time.Double();
         in_transition_ = true;
       } else if (current_time.Double() - transition_begin_ >= 5.0) {
         // Transition to driving.
-        as_state_ = eufs_msgs::msg::CanState::AS_DRIVING;
+        as_state_ = hyu_msgs::msg::CanState::AS_DRIVING;
         RCLCPP_DEBUG(rosnode->get_logger(), "state_machine :: switching to AS_DRIVING state");
         in_transition_ = false;
       }
       break;
 
-    case eufs_msgs::msg::CanState::AS_DRIVING:
+    case hyu_msgs::msg::CanState::AS_DRIVING:
       if (mission_completed_) {
-        as_state_ = eufs_msgs::msg::CanState::AS_FINISHED;
+        as_state_ = hyu_msgs::msg::CanState::AS_FINISHED;
         RCLCPP_DEBUG(rosnode->get_logger(), "state_machine :: switching to AS_FINISHED state");
       }
       break;
 
-    case eufs_msgs::msg::CanState::AS_FINISHED:
+    case hyu_msgs::msg::CanState::AS_FINISHED:
       // do nothing for now
       break;
 
-    case eufs_msgs::msg::CanState::AS_EMERGENCY_BRAKE:
+    case hyu_msgs::msg::CanState::AS_EMERGENCY_BRAKE:
       // do nothing for now
       break;
 
@@ -200,7 +200,7 @@ void StateMachine::publishState() {
     return;  // do nothing
 
   // create message
-  eufs_msgs::msg::CanState state_msg;
+  hyu_msgs::msg::CanState state_msg;
   state_msg.as_state = as_state_;
   state_msg.ami_state = ami_state_;
 
@@ -210,26 +210,26 @@ void StateMachine::publishState() {
     state_pub_str_->publish(makeStateString(state_msg));
 }
 
-std_msgs::msg::String StateMachine::makeStateString(const eufs_msgs::msg::CanState &state) {
+std_msgs::msg::String StateMachine::makeStateString(const hyu_msgs::msg::CanState &state) {
   std::string str1, str2, str3;
 
   RCLCPP_DEBUG(rosnode->get_logger(), "AS STATE: %d", state.as_state);
   RCLCPP_DEBUG(rosnode->get_logger(), "AMI STATE: %d", state.ami_state);
 
   switch (state.as_state) {
-    case eufs_msgs::msg::CanState::AS_OFF:
+    case hyu_msgs::msg::CanState::AS_OFF:
       str1 = "AS:OFF";
       break;
-    case eufs_msgs::msg::CanState::AS_READY:
+    case hyu_msgs::msg::CanState::AS_READY:
       str1 = "AS:READY";
       break;
-    case eufs_msgs::msg::CanState::AS_DRIVING:
+    case hyu_msgs::msg::CanState::AS_DRIVING:
       str1 = "AS:DRIVING";
       break;
-    case eufs_msgs::msg::CanState::AS_FINISHED:
+    case hyu_msgs::msg::CanState::AS_FINISHED:
       str1 = "AS:FINISHED";
       break;
-    case eufs_msgs::msg::CanState::AS_EMERGENCY_BRAKE:
+    case hyu_msgs::msg::CanState::AS_EMERGENCY_BRAKE:
       str1 = "AS:EMERGENCY";
       break;
     default:
@@ -238,40 +238,40 @@ std_msgs::msg::String StateMachine::makeStateString(const eufs_msgs::msg::CanSta
   }
 
   switch (state.ami_state) {
-    case eufs_msgs::msg::CanState::AMI_NOT_SELECTED:
+    case hyu_msgs::msg::CanState::AMI_NOT_SELECTED:
       str2 = "AMI:NOT_SELECTED";
       break;
-    case eufs_msgs::msg::CanState::AMI_ACCELERATION:
+    case hyu_msgs::msg::CanState::AMI_ACCELERATION:
       str2 = "AMI:ACCELERATION";
       break;
-    case eufs_msgs::msg::CanState::AMI_SKIDPAD:
+    case hyu_msgs::msg::CanState::AMI_SKIDPAD:
       str2 = "AMI:SKIDPAD";
       break;
-    case eufs_msgs::msg::CanState::AMI_AUTOCROSS:
+    case hyu_msgs::msg::CanState::AMI_AUTOCROSS:
       str2 = "AMI:AUTOCROSS";
       break;
-    case eufs_msgs::msg::CanState::AMI_TRACK_DRIVE:
+    case hyu_msgs::msg::CanState::AMI_TRACK_DRIVE:
       str2 = "AMI:TRACKDRIVE";
       break;
-    case eufs_msgs::msg::CanState::AMI_ADS_INSPECTION:
+    case hyu_msgs::msg::CanState::AMI_ADS_INSPECTION:
       str2 = "AMI:ADS_INSPECTION";
       break;
-    case eufs_msgs::msg::CanState::AMI_ADS_EBS:
+    case hyu_msgs::msg::CanState::AMI_ADS_EBS:
       str2 = "AMI:ADS_EBS";
       break;
-    case eufs_msgs::msg::CanState::AMI_DDT_INSPECTION_A:
+    case hyu_msgs::msg::CanState::AMI_DDT_INSPECTION_A:
       str2 = "AMI:DDT_INSPECTION_A";
       break;
-    case eufs_msgs::msg::CanState::AMI_DDT_INSPECTION_B:
+    case hyu_msgs::msg::CanState::AMI_DDT_INSPECTION_B:
       str2 = "AMI:DDT_INSPECTION_B";
       break;
-    case eufs_msgs::msg::CanState::AMI_AUTONOMOUS_DEMO:
+    case hyu_msgs::msg::CanState::AMI_AUTONOMOUS_DEMO:
       str2 = "AMI:BRAKETEST";
       break;
-    case eufs_msgs::msg::CanState::AMI_JOYSTICK:
+    case hyu_msgs::msg::CanState::AMI_JOYSTICK:
       str2 = "AMI:JOYSTICK";
       break;
-    case eufs_msgs::msg::CanState::AMI_MANUAL:
+    case hyu_msgs::msg::CanState::AMI_MANUAL:
       str2 = "AMI:MANUAL";
       break;
     default:
@@ -287,7 +287,7 @@ std_msgs::msg::String StateMachine::makeStateString(const eufs_msgs::msg::CanSta
 
 void StateMachine::completedCallback(const std_msgs::msg::Bool::SharedPtr msg) {
   if (mission_completed_ != msg->data) {
-    if (ami_state_ == eufs_msgs::msg::CanState::AMI_MANUAL) {
+    if (ami_state_ == hyu_msgs::msg::CanState::AMI_MANUAL) {
       RCLCPP_WARN(rosnode->get_logger(),
                   "state_machine :: mission completion is not defined for the manual mission");
       return;
@@ -306,8 +306,8 @@ void StateMachine::spinOnce(gazebo::common::Time current_time) {
 }
 
 bool StateMachine::canDrive() {
-  return as_state_ == eufs_msgs::msg::CanState::AS_DRIVING ||
-         ami_state_ == eufs_msgs::msg::CanState::AMI_MANUAL;
+  return as_state_ == hyu_msgs::msg::CanState::AS_DRIVING ||
+         ami_state_ == hyu_msgs::msg::CanState::AMI_MANUAL;
 }
 
 }  // namespace eufs_plugins

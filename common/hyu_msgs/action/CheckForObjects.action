@@ -9,7 +9,7 @@ sensor_msgs/Image image
 ---
 # Result definition
 int16 id
-eufs_msgs/BoundingBoxes bounding_boxes
+hyu_msgs/BoundingBoxes bounding_boxes
 
 ---
 # Feedback definition

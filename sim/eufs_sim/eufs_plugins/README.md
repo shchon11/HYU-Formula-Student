@@ -28,10 +28,10 @@ NB: if a parameter has no default value, a value must be provided.
 | `referenceFrame`                  | string    | `"map"`            | Tf frame in which to publish data. |
 | `robotFrame`                      | string    | `"base_footprint"` | Tf frame of the robot. |
 | `publishTransform`                | bool      | `false`            | Whether to publish the car tf. |
-| `groundTruthCarStateTopic`        | string    | -                  | Topic in which to publish the ground truth [eufs_msgs/CarState](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/CarState.msg) message. |
-| `localisationCarStateTopic`       | string    | -                  | Topic in which to publish the noisy [eufs_msgs/CarState](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/CarState.msg) message. |
-| `groundTruthWheelSpeedsTopicName` | string    | -                  | Topic in which to publish the ground truth [eufs_msgs/WheelSpeedsStamped](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/WheelSpeedsStamped.msg) message. |
-| `wheelSpeedsTopicName`            | string    | -                  | Topic in which to publish the noisy [eufs_msgs/WheelSpeedsStamped](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/WheelSpeedsStamped.msg) message. |
+| `groundTruthCarStateTopic`        | string    | -                  | Topic in which to publish the ground truth [hyu_msgs/CarState](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/CarState.msg) message. |
+| `localisationCarStateTopic`       | string    | -                  | Topic in which to publish the noisy [hyu_msgs/CarState](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/CarState.msg) message. |
+| `groundTruthWheelSpeedsTopicName` | string    | -                  | Topic in which to publish the ground truth [hyu_msgs/WheelSpeedsStamped](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/WheelSpeedsStamped.msg) message. |
+| `wheelSpeedsTopicName`            | string    | -                  | Topic in which to publish the noisy [hyu_msgs/WheelSpeedsStamped](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/WheelSpeedsStamped.msg) message. |
 | `odometryTopicName`               | string    | -                  | Topic in which to publish the noisy [nav_msgs/Odometry](http://docs.ros.org/en/noetic/api/nav_msgs/html/msg/Odometry.html) message. |
 | `noise_config`                    | string    | -                  | Config file specifying the standard deviation of Gaussian noise to be added to position, orientation, velocity, acceleration and wheel speed messages. Passed to the [Vehicle model sub-class](../eufs_models). |
 | `commandMode`                     | string    | `acceleration`     | Whether to accept `acceleration` or `velocity` control commands. |
@@ -78,10 +78,10 @@ This has to be inserted inside a robot URDF.
 
 | Topic Name | Type | Purpose |
 | ---------- | ---- | ------- |
-| `groundTruthCarStateTopic` parameter value        | [eufs_msgs/CarState](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/CarState.msg)                     | Publishes the ground truth dynamic and kinematic state of the simulated car. |
-| `localisationCarStateTopic` parameter value       | [eufs_msgs/CarState](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/CarState.msg)                     | Publishes the dynamic and kinematic state of the simulated car with added noise. |
-| `groundTruthWheelSpeedsTopicName` parameter value | [eufs_msgs/WheelSpeedsStamped](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/WheelSpeedsStamped.msg) | Publishes ground truth wheel speeds. |
-| `wheelSpeedsTopicName` parameter value            | [eufs_msgs/WheelSpeedsStamped](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/WheelSpeedsStamped.msg) | Publishes wheel speeds with added noise. |
+| `groundTruthCarStateTopic` parameter value        | [hyu_msgs/CarState](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/CarState.msg)                     | Publishes the ground truth dynamic and kinematic state of the simulated car. |
+| `localisationCarStateTopic` parameter value       | [hyu_msgs/CarState](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/CarState.msg)                     | Publishes the dynamic and kinematic state of the simulated car with added noise. |
+| `groundTruthWheelSpeedsTopicName` parameter value | [hyu_msgs/WheelSpeedsStamped](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/WheelSpeedsStamped.msg) | Publishes ground truth wheel speeds. |
+| `wheelSpeedsTopicName` parameter value            | [hyu_msgs/WheelSpeedsStamped](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/WheelSpeedsStamped.msg) | Publishes wheel speeds with added noise. |
 | `jointStatesTopicName` parameter value            | [sensor_msgs/JointState](http://docs.ros.org/en/noetic/api/sensor_msgs/html/msg/JointState.html)         | Publishes steering and wheel joint states for robot_state_publisher. |
 | `odometryTopicName` parameter value               | [nav_msgs/Odometry](http://docs.ros.org/en/noetic/api/nav_msgs/html/msg/Odometry.html)                   | Publishes vehicle odometry with noise. |
 
@@ -106,14 +106,14 @@ Simulates the state machine of the FSUK-AI DDT vehicle. A design outline can be 
 
 | Topic Name | Type | Purpose |
 | ---------- | ---- | ------- |
-| `/ros_can/state`     | [eufs_msgs/CanState](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/CanState.msg) | Publishes the AS and AMI state of the simulated car. |
+| `/ros_can/state`     | [hyu_msgs/CanState](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/CanState.msg) | Publishes the AS and AMI state of the simulated car. |
 | `/ros_can/state_str` | [std_msgs/String](http://docs.ros.org/en/noetic/api/std_msgs/html/msg/String.html)   | Publishes the AS and AMI state of the simulated car as a string. |
 
 ### ROS 2 Subscribers
 
 | Topic Name | Type | Purpose |
 | ---------- | ---- | ------- |
-| `/ros_can/set_mission`      | [eufs_msgs/CanState](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/CanState.msg) | Sets the AMI state of the simulated car. |
+| `/ros_can/set_mission`      | [hyu_msgs/CanState](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/CanState.msg) | Sets the AMI state of the simulated car. |
 |`/ros_can/mission_completed` | [std_msgs/Bool](http://docs.ros.org/en/noetic/api/std_msgs/html/msg/Bool.html)       | True when the current autonomous mission has been completed. |
 
 ### ROS 2 Services 
@@ -145,11 +145,11 @@ NB: if a parameter has no default value, a value must be provided.
 | `lidarFOV`                             | double    | 3.14159            | Absolute angle (radians) split evenly between +x and -x directions defining a sector containing all cones in the lidar FOV. |
 | `lidarOn`                              | bool      | true               | Whether the lidar is switched on. |
 | `trackFrame`                           | string    | map                | Tf frame in which to publish the track. |
-| `groundTruthConesTopicName`            | string    | -                  | Topic in which to publish ground truth cones ([eufs_msgs/ConeArrayWithCovariance](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/ConeArrayWithCovariance.msg)). |
+| `groundTruthConesTopicName`            | string    | -                  | Topic in which to publish ground truth cones ([hyu_msgs/ConeArrayWithCovariance](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/ConeArrayWithCovariance.msg)). |
 | `groundTruthConeMarkersTopicName`      | string    | -                  | Topic in which to publish ground truth cone markers for visualization ([visualization_msgs/MarkerArray](http://docs.ros.org/en/noetic/api/visualization_msgs/html/msg/MarkerArray.html)). |
-| `groundTruthTrackTopicName`            | string    | -                  | Topic in which to publish the entire ground truth track, visualization topic is this + "/viz" ([eufs_msgs/ConeArrayWithCovariance](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/ConeArrayWithCovariance.msg), viz msg: [visualization_msgs/MarkerArray](http://docs.ros.org/en/noetic/api/visualization_msgs/html/msg/MarkerArray.html)) |
+| `groundTruthTrackTopicName`            | string    | -                  | Topic in which to publish the entire ground truth track, visualization topic is this + "/viz" ([hyu_msgs/ConeArrayWithCovariance](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/ConeArrayWithCovariance.msg), viz msg: [visualization_msgs/MarkerArray](http://docs.ros.org/en/noetic/api/visualization_msgs/html/msg/MarkerArray.html)) |
 | `simulatePerception`                   | bool      | true               | Whether this package should publish to the perception cones topic |
-| `perceptionConesTopicName`             | string    | -                  | Topic in which to publish noisy cones if simulating perception ([eufs_msgs/ConeArrayWithCovariance](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/ConeArrayWithCovariance.msg)). |
+| `perceptionConesTopicName`             | string    | -                  | Topic in which to publish noisy cones if simulating perception ([hyu_msgs/ConeArrayWithCovariance](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/ConeArrayWithCovariance.msg)). |
 | `perceptionConeMarkersTopicName`       | string    | -                  | Topic in which to publish noisy cone markers for visualization ([visualization_msgs/MarkerArray](http://docs.ros.org/en/noetic/api/visualization_msgs/html/msg/MarkerArray.html)). |
 | `perceptionCameraDepthNoiseParameterA` | double    | 0.0184             | Noise weighting parameter for camera depth noise contribution. |
 | `perceptionCameraDepthNoiseParameterB` | double    | 0.2106             | Noise weighting parameter for camera depth noise contribution. |
@@ -200,11 +200,11 @@ This has to be inserted inside a robot URDF.
 
 | Topic Name | Type | Purpose |
 | ---------- | ---- | ------- |
-| `groundTruthConesTopicName` parameter value          | [eufs_msgs/ConeArrayWithCovariance](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/ConeArrayWithCovariance.msg)  | Publishes ground truth array of cone objects detectable by sensors. |
+| `groundTruthConesTopicName` parameter value          | [hyu_msgs/ConeArrayWithCovariance](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/ConeArrayWithCovariance.msg)  | Publishes ground truth array of cone objects detectable by sensors. |
 | `groundTruthConeMarkersTopicName` parameter value    | [visualization_msgs/MarkerArray](http://docs.ros.org/en/noetic/api/visualization_msgs/html/msg/MarkerArray.html)    | Publishes ground truth array of marker objects detectable by sensors for visualisation. |
-| `groundTruthTrackTopicName` parameter value          | [eufs_msgs/ConeArrayWithCovariance](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/ConeArrayWithCovariance.msg)  | Publishes the entire ground truth track in the map frame. |
+| `groundTruthTrackTopicName` parameter value          | [hyu_msgs/ConeArrayWithCovariance](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/ConeArrayWithCovariance.msg)  | Publishes the entire ground truth track in the map frame. |
 | `groundTruthTrackTopicName` parameter value + `/viz` | [visualization_msgs/MarkerArray](http://docs.ros.org/en/noetic/api/visualization_msgs/html/msg/MarkerArray.html)    | Publishes entire ground truth track as markers for visualisation. |
-| `perceptionConesTopicName` parameter value           | [eufs_msgs/ConeArrayWithCovariance](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/ConeArrayWithCovariance.msg)  | Publishes array of cone objects detectable by sensors with added noise. |
+| `perceptionConesTopicName` parameter value           | [hyu_msgs/ConeArrayWithCovariance](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/ConeArrayWithCovariance.msg)  | Publishes array of cone objects detectable by sensors with added noise. |
 | `perceptionConeMarkersTopicName` parameter value     | [visualization_msgs/MarkerArray](http://docs.ros.org/en/noetic/api/visualization_msgs/html/msg/MarkerArray.html)    | Publishes array of marker objects detectable by sensors with added noise for visualisation. |
 
 ### ROS 2 Services
@@ -230,7 +230,7 @@ Note : Bounding boxes depend on the ground truth cones topic. Its publish rate i
 | `sourceFrame`                   | string   | "base_footprint"                 | Source frame from which the position of the `cones` are translated to.       |
 | `cameraWidth`                   | int      | 1280                             | Camera resolution (width).                                                   |
 | `cameraHeight`                  | int      | 720                              | Camera resolution (height).                                                  |
-| `simulateBoundingBoxesTopicName`| string   | "bounding_boxes"                 | Topic which publishes bounding boxes of type `eufs_msgs/msg/BoundingBoxes`.  |
+| `simulateBoundingBoxesTopicName`| string   | "bounding_boxes"                 | Topic which publishes bounding boxes of type `hyu_msgs/msg/BoundingBoxes`.  |
 | `custom_camera_info`            | string   |  "customCameraInfo"              | Topic name of custom camera info.                                            |
 
 
@@ -258,6 +258,6 @@ This has to be inserted inside a robot URDF.
 
 | Topic Name | Type | Purpose |
 | ---------- | ---- | ------- |
-| `gtBoundingBoxesTopic` parameter value           | [eufs_msgs/msg/BoundingBoxes](https://gitlab.com/eufs/eufs_msgs/-/blob/master/msg/BoundingBoxes.msg) | Publishes the ground truth bounding boxes.
-| `noisyBoundingBoxesTopic` parameter value        | [eufs_msgs/msg/BoundingBoxes](https://gitlab.com/eufs/eufs_msgs/-/blob/master/msg/BoundingBoxes.msg) | Publishes bounding boxes with gaussian noise.
+| `gtBoundingBoxesTopic` parameter value           | [hyu_msgs/msg/BoundingBoxes](https://gitlab.com/eufs/hyu_msgs/-/blob/master/msg/BoundingBoxes.msg) | Publishes the ground truth bounding boxes.
+| `noisyBoundingBoxesTopic` parameter value        | [hyu_msgs/msg/BoundingBoxes](https://gitlab.com/eufs/hyu_msgs/-/blob/master/msg/BoundingBoxes.msg) | Publishes bounding boxes with gaussian noise.
 | `customCameraInfo` parameter value               | [sensor_msgs/msg/CameraInfo](http://docs.ros.org/en/noetic/api/sensor_msgs/html/msg/CameraInfo.html) | Contains the cameraInfo which will then be used to perform image projection from 3D plane to 2D plane.

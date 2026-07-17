@@ -36,7 +36,7 @@
   <depend>image_geometry</depend>
 
   <depend>eufs_models</depend>
-  <depend>eufs_msgs</depend>
+  <depend>hyu_msgs</depend>
 
   <depend>ament_index_cpp</depend>
 

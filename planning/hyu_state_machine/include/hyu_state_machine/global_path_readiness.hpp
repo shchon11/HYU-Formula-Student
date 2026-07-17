@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <string>
 
-#include "eufs_msgs/msg/waypoint_array_stamped.hpp"
+#include "hyu_msgs/msg/waypoint_array_stamped.hpp"
 #include "rclcpp/time.hpp"
 
 namespace hyu_state_machine
@@ -52,7 +52,7 @@ class GlobalPathReadiness
 {
 public:
   bool onWaypoints(
-    const eufs_msgs::msg::WaypointArrayStamped & msg,
+    const hyu_msgs::msg::WaypointArrayStamped & msg,
     const rclcpp::Time & current_time);
   void onGraphSlamStatus(const std::string & status);
   void onValidity(bool valid, const rclcpp::Time & current_time, double timeout_sec);

@@ -126,11 +126,11 @@ void BoundingBoxesPlugin::Load(gazebo::physics::ModelPtr _parent, sdf::ElementPt
 
   // Declare publisher
   this->ground_truth_bounding_boxes_pub =
-          this->rosnode_->create_publisher<eufs_msgs::msg::BoundingBoxes>(
+          this->rosnode_->create_publisher<hyu_msgs::msg::BoundingBoxes>(
           gt_bounding_boxes_topic, 10);
 
   this->bounding_boxes_with_noise_pub =
-        this->rosnode_->create_publisher<eufs_msgs::msg::BoundingBoxes>(
+        this->rosnode_->create_publisher<hyu_msgs::msg::BoundingBoxes>(
         noisy_bounding_boxes_topic, 10);
 
   this->custom_cam_info_pub =
@@ -139,7 +139,7 @@ void BoundingBoxesPlugin::Load(gazebo::physics::ModelPtr _parent, sdf::ElementPt
 
   // Declare subscriber
   this->cone_ground_truth_sub_ =
-          this->rosnode_->create_subscription<eufs_msgs::msg::ConeArrayWithCovariance>(
+          this->rosnode_->create_subscription<hyu_msgs::msg::ConeArrayWithCovariance>(
           "/ground_truth/cones", 10,
           std::bind(&BoundingBoxesPlugin::cones_callback, this, std::placeholders::_1));
 
@@ -150,7 +150,7 @@ void BoundingBoxesPlugin::Load(gazebo::physics::ModelPtr _parent, sdf::ElementPt
 }  // GazeboConeGroundTruth
 
 void BoundingBoxesPlugin::cones_callback(
-                      const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg) {
+                      const hyu_msgs::msg::ConeArrayWithCovariance::SharedPtr msg) {
   gazebo::common::Time curTime = _world->SimTime();
   double dt = (curTime - _last_sim_time).Double();
 
@@ -162,10 +162,10 @@ void BoundingBoxesPlugin::cones_callback(
   // Reset the last simulation time
   _last_sim_time = curTime;
 
-  std::vector<eufs_msgs::msg::ConeWithCovariance> blue_cones = msg->blue_cones;
-  std::vector<eufs_msgs::msg::ConeWithCovariance> yellow_cones = msg->yellow_cones;
-  std::vector<eufs_msgs::msg::ConeWithCovariance> orange_cones = msg->orange_cones;
-  std::vector<eufs_msgs::msg::ConeWithCovariance> big_orange_cones = msg->big_orange_cones;
+  std::vector<hyu_msgs::msg::ConeWithCovariance> blue_cones = msg->blue_cones;
+  std::vector<hyu_msgs::msg::ConeWithCovariance> yellow_cones = msg->yellow_cones;
+  std::vector<hyu_msgs::msg::ConeWithCovariance> orange_cones = msg->orange_cones;
+  std::vector<hyu_msgs::msg::ConeWithCovariance> big_orange_cones = msg->big_orange_cones;
 
   // Get the cone position of each color and find it's bounding boxes position
   auto [ground_truth_blue_bounding_boxes, noisy_blue_bounding_boxes] =
@@ -177,12 +177,12 @@ void BoundingBoxesPlugin::cones_callback(
   auto [ground_truth_big_orange_bounding_boxes, noisy_big_orange_bounding_boxes] =
       projectToImagePlane(big_orange_cones, big_cones);
 
-  eufs_msgs::msg::BoundingBoxes ground_truth_bounding_boxes_msg;
+  hyu_msgs::msg::BoundingBoxes ground_truth_bounding_boxes_msg;
   update_msg(ground_truth_bounding_boxes_msg, msg->header,
           ground_truth_blue_bounding_boxes, ground_truth_yellow_bounding_boxes,
           ground_truth_orange_bounding_boxes, ground_truth_big_orange_bounding_boxes);
 
-  eufs_msgs::msg::BoundingBoxes noisy_bounding_boxes_msg;
+  hyu_msgs::msg::BoundingBoxes noisy_bounding_boxes_msg;
 
   update_msg(noisy_bounding_boxes_msg, msg->header,
             noisy_blue_bounding_boxes,
@@ -199,7 +199,7 @@ void BoundingBoxesPlugin::cones_callback(
   }
 
 void BoundingBoxesPlugin::update_msg(
-  eufs_msgs::msg::BoundingBoxes &bounding_boxes_msg, std_msgs::msg::Header header,
+  hyu_msgs::msg::BoundingBoxes &bounding_boxes_msg, std_msgs::msg::Header header,
   std::vector<std::vector<double>> blue_cones,
   std::vector<std::vector<double>> yellow_cones,
   std::vector<std::vector<double>> orange_cones,
@@ -253,7 +253,7 @@ void BoundingBoxesPlugin::setCameraInfo(
 }
 
 std::tuple<std::vector<std::vector<double>>, std::vector<std::vector<double>>>
-    BoundingBoxesPlugin::projectToImagePlane(std::vector<eufs_msgs::msg::ConeWithCovariance>
+    BoundingBoxesPlugin::projectToImagePlane(std::vector<hyu_msgs::msg::ConeWithCovariance>
                   &cones_vector, const ConeInfo cone_info_) {
   std::vector<std::vector<double>> bounding_boxes_vector;
   std::vector<std::vector<double>> noisy_bounding_boxes_vector;
@@ -355,10 +355,10 @@ void BoundingBoxesPlugin::add_gaussian_noise_to_bounding_box(
 }
 
 void BoundingBoxesPlugin::push_back_bounding_boxes_msg(
-  eufs_msgs::msg::BoundingBoxes &bounding_boxes_msg,
+  hyu_msgs::msg::BoundingBoxes &bounding_boxes_msg,
   std::vector<std::vector<double>> bounding_boxes_vector, std::string color) const {
   for (size_t i = 0; i < bounding_boxes_vector.size(); i++) {
-  eufs_msgs::msg::BoundingBox bounding_box_msg;
+  hyu_msgs::msg::BoundingBox bounding_box_msg;
   bounding_box_msg.color = color;
   bounding_box_msg.xmax = bounding_boxes_vector[i][0];
   bounding_box_msg.ymax = bounding_boxes_vector[i][3];

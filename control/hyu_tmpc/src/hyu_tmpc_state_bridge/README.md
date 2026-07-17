@@ -6,7 +6,7 @@ wrapper.
 
 ## Build and run
 
-The HYU-Formula-Student overlay is required for `eufs_msgs`.
+The HYU-Formula-Student overlay is required for `hyu_msgs`.
 
 ```zsh
 cd /home/shchon11/fsk/src/hyu_tmpc

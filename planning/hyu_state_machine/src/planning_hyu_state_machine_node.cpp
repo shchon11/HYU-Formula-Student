@@ -80,7 +80,7 @@ PlanningStateMachineNode::PlanningStateMachineNode()
   auto latched_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
   auto validity_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable().durability_volatile();
 
-  global_waypoints_sub_ = create_subscription<eufs_msgs::msg::WaypointArrayStamped>(
+  global_waypoints_sub_ = create_subscription<hyu_msgs::msg::WaypointArrayStamped>(
     global_waypoints_topic_, latched_qos,
     std::bind(&PlanningStateMachineNode::onGlobalWaypoints, this, _1));
 
@@ -100,13 +100,13 @@ PlanningStateMachineNode::PlanningStateMachineNode()
     global_handoff_ready_topic_, validity_qos,
     std::bind(&PlanningStateMachineNode::onGlobalHandoffReady, this, _1));
 
-  cone_map_sub_ = create_subscription<eufs_msgs::msg::ConeArrayWithCovariance>(
+  cone_map_sub_ = create_subscription<hyu_msgs::msg::ConeArrayWithCovariance>(
     cone_map_topic_, rclcpp::SensorDataQoS(),
     std::bind(&PlanningStateMachineNode::onCones, this, _1));
 
   // Start/finish gate: big-orange landmarks from the latched SLAM map plus
   // the map-frame ego stream drive the orange-gate lap counter.
-  slam_cone_map_sub_ = create_subscription<eufs_msgs::msg::ConeArrayWithCovariance>(
+  slam_cone_map_sub_ = create_subscription<hyu_msgs::msg::ConeArrayWithCovariance>(
     slam_cone_map_topic_, latched_qos,
     std::bind(&PlanningStateMachineNode::onSlamConeMap, this, _1));
   ego_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
@@ -158,7 +158,7 @@ void PlanningStateMachineNode::onFrenetOdom(const nav_msgs::msg::Odometry::Share
 }
 
 void PlanningStateMachineNode::onSlamConeMap(
-  const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg)
+  const hyu_msgs::msg::ConeArrayWithCovariance::SharedPtr msg)
 {
   if (!gate_tracker_) {
     return;
@@ -184,7 +184,7 @@ void PlanningStateMachineNode::onEgoOdom(const nav_msgs::msg::Odometry::SharedPt
 }
 
 void PlanningStateMachineNode::onGlobalWaypoints(
-  const eufs_msgs::msg::WaypointArrayStamped::SharedPtr msg)
+  const hyu_msgs::msg::WaypointArrayStamped::SharedPtr msg)
 {
   const rclcpp::Time receive_time = now();
   if (lap_tracking_policy_) {
@@ -229,7 +229,7 @@ void PlanningStateMachineNode::onGlobalHandoffReady(const std_msgs::msg::Bool::S
 }
 
 void PlanningStateMachineNode::onCones(
-  const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg)
+  const hyu_msgs::msg::ConeArrayWithCovariance::SharedPtr msg)
 {
   blue_cone_count_ = msg->blue_cones.size();
   yellow_cone_count_ = msg->yellow_cones.size();

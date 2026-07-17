@@ -72,7 +72,7 @@ MonotonicProjection closestPointOnPolylineAfter(
 }
 
 std::vector<PlannerPoint> finiteConePoints(
-  const std::vector<eufs_msgs::msg::ConeWithCovariance> & cones)
+  const std::vector<hyu_msgs::msg::ConeWithCovariance> & cones)
 {
   std::vector<PlannerPoint> points;
   points.reserve(cones.size());
@@ -647,7 +647,7 @@ static bool buildCenterlineFromSeed(
 }
 
 bool buildCenterlineFromSlamMap(
-  const eufs_msgs::msg::ConeArrayWithCovariance & cone_map,
+  const hyu_msgs::msg::ConeArrayWithCovariance & cone_map,
   const nav_msgs::msg::Odometry & ego_odom,
   const SlamCenterlineConfig & config,
   std::vector<PlannerWaypoint> & waypoints,

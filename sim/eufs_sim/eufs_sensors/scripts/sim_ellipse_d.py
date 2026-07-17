@@ -154,7 +154,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 
-from eufs_msgs.msg import CarState
+from hyu_msgs.msg import CarState
 from std_msgs.msg import String, UInt8
 
 try:

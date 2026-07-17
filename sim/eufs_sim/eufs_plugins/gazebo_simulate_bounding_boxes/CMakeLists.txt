@@ -10,7 +10,7 @@ ament_target_dependencies(gazebo_simulate_bounding_boxes
   "tf2"
   "tf2_ros"
   "tf2_geometry_msgs"
-  "eufs_msgs"
+  "hyu_msgs"
   "image_geometry")
 
 target_include_directories(gazebo_simulate_bounding_boxes PUBLIC include)

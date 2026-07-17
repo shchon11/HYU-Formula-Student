@@ -28,7 +28,7 @@
  * @brief ground truth cone Gazebo plugin
  *
  * @details Provides ground truth cones in simulation in the form of
- *`eufs_msgs/msg/ConeArrayWithCovariance`. Can also simulate the perception stack by publishing
+ *`hyu_msgs/msg/ConeArrayWithCovariance`. Can also simulate the perception stack by publishing
  *cones with noise.
  **/
 
@@ -118,7 +118,7 @@ void GazeboCameraCones::Load(gazebo::physics::ModelPtr _parent, sdf::ElementPtr 
   } else {
     std::string topic_name_ = _sdf->GetElement("cameraConesTopicName")->Get<std::string>();
     this->camera_cones_pub_ =
-        this->rosnode_->create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(
+        this->rosnode_->create_publisher<hyu_msgs::msg::ConeArrayWithCovariance>(
             topic_name_, 1);
   }
 
@@ -146,34 +146,34 @@ void GazeboCameraCones::UpdateChild() {
   this->car_pos = this->car_link->WorldPose();
 
   // Get the track message
-  eufs_msgs::msg::ConeArrayWithCovariance gazebo_cone_arrays_msg =
+  hyu_msgs::msg::ConeArrayWithCovariance gazebo_cone_arrays_msg =
       cone_helpers::getGroundTruthCones(track_model, this->rosnode_->get_logger());
-  eufs_msgs::msg::ConeArrayWithCovariance cone_arrays_msg =
+  hyu_msgs::msg::ConeArrayWithCovariance cone_arrays_msg =
       cone_helpers::translateToFrame(gazebo_cone_arrays_msg,
                                      this->car_pos,
                                      this->car_frame_id);
   cone_arrays_msg.header.stamp.sec = cur_time.sec;
   cone_arrays_msg.header.stamp.nanosec = cur_time.nsec;
-  eufs_msgs::msg::ConeArrayWithCovariance ground_truth_cones_msg =
+  hyu_msgs::msg::ConeArrayWithCovariance ground_truth_cones_msg =
       processCones(cone_arrays_msg);
 
   // Publish the camera cones if it has subscribers
   if (this->camera_cones_pub_->get_subscription_count() > 0) {
-    eufs_msgs::msg::ConeArrayWithCovariance camera_cones_msg =
+    hyu_msgs::msg::ConeArrayWithCovariance camera_cones_msg =
         addConeNoise(ground_truth_cones_msg);
     this->camera_cones_pub_->publish(camera_cones_msg);
   }
 }
 
-eufs_msgs::msg::ConeArrayWithCovariance GazeboCameraCones::processCones(
-    eufs_msgs::msg::ConeArrayWithCovariance cones) {
+hyu_msgs::msg::ConeArrayWithCovariance GazeboCameraCones::processCones(
+    hyu_msgs::msg::ConeArrayWithCovariance cones) {
 
-  std::vector<eufs_msgs::msg::ConeWithCovariance> new_blue;
-  std::vector<eufs_msgs::msg::ConeWithCovariance> new_yellow;
-  std::vector<eufs_msgs::msg::ConeWithCovariance> new_orange;
-  std::vector<eufs_msgs::msg::ConeWithCovariance> new_big_orange;
+  std::vector<hyu_msgs::msg::ConeWithCovariance> new_blue;
+  std::vector<hyu_msgs::msg::ConeWithCovariance> new_yellow;
+  std::vector<hyu_msgs::msg::ConeWithCovariance> new_orange;
+  std::vector<hyu_msgs::msg::ConeWithCovariance> new_big_orange;
 
-  std::vector<eufs_msgs::msg::ConeWithCovariance> in_view;
+  std::vector<hyu_msgs::msg::ConeWithCovariance> in_view;
 
   // blue
   in_view = GazeboCameraCones::fovCones(cones.blue_cones);
@@ -203,22 +203,22 @@ eufs_msgs::msg::ConeArrayWithCovariance GazeboCameraCones::processCones(
   return cones;
 }
 
-bool GazeboCameraCones::inRangeOfCamera(eufs_msgs::msg::ConeWithCovariance cone) {
+bool GazeboCameraCones::inRangeOfCamera(hyu_msgs::msg::ConeWithCovariance cone) {
   auto dist = std::pow(cone.point.x - this->camera_pos.Pos()[0], 2) +
               std::pow(cone.point.y - this->camera_pos.Pos()[1], 2);
   return camera_min_view_distance * camera_min_view_distance < dist &&
          dist < camera_total_view_distance * camera_total_view_distance;
 }
 
-bool GazeboCameraCones::inFOVOfCamera(eufs_msgs::msg::ConeWithCovariance cone) {
+bool GazeboCameraCones::inFOVOfCamera(hyu_msgs::msg::ConeWithCovariance cone) {
   float angle = atan2(cone.point.y - this->camera_pos.Pos()[1], cone.point.x -
                                                                     this->camera_pos.Pos()[0]);
   return abs(angle - this->camera_pos.Rot().Yaw()) < (this->camera_fov / 2);
 }
 
-std::vector<eufs_msgs::msg::ConeWithCovariance>
-GazeboCameraCones::fovCones(std::vector<eufs_msgs::msg::ConeWithCovariance> conesToCheck) {
-  std::vector<eufs_msgs::msg::ConeWithCovariance> cones_in_view;
+std::vector<hyu_msgs::msg::ConeWithCovariance>
+GazeboCameraCones::fovCones(std::vector<hyu_msgs::msg::ConeWithCovariance> conesToCheck) {
+  std::vector<hyu_msgs::msg::ConeWithCovariance> cones_in_view;
 
   for (auto const &cone : conesToCheck) {
     bool camera_sees = inRangeOfCamera(cone) && inFOVOfCamera(cone);
@@ -228,9 +228,9 @@ GazeboCameraCones::fovCones(std::vector<eufs_msgs::msg::ConeWithCovariance> cone
 }
 
 // Add noise to the cone arrays
-eufs_msgs::msg::ConeArrayWithCovariance GazeboCameraCones::addConeNoise(
-    eufs_msgs::msg::ConeArrayWithCovariance &cones_message) {
-  eufs_msgs::msg::ConeArrayWithCovariance cones_message_with_noise = cones_message;
+hyu_msgs::msg::ConeArrayWithCovariance GazeboCameraCones::addConeNoise(
+    hyu_msgs::msg::ConeArrayWithCovariance &cones_message) {
+  hyu_msgs::msg::ConeArrayWithCovariance cones_message_with_noise = cones_message;
 
   addNoiseToConeArray(cones_message_with_noise.blue_cones);
   addNoiseToConeArray(cones_message_with_noise.yellow_cones);
@@ -238,7 +238,7 @@ eufs_msgs::msg::ConeArrayWithCovariance GazeboCameraCones::addConeNoise(
   addNoiseToConeArray(cones_message_with_noise.big_orange_cones);
   addNoiseToConeArray(cones_message_with_noise.unknown_color_cones);
 
-  std::map<std::string, std::vector<eufs_msgs::msg::ConeWithCovariance>> color_map = {
+  std::map<std::string, std::vector<hyu_msgs::msg::ConeWithCovariance>> color_map = {
     {"blue", cones_message_with_noise.blue_cones},
     {"yellow", cones_message_with_noise.yellow_cones},
     {"orange", cones_message_with_noise.orange_cones},
@@ -261,7 +261,7 @@ eufs_msgs::msg::ConeArrayWithCovariance GazeboCameraCones::addConeNoise(
 }
 
 void GazeboCameraCones::addNoiseToConeArray(
-    std::vector<eufs_msgs::msg::ConeWithCovariance> &cone_array) {
+    std::vector<hyu_msgs::msg::ConeWithCovariance> &cone_array) {
   for (unsigned int i = 0; i < cone_array.size(); i++) {
     // Camera noise
     auto dist = sqrt(cone_array[i].point.x * cone_array[i].point.x +
@@ -337,10 +337,10 @@ std::string GazeboCameraCones::pickColorWithProbability(
     return color;
 }
 
-std::map<std::string, std::vector<eufs_msgs::msg::ConeWithCovariance>>
+std::map<std::string, std::vector<hyu_msgs::msg::ConeWithCovariance>>
 GazeboCameraCones::swapConeColors(
-  std::map<std::string, std::vector<eufs_msgs::msg::ConeWithCovariance>> color_map) {
-  std::map<std::string, std::vector<eufs_msgs::msg::ConeWithCovariance>> new_map;
+  std::map<std::string, std::vector<hyu_msgs::msg::ConeWithCovariance>> color_map) {
+  std::map<std::string, std::vector<hyu_msgs::msg::ConeWithCovariance>> new_map;
   for (auto const& [color, source] : color_map) {
     for (auto cone : source) {
       if (!shouldDetectCone()) {
@@ -349,7 +349,7 @@ GazeboCameraCones::swapConeColors(
       std::string rand_color = pickColorWithProbability(recolor_config[color]);
       if (rand_color != "undetected") {
         if (!new_map.count(rand_color)) {
-          std::vector<eufs_msgs::msg::ConeWithCovariance> new_cones = {cone};
+          std::vector<hyu_msgs::msg::ConeWithCovariance> new_cones = {cone};
           new_map.insert({rand_color, new_cones});
         } else {
           new_map.find(rand_color)->second.push_back(cone);

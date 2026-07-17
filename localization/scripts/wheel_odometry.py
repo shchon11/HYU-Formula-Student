@@ -13,7 +13,7 @@ GNSS-independent odometry source for the graph SLAM motion input, so the
 GNSS prior stays the only absolute channel (no correlated double injection).
 
 Wiring — identical in the sim and on the car, which is the point:
-  - ``/ros_can/wheel_speeds``     eufs_msgs/WheelSpeedsStamped, wheel speeds
+  - ``/ros_can/wheel_speeds``     hyu_msgs/WheelSpeedsStamped, wheel speeds
     in RPM (all four are real: one AMK DD5 per wheel; this node uses the
     rears, which stay unsteered), steering in rad.
   - ``/sbg/ekf_rot_accel_body``   sbg_driver/SbgEkfRotAccel, the INS body-frame
@@ -78,7 +78,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 
-from eufs_msgs.msg import CarState, WheelSpeedsStamped
+from hyu_msgs.msg import CarState, WheelSpeedsStamped
 
 try:
     from sbg_driver.msg import SbgEkfRotAccel

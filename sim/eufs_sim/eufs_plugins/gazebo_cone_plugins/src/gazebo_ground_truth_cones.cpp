@@ -28,7 +28,7 @@
  * @brief ground truth cone Gazebo plugin
  *
  * @details Provides ground truth cones in simulation in the form of
- *`eufs_msgs/msg/ConeArrayWithCovariance`. Can also simulate the perception stack by publishing
+ *`hyu_msgs/msg/ConeArrayWithCovariance`. Can also simulate the perception stack by publishing
  *cones with noise.
  **/
 
@@ -138,7 +138,7 @@ void GazeboGroundTruthCones::Load(gazebo::physics::ModelPtr _parent, sdf::Elemen
   } else {
     std::string topic_name_ = _sdf->GetElement("groundTruthConesTopicName")->Get<std::string>();
     this->ground_truth_cone_pub_ =
-        this->rosnode_->create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(
+        this->rosnode_->create_publisher<hyu_msgs::msg::ConeArrayWithCovariance>(
             topic_name_, 1);
   }
 
@@ -150,7 +150,7 @@ void GazeboGroundTruthCones::Load(gazebo::physics::ModelPtr _parent, sdf::Elemen
   } else {
     std::string topic_name_ = _sdf->GetElement("groundTruthTrackTopicName")->Get<std::string>();
     this->ground_truth_track_pub_ =
-        this->rosnode_->create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(
+        this->rosnode_->create_publisher<hyu_msgs::msg::ConeArrayWithCovariance>(
             topic_name_, 1);
   }
 
@@ -171,7 +171,7 @@ void GazeboGroundTruthCones::Load(gazebo::physics::ModelPtr _parent, sdf::Elemen
     } else {
       std::string topic_name_ = _sdf->GetElement("perceptionConesTopicName")->Get<std::string>();
       this->perception_cone_pub_ =
-          this->rosnode_->create_publisher<eufs_msgs::msg::ConeArrayWithCovariance>(
+          this->rosnode_->create_publisher<hyu_msgs::msg::ConeArrayWithCovariance>(
               topic_name_, 1);
     }
   }
@@ -222,9 +222,9 @@ void GazeboGroundTruthCones::UpdateChild() {
   this->car_pos = this->car_link->WorldPose();
 
   // Get the track message
-  eufs_msgs::msg::ConeArrayWithCovariance cone_arrays_message = getConeArraysMessage();
+  hyu_msgs::msg::ConeArrayWithCovariance cone_arrays_message = getConeArraysMessage();
 
-  eufs_msgs::msg::ConeArrayWithCovariance ground_truth_track_message;
+  hyu_msgs::msg::ConeArrayWithCovariance ground_truth_track_message;
   if (this->track_frame_ == "map") {
     ground_truth_track_message = translateMapFrame(cone_arrays_message);
   } else if (this->track_frame_ == "base_footprint") {
@@ -242,7 +242,7 @@ void GazeboGroundTruthCones::UpdateChild() {
     this->ground_truth_track_pub_->publish(ground_truth_track_message);
   }
 
-  eufs_msgs::msg::ConeArrayWithCovariance ground_truth_cones_message =
+  hyu_msgs::msg::ConeArrayWithCovariance ground_truth_cones_message =
       processCones(cone_arrays_message);
 
   // Publish the ground truth cones if it has subscribers and is allowed to publish
@@ -253,15 +253,15 @@ void GazeboGroundTruthCones::UpdateChild() {
   // Publish the simulated perception cones if it has subscribers
   if (this->simulate_perception_ &&
       this->perception_cone_pub_->get_subscription_count() > 0) {
-    eufs_msgs::msg::ConeArrayWithCovariance perception_cones_message =
+    hyu_msgs::msg::ConeArrayWithCovariance perception_cones_message =
         addNoisePerception(ground_truth_cones_message, perception_lidar_noise_);
     this->perception_cone_pub_->publish(perception_cones_message);
   }
 }
 
 // Getting the track
-eufs_msgs::msg::ConeArrayWithCovariance GazeboGroundTruthCones::getConeArraysMessage() {
-  eufs_msgs::msg::ConeArrayWithCovariance cone_arrays_message;
+hyu_msgs::msg::ConeArrayWithCovariance GazeboGroundTruthCones::getConeArraysMessage() {
+  hyu_msgs::msg::ConeArrayWithCovariance cone_arrays_message;
   cone_arrays_message.header.frame_id = "map";
   cone_arrays_message.header.stamp.sec = this->time_last_published.sec;
   cone_arrays_message.header.stamp.nanosec = this->time_last_published.nsec;
@@ -277,7 +277,7 @@ eufs_msgs::msg::ConeArrayWithCovariance GazeboGroundTruthCones::getConeArraysMes
 }
 
 void GazeboGroundTruthCones::addConeToConeArray(
-    eufs_msgs::msg::ConeArrayWithCovariance & ground_truth_cone_array,
+    hyu_msgs::msg::ConeArrayWithCovariance & ground_truth_cone_array,
     gazebo::physics::LinkPtr link) {
   geometry_msgs::msg::Point point;
   point.x = link->WorldPose().Pos().X();
@@ -286,7 +286,7 @@ void GazeboGroundTruthCones::addConeToConeArray(
 
   ConeType cone_type = this->getConeType(link);
 
-  eufs_msgs::msg::ConeWithCovariance cone = eufs_msgs::msg::ConeWithCovariance();
+  hyu_msgs::msg::ConeWithCovariance cone = hyu_msgs::msg::ConeWithCovariance();
   cone.point = point;
   cone.covariance = {0, 0, 0, 0};
 
@@ -310,18 +310,18 @@ void GazeboGroundTruthCones::addConeToConeArray(
   }
 }
 
-eufs_msgs::msg::ConeArrayWithCovariance GazeboGroundTruthCones::processCones(
-    eufs_msgs::msg::ConeArrayWithCovariance cones_to_process) {
-  eufs_msgs::msg::ConeArrayWithCovariance cones =
+hyu_msgs::msg::ConeArrayWithCovariance GazeboGroundTruthCones::processCones(
+    hyu_msgs::msg::ConeArrayWithCovariance cones_to_process) {
+  hyu_msgs::msg::ConeArrayWithCovariance cones =
       translateBaseFootprintFrame(cones_to_process);
 
-  std::vector<eufs_msgs::msg::ConeWithCovariance> new_blue;
-  std::vector<eufs_msgs::msg::ConeWithCovariance> new_yellow;
-  std::vector<eufs_msgs::msg::ConeWithCovariance> new_orange;
-  std::vector<eufs_msgs::msg::ConeWithCovariance> new_big_orange;
-  std::vector<eufs_msgs::msg::ConeWithCovariance> new_unknown;
+  std::vector<hyu_msgs::msg::ConeWithCovariance> new_blue;
+  std::vector<hyu_msgs::msg::ConeWithCovariance> new_yellow;
+  std::vector<hyu_msgs::msg::ConeWithCovariance> new_orange;
+  std::vector<hyu_msgs::msg::ConeWithCovariance> new_big_orange;
+  std::vector<hyu_msgs::msg::ConeWithCovariance> new_unknown;
 
-  std::vector<eufs_msgs::msg::ConeWithCovariance> color, no_color;
+  std::vector<hyu_msgs::msg::ConeWithCovariance> color, no_color;
 
   // blue
   std::tie(color, no_color) = GazeboGroundTruthCones::fovCones(cones.blue_cones);
@@ -389,7 +389,7 @@ bool GazeboGroundTruthCones::resetConePosition(
 
   // Loop through all cones
   for (unsigned int i = 0; i < links.size(); i++) {
-    eufs_msgs::msg::ConeWithCovariance cone;
+    hyu_msgs::msg::ConeWithCovariance cone;
     ConeType cone_type = this->getConeType(links[i]);
 
     // sort by cone color
@@ -431,18 +431,18 @@ bool GazeboGroundTruthCones::resetConePosition(
   return response->success;
 }
 
-bool GazeboGroundTruthCones::inRangeOfCamera(eufs_msgs::msg::ConeWithCovariance cone) {
+bool GazeboGroundTruthCones::inRangeOfCamera(hyu_msgs::msg::ConeWithCovariance cone) {
   auto dist = (cone.point.x * cone.point.x) + (cone.point.y * cone.point.y);
   return camera_min_view_distance * camera_min_view_distance < dist &&
          dist < camera_total_view_distance * camera_total_view_distance;
 }
 
-bool GazeboGroundTruthCones::inFOVOfCamera(eufs_msgs::msg::ConeWithCovariance cone) {
+bool GazeboGroundTruthCones::inFOVOfCamera(hyu_msgs::msg::ConeWithCovariance cone) {
   float angle = atan2(cone.point.y, cone.point.x);
   return abs(angle) < (this->camera_fov / 2);
 }
 
-bool GazeboGroundTruthCones::inRangeOfLidar(eufs_msgs::msg::ConeWithCovariance cone) {
+bool GazeboGroundTruthCones::inRangeOfLidar(hyu_msgs::msg::ConeWithCovariance cone) {
   auto dist = (cone.point.x * cone.point.x) + (cone.point.y * cone.point.y);
   return lidar_min_view_distance * lidar_min_view_distance < dist &&
          dist < lidar_total_view_distance * lidar_total_view_distance &&
@@ -450,14 +450,14 @@ bool GazeboGroundTruthCones::inRangeOfLidar(eufs_msgs::msg::ConeWithCovariance c
                                                           lidar_y_view_distance && this->lidar_on;
 }
 
-bool GazeboGroundTruthCones::inFOVOfLidar(eufs_msgs::msg::ConeWithCovariance cone) {
+bool GazeboGroundTruthCones::inFOVOfLidar(hyu_msgs::msg::ConeWithCovariance cone) {
   float angle = atan2(cone.point.y, cone.point.x);
   return abs(angle) < (this->lidar_fov / 2) && this->lidar_on;
 }
 
-std::vector<eufs_msgs::msg::ConeWithCovariance> GazeboGroundTruthCones::translateCones(
-    std::vector<eufs_msgs::msg::ConeWithCovariance> cones, ignition::math::Pose3d frame) {
-  std::vector<eufs_msgs::msg::ConeWithCovariance> translated_cones;
+std::vector<hyu_msgs::msg::ConeWithCovariance> GazeboGroundTruthCones::translateCones(
+    std::vector<hyu_msgs::msg::ConeWithCovariance> cones, ignition::math::Pose3d frame) {
+  std::vector<hyu_msgs::msg::ConeWithCovariance> translated_cones;
   for (auto const &cone : cones) {
     // Translate the position of the cone to be based on the car
     float x = cone.point.x - frame.Pos().X();
@@ -467,7 +467,7 @@ std::vector<eufs_msgs::msg::ConeWithCovariance> GazeboGroundTruthCones::translat
     float yaw = frame.Rot().Yaw();
 
     // Rotate the points using the yaw of the car (x and y are the other way around)
-    eufs_msgs::msg::ConeWithCovariance translated_cone;
+    hyu_msgs::msg::ConeWithCovariance translated_cone;
     translated_cone.point.y = (cos(yaw) * y) - (sin(yaw) * x);
     translated_cone.point.x = (sin(yaw) * y) + (cos(yaw) * x);
 
@@ -476,8 +476,8 @@ std::vector<eufs_msgs::msg::ConeWithCovariance> GazeboGroundTruthCones::translat
   return translated_cones;
 }
 
-eufs_msgs::msg::ConeArrayWithCovariance GazeboGroundTruthCones::translateMapFrame(
-    eufs_msgs::msg::ConeArrayWithCovariance cones) {
+hyu_msgs::msg::ConeArrayWithCovariance GazeboGroundTruthCones::translateMapFrame(
+    hyu_msgs::msg::ConeArrayWithCovariance cones) {
   cones.header.frame_id = "map";
   cones.blue_cones = translateCones(cones.blue_cones, this->initial_car_pos_);
   cones.yellow_cones = translateCones(cones.yellow_cones, this->initial_car_pos_);
@@ -489,8 +489,8 @@ eufs_msgs::msg::ConeArrayWithCovariance GazeboGroundTruthCones::translateMapFram
   return cones;
 }
 
-eufs_msgs::msg::ConeArrayWithCovariance GazeboGroundTruthCones::translateBaseFootprintFrame(
-    eufs_msgs::msg::ConeArrayWithCovariance cones) {
+hyu_msgs::msg::ConeArrayWithCovariance GazeboGroundTruthCones::translateBaseFootprintFrame(
+    hyu_msgs::msg::ConeArrayWithCovariance cones) {
   cones.header.frame_id = "base_footprint";
   cones.blue_cones = translateCones(cones.blue_cones, this->car_pos);
   cones.yellow_cones = translateCones(cones.yellow_cones, this->car_pos);
@@ -500,11 +500,11 @@ eufs_msgs::msg::ConeArrayWithCovariance GazeboGroundTruthCones::translateBaseFoo
   return cones;
 }
 
-std::pair<std::vector<eufs_msgs::msg::ConeWithCovariance>,
-          std::vector<eufs_msgs::msg::ConeWithCovariance>>
-GazeboGroundTruthCones::fovCones(std::vector<eufs_msgs::msg::ConeWithCovariance> conesToCheck) {
-  std::vector<eufs_msgs::msg::ConeWithCovariance> cones_in_view;
-  std::vector<eufs_msgs::msg::ConeWithCovariance> cones_in_view_without_color;
+std::pair<std::vector<hyu_msgs::msg::ConeWithCovariance>,
+          std::vector<hyu_msgs::msg::ConeWithCovariance>>
+GazeboGroundTruthCones::fovCones(std::vector<hyu_msgs::msg::ConeWithCovariance> conesToCheck) {
+  std::vector<hyu_msgs::msg::ConeWithCovariance> cones_in_view;
+  std::vector<hyu_msgs::msg::ConeWithCovariance> cones_in_view_without_color;
 
   for (auto const &cone : conesToCheck) {
     bool lidar_sees = inRangeOfLidar(cone) && inFOVOfLidar(cone);
@@ -543,9 +543,9 @@ GazeboGroundTruthCones::getConeType(gazebo::physics::LinkPtr link) {
 }
 
 // Add noise to the cone arrays
-eufs_msgs::msg::ConeArrayWithCovariance GazeboGroundTruthCones::addNoisePerception(
-    eufs_msgs::msg::ConeArrayWithCovariance &cones_message, ignition::math::Vector3d noise) {
-  eufs_msgs::msg::ConeArrayWithCovariance cones_message_with_noise = cones_message;
+hyu_msgs::msg::ConeArrayWithCovariance GazeboGroundTruthCones::addNoisePerception(
+    hyu_msgs::msg::ConeArrayWithCovariance &cones_message, ignition::math::Vector3d noise) {
+  hyu_msgs::msg::ConeArrayWithCovariance cones_message_with_noise = cones_message;
 
 
   addNoiseToConeArray(cones_message_with_noise.blue_cones, noise);
@@ -554,7 +554,7 @@ eufs_msgs::msg::ConeArrayWithCovariance GazeboGroundTruthCones::addNoisePercepti
   addNoiseToConeArray(cones_message_with_noise.big_orange_cones, noise);
   addNoiseToConeArray(cones_message_with_noise.unknown_color_cones, noise);
 
-  std::map<std::string, std::vector<eufs_msgs::msg::ConeWithCovariance>> color_map = {
+  std::map<std::string, std::vector<hyu_msgs::msg::ConeWithCovariance>> color_map = {
     {"blue", cones_message_with_noise.blue_cones},
     {"yellow", cones_message_with_noise.yellow_cones},
     {"orange", cones_message_with_noise.orange_cones},
@@ -577,7 +577,7 @@ eufs_msgs::msg::ConeArrayWithCovariance GazeboGroundTruthCones::addNoisePercepti
 }
 
 void GazeboGroundTruthCones::addNoiseToConeArray(
-    std::vector<eufs_msgs::msg::ConeWithCovariance> &cone_array, ignition::math::Vector3d noise) {
+    std::vector<hyu_msgs::msg::ConeWithCovariance> &cone_array, ignition::math::Vector3d noise) {
   for (unsigned int i = 0; i < cone_array.size(); i++) {
     // Lidar noise
     auto lidar_x_noise = noise.X();
@@ -691,10 +691,10 @@ std::string GazeboGroundTruthCones::pickColorWithProbability(
     return color;
 }
 
-std::map<std::string, std::vector<eufs_msgs::msg::ConeWithCovariance>>
+std::map<std::string, std::vector<hyu_msgs::msg::ConeWithCovariance>>
 GazeboGroundTruthCones::swapConeColors(
-  std::map<std::string, std::vector<eufs_msgs::msg::ConeWithCovariance>> color_map) {
-  std::map<std::string, std::vector<eufs_msgs::msg::ConeWithCovariance>> new_map;
+  std::map<std::string, std::vector<hyu_msgs::msg::ConeWithCovariance>> color_map) {
+  std::map<std::string, std::vector<hyu_msgs::msg::ConeWithCovariance>> new_map;
   for (auto const& [color, source] : color_map) {
     for (auto cone : source) {
       if (!shouldDetectCone()) {
@@ -703,7 +703,7 @@ GazeboGroundTruthCones::swapConeColors(
       std::string rand_color = pickColorWithProbability(recolor_config[color]);
       if (rand_color != "undetected") {
         if (!new_map.count(rand_color)) {
-          std::vector<eufs_msgs::msg::ConeWithCovariance> new_cones = {cone};
+          std::vector<hyu_msgs::msg::ConeWithCovariance> new_cones = {cone};
           new_map.insert({rand_color, new_cones});
         } else {
           new_map.find(rand_color)->second.push_back(cone);
@@ -766,9 +766,9 @@ ignition::math::Vector3d GazeboGroundTruthCones::getVector3dParameter(
   }
 }
 
-eufs_msgs::msg::ConeArray GazeboGroundTruthCones::stripCovariance(
-    eufs_msgs::msg::ConeArrayWithCovariance msg) {
-  auto return_msg = eufs_msgs::msg::ConeArray();
+hyu_msgs::msg::ConeArray GazeboGroundTruthCones::stripCovariance(
+    hyu_msgs::msg::ConeArrayWithCovariance msg) {
+  auto return_msg = hyu_msgs::msg::ConeArray();
   for (auto c : msg.blue_cones) {
     return_msg.blue_cones.push_back(c.point);
   }

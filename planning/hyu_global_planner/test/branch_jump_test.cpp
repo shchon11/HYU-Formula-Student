@@ -8,9 +8,9 @@ namespace hyu_global_planner::test
 namespace
 {
 
-void addCone(std::vector<eufs_msgs::msg::ConeWithCovariance> & cones, double x, double y)
+void addCone(std::vector<hyu_msgs::msg::ConeWithCovariance> & cones, double x, double y)
 {
-  eufs_msgs::msg::ConeWithCovariance cone;
+  hyu_msgs::msg::ConeWithCovariance cone;
   cone.point.x = x;
   cone.point.y = y;
   cones.push_back(cone);
@@ -20,7 +20,7 @@ void addCone(std::vector<eufs_msgs::msg::ConeWithCovariance> & cones, double x, 
 
 TEST(BranchJump, FailsClosedWithExactReasonAndNoStaleWaypoints)
 {
-  eufs_msgs::msg::ConeArrayWithCovariance map;
+  hyu_msgs::msg::ConeArrayWithCovariance map;
   addCone(map.blue_cones, 0.0, 0.0);
   addCone(map.blue_cones, 4.0, 0.0);
   addCone(map.blue_cones, 40.0, 0.0);

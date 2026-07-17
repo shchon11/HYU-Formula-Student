@@ -13,7 +13,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(eigen3_cmake_module QUIET)
 find_package(Eigen3 REQUIRED)
-find_package(eufs_msgs REQUIRED)
+find_package(hyu_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -79,7 +79,7 @@ target_include_directories(graph_slam_node PRIVATE
   "$<INSTALL_INTERFACE:include>")
 
 ament_target_dependencies(graph_slam_node
-  eufs_msgs
+  hyu_msgs
   geometry_msgs
   nav_msgs
   rclcpp

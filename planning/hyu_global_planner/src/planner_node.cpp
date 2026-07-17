@@ -6,7 +6,7 @@
 #include <functional>
 #include <sstream>
 
-#include "eufs_msgs/msg/waypoint.hpp"
+#include "hyu_msgs/msg/waypoint.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 
 namespace hyu_global_planner
@@ -22,7 +22,7 @@ PlannerNode::PlannerNode()
   const auto odom_qos = rclcpp::QoS(rclcpp::KeepLast(20)).reliable();
   const auto valid_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
 
-  cone_map_sub_ = create_subscription<eufs_msgs::msg::ConeArrayWithCovariance>(
+  cone_map_sub_ = create_subscription<hyu_msgs::msg::ConeArrayWithCovariance>(
     cone_map_topic_, latched_qos,
     std::bind(&PlannerNode::onConeMap, this, std::placeholders::_1));
   ego_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
@@ -37,7 +37,7 @@ PlannerNode::PlannerNode()
       std::bind(&PlannerNode::onMapConverged, this, std::placeholders::_1));
   }
 
-  global_waypoints_pub_ = create_publisher<eufs_msgs::msg::WaypointArrayStamped>(
+  global_waypoints_pub_ = create_publisher<hyu_msgs::msg::WaypointArrayStamped>(
     global_waypoints_topic_, latched_qos);
   // RViz-friendly mirror of the waypoint message (nav_msgs/Path, latched).
   global_path_viz_pub_ = create_publisher<nav_msgs::msg::Path>(
@@ -153,7 +153,7 @@ namespace
 
 // FNV-1a over cone counts and millimetre-rounded positions: cheap, stable
 // content identity for "did the map actually change".
-std::uint64_t coneMapSignature(const eufs_msgs::msg::ConeArrayWithCovariance & map)
+std::uint64_t coneMapSignature(const hyu_msgs::msg::ConeArrayWithCovariance & map)
 {
   std::uint64_t hash = 1469598103934665603ULL;
   const auto mix = [&hash](std::uint64_t value) {
@@ -179,7 +179,7 @@ std::uint64_t coneMapSignature(const eufs_msgs::msg::ConeArrayWithCovariance & m
 
 }  // namespace
 
-void PlannerNode::onConeMap(const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg)
+void PlannerNode::onConeMap(const hyu_msgs::msg::ConeArrayWithCovariance::SharedPtr msg)
 {
   const std::uint64_t signature = coneMapSignature(*msg);
   latest_cone_map_ = msg;
@@ -214,7 +214,7 @@ void PlannerNode::onMapConverged(const std_msgs::msg::Bool::SharedPtr msg)
 namespace
 {
 
-nav_msgs::msg::Path buildPathMessage(const eufs_msgs::msg::WaypointArrayStamped & msg)
+nav_msgs::msg::Path buildPathMessage(const hyu_msgs::msg::WaypointArrayStamped & msg)
 {
   nav_msgs::msg::Path path;
   path.header = msg.header;
@@ -338,10 +338,10 @@ SlamCenterlineConfig PlannerNode::centerlineConfig() const
     raceline_alpha_};
 }
 
-eufs_msgs::msg::WaypointArrayStamped PlannerNode::buildWaypointMessage(
+hyu_msgs::msg::WaypointArrayStamped PlannerNode::buildWaypointMessage(
   const std::vector<PlannerWaypoint> & waypoints) const
 {
-  eufs_msgs::msg::WaypointArrayStamped msg;
+  hyu_msgs::msg::WaypointArrayStamped msg;
   msg.header.stamp = now();
   msg.header.frame_id = latest_cone_map_->header.frame_id.empty() ?
     std::string("map") : latest_cone_map_->header.frame_id;
@@ -360,7 +360,7 @@ eufs_msgs::msg::WaypointArrayStamped PlannerNode::buildWaypointMessage(
     // Curvature/friction profile when available; flat default otherwise.
     const double vx = i < profile.size() ? profile[i].vx : default_speed_mps_;
     const double ax = i < profile.size() ? profile[i].ax : 0.0;
-    eufs_msgs::msg::Waypoint waypoint;
+    hyu_msgs::msg::Waypoint waypoint;
     waypoint.position.x = point.x;
     waypoint.position.y = point.y;
     waypoint.position.z = 0.0;

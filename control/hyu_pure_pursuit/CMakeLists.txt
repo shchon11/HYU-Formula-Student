@@ -11,7 +11,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(ackermann_msgs REQUIRED)
-find_package(eufs_msgs REQUIRED)
+find_package(hyu_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -35,7 +35,7 @@ target_link_libraries(hyu_pure_pursuit_node
 ament_target_dependencies(hyu_pure_pursuit_node
   rclcpp
   ackermann_msgs
-  eufs_msgs
+  hyu_msgs
   nav_msgs
   geometry_msgs
   std_msgs

@@ -107,7 +107,7 @@ CandidateValidation ContinuityCheck::validateOdometry(
 }
 
 TrimResult ContinuityCheck::trimAtEgoNearestPoint(
-  const eufs_msgs::msg::WaypointArrayStamped & path,
+  const hyu_msgs::msg::WaypointArrayStamped & path,
   const nav_msgs::msg::Odometry & odometry) const
 {
   return continuity_geometry::trimAtEgoNearestPoint(path, odometry);
@@ -189,7 +189,7 @@ ContinuityResult ContinuityCheck::evaluate(const ContinuityInputs & inputs) cons
 }
 
 nav_msgs::msg::Path ContinuityCheck::toPath(
-  const eufs_msgs::msg::WaypointArrayStamped & waypoints) const
+  const hyu_msgs::msg::WaypointArrayStamped & waypoints) const
 {
   return continuity_geometry::toPath(waypoints);
 }

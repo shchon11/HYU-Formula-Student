@@ -9,7 +9,7 @@ ament_target_dependencies(gazebo_ground_truth_cones
   "gazebo_ros"
   "rclcpp"
   "std_srvs"
-  "eufs_msgs"
+  "hyu_msgs"
   "geometry_msgs"
   "ament_index_cpp")
 
@@ -30,7 +30,7 @@ ament_target_dependencies(gazebo_camera_cones
         "gazebo_dev"
         "gazebo_ros"
         "rclcpp"
-        "eufs_msgs"
+        "hyu_msgs"
         "ament_index_cpp")
 
 target_include_directories(gazebo_camera_cones PUBLIC include)

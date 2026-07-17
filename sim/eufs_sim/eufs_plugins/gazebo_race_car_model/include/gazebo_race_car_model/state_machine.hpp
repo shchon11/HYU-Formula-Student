@@ -45,13 +45,13 @@
 
 #include <rclcpp/rclcpp.hpp>
 // ROS msgs
-#include <eufs_msgs/msg/can_state.hpp>
+#include <hyu_msgs/msg/can_state.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
 
 // ROS  srvs
 #include <std_srvs/srv/trigger.hpp>
-#include <eufs_msgs/srv/set_can_state.hpp>
+#include <hyu_msgs/srv/set_can_state.hpp>
 
 
 
@@ -99,14 +99,14 @@ class StateMachine {
   // High level robot command
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr completed_sub_;
 
-  rclcpp::Publisher<eufs_msgs::msg::CanState>::SharedPtr state_pub_;
+  rclcpp::Publisher<hyu_msgs::msg::CanState>::SharedPtr state_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_pub_str_;
 
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr
       reset_srv_;  ///< service to reset state machine
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr
       ebs_srv_;  ///< service to request an emergency brake
-  rclcpp::Service<eufs_msgs::srv::SetCanState>::SharedPtr
+  rclcpp::Service<hyu_msgs::srv::SetCanState>::SharedPtr
       set_mission_srv_;  ///< service to set mission
 
   /**
@@ -118,8 +118,8 @@ class StateMachine {
   /**
    * Sets the mission of the car. Only available in simulation
    */
-  bool setMission(std::shared_ptr<eufs_msgs::srv::SetCanState::Request> request,
-                  std::shared_ptr<eufs_msgs::srv::SetCanState::Response> response);
+  bool setMission(std::shared_ptr<hyu_msgs::srv::SetCanState::Request> request,
+                  std::shared_ptr<hyu_msgs::srv::SetCanState::Response> response);
 
   /**
    * Resets the state of the internal state machine
@@ -141,14 +141,14 @@ class StateMachine {
   void updateState(gazebo::common::Time current_time);
 
   /**
-   * Publishes internal state and mission in a eufs_msgs/msg/CanState.msg format
+   * Publishes internal state and mission in a hyu_msgs/msg/CanState.msg format
    */
   void publishState();
 
   /**
    * Creates a std_msgs/msg/String.msg version of the internal state and mission
    */
-  std_msgs::msg::String makeStateString(const eufs_msgs::msg::CanState &state);
+  std_msgs::msg::String makeStateString(const hyu_msgs::msg::CanState &state);
 };
 
 }  // namespace eufs_plugins

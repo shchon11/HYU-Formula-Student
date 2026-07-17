@@ -1,4 +1,4 @@
-# eufs_msgs
+# hyu_msgs
 
 A collection of all ROS messages and services used by EUFS.
 

@@ -20,8 +20,8 @@ TEST(MapGeometryFailClosed, DuplicateGhostFixtureReturnsReasonAndNoWaypoints)
 
 TEST(MapGeometryFailClosed, TooFewConesReturnsReasonAndNoWaypoints)
 {
-  eufs_msgs::msg::ConeArrayWithCovariance map;
-  eufs_msgs::msg::ConeWithCovariance cone;
+  hyu_msgs::msg::ConeArrayWithCovariance map;
+  hyu_msgs::msg::ConeWithCovariance cone;
   cone.point.x = 0.0;
   cone.point.y = 0.0;
   map.blue_cones.push_back(cone);

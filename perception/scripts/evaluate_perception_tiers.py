@@ -73,12 +73,12 @@ try:
     from rclpy.node import Node
     from rclpy.parameter import Parameter
     from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-    from eufs_msgs.msg import ConeArrayWithCovariance
+    from hyu_msgs.msg import ConeArrayWithCovariance
     from nav_msgs.msg import Odometry
     from visualization_msgs.msg import Marker, MarkerArray
 except ImportError:
     sys.exit(
-        "This script needs a sourced ROS 2 workspace with eufs_msgs on the "
+        "This script needs a sourced ROS 2 workspace with hyu_msgs on the "
         "PYTHONPATH:\n"
         "    source /opt/ros/<distro>/setup.bash && source install/setup.bash"
     )

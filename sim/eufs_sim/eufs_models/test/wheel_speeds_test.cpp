@@ -79,7 +79,7 @@ State accelerating(double v_x, double a_x) {
   return state;
 }
 
-double rearMean(const eufs_msgs::msg::WheelSpeeds &ws) {
+double rearMean(const hyu_msgs::msg::WheelSpeeds &ws) {
   return 0.5 * (ws.lb_speed + ws.rb_speed);
 }
 
@@ -202,7 +202,7 @@ TEST(WheelSpeedNoise, QuantizesToTheMotorLsbOverGearRatio) {
   const double ratio = 14.5;
   Noise noise(writeNoiseConfig("motorlsb", 0.0, 1.0 / ratio));
 
-  eufs_msgs::msg::WheelSpeeds ws;
+  hyu_msgs::msg::WheelSpeeds ws;
   ws.lb_speed = 378.16;
   const auto noisy = noise.applyNoiseToWheelSpeeds(ws);
 
@@ -216,7 +216,7 @@ TEST(WheelSpeedNoise, QuantizesToTheMotorLsbOverGearRatio) {
 TEST(WheelSpeedNoise, QuantizesToTheCanStep) {
   Noise noise(writeNoiseConfig("quant", 0.0, 1.0));
 
-  eufs_msgs::msg::WheelSpeeds ws;
+  hyu_msgs::msg::WheelSpeeds ws;
   ws.lb_speed = 123.4;
   ws.rb_speed = 123.6;
   const auto noisy = noise.applyNoiseToWheelSpeeds(ws);
@@ -228,7 +228,7 @@ TEST(WheelSpeedNoise, QuantizesToTheCanStep) {
 TEST(WheelSpeedNoise, QuantumZeroPassesThrough) {
   Noise noise(writeNoiseConfig("noquant", 0.0, 0.0));
 
-  eufs_msgs::msg::WheelSpeeds ws;
+  hyu_msgs::msg::WheelSpeeds ws;
   ws.lb_speed = 123.456;
   const auto noisy = noise.applyNoiseToWheelSpeeds(ws);
 

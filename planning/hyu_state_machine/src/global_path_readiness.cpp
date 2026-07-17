@@ -91,7 +91,7 @@ void ContinuousHandoffGate::reset()
 }
 
 bool GlobalPathReadiness::onWaypoints(
-  const eufs_msgs::msg::WaypointArrayStamped & msg,
+  const hyu_msgs::msg::WaypointArrayStamped & msg,
   const rclcpp::Time & current_time)
 {
   ++waypoint_message_generation_;

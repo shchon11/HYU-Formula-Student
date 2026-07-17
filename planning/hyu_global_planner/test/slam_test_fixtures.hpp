@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "eufs_msgs/msg/cone_array_with_covariance.hpp"
+#include "hyu_msgs/msg/cone_array_with_covariance.hpp"
 #include "hyu_global_planner/planner_geometry.hpp"
 #include "hyu_global_planner/slam_boundary_ordering.hpp"
 #include "hyu_global_planner/slam_centerline_builder.hpp"
@@ -34,14 +34,14 @@ inline std::string fixturePath(const std::string & relative)
   return std::string(GLOBAL_PLANNER_SRC_ROOT) + "/" + relative;
 }
 
-inline eufs_msgs::msg::ConeArrayWithCovariance loadConeMapCsv(const std::string & relative)
+inline hyu_msgs::msg::ConeArrayWithCovariance loadConeMapCsv(const std::string & relative)
 {
   std::ifstream file(fixturePath(relative));
   if (!file.is_open()) {
     throw std::runtime_error("could not open fixture: " + relative);
   }
 
-  eufs_msgs::msg::ConeArrayWithCovariance map;
+  hyu_msgs::msg::ConeArrayWithCovariance map;
   std::string line;
   std::getline(file, line);
   while (std::getline(file, line)) {
@@ -53,7 +53,7 @@ inline eufs_msgs::msg::ConeArrayWithCovariance loadConeMapCsv(const std::string 
       throw std::runtime_error("bad CSV fixture row: " + line);
     }
 
-    eufs_msgs::msg::ConeWithCovariance cone;
+    hyu_msgs::msg::ConeWithCovariance cone;
     cone.point.x = std::stod(fields[1]);
     cone.point.y = std::stod(fields[2]);
     cone.point.z = 0.0;
@@ -121,7 +121,7 @@ inline SlamCenterlineConfig fixtureConfig()
   return config;
 }
 
-inline std::vector<PlannerPoint> bluePoints(const eufs_msgs::msg::ConeArrayWithCovariance & map)
+inline std::vector<PlannerPoint> bluePoints(const hyu_msgs::msg::ConeArrayWithCovariance & map)
 {
   std::vector<PlannerPoint> points;
   points.reserve(map.blue_cones.size());
@@ -131,7 +131,7 @@ inline std::vector<PlannerPoint> bluePoints(const eufs_msgs::msg::ConeArrayWithC
   return points;
 }
 
-inline std::vector<PlannerPoint> yellowPoints(const eufs_msgs::msg::ConeArrayWithCovariance & map)
+inline std::vector<PlannerPoint> yellowPoints(const hyu_msgs::msg::ConeArrayWithCovariance & map)
 {
   std::vector<PlannerPoint> points;
   points.reserve(map.yellow_cones.size());
@@ -220,7 +220,7 @@ inline PlannerPoint closestPointOnFixturePolyline(
 }
 
 inline std::vector<double> fixturePairingWidths(
-  const eufs_msgs::msg::ConeArrayWithCovariance & map,
+  const hyu_msgs::msg::ConeArrayWithCovariance & map,
   const SlamCenterlineConfig & config)
 {
   std::vector<PlannerPoint> ordered_blue;

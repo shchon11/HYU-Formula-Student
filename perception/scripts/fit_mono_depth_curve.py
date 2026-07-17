@@ -143,11 +143,11 @@ def collect_live(args):
         import tf2_ros
         from rclpy.node import Node
         from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
-        from eufs_msgs.msg import BoundingBoxes, ConeArrayWithCovariance
+        from hyu_msgs.msg import BoundingBoxes, ConeArrayWithCovariance
         from nav_msgs.msg import Odometry
         from sensor_msgs.msg import CameraInfo
     except ImportError as exc:
-        sys.exit(f"--live needs a sourced ROS 2 workspace with eufs_msgs: {exc}")
+        sys.exit(f"--live needs a sourced ROS 2 workspace with hyu_msgs: {exc}")
 
     CONE_FIELDS = ("blue_cones", "yellow_cones", "orange_cones",
                    "big_orange_cones", "unknown_color_cones")

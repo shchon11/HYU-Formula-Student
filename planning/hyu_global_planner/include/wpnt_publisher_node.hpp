@@ -21,7 +21,7 @@
 #include "hyu_global_planner/tmpc_trajectory_builder.hpp"
 #include "rclcpp/rclcpp.hpp"
 
-#include "eufs_msgs/msg/waypoint_array_stamped.hpp"
+#include "hyu_msgs/msg/waypoint_array_stamped.hpp"
 #include "hyu_tmpc_msgs/msg/tum_trajectory.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "std_msgs/msg/bool.hpp"
@@ -37,7 +37,7 @@ public:
   explicit WpntPublisher(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
 
 private:
-  void onGlobalWaypoints(const eufs_msgs::msg::WaypointArrayStamped::SharedPtr msg);
+  void onGlobalWaypoints(const hyu_msgs::msg::WaypointArrayStamped::SharedPtr msg);
   void onGlobalPathValid(const std_msgs::msg::Bool::SharedPtr msg);
   void onOdom(const nav_msgs::msg::Odometry::SharedPtr msg);
   void onEgoOdom(const nav_msgs::msg::Odometry::SharedPtr msg);
@@ -86,13 +86,13 @@ private:
   std::uint32_t trajectory_counter_{0U};
   std::unique_ptr<hyu_global_planner::tmpc::TmpcTrajectoryBuilder> tmpc_builder_;
 
-  rclcpp::Subscription<eufs_msgs::msg::WaypointArrayStamped>::SharedPtr global_sub_;
+  rclcpp::Subscription<hyu_msgs::msg::WaypointArrayStamped>::SharedPtr global_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr global_path_valid_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr ego_odom_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr path_source_sub_;
   rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr lap_count_sub_;
-  rclcpp::Publisher<eufs_msgs::msg::WaypointArrayStamped>::SharedPtr path_waypoints_pub_;
+  rclcpp::Publisher<hyu_msgs::msg::WaypointArrayStamped>::SharedPtr path_waypoints_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
   rclcpp::Publisher<hyu_tmpc_msgs::msg::TumTrajectory>::SharedPtr
   tmpc_performance_pub_;

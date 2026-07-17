@@ -5,7 +5,7 @@
 #include <optional>
 #include <string>
 
-#include "eufs_msgs/msg/waypoint_array_stamped.hpp"
+#include "hyu_msgs/msg/waypoint_array_stamped.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -35,8 +35,8 @@ private:
   };
 
   void onPathSource(const std_msgs::msg::String::SharedPtr message);
-  void onLocalPath(const eufs_msgs::msg::WaypointArrayStamped::SharedPtr message);
-  void onGlobalPath(const eufs_msgs::msg::WaypointArrayStamped::SharedPtr message);
+  void onLocalPath(const hyu_msgs::msg::WaypointArrayStamped::SharedPtr message);
+  void onGlobalPath(const hyu_msgs::msg::WaypointArrayStamped::SharedPtr message);
   void onLocalValidity(const std_msgs::msg::Bool::SharedPtr message);
   void onGlobalValidity(const std_msgs::msg::Bool::SharedPtr message);
   void onOdometry(const nav_msgs::msg::Odometry::SharedPtr message);
@@ -68,13 +68,13 @@ private:
   NodeState state_;
 
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr path_source_sub_;
-  rclcpp::Subscription<eufs_msgs::msg::WaypointArrayStamped>::SharedPtr local_path_sub_;
-  rclcpp::Subscription<eufs_msgs::msg::WaypointArrayStamped>::SharedPtr global_path_sub_;
+  rclcpp::Subscription<hyu_msgs::msg::WaypointArrayStamped>::SharedPtr local_path_sub_;
+  rclcpp::Subscription<hyu_msgs::msg::WaypointArrayStamped>::SharedPtr global_path_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr local_validity_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr global_validity_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odometry_sub_;
 
-  rclcpp::Publisher<eufs_msgs::msg::WaypointArrayStamped>::SharedPtr selected_path_pub_;
+  rclcpp::Publisher<hyu_msgs::msg::WaypointArrayStamped>::SharedPtr selected_path_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr selected_path_viz_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr selected_validity_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr handoff_ready_pub_;

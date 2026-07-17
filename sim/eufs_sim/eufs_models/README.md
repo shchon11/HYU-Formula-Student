@@ -49,7 +49,7 @@ A vehicle model object will allow public use of the following methods:
 
 | Name | input(s) | output | Purpose |
 | ---- | ----- | ------ | ------- |
-| `getWheelSpeeds` | [State](./include/eufs_models/vehicle_state.hpp), [Input](./include/eufs_models/vehicle_input.hpp) | [eufs_msgs/WheelSpeeds](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/WheelSpeeds.msg) | Calculates the wheel speeds (rpm) based on the vehicle velocity. |
+| `getWheelSpeeds` | [State](./include/eufs_models/vehicle_state.hpp), [Input](./include/eufs_models/vehicle_input.hpp) | [hyu_msgs/WheelSpeeds](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/WheelSpeeds.msg) | Calculates the wheel speeds (rpm) based on the vehicle velocity. |
 | `getSlipAngle` | [State](./include/eufs_models/vehicle_state.hpp), [Input](./include/eufs_models/vehicle_input.hpp), bool (is front?) | double | Gets the [slip angle](https://en.wikipedia.org/wiki/Slip_angle) (radians). |
 | `validateInput` | [Input](./include/eufs_models/vehicle_input.hpp) | void | Ensures that the vehicle steering angle, velocity and acceleration values are never above their maximum or below their minimum. If they are, the values are clipped. |
 | `validateState` | [State](./include/eufs_models/vehicle_state.hpp) | void | Ensures that the linear velocity is always greater than zero. If not, it is set to 0. |
@@ -60,7 +60,7 @@ A vehicle model object will allow public use of the following methods:
 
 The [noise.hpp](./include/eufs_models/noise.hpp) header file defines a `Noise` class. This class implements two main methods: `applyNoise` and
 `applyNoiseToWheelSpeeds`. The first of these methods takes a [State](./include/eufs_models/vehicle_state.hpp) object and applies Gaussian noise to every
-[State](./include/eufs_models/vehicle_state.hpp) attribute. The second takes a [eufs_msgs/WheelSpeeds](https://gitlab.com/eufs/eufs_msgs/-/blob/ros2/msg/WheelSpeeds.msg) message and applies Gaussian noise to each individual wheel
+[State](./include/eufs_models/vehicle_state.hpp) attribute. The second takes a [hyu_msgs/WheelSpeeds](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/WheelSpeeds.msg) message and applies Gaussian noise to each individual wheel
 speed. The exact Gaussian distribution depends on the [configuration file](./config/noise.yaml) provided to the `Noise` object during
 initialization.
 

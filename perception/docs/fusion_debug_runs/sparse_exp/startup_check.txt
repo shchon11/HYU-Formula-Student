@@ -19,7 +19,7 @@
 /zed_left_camera_controller
 /zed_right_camera_controller
 ---
-Type: eufs_msgs/msg/ConeArrayWithCovariance
+Type: hyu_msgs/msg/ConeArrayWithCovariance
 Publisher count: 1
 Subscription count: 0
 ---

@@ -23,7 +23,7 @@ In summary, teams can attempt the full competition, with their own vehicle model
 
 - Ubuntu 20.04 LTS
 - [ROS 2 Galactic](https://docs.ros.org/en/galactic/index.html)
-- [eufs_msgs](https://gitlab.com/eufs/eufs_msgs)
+- [hyu_msgs](https://gitlab.com/eufs/hyu_msgs)
 
 _Note_: eufs_sim will probably work with other versions of ROS 2 (e.g Foxy) but they are not actively supported by the maintainers.
 

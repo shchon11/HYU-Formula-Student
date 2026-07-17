@@ -32,7 +32,7 @@ rclpy = pytest.importorskip("rclpy")
 pytest.importorskip("sbg_driver.msg")
 
 from builtin_interfaces.msg import Time as TimeMsg  # noqa: E402
-from eufs_msgs.msg import WheelSpeedsStamped  # noqa: E402
+from hyu_msgs.msg import WheelSpeedsStamped  # noqa: E402
 from sbg_driver.msg import SbgEkfEuler, SbgEkfNav  # noqa: E402
 
 _MODULE_PATH = os.path.join(

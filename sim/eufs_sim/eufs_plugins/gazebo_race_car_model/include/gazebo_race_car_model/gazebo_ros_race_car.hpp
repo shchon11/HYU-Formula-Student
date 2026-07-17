@@ -36,8 +36,8 @@
 
 // ROS msgs
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
-#include "eufs_msgs/msg/car_state.hpp"
-#include "eufs_msgs/msg/wheel_speeds_stamped.hpp"
+#include "hyu_msgs/msg/car_state.hpp"
+#include "hyu_msgs/msg/wheel_speeds_stamped.hpp"
 #include "geometry_msgs/msg/pose_with_covariance.hpp"
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 #include "geometry_msgs/msg/twist_with_covariance.hpp"
@@ -108,7 +108,7 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
   void sampleTerrain(double x, double y, double yaw, double *z, double *roll,
                      double *pitch) const;
 
-  eufs_msgs::msg::CarState stateToCarStateMsg(const eufs::models::State &state);
+  hyu_msgs::msg::CarState stateToCarStateMsg(const eufs::models::State &state);
 
   /// @brief Integrates the ground-truth body twist with bias + noise so the
   /// localisation car state drifts like real wheel odometry. Returns the
@@ -218,10 +218,10 @@ class RaceCarModelPlugin : public gazebo::ModelPlugin {
   std::string _odom_topic_name;
 
   // ROS Publishers
-  rclcpp::Publisher<eufs_msgs::msg::CarState>::SharedPtr _pub_ground_truth_car_state;
-  rclcpp::Publisher<eufs_msgs::msg::CarState>::SharedPtr _pub_localisation_car_state;
-  rclcpp::Publisher<eufs_msgs::msg::WheelSpeedsStamped>::SharedPtr _pub_wheel_speeds;
-  rclcpp::Publisher<eufs_msgs::msg::WheelSpeedsStamped>::SharedPtr _pub_ground_truth_wheel_speeds;
+  rclcpp::Publisher<hyu_msgs::msg::CarState>::SharedPtr _pub_ground_truth_car_state;
+  rclcpp::Publisher<hyu_msgs::msg::CarState>::SharedPtr _pub_localisation_car_state;
+  rclcpp::Publisher<hyu_msgs::msg::WheelSpeedsStamped>::SharedPtr _pub_wheel_speeds;
+  rclcpp::Publisher<hyu_msgs::msg::WheelSpeedsStamped>::SharedPtr _pub_ground_truth_wheel_speeds;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr _pub_joint_states;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr _pub_odom;
 

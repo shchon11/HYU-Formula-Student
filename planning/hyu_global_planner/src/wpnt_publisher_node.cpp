@@ -154,7 +154,7 @@ WpntPublisher::WpntPublisher(const rclcpp::NodeOptions & options)
 
   auto global_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
   auto valid_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable();
-  global_sub_ = create_subscription<eufs_msgs::msg::WaypointArrayStamped>(
+  global_sub_ = create_subscription<hyu_msgs::msg::WaypointArrayStamped>(
     global_waypoints_topic_, global_qos,
     std::bind(&WpntPublisher::onGlobalWaypoints, this, std::placeholders::_1));
   global_path_valid_sub_ = create_subscription<std_msgs::msg::Bool>(
@@ -173,7 +173,7 @@ WpntPublisher::WpntPublisher(const rclcpp::NodeOptions & options)
     lap_count_topic_, rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
     std::bind(&WpntPublisher::onLapCount, this, std::placeholders::_1));
 
-  path_waypoints_pub_ = create_publisher<eufs_msgs::msg::WaypointArrayStamped>(
+  path_waypoints_pub_ = create_publisher<hyu_msgs::msg::WaypointArrayStamped>(
     path_waypoints_topic_, rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
   path_pub_ = create_publisher<nav_msgs::msg::Path>(
     path_topic_, rclcpp::QoS(rclcpp::KeepLast(10)).reliable());
@@ -211,7 +211,7 @@ WpntPublisher::WpntPublisher(const rclcpp::NodeOptions & options)
 }
 
 void WpntPublisher::onGlobalWaypoints(
-  const eufs_msgs::msg::WaypointArrayStamped::SharedPtr msg)
+  const hyu_msgs::msg::WaypointArrayStamped::SharedPtr msg)
 {
   const auto result = makePathSnapshot(
     *msg, PathSnapshotOptions{closed_loop_, closing_duplicate_tolerance_});
@@ -334,7 +334,7 @@ void WpntPublisher::onOdom(const nav_msgs::msg::Odometry::SharedPtr msg)
   const std::size_t count =
     closed_loop_ ? std::min(requested, n) : std::min(requested, n - start);
 
-  eufs_msgs::msg::WaypointArrayStamped out;
+  hyu_msgs::msg::WaypointArrayStamped out;
   out.header.stamp = msg->header.stamp;
   out.header.frame_id = snap.frame_id;
   out.waypoints.reserve(count);

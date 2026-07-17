@@ -6,7 +6,7 @@
 #include <vector>
 
 #include <builtin_interfaces/msg/time.hpp>
-#include <eufs_msgs/msg/cone_array_with_covariance.hpp>
+#include <hyu_msgs/msg/cone_array_with_covariance.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 
@@ -15,7 +15,7 @@ namespace hyu_local_planner
 namespace test_support
 {
 
-using ConeArray = eufs_msgs::msg::ConeArrayWithCovariance;
+using ConeArray = hyu_msgs::msg::ConeArrayWithCovariance;
 using Odometry = nav_msgs::msg::Odometry;
 
 struct ShutdownGuard
@@ -51,12 +51,12 @@ inline ConeArray cones(std::int32_t stamp_sec)
   message.header.frame_id = "base_footprint";
   message.header.stamp.sec = stamp_sec;
   for (const double x : {0.0, 2.0, 4.0, 6.0, 8.0}) {
-    eufs_msgs::msg::ConeWithCovariance blue;
+    hyu_msgs::msg::ConeWithCovariance blue;
     blue.point.x = x;
     blue.point.y = 2.0;
     message.blue_cones.push_back(blue);
 
-    eufs_msgs::msg::ConeWithCovariance yellow;
+    hyu_msgs::msg::ConeWithCovariance yellow;
     yellow.point.x = x;
     yellow.point.y = -2.0;
     message.yellow_cones.push_back(yellow);

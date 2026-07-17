@@ -58,7 +58,7 @@ pbring()  { ros2 launch hyu_planning_bringup local_global_planning.launch.py "$@
 teleop()  { ros2 run hyu_teleop teleop "$@"; }
 
 # --- helpers ------------------------------------------------------------------
-mission()  { ros2 service call /ros_can/set_mission eufs_msgs/srv/SetCanState "{ami_state: ${1:-14}}"; }
+mission()  { ros2 service call /ros_can/set_mission hyu_msgs/srv/SetCanState "{ami_state: ${1:-14}}"; }
 resetcar() { ros2 service call /ros_can/reset_vehicle_pos std_srvs/srv/Trigger; }
 slamreset(){ ros2 service call /graph_slam/start_mapping std_srvs/srv/Trigger; }
 rv()       { rviz2 -d "$EUFS_MASTER/install/eufs_launcher/share/eufs_launcher/config/default.rviz" "$@"; }

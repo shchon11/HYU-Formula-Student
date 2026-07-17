@@ -27,9 +27,9 @@
 #include <vector>
 
 #include "builtin_interfaces/msg/time.hpp"
-#include "eufs_msgs/msg/car_state.hpp"
-#include "eufs_msgs/msg/cone_array_with_covariance.hpp"
-#include "eufs_msgs/msg/cone_with_covariance.hpp"
+#include "hyu_msgs/msg/car_state.hpp"
+#include "hyu_msgs/msg/cone_array_with_covariance.hpp"
+#include "hyu_msgs/msg/cone_with_covariance.hpp"
 #include "hyu_localization/gate_anchor.hpp"
 #include "hyu_localization/slam_lifecycle_classifiers.hpp"
 #include "hyu_localization/tentative_track_frontend.hpp"
@@ -108,8 +108,8 @@ private:
   void configureOptimizer();
   void resetGraph();
 
-  void stateCallback(const eufs_msgs::msg::CarState::SharedPtr msg);
-  void conesCallback(const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg);
+  void stateCallback(const hyu_msgs::msg::CarState::SharedPtr msg);
+  void conesCallback(const hyu_msgs::msg::ConeArrayWithCovariance::SharedPtr msg);
   void gnssOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
   void initialPoseCallback(
     const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
@@ -154,7 +154,7 @@ private:
   void suppressGnssPriors(double now_sec);
   g2o::SE2 latestRawOdom() const;
 
-  g2o::SE2 poseFromCarState(const eufs_msgs::msg::CarState & msg) const;
+  g2o::SE2 poseFromCarState(const hyu_msgs::msg::CarState & msg) const;
   g2o::SE2 estimateFromRawOdometry(const g2o::SE2 & raw_odom) const;
   bool shouldCreateKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & stamp) const;
   void addInitialPose(const g2o::SE2 & raw_odom, const rclcpp::Time & stamp);
@@ -165,12 +165,12 @@ private:
   void maybeAddGnssPrior(g2o::VertexSE2 * vertex, const rclcpp::Time & stamp);
 
   ObservationUpdate addConeObservations(
-    const eufs_msgs::msg::ConeArrayWithCovariance & msg,
+    const hyu_msgs::msg::ConeArrayWithCovariance & msg,
     bool force_process);
   std::vector<ConeObservation> extractConeObservations(
-    const eufs_msgs::msg::ConeArrayWithCovariance & msg) const;
+    const hyu_msgs::msg::ConeArrayWithCovariance & msg) const;
   Eigen::Matrix2d covarianceFromCone(
-    const eufs_msgs::msg::ConeWithCovariance & cone) const;
+    const hyu_msgs::msg::ConeWithCovariance & cone) const;
   Eigen::Matrix2d covarianceInMapFrame(
     const g2o::SE2 & pose,
     const Eigen::Matrix2d & local_covariance) const;
@@ -282,12 +282,12 @@ private:
 
   g2o::SparseOptimizer optimizer_;
 
-  rclcpp::Subscription<eufs_msgs::msg::CarState>::SharedPtr car_state_sub_;
-  rclcpp::Subscription<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr cones_sub_;
+  rclcpp::Subscription<hyu_msgs::msg::CarState>::SharedPtr car_state_sub_;
+  rclcpp::Subscription<hyu_msgs::msg::ConeArrayWithCovariance>::SharedPtr cones_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr
     initialpose_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr gnss_odom_sub_;
-  rclcpp::Publisher<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr map_pub_;
+  rclcpp::Publisher<hyu_msgs::msg::ConeArrayWithCovariance>::SharedPtr map_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;

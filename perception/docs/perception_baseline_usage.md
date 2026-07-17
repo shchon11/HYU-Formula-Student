@@ -22,7 +22,7 @@ SLAM output contract:
 
 ```text
 topic: /cones
-type: eufs_msgs/msg/ConeArrayWithCovariance
+type: hyu_msgs/msg/ConeArrayWithCovariance
 frame_id: base_footprint
 ```
 
@@ -211,7 +211,7 @@ hyu_perception/
     담당한다.
 
 - `_extract_detections()`
-  - `eufs_msgs/msg/BoundingBoxes`를 내부 `Detection` 구조로 바꾼다.
+  - `hyu_msgs/msg/BoundingBoxes`를 내부 `Detection` 구조로 바꾼다.
   - cone color도 여기서 normalize한다.
 
 - `_pointcloud_to_xyz()`
@@ -450,7 +450,7 @@ ros2 topic info -v /cones
 정상 기준:
 
 ```text
-Type: eufs_msgs/msg/ConeArrayWithCovariance
+Type: hyu_msgs/msg/ConeArrayWithCovariance
 Publisher count: 1
 Subscription count: 1
 ```

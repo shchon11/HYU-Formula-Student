@@ -24,7 +24,7 @@ the instant RTK is lost), this node *degrades gracefully* across those modes and
 splits the GNSS solution into two decoupled roles so losing the global anchor
 never stops the odometry:
 
-  * ``/odometry_integration/car_state`` (eufs_msgs/CarState) -- **relative
+  * ``/odometry_integration/car_state`` (hyu_msgs/CarState) -- **relative
     odometry**. Pose is the ENU velocity+heading *integrated* here, so it is
     jump-free even when RTK re-acquisition makes the absolute position step.
     graph_slam_node differences this between keyframes. Below
@@ -63,7 +63,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, ReliabilityPolicy
 
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
-from eufs_msgs.msg import CarState, WheelSpeedsStamped
+from hyu_msgs.msg import CarState, WheelSpeedsStamped
 from nav_msgs.msg import Odometry
 from std_msgs.msg import ColorRGBA
 from visualization_msgs.msg import Marker, MarkerArray

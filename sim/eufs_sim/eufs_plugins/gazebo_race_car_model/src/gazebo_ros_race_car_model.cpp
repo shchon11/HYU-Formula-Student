@@ -82,14 +82,14 @@ void RaceCarModelPlugin::Load(gazebo::physics::ModelPtr model, sdf::ElementPtr s
 
   // ROS Publishers
   _pub_ground_truth_car_state =
-      _rosnode->create_publisher<eufs_msgs::msg::CarState>(_ground_truth_car_state_topic, 1);
+      _rosnode->create_publisher<hyu_msgs::msg::CarState>(_ground_truth_car_state_topic, 1);
   if (_publish_localisation_car_state) {
     _pub_localisation_car_state =
-        _rosnode->create_publisher<eufs_msgs::msg::CarState>(_localisation_car_state_topic, 1);
+        _rosnode->create_publisher<hyu_msgs::msg::CarState>(_localisation_car_state_topic, 1);
   }
   _pub_wheel_speeds =
-      _rosnode->create_publisher<eufs_msgs::msg::WheelSpeedsStamped>(_wheel_speeds_topic_name, 1);
-  _pub_ground_truth_wheel_speeds = _rosnode->create_publisher<eufs_msgs::msg::WheelSpeedsStamped>(
+      _rosnode->create_publisher<hyu_msgs::msg::WheelSpeedsStamped>(_wheel_speeds_topic_name, 1);
+  _pub_ground_truth_wheel_speeds = _rosnode->create_publisher<hyu_msgs::msg::WheelSpeedsStamped>(
       _ground_truth_wheel_speeds_topic_name, 1);
   _pub_joint_states =
       _rosnode->create_publisher<sensor_msgs::msg::JointState>(_joint_states_topic_name, 10);
@@ -767,9 +767,9 @@ void RaceCarModelPlugin::setModelState(double dt) {
   _model->SetLinearVel(vel);
 }
 
-eufs_msgs::msg::CarState RaceCarModelPlugin::stateToCarStateMsg(const eufs::models::State &state) {
+hyu_msgs::msg::CarState RaceCarModelPlugin::stateToCarStateMsg(const eufs::models::State &state) {
   // Publish Car Info
-  eufs_msgs::msg::CarState car_state;
+  hyu_msgs::msg::CarState car_state;
 
   car_state.header.stamp.sec = _last_sim_time.sec;
   car_state.header.stamp.nanosec = _last_sim_time.nsec;
@@ -843,7 +843,7 @@ eufs::models::State RaceCarModelPlugin::integrateDriftedState() {
 }
 
 void RaceCarModelPlugin::publishCarState() {
-  eufs_msgs::msg::CarState car_state = stateToCarStateMsg(_state);
+  hyu_msgs::msg::CarState car_state = stateToCarStateMsg(_state);
 
   // Publish the ground truth car state if it has subscribers and is allowed to publish
   if (_pub_ground_truth_car_state->get_subscription_count() > 0 && _pub_ground_truth) {
@@ -858,7 +858,7 @@ void RaceCarModelPlugin::publishCarState() {
   }
   eufs::models::State state_noisy =
       _drift_odometry ? integrateDriftedState() : _noise->applyNoise(_state);
-  eufs_msgs::msg::CarState car_state_noisy = stateToCarStateMsg(state_noisy);
+  hyu_msgs::msg::CarState car_state_noisy = stateToCarStateMsg(state_noisy);
 
   // Fill in covariance matrix
   const eufs::models::NoiseParam &noise_param = _noise->getNoiseParam();
@@ -897,8 +897,8 @@ void RaceCarModelPlugin::publishCarState() {
 }
 
 void RaceCarModelPlugin::publishWheelSpeeds() {
-  eufs_msgs::msg::WheelSpeedsStamped wheel_speeds_stamped;
-  eufs_msgs::msg::WheelSpeeds wheel_speeds;
+  hyu_msgs::msg::WheelSpeedsStamped wheel_speeds_stamped;
+  hyu_msgs::msg::WheelSpeeds wheel_speeds;
 
   wheel_speeds_stamped.header.stamp.sec = _last_sim_time.sec;
   wheel_speeds_stamped.header.stamp.nanosec = _last_sim_time.nsec;

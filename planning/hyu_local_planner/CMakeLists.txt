@@ -8,7 +8,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(message_filters REQUIRED)
-find_package(eufs_msgs REQUIRED)
+find_package(hyu_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -45,7 +45,7 @@ target_link_libraries(hyu_local_planner_node hyu_local_planner_core)
 ament_target_dependencies(hyu_local_planner_node
   rclcpp
   message_filters
-  eufs_msgs
+  hyu_msgs
   nav_msgs
   geometry_msgs
   std_msgs
@@ -113,7 +113,7 @@ if(BUILD_TESTING)
   ament_target_dependencies(hyu_local_planner_validity_test
     rclcpp
     message_filters
-    eufs_msgs
+    hyu_msgs
     nav_msgs
     geometry_msgs
     std_msgs)
@@ -129,7 +129,7 @@ if(BUILD_TESTING)
   ament_target_dependencies(hyu_local_planner_stale_recovery_test
     rclcpp
     message_filters
-    eufs_msgs
+    hyu_msgs
     nav_msgs
     geometry_msgs
     std_msgs)
@@ -145,7 +145,7 @@ if(BUILD_TESTING)
   ament_target_dependencies(hyu_local_planner_live_extension_test
     rclcpp
     message_filters
-    eufs_msgs
+    hyu_msgs
     nav_msgs
     geometry_msgs
     std_msgs)
@@ -161,7 +161,7 @@ if(BUILD_TESTING)
   ament_target_dependencies(hyu_local_planner_slam_validity_test
     rclcpp
     message_filters
-    eufs_msgs
+    hyu_msgs
     nav_msgs
     geometry_msgs
     std_msgs)

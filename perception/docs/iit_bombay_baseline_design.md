@@ -28,7 +28,7 @@ checkpoint and a vehicle-specific measured template/calibration.
 HYU graph SLAM subscribes to:
 
 - Topic: `/cones`
-- Type: `eufs_msgs/msg/ConeArrayWithCovariance`
+- Type: `hyu_msgs/msg/ConeArrayWithCovariance`
 - Frame: `base_footprint`
 
 The message groups cones into `blue_cones`, `yellow_cones`, `orange_cones`,

@@ -12,9 +12,9 @@ namespace hyu_global_planner::test
 
 namespace
 {
-eufs_msgs::msg::ConeWithCovariance coneAt(double x, double y)
+hyu_msgs::msg::ConeWithCovariance coneAt(double x, double y)
 {
-  eufs_msgs::msg::ConeWithCovariance cone;
+  hyu_msgs::msg::ConeWithCovariance cone;
   cone.point.x = x;
   cone.point.y = y;
   cone.point.z = 0.0;
@@ -27,7 +27,7 @@ eufs_msgs::msg::ConeWithCovariance coneAt(double x, double y)
 // (crossed/swapped boundaries), not the local outliers the gate now tolerates.
 TEST(InvalidWidth, WidespreadWidthFailureFailsClosed)
 {
-  eufs_msgs::msg::ConeArrayWithCovariance map;
+  hyu_msgs::msg::ConeArrayWithCovariance map;
   constexpr int kCount = 24;
   constexpr double kPi = 3.14159265358979323846;
   for (int i = 0; i < kCount; ++i) {

@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "eufs_msgs/msg/cone_array_with_covariance.hpp"
+#include "hyu_msgs/msg/cone_array_with_covariance.hpp"
 #include "hyu_global_planner/planner_geometry.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 
@@ -33,7 +33,7 @@ struct SlamCenterlineConfig
 };
 
 bool buildCenterlineFromSlamMap(
-  const eufs_msgs::msg::ConeArrayWithCovariance & cone_map,
+  const hyu_msgs::msg::ConeArrayWithCovariance & cone_map,
   const nav_msgs::msg::Odometry & ego_odom,
   const SlamCenterlineConfig & config,
   std::vector<PlannerWaypoint> & waypoints,

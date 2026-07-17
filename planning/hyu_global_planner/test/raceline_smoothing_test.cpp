@@ -20,16 +20,16 @@ namespace
 constexpr double kPi = 3.14159265358979323846;
 
 // Ring track: two concentric cone circles, centerline radius 20 m, width 4 m.
-eufs_msgs::msg::ConeArrayWithCovariance ringMap(std::size_t cones_per_side = 40U)
+hyu_msgs::msg::ConeArrayWithCovariance ringMap(std::size_t cones_per_side = 40U)
 {
-  eufs_msgs::msg::ConeArrayWithCovariance map;
+  hyu_msgs::msg::ConeArrayWithCovariance map;
   for (std::size_t i = 0; i < cones_per_side; ++i) {
     const double angle = 2.0 * kPi * static_cast<double>(i) / static_cast<double>(cones_per_side);
-    eufs_msgs::msg::ConeWithCovariance blue;
+    hyu_msgs::msg::ConeWithCovariance blue;
     blue.point.x = 22.0 * std::cos(angle);
     blue.point.y = 22.0 * std::sin(angle);
     map.blue_cones.push_back(blue);
-    eufs_msgs::msg::ConeWithCovariance yellow;
+    hyu_msgs::msg::ConeWithCovariance yellow;
     yellow.point.x = 18.0 * std::cos(angle);
     yellow.point.y = 18.0 * std::sin(angle);
     map.yellow_cones.push_back(yellow);

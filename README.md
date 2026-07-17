@@ -415,7 +415,7 @@ ros2 launch hyu_localization ins_pipeline.launch.py slam:=false
 <summary><b>주요 서비스</b></summary>
 
 ```bash
-ros2 service call /ros_can/set_mission eufs_msgs/srv/SetCanState '{ami_state: 14}'  # 주행 미션
+ros2 service call /ros_can/set_mission hyu_msgs/srv/SetCanState '{ami_state: 14}'  # 주행 미션
 ros2 service call /ros_can/reset_vehicle_pos std_srvs/srv/Trigger                   # 차 원위치
 ros2 service call /graph_slam/start_mapping  std_srvs/srv/Trigger                   # 매핑 모드
 ros2 service call /graph_slam/save_map       std_srvs/srv/Trigger                   # 맵 CSV 저장
@@ -437,7 +437,7 @@ ros2 service call /graph_slam/save_map       std_srvs/srv/Trigger               
 
 ```
 eufs_sim/                 시뮬레이터 (Gazebo, 차량 URDF, 센서, 플러그인, 런처)
-eufs_msgs/                EUFS 메시지/서비스
+hyu_msgs/                EUFS 메시지/서비스
 hyu_localization/          graph SLAM + INS/SBG 브리지 + CTE 모니터
 hyu_perception/ YOLO26n-pose + LiDAR 융합 → /cones (provenance별)
 hyu_teleop/              키보드 주행

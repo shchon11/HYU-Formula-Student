@@ -12,8 +12,8 @@
 #include <gazebo/common/Time.hh>
 #include <geometry_msgs/msg/point.hpp>
 
-#include <eufs_msgs/msg/cone_with_covariance.hpp>
-#include <eufs_msgs/msg/cone_array_with_covariance.hpp>
+#include <hyu_msgs/msg/cone_with_covariance.hpp>
+#include <hyu_msgs/msg/cone_array_with_covariance.hpp>
 
 
 namespace internal {
@@ -39,7 +39,7 @@ ConeType getConeType(gazebo::physics::LinkPtr link, rclcpp::Logger logger) {
   }
 }
 
-void addConeToConeArray(eufs_msgs::msg::ConeArrayWithCovariance &cone_array,
+void addConeToConeArray(hyu_msgs::msg::ConeArrayWithCovariance &cone_array,
                         gazebo::physics::LinkPtr link,
                         rclcpp::Logger logger) {
   geometry_msgs::msg::Point point;
@@ -49,7 +49,7 @@ void addConeToConeArray(eufs_msgs::msg::ConeArrayWithCovariance &cone_array,
 
   ConeType cone_type = getConeType(link, logger);
 
-  eufs_msgs::msg::ConeWithCovariance cone = eufs_msgs::msg::ConeWithCovariance();
+  hyu_msgs::msg::ConeWithCovariance cone = hyu_msgs::msg::ConeWithCovariance();
   cone.point = point;
   cone.covariance = {0, 0, 0, 0};  // ground truth so zero covariance
 
@@ -69,9 +69,9 @@ void addConeToConeArray(eufs_msgs::msg::ConeArrayWithCovariance &cone_array,
   }
 }
 
-std::vector<eufs_msgs::msg::ConeWithCovariance> translateCones(
-    std::vector<eufs_msgs::msg::ConeWithCovariance> cones, ignition::math::Pose3d frame) {
-  std::vector<eufs_msgs::msg::ConeWithCovariance> translated_cones;
+std::vector<hyu_msgs::msg::ConeWithCovariance> translateCones(
+    std::vector<hyu_msgs::msg::ConeWithCovariance> cones, ignition::math::Pose3d frame) {
+  std::vector<hyu_msgs::msg::ConeWithCovariance> translated_cones;
   for (auto const &cone : cones) {
     // Translate the position of the cone to be based on the car
     float x = cone.point.x - frame.Pos().X();
@@ -81,7 +81,7 @@ std::vector<eufs_msgs::msg::ConeWithCovariance> translateCones(
     float yaw = frame.Rot().Yaw();
 
     // Rotate the points using the yaw of the car (x and y are the other way around)
-    eufs_msgs::msg::ConeWithCovariance translated_cone;
+    hyu_msgs::msg::ConeWithCovariance translated_cone;
     translated_cone.point.y = (cos(yaw) * y) - (sin(yaw) * x);
     translated_cone.point.x = (sin(yaw) * y) + (cos(yaw) * x);
 
@@ -98,9 +98,9 @@ namespace eufs_plugins {
 namespace cone_helpers {
 
 // IMPORTANT: This doesn't timestamp the ConeArray message, this is the responsibility of the plugin
-eufs_msgs::msg::ConeArrayWithCovariance getGroundTruthCones(gazebo::physics::ModelPtr track_model,
+hyu_msgs::msg::ConeArrayWithCovariance getGroundTruthCones(gazebo::physics::ModelPtr track_model,
                                                             rclcpp::Logger logger) {
-  eufs_msgs::msg::ConeArrayWithCovariance cone_arrays_message;
+  hyu_msgs::msg::ConeArrayWithCovariance cone_arrays_message;
   cone_arrays_message.header.frame_id = "gazebo";  // Gets cone coordinates in gazebo global FoV
 
   if (track_model != nullptr) {
@@ -112,8 +112,8 @@ eufs_msgs::msg::ConeArrayWithCovariance getGroundTruthCones(gazebo::physics::Mod
   return cone_arrays_message;
 }
 
-eufs_msgs::msg::ConeArrayWithCovariance translateToFrame(
-    eufs_msgs::msg::ConeArrayWithCovariance cones,
+hyu_msgs::msg::ConeArrayWithCovariance translateToFrame(
+    hyu_msgs::msg::ConeArrayWithCovariance cones,
     ignition::math::Pose3d frame_origin, std::string frame_id) {
   cones.header.frame_id = frame_id;
   cones.blue_cones = internal::translateCones(cones.blue_cones, frame_origin);

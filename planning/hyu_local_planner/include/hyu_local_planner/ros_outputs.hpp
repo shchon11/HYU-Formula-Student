@@ -5,7 +5,7 @@
 #include <mutex>
 #include <string>
 
-#include <eufs_msgs/msg/waypoint_array_stamped.hpp>
+#include <hyu_msgs/msg/waypoint_array_stamped.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/bool.hpp>
@@ -42,7 +42,7 @@ private:
   void publishHeartbeat();
 
   const double max_input_age_sec_;
-  rclcpp::Publisher<eufs_msgs::msg::WaypointArrayStamped>::SharedPtr waypoints_publisher_;
+  rclcpp::Publisher<hyu_msgs::msg::WaypointArrayStamped>::SharedPtr waypoints_publisher_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_publisher_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr validity_publisher_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr reason_publisher_;

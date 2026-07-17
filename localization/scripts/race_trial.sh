@@ -78,7 +78,7 @@ MAP_COUNT=$(timeout 8 python3 - <<'PYEOF' 2>/dev/null
 import rclpy, time
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
-from eufs_msgs.msg import ConeArrayWithCovariance
+from hyu_msgs.msg import ConeArrayWithCovariance
 rclpy.init()
 n = Node("race_trial_probe")
 got = []

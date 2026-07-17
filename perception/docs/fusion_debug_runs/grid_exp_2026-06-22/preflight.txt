@@ -20,11 +20,11 @@
 /zed_right_camera_controller
 
 ## baseline cones info
-Type: eufs_msgs/msg/ConeArrayWithCovariance
+Type: hyu_msgs/msg/ConeArrayWithCovariance
 Publisher count: 1
 Subscription count: 0
 
 ## yolo info
-Type: eufs_msgs/msg/BoundingBoxes
+Type: hyu_msgs/msg/BoundingBoxes
 Publisher count: 1
 Subscription count: 1

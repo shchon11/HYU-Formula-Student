@@ -7,8 +7,8 @@
 #include <stdexcept>
 #include <string>
 
-#include "eufs_msgs/msg/car_state.hpp"
-#include "eufs_msgs/msg/wheel_speeds_stamped.hpp"
+#include "hyu_msgs/msg/car_state.hpp"
+#include "hyu_msgs/msg/wheel_speeds_stamped.hpp"
 #include "hyu_tmpc_msgs/msg/tum_vehicle_state.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -35,10 +35,10 @@ bool IsFiniteQuaternion(const geometry_msgs::msg::Quaternion & quaternion)
 class TumVehicleStateBridge : public rclcpp::Node
 {
 public:
-  using CarState = eufs_msgs::msg::CarState;
+  using CarState = hyu_msgs::msg::CarState;
   using Odometry = nav_msgs::msg::Odometry;
   using TumVehicleState = hyu_tmpc_msgs::msg::TumVehicleState;
-  using WheelSpeedsStamped = eufs_msgs::msg::WheelSpeedsStamped;
+  using WheelSpeedsStamped = hyu_msgs::msg::WheelSpeedsStamped;
 
   TumVehicleStateBridge()
   : Node("hyu_tmpc_state_bridge")

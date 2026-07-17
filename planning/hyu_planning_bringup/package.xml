@@ -21,7 +21,7 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
-  <exec_depend>eufs_msgs</exec_depend>
+  <exec_depend>hyu_msgs</exec_depend>
   <exec_depend>ackermann_msgs</exec_depend>
   <exec_depend>rviz_2d_overlay_msgs</exec_depend>
   <exec_depend>hyu_tmpc</exec_depend>

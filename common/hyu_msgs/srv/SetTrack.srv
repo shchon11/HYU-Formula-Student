@@ -1,0 +1,4 @@
+hyu_msgs/ConeArrayWithCovariance data
+---
+bool success
+string message

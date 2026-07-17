@@ -234,7 +234,7 @@ def record():
     from rclpy.qos import QoSProfile, ReliabilityPolicy
     from sensor_msgs.msg import Imu, PointCloud2
     from sensor_msgs_py import point_cloud2
-    from eufs_msgs.msg import WheelSpeedsStamped
+    from hyu_msgs.msg import WheelSpeedsStamped
 
     try:
         from sbg_driver.msg import SbgEkfNav

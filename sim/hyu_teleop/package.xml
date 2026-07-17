@@ -11,7 +11,7 @@
 
   <depend>rclpy</depend>
   <depend>ackermann_msgs</depend>
-  <depend>eufs_msgs</depend>
+  <depend>hyu_msgs</depend>
   <depend>std_srvs</depend>
 
   <export>

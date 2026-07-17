@@ -14,7 +14,7 @@ namespace wpnt_publisher
 namespace
 {
 
-void resolveXY(const eufs_msgs::msg::Waypoint & waypoint, double & x, double & y)
+void resolveXY(const hyu_msgs::msg::Waypoint & waypoint, double & x, double & y)
 {
   x = waypoint.x_m;
   y = waypoint.y_m;
@@ -39,7 +39,7 @@ std::string monotonicError(std::size_t index, double current, double previous)
 }  // namespace
 
 PathSnapshotBuildResult makePathSnapshot(
-  const eufs_msgs::msg::WaypointArrayStamped & msg,
+  const hyu_msgs::msg::WaypointArrayStamped & msg,
   const PathSnapshotOptions & options)
 {
   PathSnapshotBuildResult result;

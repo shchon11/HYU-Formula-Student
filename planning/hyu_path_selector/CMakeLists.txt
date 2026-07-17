@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(ament_cmake REQUIRED)
-find_package(eufs_msgs REQUIRED)
+find_package(hyu_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -26,7 +26,7 @@ target_include_directories(hyu_path_selector_core
     $<INSTALL_INTERFACE:include>
 )
 ament_target_dependencies(hyu_path_selector_core
-  eufs_msgs
+  hyu_msgs
   geometry_msgs
   nav_msgs
   rclcpp
@@ -43,7 +43,7 @@ target_include_directories(hyu_path_selector_node
 )
 target_link_libraries(hyu_path_selector_node hyu_path_selector_core)
 ament_target_dependencies(hyu_path_selector_node
-  eufs_msgs
+  hyu_msgs
   geometry_msgs
   nav_msgs
   rclcpp
@@ -94,6 +94,6 @@ if(BUILD_TESTING)
 endif()
 
 ament_export_targets(export_hyu_path_selector_core HAS_LIBRARY_TARGET)
-ament_export_dependencies(eufs_msgs geometry_msgs nav_msgs rclcpp std_msgs)
+ament_export_dependencies(hyu_msgs geometry_msgs nav_msgs rclcpp std_msgs)
 
 ament_package()

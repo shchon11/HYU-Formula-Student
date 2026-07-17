@@ -13,7 +13,7 @@
   <build_depend>eigen</build_depend>
   <build_depend>eigen3_cmake_module</build_depend>
 
-  <depend>eufs_msgs</depend>
+  <depend>hyu_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>rclcpp</depend>

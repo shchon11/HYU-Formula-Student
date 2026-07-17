@@ -6,7 +6,7 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
-find_package(eufs_msgs REQUIRED)
+find_package(hyu_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -22,7 +22,7 @@ add_library(hyu_state_machine_core
 )
 target_include_directories(hyu_state_machine_core PUBLIC include)
 ament_target_dependencies(hyu_state_machine_core
-  eufs_msgs
+  hyu_msgs
   nav_msgs
   rclcpp
   std_msgs
@@ -42,7 +42,7 @@ if(BUILD_TESTING)
   )
   target_link_libraries(planning_hyu_state_machine_policy_test hyu_state_machine_core)
   ament_target_dependencies(planning_hyu_state_machine_policy_test
-    eufs_msgs
+    hyu_msgs
     rclcpp
   )
 endif()

@@ -23,9 +23,9 @@
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "std_msgs/msg/string.hpp"
 
-#include <eufs_msgs/msg/cone_array_with_covariance.hpp>
-#include <eufs_msgs/msg/bounding_boxes.hpp>
-#include <eufs_msgs/msg/cone_with_covariance.hpp>
+#include <hyu_msgs/msg/cone_array_with_covariance.hpp>
+#include <hyu_msgs/msg/bounding_boxes.hpp>
+#include <hyu_msgs/msg/cone_with_covariance.hpp>
 
 #include <image_geometry/pinhole_camera_model.h>
 
@@ -52,9 +52,9 @@ class BoundingBoxesPlugin : public gazebo::ModelPlugin {
   void Load(gazebo::physics::ModelPtr _parent, sdf::ElementPtr _sdf);
 
  private:
-  void cones_callback(const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg);
+  void cones_callback(const hyu_msgs::msg::ConeArrayWithCovariance::SharedPtr msg);
 
-  void update_msg(eufs_msgs::msg::BoundingBoxes &bounding_boxes_msg, std_msgs::msg::Header header,
+  void update_msg(hyu_msgs::msg::BoundingBoxes &bounding_boxes_msg, std_msgs::msg::Header header,
                   std::vector<std::vector<double>> blue_cones,
                   std::vector<std::vector<double>> yellow_cones,
                   std::vector<std::vector<double>> orange_cones,
@@ -70,12 +70,12 @@ class BoundingBoxesPlugin : public gazebo::ModelPlugin {
   void add_gaussian_noise_to_bounding_box(
               std::vector<double> &bounding_box_vector, std::default_random_engine seed);
 
-  void push_back_bounding_boxes_msg(eufs_msgs::msg::BoundingBoxes &bounding_boxes_msg,
+  void push_back_bounding_boxes_msg(hyu_msgs::msg::BoundingBoxes &bounding_boxes_msg,
                                       std::vector<std::vector<double>> bounding_boxes_vector,
                                       std::string color) const;
 
   std::tuple<std::vector<std::vector<double>>, std::vector<std::vector<double>>>
-      projectToImagePlane(std::vector<eufs_msgs::msg::ConeWithCovariance> &cones_vector,
+      projectToImagePlane(std::vector<hyu_msgs::msg::ConeWithCovariance> &cones_vector,
                             const ConeInfo cone_info_);
 
   std::string getStringParameter(sdf::ElementPtr _sdf, const char *element,
@@ -101,12 +101,12 @@ class BoundingBoxesPlugin : public gazebo::ModelPlugin {
   gazebo_ros::Node::SharedPtr rosnode_;
 
   // Publisher
-  rclcpp::Publisher<eufs_msgs::msg::BoundingBoxes>::SharedPtr ground_truth_bounding_boxes_pub;
-  rclcpp::Publisher<eufs_msgs::msg::BoundingBoxes>::SharedPtr bounding_boxes_with_noise_pub;
+  rclcpp::Publisher<hyu_msgs::msg::BoundingBoxes>::SharedPtr ground_truth_bounding_boxes_pub;
+  rclcpp::Publisher<hyu_msgs::msg::BoundingBoxes>::SharedPtr bounding_boxes_with_noise_pub;
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr custom_cam_info_pub;
 
   // Subscriber
-  rclcpp::Subscription<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr cone_ground_truth_sub_;
+  rclcpp::Subscription<hyu_msgs::msg::ConeArrayWithCovariance>::SharedPtr cone_ground_truth_sub_;
 
   // tf2
   std::shared_ptr<tf2_ros::TransformListener> transform_listener_{nullptr};

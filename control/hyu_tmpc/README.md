@@ -11,7 +11,7 @@ HYU Formula TMPC 래퍼와 관련 메시지 및 어댑터 패키지를 위한 �
 - [`hyu_tmpc_output_bridge`](src/hyu_tmpc_output_bridge/README.md): TMPC force/steering 출력을 EUFS Ackermann acceleration 명령으로 변환하는 어댑터
 
 컨트롤러를 빌드할 때 전체 `mod_vehicle_dynamics_control` 저장소는 필요하지 않습니다.
-차량 상태 브리지를 빌드하려면 HYU-Formula-Student가 설치한 `eufs_msgs`가 추가로
+차량 상태 브리지를 빌드하려면 HYU-Formula-Student가 설치한 `hyu_msgs`가 추가로
 필요합니다. 출력 브리지는 ROS2의 `ackermann_msgs`와 이 워크스페이스의 메시지만
 사용합니다.
 

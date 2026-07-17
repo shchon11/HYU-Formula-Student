@@ -46,9 +46,9 @@ TEST(LocalPlannerValidity, ValidPathSurvivesUnmatchedRawConeAndOdomCallbacks)
 
   Observations observations;
   const auto waypoint_subscription = driver->create_subscription<
-    eufs_msgs::msg::WaypointArrayStamped>(
+    hyu_msgs::msg::WaypointArrayStamped>(
     "/t9_hyu_local_planner/waypoints", rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
-    [&observations](const eufs_msgs::msg::WaypointArrayStamped::SharedPtr message) {
+    [&observations](const hyu_msgs::msg::WaypointArrayStamped::SharedPtr message) {
       if (!message->waypoints.empty()) {
         ++observations.path_count;
       }
@@ -144,9 +144,9 @@ TEST(LocalPlannerValidity, SingleInvalidBuildRetainsFreshPathUntilInputAgeExpire
 
   Observations observations;
   const auto waypoint_subscription = driver->create_subscription<
-    eufs_msgs::msg::WaypointArrayStamped>(
+    hyu_msgs::msg::WaypointArrayStamped>(
     "/t9_retention/waypoints", rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
-    [&observations](const eufs_msgs::msg::WaypointArrayStamped::SharedPtr message) {
+    [&observations](const hyu_msgs::msg::WaypointArrayStamped::SharedPtr message) {
       if (!message->waypoints.empty()) {
         ++observations.path_count;
       }

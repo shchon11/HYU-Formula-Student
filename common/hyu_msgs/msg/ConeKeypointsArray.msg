@@ -1,4 +1,4 @@
-# Per-cone keypoints emitted alongside eufs_msgs/BoundingBoxes by a pose-capable
+# Per-cone keypoints emitted alongside hyu_msgs/BoundingBoxes by a pose-capable
 # detector (one inference produces both).  Entry i of `cone_keypoints`
 # corresponds to entry i of the BoundingBoxes message published with the same
 # header stamp, so the two topics pair one-to-one.

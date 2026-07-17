@@ -30,7 +30,7 @@ wpnt_publisher::PathSnapshot makeCircle(
   for (std::size_t i = 0U; i < count; ++i) {
     const double ratio = static_cast<double>(i) / static_cast<double>(count);
     const double theta = ratio * 2.0 * kPi;
-    eufs_msgs::msg::Waypoint waypoint;
+    hyu_msgs::msg::Waypoint waypoint;
     waypoint.s_m = ratio * path.track_length;
     waypoint.x_m = radius_m * std::cos(theta);
     waypoint.y_m = radius_m * std::sin(theta);

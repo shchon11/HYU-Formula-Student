@@ -282,7 +282,7 @@ perception_node:
     sigma_d_px: 0.85
 
     # --- covariance: the trust handed to SLAM ------------------------------
-    # Order in eufs_msgs/ConeWithCovariance is [xx, xy, yx, yy].
+    # Order in hyu_msgs/ConeWithCovariance is [xx, xy, yx, yy].
     #
     # LiDAR ranges directly to ~1 %, so its error really is the near-circle
     # these constants describe. VISION does not: at 15 m the bearing is good to

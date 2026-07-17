@@ -21,12 +21,12 @@ Default topics:
 
 | Topic | Type | QoS | Owner |
 | --- | --- | --- | --- |
-| `/localization/cone_map` | `eufs_msgs/msg/ConeArrayWithCovariance` | reliable transient-local | `graph_slam` |
+| `/localization/cone_map` | `hyu_msgs/msg/ConeArrayWithCovariance` | reliable transient-local | `graph_slam` |
 | `/localization/ego_odom` | `nav_msgs/msg/Odometry` | reliable volatile | `graph_slam` |
 | `/graph_slam/status` | `std_msgs/msg/String` | reliable transient-local | `graph_slam` |
-| `/global_waypoints` | `eufs_msgs/msg/WaypointArrayStamped` | reliable transient-local | selected global waypoint writer |
+| `/global_waypoints` | `hyu_msgs/msg/WaypointArrayStamped` | reliable transient-local | selected global waypoint writer |
 | `/planning/global_path_valid` | `std_msgs/msg/Bool` | reliable volatile | selected global waypoint writer |
-| `/path_waypoints` | `eufs_msgs/msg/WaypointArrayStamped` | reliable volatile | `hyu_path_selector_node` in integrated bringup |
+| `/path_waypoints` | `hyu_msgs/msg/WaypointArrayStamped` | reliable volatile | `hyu_path_selector_node` in integrated bringup |
 
 Only one node may write `/global_waypoints` and `/planning/global_path_valid`
 in a launch. Use `slam_hyu_global_planner.launch.py planner_source:=slam` for the

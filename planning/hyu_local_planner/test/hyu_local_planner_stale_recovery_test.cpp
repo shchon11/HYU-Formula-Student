@@ -48,9 +48,9 @@ TEST(LocalPlannerValidity, StaleMatchedPairInvalidatesThenFreshPairRecovers)
 
   Observations observations;
   const auto waypoint_subscription = driver->create_subscription<
-    eufs_msgs::msg::WaypointArrayStamped>(
+    hyu_msgs::msg::WaypointArrayStamped>(
     "/t9_stale_recovery/waypoints", rclcpp::QoS(rclcpp::KeepLast(10)).reliable(),
-    [&observations](const eufs_msgs::msg::WaypointArrayStamped::SharedPtr message) {
+    [&observations](const hyu_msgs::msg::WaypointArrayStamped::SharedPtr message) {
       if (!message->waypoints.empty()) {
         ++observations.path_count;
       }

@@ -33,7 +33,7 @@ bool isStampFresh(double event_time_sec, double now_sec, double timeout_sec)
   return age_sec >= -kMaxFutureHeaderStampSkewSec && age_sec <= timeout_sec;
 }
 
-bool finiteWaypoint(const eufs_msgs::msg::Waypoint & waypoint)
+bool finiteWaypoint(const hyu_msgs::msg::Waypoint & waypoint)
 {
   return std::isfinite(waypoint.position.x) && std::isfinite(waypoint.position.y) &&
          std::isfinite(waypoint.position.z) && std::isfinite(waypoint.speed) &&
@@ -43,7 +43,7 @@ bool finiteWaypoint(const eufs_msgs::msg::Waypoint & waypoint)
          std::isfinite(waypoint.vx_mps) && std::isfinite(waypoint.ax_mps2);
 }
 
-bool hasNonzeroSegment(const eufs_msgs::msg::WaypointArrayStamped & path)
+bool hasNonzeroSegment(const hyu_msgs::msg::WaypointArrayStamped & path)
 {
   for (std::size_t index = 1U; index < path.waypoints.size(); ++index) {
     const auto & previous = path.waypoints[index - 1U];
@@ -57,7 +57,7 @@ bool hasNonzeroSegment(const eufs_msgs::msg::WaypointArrayStamped & path)
   return false;
 }
 
-double forwardLength(const eufs_msgs::msg::WaypointArrayStamped & path)
+double forwardLength(const hyu_msgs::msg::WaypointArrayStamped & path)
 {
   double length_m = 0.0;
   for (std::size_t index = 1U; index < path.waypoints.size(); ++index) {
@@ -68,7 +68,7 @@ double forwardLength(const eufs_msgs::msg::WaypointArrayStamped & path)
   return length_m;
 }
 
-std::optional<double> startHeading(const eufs_msgs::msg::WaypointArrayStamped & path)
+std::optional<double> startHeading(const hyu_msgs::msg::WaypointArrayStamped & path)
 {
   const auto & first = path.waypoints.front();
   for (std::size_t index = 1U; index < path.waypoints.size(); ++index) {
@@ -87,7 +87,7 @@ double wrappedAbsoluteDifference(double lhs, double rhs)
 }
 
 TrimResult trimAtEgoNearestPoint(
-  const eufs_msgs::msg::WaypointArrayStamped & path,
+  const hyu_msgs::msg::WaypointArrayStamped & path,
   const nav_msgs::msg::Odometry & odometry)
 {
   if (path.waypoints.size() < 2U) {
@@ -120,7 +120,7 @@ TrimResult trimAtEgoNearestPoint(
     return {std::nullopt, nearest_index, ContinuityFailure::MalformedPath};
   }
 
-  eufs_msgs::msg::WaypointArrayStamped trimmed;
+  hyu_msgs::msg::WaypointArrayStamped trimmed;
   trimmed.header = path.header;
   trimmed.waypoints.assign(
     path.waypoints.begin() + static_cast<std::ptrdiff_t>(nearest_index),
@@ -131,7 +131,7 @@ TrimResult trimAtEgoNearestPoint(
   return {std::move(trimmed), nearest_index, ContinuityFailure::None};
 }
 
-nav_msgs::msg::Path toPath(const eufs_msgs::msg::WaypointArrayStamped & waypoints)
+nav_msgs::msg::Path toPath(const hyu_msgs::msg::WaypointArrayStamped & waypoints)
 {
   nav_msgs::msg::Path path;
   path.header = waypoints.header;

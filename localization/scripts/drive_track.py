@@ -23,8 +23,8 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 
 from ackermann_msgs.msg import AckermannDriveStamped
-from eufs_msgs.msg import CanState, CarState
-from eufs_msgs.srv import SetCanState
+from hyu_msgs.msg import CanState, CarState
+from hyu_msgs.srv import SetCanState
 
 
 def load_centerline(csv_path):

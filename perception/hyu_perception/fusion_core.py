@@ -201,7 +201,7 @@ def bearing_aligned_covariance(
     by the bearing states that honestly, which an axis-aligned matrix cannot do
     for a cone off the camera's centreline.
 
-    Returns ``(xx, xy, yx, yy)`` in eufs_msgs/ConeWithCovariance order.
+    Returns ``(xx, xy, yx, yy)`` in hyu_msgs/ConeWithCovariance order.
     """
     values = (x_m, y_m, sigma_lon_m, sigma_lat_m)
     if not all(_finite(value) for value in values):

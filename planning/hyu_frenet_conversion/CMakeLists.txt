@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # ---- ament / ROS dependencies ----
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(eufs_msgs REQUIRED)
+find_package(hyu_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -98,7 +98,7 @@ target_include_directories(frenet_odom_node PRIVATE
 target_link_libraries(frenet_odom_node crccosy)
 ament_target_dependencies(frenet_odom_node
   rclcpp
-  eufs_msgs
+  hyu_msgs
   nav_msgs
   geometry_msgs
   std_msgs

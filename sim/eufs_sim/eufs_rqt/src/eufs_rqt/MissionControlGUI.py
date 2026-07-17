@@ -10,10 +10,10 @@ from python_qt_binding.QtWidgets import QWidget, QComboBox, QPushButton, QLabel
 from ament_index_python.packages import get_package_share_directory
 import rclpy
 from diagnostic_msgs.msg import DiagnosticStatus, DiagnosticArray
-from eufs_msgs.msg import CanState
+from hyu_msgs.msg import CanState
 from std_msgs.msg import String, UInt8
 from std_srvs.srv import Trigger
-from eufs_msgs.srv import SetCanState
+from hyu_msgs.srv import SetCanState
 
 
 class MissionControlGUI(Plugin):
@@ -148,7 +148,7 @@ class MissionControlGUI(Plugin):
 
     def sendRequest(self, mission_ami_state):
         """Sends a mission request to the simulated ros_can
-        The mission request is of message type eufs_msgs/srv/SetCanState
+        The mission request is of message type hyu_msgs/srv/SetCanState
         where only the ami_state field is used.
         """
         if self.set_mission_cli.wait_for_service(timeout_sec=1):
@@ -291,7 +291,7 @@ class MissionControlGUI(Plugin):
         and displays it within the GUI
 
         Args:
-            msg (eufs_msgs/CanState): state of race car
+            msg (hyu_msgs/CanState): state of race car
         """
         if msg.ami_state == CanState.AMI_MANUAL:
             self._widget.findChild(QLabel, "StateDisplay").setText(

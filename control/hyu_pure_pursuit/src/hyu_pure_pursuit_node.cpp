@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
-#include "eufs_msgs/msg/waypoint_array_stamped.hpp"
+#include "hyu_msgs/msg/waypoint_array_stamped.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "hyu_pure_pursuit/controller.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -93,7 +93,7 @@ public:
       create_publisher<ackermann_msgs::msg::AckermannDriveStamped>("/cmd", qos);
     lookahead_marker_publisher_ = create_publisher<visualization_msgs::msg::Marker>(
       "/control/lookahead_marker", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
-    path_subscription_ = create_subscription<eufs_msgs::msg::WaypointArrayStamped>(
+    path_subscription_ = create_subscription<hyu_msgs::msg::WaypointArrayStamped>(
       "/path_waypoints", qos,
       std::bind(&PurePursuitControllerNode::onPath, this, std::placeholders::_1));
     validity_subscription_ = create_subscription<std_msgs::msg::Bool>(
@@ -118,7 +118,7 @@ private:
     return (now - received).seconds();
   }
 
-  void onPath(const eufs_msgs::msg::WaypointArrayStamped::SharedPtr message)
+  void onPath(const hyu_msgs::msg::WaypointArrayStamped::SharedPtr message)
   {
     input_.path_received = true;
     input_.path_frame_valid = message->header.frame_id == "map";
@@ -282,7 +282,7 @@ private:
   rclcpp::Time odom_receive_time_;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr command_publisher_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr lookahead_marker_publisher_;
-  rclcpp::Subscription<eufs_msgs::msg::WaypointArrayStamped>::SharedPtr path_subscription_;
+  rclcpp::Subscription<hyu_msgs::msg::WaypointArrayStamped>::SharedPtr path_subscription_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr validity_subscription_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr stop_subscription_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscription_;

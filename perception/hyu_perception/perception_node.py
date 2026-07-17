@@ -58,7 +58,7 @@ from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from visualization_msgs.msg import Marker, MarkerArray
 
-from eufs_msgs.msg import (
+from hyu_msgs.msg import (
     BoundingBoxes,
     CarState,
     ConeArrayWithCovariance,

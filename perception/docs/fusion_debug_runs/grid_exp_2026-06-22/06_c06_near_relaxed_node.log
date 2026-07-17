@@ -1,4 +1,4 @@
-[INFO] [1782123771.338394057] [fusion_grid_06]: Publishing SLAM cone observations on /cones_grid_06 as eufs_msgs/msg/ConeArrayWithCovariance
+[INFO] [1782123771.338394057] [fusion_grid_06]: Publishing SLAM cone observations on /cones_grid_06 as hyu_msgs/msg/ConeArrayWithCovariance
 [INFO] [1782123771.338642092] [fusion_grid_06]: Publishing RViz cone markers on /cones_grid_06/viz as visualization_msgs/msg/MarkerArray
 [INFO] [1782123771.338814299] [fusion_grid_06]: Fusion inputs: image=/zed/left/image_rect_color, pointcloud=/velodyne_points, bboxes=/yolo_bounding_boxes, camera_info=/zed/left/camera_info
 [INFO] [1782123771.338973266] [fusion_grid_06]: LiDAR-camera fusion enabled. BBox class/color is fused with LiDAR clusters.

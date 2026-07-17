@@ -21,7 +21,7 @@
   <depend>rqt_gui</depend>
   <depend>python3-qt5-bindings</depend>
 
-  <depend>eufs_msgs</depend>
+  <depend>hyu_msgs</depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

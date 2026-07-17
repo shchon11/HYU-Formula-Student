@@ -4,8 +4,8 @@
 #include <string>
 #include <vector>
 
-#include "eufs_msgs/msg/cone_array_with_covariance.hpp"
-#include "eufs_msgs/msg/waypoint_array_stamped.hpp"
+#include "hyu_msgs/msg/cone_array_with_covariance.hpp"
+#include "hyu_msgs/msg/waypoint_array_stamped.hpp"
 #include "hyu_global_planner/planner_geometry.hpp"
 #include "hyu_global_planner/slam_centerline_builder.hpp"
 #include "nav_msgs/msg/odometry.hpp"
@@ -25,7 +25,7 @@ public:
 private:
   void declareParameters();
   void loadParameters();
-  void onConeMap(const eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr msg);
+  void onConeMap(const hyu_msgs::msg::ConeArrayWithCovariance::SharedPtr msg);
   void onEgoOdom(const nav_msgs::msg::Odometry::SharedPtr msg);
   void onGraphSlamStatus(const std_msgs::msg::String::SharedPtr msg);
   void onMapConverged(const std_msgs::msg::Bool::SharedPtr msg);
@@ -34,7 +34,7 @@ private:
   bool inputsAllowPlanning(std::string & reason) const;
   bool canHoldLastValidPath() const;
   SlamCenterlineConfig centerlineConfig() const;
-  eufs_msgs::msg::WaypointArrayStamped buildWaypointMessage(
+  hyu_msgs::msg::WaypointArrayStamped buildWaypointMessage(
     const std::vector<PlannerWaypoint> & waypoints) const;
   void publishHeldPathValidity(const std::string & reason);
   void publishValidity(bool valid, const std::string & reason = "");
@@ -85,18 +85,18 @@ private:
   std::uint64_t cone_map_signature_{0U};
   bool has_cone_map_signature_{false};
 
-  eufs_msgs::msg::ConeArrayWithCovariance::SharedPtr latest_cone_map_;
+  hyu_msgs::msg::ConeArrayWithCovariance::SharedPtr latest_cone_map_;
   nav_msgs::msg::Odometry latest_ego_odom_;
   rclcpp::Time latest_ego_odom_receive_time_;
   std::string graph_slam_status_;
   std::string waypoint_spacing_invalid_reason_;
   std::string last_invalid_reason_;
 
-  rclcpp::Subscription<eufs_msgs::msg::ConeArrayWithCovariance>::SharedPtr cone_map_sub_;
+  rclcpp::Subscription<hyu_msgs::msg::ConeArrayWithCovariance>::SharedPtr cone_map_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr ego_odom_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr graph_slam_status_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr map_converged_sub_;
-  rclcpp::Publisher<eufs_msgs::msg::WaypointArrayStamped>::SharedPtr global_waypoints_pub_;
+  rclcpp::Publisher<hyu_msgs::msg::WaypointArrayStamped>::SharedPtr global_waypoints_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr global_path_viz_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr global_path_valid_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr global_path_reason_pub_;

@@ -4,7 +4,7 @@
 #include <vector>
 
 #include "clcs_frenet_converter.hpp"
-#include "eufs_msgs/msg/waypoint_array_stamped.hpp"
+#include "hyu_msgs/msg/waypoint_array_stamped.hpp"
 #include "geometry_msgs/msg/quaternion.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
@@ -25,7 +25,7 @@ double yawFromQuaternion(const geometry_msgs::msg::Quaternion & q);
 geometry_msgs::msg::Quaternion quaternionFromYaw(double yaw);
 
 std::vector<ReferenceWaypoint> toReferenceWaypoints(
-  const eufs_msgs::msg::WaypointArrayStamped & msg);
+  const hyu_msgs::msg::WaypointArrayStamped & msg);
 
 ClcsConversionInput toConversionInput(const nav_msgs::msg::Odometry & odom);
 

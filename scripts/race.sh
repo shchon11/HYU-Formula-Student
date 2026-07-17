@@ -225,7 +225,7 @@ tmux send-keys -t "$P_PLAN" \
 # 2 · Arm the mission — then the controller drives autonomously ──────────────
 P_DRIVE=$(tmux split-window -v -t "$P_SIM" -P -F '#{pane_id}')
 tmux send-keys -t "$P_DRIVE" \
-  "$SRC echo '[③ MISSION] waiting for car…'; $WAIT_CAR; sleep 5; ros2 service call /ros_can/set_mission eufs_msgs/srv/SetCanState '{ami_state: $AMI_STATE}'; echo 'mission armed → controller now drives (no teleop). /cmd:'; ros2 topic hz /cmd" C-m
+  "$SRC echo '[③ MISSION] waiting for car…'; $WAIT_CAR; sleep 5; ros2 service call /ros_can/set_mission hyu_msgs/srv/SetCanState '{ami_state: $AMI_STATE}'; echo 'mission armed → controller now drives (no teleop). /cmd:'; ros2 topic hz /cmd" C-m
 
 P_GNSS=$(tmux split-window -v -t "$P_DRIVE" -P -F '#{pane_id}')
 tmux send-keys -t "$P_GNSS" \
