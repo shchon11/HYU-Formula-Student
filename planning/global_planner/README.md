@@ -195,7 +195,7 @@ Run this first to build the track mask from the EUFS cone CSV and generate
 
 ```bash
 cd ~/HYU-Formula-Student/planning/trajectory_generator
-python3 csv_to_track_mask.py --cone-csv ../../eufs_sim/eufs_tracks/csv/peanut.csv
+python3 csv_to_track_mask.py --cone-csv ../../sim/eufs_sim/eufs_tracks/csv/peanut.csv
 python3 lane_generator.py --headless
 ```
 

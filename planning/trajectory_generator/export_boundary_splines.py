@@ -11,7 +11,7 @@ Outputs (header "x_m,y_m") under outputs/<map_name>/:
   right_boundary_spline.csv  (yellow cones, dense spline) -> RViz yellow
 
 Example (from the trajectory_generator directory):
-  python3 export_boundary_splines.py --cone-csv ../../eufs_sim/eufs_tracks/csv/peanut.csv --map-name peanut
+  python3 export_boundary_splines.py --cone-csv ../../sim/eufs_sim/eufs_tracks/csv/peanut.csv --map-name peanut
 """
 
 from __future__ import annotations

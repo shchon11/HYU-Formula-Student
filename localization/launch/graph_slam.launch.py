@@ -15,7 +15,7 @@ from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 # Saved maps live in the package's map/ directory (this launch file is at
-# eufs_graph_slam/launch/, so ../map resolves to eufs_graph_slam/map even with
+# localization/launch/, so ../map resolves to localization/map even with
 # a symlink install).
 DEFAULT_MAP_DIR = os.path.normpath(
     os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "map")

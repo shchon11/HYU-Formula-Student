@@ -18,7 +18,7 @@ __pycache__/
 .agents/
 AGENTS.md
 # graph SLAM run-output maps (timestamped); test fixtures are force-added
-eufs_graph_slam/map/map_[0-9]*.csv
+localization/map/map_[0-9]*.csv
 
 # Vendored SBG driver — has its own git repo, not tracked here
 sbg_ros2_driver/

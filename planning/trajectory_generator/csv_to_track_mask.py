@@ -34,7 +34,7 @@ Image styles (--style):
 Example (from the planning/trajectory_generator directory):
 
   # cone-map mode: map-name defaults to the cone-CSV file stem (small_track)
-  python3 csv_to_track_mask.py --cone-csv ../../eufs_sim/eufs_tracks/csv/small_track.csv
+  python3 csv_to_track_mask.py --cone-csv ../../sim/eufs_sim/eufs_tracks/csv/small_track.csv
 
   # boundary mode
   python3 csv_to_track_mask.py \

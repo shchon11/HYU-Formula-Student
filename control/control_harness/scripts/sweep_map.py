@@ -9,8 +9,8 @@ by CTE RMSE.
 Example:
   sweep_map.py \
     --bin install/control_harness/lib/control_harness/map_harness \
-    --track src/eufs_sim/eufs_tracks/csv/trackdrive_kase2026.csv \
-    --plant-yaml src/eufs_sim/eufs_racecar/robots/eufs/configDry.yaml \
+    --track src/sim/eufs_sim/eufs_tracks/csv/trackdrive_kase2026.csv \
+    --plant-yaml src/sim/eufs_sim/eufs_racecar/robots/eufs/configDry.yaml \
     --grid map_lookahead_max_m=3.5,4.0,4.5,5.0 \
     --grid map_lookahead_slope_s=0.45,0.55,0.65 \
     --fixed two_sided_speed_mps=4.5 \

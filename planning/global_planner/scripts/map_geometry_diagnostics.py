@@ -6,7 +6,7 @@
 # --- How to run ---
 # python3 src/planning/global_planner/scripts/map_geometry_diagnostics.py \
 #   --min-track-width 2.0 --max-track-width 6.0 \
-#   --glob 'src/eufs_graph_slam/map/map_20260713_*.csv' \
+#   --glob 'src/localization/map/map_20260713_*.csv' \
 #   --evidence src/.omo/evidence/slam-planner-pipeline-recovery/task-2/maps.json
 
 from __future__ import annotations

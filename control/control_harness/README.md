@@ -34,8 +34,8 @@ latency noiseless loop is too optimistic to tune against.
 
 ```bash
 ./install/control_harness/lib/control_harness/map_harness \
-  track=src/eufs_sim/eufs_tracks/csv/trackdrive_kase2026.csv \
-  plant_yaml=src/eufs_sim/eufs_racecar/robots/eufs/configDry.yaml \
+  track=src/sim/eufs_sim/eufs_tracks/csv/trackdrive_kase2026.csv \
+  plant_yaml=src/sim/eufs_sim/eufs_racecar/robots/eufs/configDry.yaml \
   map_lookahead_max_m=5.0 two_sided_speed_mps=4.5 \
   traj_csv=/tmp/traj.csv        # optional 100 Hz dump for plotting
 ```
@@ -48,10 +48,10 @@ trackdrive configs (`pure_pursuit_controller.yaml`, `local_planner.yaml`).
 Grid sweeps (cartesian product, parallel, ranked summary + CSV):
 
 ```bash
-python3 src/control_harness/scripts/sweep_map.py \
+python3 src/control/control_harness/scripts/sweep_map.py \
   --bin install/control_harness/lib/control_harness/map_harness \
-  --track src/eufs_sim/eufs_tracks/csv/trackdrive_kase2026.csv \
-  --plant-yaml src/eufs_sim/eufs_racecar/robots/eufs/configDry.yaml \
+  --track src/sim/eufs_sim/eufs_tracks/csv/trackdrive_kase2026.csv \
+  --plant-yaml src/sim/eufs_sim/eufs_racecar/robots/eufs/configDry.yaml \
   --grid map_lookahead_max_m=3.0,4.0,5.0,6.0 \
   --grid map_lookahead_slope_s=0.4,0.55,0.7 \
   --fixed two_sided_speed_mps=4.5 \
