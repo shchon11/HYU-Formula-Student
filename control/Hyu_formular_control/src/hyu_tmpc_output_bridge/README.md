@@ -1,6 +1,6 @@
 # TUM MPC Output Bridge
 
-`tum_mpc_output_bridge`는 Formula TMPC 래퍼의 `/output`을 EUFS 시뮬레이터가
+`hyu_tmpc_output_bridge`는 Formula TMPC 래퍼의 `/output`을 EUFS 시뮬레이터가
 사용하는 `ackermann_msgs/msg/AckermannDriveStamped` 명령으로 변환합니다.
 기본 출력은 실제 차량 명령 토픽이 아닌 `/tmpc/cmd_shadow`이므로 기존
 Pure Pursuit와 나란히 실행하면서 값을 먼저 비교할 수 있습니다.
@@ -72,7 +72,7 @@ steady clock 기준으로 판단합니다.
 Shadow mode:
 
 ```zsh
-ros2 launch tum_mpc_output_bridge tum_mpc_output_bridge.launch.xml
+ros2 launch hyu_tmpc_output_bridge hyu_tmpc_output_bridge.launch.xml
 ```
 
 실제 EUFS `/cmd`로 내보내려면 Pure Pursuit 등 다른 `/cmd` publisher를 먼저 끈
@@ -80,7 +80,7 @@ ros2 launch tum_mpc_output_bridge tum_mpc_output_bridge.launch.xml
 
 ```zsh
 ros2 topic info /cmd --verbose
-ros2 launch tum_mpc_output_bridge tum_mpc_output_bridge.launch.xml output_topic:=/cmd
+ros2 launch hyu_tmpc_output_bridge hyu_tmpc_output_bridge.launch.xml output_topic:=/cmd
 ```
 
 EUFS는 `commandMode:=acceleration`으로 실행해야 `drive.acceleration`을 실제
@@ -110,9 +110,9 @@ source /opt/ros/humble/setup.zsh
 
 colcon build --base-paths src --packages-select \
   hyu_formular_control_msgs \
-  tum_mpc_output_bridge
+  hyu_tmpc_output_bridge
 
 source install/setup.zsh
-colcon test --packages-select tum_mpc_output_bridge
+colcon test --packages-select hyu_tmpc_output_bridge
 colcon test-result --verbose
 ```

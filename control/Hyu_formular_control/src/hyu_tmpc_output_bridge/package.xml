@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>tum_mpc_output_bridge</name>
+  <name>hyu_tmpc_output_bridge</name>
   <version>0.0.0</version>
   <description>Convert TUM MPC force and steering requests to EUFS Ackermann acceleration commands.</description>
   <maintainer email="simseunghwan@example.com">simseunghwan</maintainer>

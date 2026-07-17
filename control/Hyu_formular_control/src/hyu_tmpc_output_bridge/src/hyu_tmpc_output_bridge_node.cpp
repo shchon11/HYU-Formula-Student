@@ -10,41 +10,41 @@
 #include "hyu_formular_control_msgs/msg/tum_mpc_output.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/bool.hpp"
-#include "tum_mpc_output_bridge/command_conversion.hpp"
+#include "hyu_tmpc_output_bridge/command_conversion.hpp"
 
-namespace tum_mpc_output_bridge
+namespace hyu_tmpc_output_bridge
 {
 
 class TumMpcOutputBridgeNode final : public rclcpp::Node
 {
 public:
   TumMpcOutputBridgeNode()
-  : Node("tum_mpc_output_bridge")
+  : Node("hyu_tmpc_output_bridge")
   {
     input_topic_ = declare_parameter<std::string>(
-      "tum_mpc_output_bridge/input_topic", "/output");
+      "hyu_tmpc_output_bridge/input_topic", "/output");
     output_topic_ = declare_parameter<std::string>(
-      "tum_mpc_output_bridge/output_topic", "/tmpc/cmd_shadow");
+      "hyu_tmpc_output_bridge/output_topic", "/tmpc/cmd_shadow");
     valid_topic_ = declare_parameter<std::string>(
-      "tum_mpc_output_bridge/valid_topic", "/tmpc/cmd_valid");
+      "hyu_tmpc_output_bridge/valid_topic", "/tmpc/cmd_valid");
     config_.conversion_mass_kg = declare_parameter<double>(
-      "tum_mpc_output_bridge/conversion_mass_kg", config_.conversion_mass_kg);
+      "hyu_tmpc_output_bridge/conversion_mass_kg", config_.conversion_mass_kg);
     config_.steering_min_rad = declare_parameter<double>(
-      "tum_mpc_output_bridge/steering_min_rad", config_.steering_min_rad);
+      "hyu_tmpc_output_bridge/steering_min_rad", config_.steering_min_rad);
     config_.steering_max_rad = declare_parameter<double>(
-      "tum_mpc_output_bridge/steering_max_rad", config_.steering_max_rad);
+      "hyu_tmpc_output_bridge/steering_max_rad", config_.steering_max_rad);
     config_.acceleration_min_mps2 = declare_parameter<double>(
-      "tum_mpc_output_bridge/acceleration_min_mps2", config_.acceleration_min_mps2);
+      "hyu_tmpc_output_bridge/acceleration_min_mps2", config_.acceleration_min_mps2);
     config_.acceleration_max_mps2 = declare_parameter<double>(
-      "tum_mpc_output_bridge/acceleration_max_mps2", config_.acceleration_max_mps2);
+      "hyu_tmpc_output_bridge/acceleration_max_mps2", config_.acceleration_max_mps2);
     config_.safe_brake_mps2 = declare_parameter<double>(
-      "tum_mpc_output_bridge/safe_brake_mps2", config_.safe_brake_mps2);
+      "hyu_tmpc_output_bridge/safe_brake_mps2", config_.safe_brake_mps2);
     config_.output_timeout_sec = declare_parameter<double>(
-      "tum_mpc_output_bridge/output_timeout_sec", config_.output_timeout_sec);
+      "hyu_tmpc_output_bridge/output_timeout_sec", config_.output_timeout_sec);
     config_.steering_reject_factor = declare_parameter<double>(
-      "tum_mpc_output_bridge/steering_reject_factor", config_.steering_reject_factor);
+      "hyu_tmpc_output_bridge/steering_reject_factor", config_.steering_reject_factor);
     publish_rate_hz_ = declare_parameter<double>(
-      "tum_mpc_output_bridge/publish_rate_hz", 100.0);
+      "hyu_tmpc_output_bridge/publish_rate_hz", 100.0);
 
     if (input_topic_.empty() || output_topic_.empty() || valid_topic_.empty()) {
       throw std::invalid_argument("input_topic, output_topic, and valid_topic must not be empty");
@@ -155,12 +155,12 @@ private:
   rclcpp::TimerBase::SharedPtr timer_;
 };
 
-}  // namespace tum_mpc_output_bridge
+}  // namespace hyu_tmpc_output_bridge
 
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<tum_mpc_output_bridge::TumMpcOutputBridgeNode>());
+  rclcpp::spin(std::make_shared<hyu_tmpc_output_bridge::TumMpcOutputBridgeNode>());
   rclcpp::shutdown();
   return 0;
 }

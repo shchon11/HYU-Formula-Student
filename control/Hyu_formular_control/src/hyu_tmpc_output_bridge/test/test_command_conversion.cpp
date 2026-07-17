@@ -1,22 +1,22 @@
 #include <limits>
 
 #include "gtest/gtest.h"
-#include "tum_mpc_output_bridge/command_conversion.hpp"
+#include "hyu_tmpc_output_bridge/command_conversion.hpp"
 
 namespace
 {
 
-using tum_mpc_output_bridge::BuildCommand;
-using tum_mpc_output_bridge::CommandState;
-using tum_mpc_output_bridge::ConversionConfig;
-using tum_mpc_output_bridge::MpcCommand;
+using hyu_tmpc_output_bridge::BuildCommand;
+using hyu_tmpc_output_bridge::CommandState;
+using hyu_tmpc_output_bridge::ConversionConfig;
+using hyu_tmpc_output_bridge::MpcCommand;
 
 MpcCommand ValidInput(double steering_angle_rad = 0.1, double long_force_n = 1300.0)
 {
   MpcCommand input;
   input.steering_angle_rad = steering_angle_rad;
   input.long_force_n = long_force_n;
-  input.tube_mpc_status = tum_mpc_output_bridge::kTubeMpcStatusOk;
+  input.tube_mpc_status = hyu_tmpc_output_bridge::kTubeMpcStatusOk;
   return input;
 }
 

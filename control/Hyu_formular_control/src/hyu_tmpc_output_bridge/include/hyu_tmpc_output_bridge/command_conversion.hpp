@@ -3,7 +3,7 @@
 
 #include <cstdint>
 
-namespace tum_mpc_output_bridge
+namespace hyu_tmpc_output_bridge
 {
 
 constexpr std::uint16_t kTubeMpcStatusOk = 2U;
@@ -78,6 +78,6 @@ ConversionResult BuildCommand(
 
 const char * CommandStateName(CommandState state);
 
-}  // namespace tum_mpc_output_bridge
+}  // namespace hyu_tmpc_output_bridge
 
 #endif  // TUM_MPC_OUTPUT_BRIDGE__COMMAND_CONVERSION_HPP_

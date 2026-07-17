@@ -1,9 +1,9 @@
-#include "tum_mpc_output_bridge/command_conversion.hpp"
+#include "hyu_tmpc_output_bridge/command_conversion.hpp"
 
 #include <algorithm>
 #include <cmath>
 
-namespace tum_mpc_output_bridge
+namespace hyu_tmpc_output_bridge
 {
 namespace
 {
@@ -135,4 +135,4 @@ const char * CommandStateName(CommandState state)
   }
 }
 
-}  // namespace tum_mpc_output_bridge
+}  // namespace hyu_tmpc_output_bridge

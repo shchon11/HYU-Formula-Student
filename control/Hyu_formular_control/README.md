@@ -8,7 +8,7 @@ HYU Formula TMPC 래퍼와 관련 메시지 및 어댑터 패키지를 위한 �
 - `hyu_formular_control_msgs`: `TumVehicleState`, `TumTrajectory`, `TumMpcOutput` 메시지
 - `hyu_formular_control`: 자동 생성된 경로 매칭/TMPC 래퍼와 저장소에 포함된 OSQP 런타임
 - [`hyu_tmpc_state_bridge`](src/hyu_tmpc_state_bridge/README.md): HYU-Formula-Student 시뮬레이션 상태 어댑터
-- [`tum_mpc_output_bridge`](src/tum_mpc_output_bridge/README.md): TMPC force/steering 출력을 EUFS Ackermann acceleration 명령으로 변환하는 어댑터
+- [`hyu_tmpc_output_bridge`](src/hyu_tmpc_output_bridge/README.md): TMPC force/steering 출력을 EUFS Ackermann acceleration 명령으로 변환하는 어댑터
 
 컨트롤러를 빌드할 때 전체 `mod_vehicle_dynamics_control` 저장소는 필요하지 않습니다.
 차량 상태 브리지를 빌드하려면 HYU-Formula-Student가 설치한 `eufs_msgs`가 추가로
@@ -34,7 +34,7 @@ source /opt/ros/humble/setup.zsh
 source /home/shchon11/fsk/install/setup.zsh
 colcon build --packages-select \
   hyu_formular_control_msgs hyu_tmpc_state_bridge \
-  tum_mpc_output_bridge hyu_formular_control
+  hyu_tmpc_output_bridge hyu_formular_control
 source install/setup.zsh
 ```
 
@@ -58,7 +58,7 @@ ros2 launch hyu_formular_control hyu_formular_control.launch.xml
 
 ## TMPC 출력 브리지
 
-[`tum_mpc_output_bridge`](src/tum_mpc_output_bridge/README.md)는 `/output`의
+[`hyu_tmpc_output_bridge`](src/hyu_tmpc_output_bridge/README.md)는 `/output`의
 steering과 longitudinal force를 EUFS용 `AckermannDriveStamped`로 변환합니다.
 기본 출력은 실제 `/cmd`가 아닌 `/tmpc/cmd_shadow`이며, 현재 1300 kg MPC 모델과
 300 kg EUFS 차량 사이의 질량 변환 정책은 패키지 README에 정리되어 있습니다.

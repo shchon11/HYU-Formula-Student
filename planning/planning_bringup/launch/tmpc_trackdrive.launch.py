@@ -164,23 +164,23 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     output_bridge = Node(
-        package="tum_mpc_output_bridge",
-        executable="tum_mpc_output_bridge",
-        name="tum_mpc_output_bridge",
+        package="hyu_tmpc_output_bridge",
+        executable="hyu_tmpc_output_bridge",
+        name="hyu_tmpc_output_bridge",
         output="screen",
         parameters=[
             {
                 "use_sim_time": use_sim_time,
-                "tum_mpc_output_bridge/input_topic": values["tmpc_output_topic"],
-                "tum_mpc_output_bridge/output_topic": values["tmpc_cmd_topic"],
-                "tum_mpc_output_bridge/valid_topic": values["tmpc_valid_topic"],
-                "tum_mpc_output_bridge/output_timeout_sec": ParameterValue(
+                "hyu_tmpc_output_bridge/input_topic": values["tmpc_output_topic"],
+                "hyu_tmpc_output_bridge/output_topic": values["tmpc_cmd_topic"],
+                "hyu_tmpc_output_bridge/valid_topic": values["tmpc_valid_topic"],
+                "hyu_tmpc_output_bridge/output_timeout_sec": ParameterValue(
                     values["tmpc_command_timeout_sec"], value_type=float
                 ),
-                "tum_mpc_output_bridge/publish_rate_hz": publish_rate,
-                "tum_mpc_output_bridge/steering_min_rad": tmpc_steering_min,
-                "tum_mpc_output_bridge/steering_max_rad": tmpc_steering_max,
-                "tum_mpc_output_bridge/safe_brake_mps2": safe_brake,
+                "hyu_tmpc_output_bridge/publish_rate_hz": publish_rate,
+                "hyu_tmpc_output_bridge/steering_min_rad": tmpc_steering_min,
+                "hyu_tmpc_output_bridge/steering_max_rad": tmpc_steering_max,
+                "hyu_tmpc_output_bridge/safe_brake_mps2": safe_brake,
             }
         ],
     )
