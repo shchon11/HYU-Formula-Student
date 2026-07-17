@@ -1,4 +1,4 @@
-#include "hyu_formular_control_node.hpp"
+#include "hyu_tmpc_node.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -44,37 +44,37 @@ TUMHealthStatus ToHealthStatus(uint16_t value)
 }  // namespace
 
 HyuFormulaControlNode::HyuFormulaControlNode()
-: Node("hyu_formular_control")
+: Node("hyu_tmpc")
 {
-  this->declare_parameter("hyu_formular_control/vehicle_state_topic", cfg_.vehicle_state_topic);
+  this->declare_parameter("hyu_tmpc/vehicle_state_topic", cfg_.vehicle_state_topic);
   this->declare_parameter(
-    "hyu_formular_control/performance_trajectory_topic", cfg_.performance_trajectory_topic);
+    "hyu_tmpc/performance_trajectory_topic", cfg_.performance_trajectory_topic);
   this->declare_parameter(
-    "hyu_formular_control/emergency_trajectory_topic", cfg_.emergency_trajectory_topic);
-  this->declare_parameter("hyu_formular_control/output_topic", cfg_.output_topic);
-  this->declare_parameter("hyu_formular_control/loop_rate_hz", cfg_.loop_rate_hz);
-  this->declare_parameter("hyu_formular_control/state_timeout_sec", cfg_.state_timeout_sec);
+    "hyu_tmpc/emergency_trajectory_topic", cfg_.emergency_trajectory_topic);
+  this->declare_parameter("hyu_tmpc/output_topic", cfg_.output_topic);
+  this->declare_parameter("hyu_tmpc/loop_rate_hz", cfg_.loop_rate_hz);
+  this->declare_parameter("hyu_tmpc/state_timeout_sec", cfg_.state_timeout_sec);
   this->declare_parameter(
-    "hyu_formular_control/performance_trajectory_timeout_sec",
+    "hyu_tmpc/performance_trajectory_timeout_sec",
     cfg_.performance_trajectory_timeout_sec);
   this->declare_parameter(
-    "hyu_formular_control/emergency_trajectory_timeout_sec", cfg_.emergency_trajectory_timeout_sec);
-  this->declare_parameter("hyu_formular_control/enable_emergency", cfg_.enable_emergency);
-  this->declare_parameter("hyu_formular_control/publish_on_timeout", cfg_.publish_on_timeout);
+    "hyu_tmpc/emergency_trajectory_timeout_sec", cfg_.emergency_trajectory_timeout_sec);
+  this->declare_parameter("hyu_tmpc/enable_emergency", cfg_.enable_emergency);
+  this->declare_parameter("hyu_tmpc/publish_on_timeout", cfg_.publish_on_timeout);
   this->declare_parameter(
-    "hyu_formular_control/steering_angle_min_rad", cfg_.steering_angle_min_rad);
+    "hyu_tmpc/steering_angle_min_rad", cfg_.steering_angle_min_rad);
   this->declare_parameter(
-    "hyu_formular_control/steering_angle_max_rad", cfg_.steering_angle_max_rad);
-  this->declare_parameter("hyu_formular_control/drive_force_min_n", cfg_.drive_force_min_n);
-  this->declare_parameter("hyu_formular_control/drive_force_max_n", cfg_.drive_force_max_n);
+    "hyu_tmpc/steering_angle_max_rad", cfg_.steering_angle_max_rad);
+  this->declare_parameter("hyu_tmpc/drive_force_min_n", cfg_.drive_force_min_n);
+  this->declare_parameter("hyu_tmpc/drive_force_max_n", cfg_.drive_force_max_n);
   this->declare_parameter(
-    "hyu_formular_control/applied_command_topic", cfg_.applied_command_topic);
+    "hyu_tmpc/applied_command_topic", cfg_.applied_command_topic);
   this->declare_parameter(
-    "hyu_formular_control/applied_command_timeout_sec", cfg_.applied_command_timeout_sec);
+    "hyu_tmpc/applied_command_timeout_sec", cfg_.applied_command_timeout_sec);
   this->declare_parameter(
-    "hyu_formular_control/applied_command_mass_kg", cfg_.applied_command_mass_kg);
+    "hyu_tmpc/applied_command_mass_kg", cfg_.applied_command_mass_kg);
   this->declare_parameter(
-    "hyu_formular_control/divergence_reset_factor", cfg_.divergence_reset_factor);
+    "hyu_tmpc/divergence_reset_factor", cfg_.divergence_reset_factor);
 
   ProcessParams();
   UpdateActuatorLimitations();
@@ -131,35 +131,35 @@ HyuFormulaControlNode::~HyuFormulaControlNode()
 
 void HyuFormulaControlNode::ProcessParams()
 {
-  this->get_parameter("hyu_formular_control/vehicle_state_topic", cfg_.vehicle_state_topic);
+  this->get_parameter("hyu_tmpc/vehicle_state_topic", cfg_.vehicle_state_topic);
   this->get_parameter(
-    "hyu_formular_control/performance_trajectory_topic", cfg_.performance_trajectory_topic);
+    "hyu_tmpc/performance_trajectory_topic", cfg_.performance_trajectory_topic);
   this->get_parameter(
-    "hyu_formular_control/emergency_trajectory_topic", cfg_.emergency_trajectory_topic);
-  this->get_parameter("hyu_formular_control/output_topic", cfg_.output_topic);
-  this->get_parameter("hyu_formular_control/loop_rate_hz", cfg_.loop_rate_hz);
-  this->get_parameter("hyu_formular_control/state_timeout_sec", cfg_.state_timeout_sec);
+    "hyu_tmpc/emergency_trajectory_topic", cfg_.emergency_trajectory_topic);
+  this->get_parameter("hyu_tmpc/output_topic", cfg_.output_topic);
+  this->get_parameter("hyu_tmpc/loop_rate_hz", cfg_.loop_rate_hz);
+  this->get_parameter("hyu_tmpc/state_timeout_sec", cfg_.state_timeout_sec);
   this->get_parameter(
-    "hyu_formular_control/performance_trajectory_timeout_sec",
+    "hyu_tmpc/performance_trajectory_timeout_sec",
     cfg_.performance_trajectory_timeout_sec);
   this->get_parameter(
-    "hyu_formular_control/emergency_trajectory_timeout_sec", cfg_.emergency_trajectory_timeout_sec);
-  this->get_parameter("hyu_formular_control/enable_emergency", cfg_.enable_emergency);
-  this->get_parameter("hyu_formular_control/publish_on_timeout", cfg_.publish_on_timeout);
+    "hyu_tmpc/emergency_trajectory_timeout_sec", cfg_.emergency_trajectory_timeout_sec);
+  this->get_parameter("hyu_tmpc/enable_emergency", cfg_.enable_emergency);
+  this->get_parameter("hyu_tmpc/publish_on_timeout", cfg_.publish_on_timeout);
   this->get_parameter(
-    "hyu_formular_control/steering_angle_min_rad", cfg_.steering_angle_min_rad);
+    "hyu_tmpc/steering_angle_min_rad", cfg_.steering_angle_min_rad);
   this->get_parameter(
-    "hyu_formular_control/steering_angle_max_rad", cfg_.steering_angle_max_rad);
-  this->get_parameter("hyu_formular_control/drive_force_min_n", cfg_.drive_force_min_n);
-  this->get_parameter("hyu_formular_control/drive_force_max_n", cfg_.drive_force_max_n);
+    "hyu_tmpc/steering_angle_max_rad", cfg_.steering_angle_max_rad);
+  this->get_parameter("hyu_tmpc/drive_force_min_n", cfg_.drive_force_min_n);
+  this->get_parameter("hyu_tmpc/drive_force_max_n", cfg_.drive_force_max_n);
   this->get_parameter(
-    "hyu_formular_control/applied_command_topic", cfg_.applied_command_topic);
+    "hyu_tmpc/applied_command_topic", cfg_.applied_command_topic);
   this->get_parameter(
-    "hyu_formular_control/applied_command_timeout_sec", cfg_.applied_command_timeout_sec);
+    "hyu_tmpc/applied_command_timeout_sec", cfg_.applied_command_timeout_sec);
   this->get_parameter(
-    "hyu_formular_control/applied_command_mass_kg", cfg_.applied_command_mass_kg);
+    "hyu_tmpc/applied_command_mass_kg", cfg_.applied_command_mass_kg);
   this->get_parameter(
-    "hyu_formular_control/divergence_reset_factor", cfg_.divergence_reset_factor);
+    "hyu_tmpc/divergence_reset_factor", cfg_.divergence_reset_factor);
 }
 
 void HyuFormulaControlNode::CallbackVehicleState(const TumVehicleState::SharedPtr msg)

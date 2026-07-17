@@ -9,7 +9,7 @@ wrapper.
 The HYU-Formula-Student overlay is required for `eufs_msgs`.
 
 ```zsh
-cd /home/shchon11/fsk/src/Hyu_formular_control
+cd /home/shchon11/fsk/src/hyu_tmpc
 source /opt/ros/humble/setup.zsh
 source /home/shchon11/fsk/install/setup.zsh
 colcon build --packages-select hyu_tmpc_msgs hyu_tmpc_state_bridge
@@ -26,7 +26,7 @@ ros2 run hyu_tmpc_state_bridge hyu_tmpc_state_bridge
 ros2 launch hyu_tmpc_state_bridge hyu_tmpc_state_bridge.launch.xml
 ```
 
-Run `hyu_formular_control` separately after its trajectory inputs are ready.
+Run `hyu_tmpc` separately after its trajectory inputs are ready.
 
 ## 역할과 전체 흐름
 
@@ -51,7 +51,7 @@ Run `hyu_formular_control` separately after its trajectory inputs are ready.
                                             /tmpc/vehicle_state
                                                       │
                                                       v
-                                            hyu_formular_control
+                                            hyu_tmpc
 ```
 
 각 subscriber callback은 메시지와 수신 시각만 저장한다. 100 Hz timer는 세

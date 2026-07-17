@@ -141,24 +141,24 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     tmpc_wrapper = Node(
-        package="hyu_formular_control",
-        executable="hyu_formular_control",
-        name="hyu_formular_control",
+        package="hyu_tmpc",
+        executable="hyu_tmpc",
+        name="hyu_tmpc",
         output="screen",
         parameters=[
             {
                 "use_sim_time": use_sim_time,
-                "hyu_formular_control/vehicle_state_topic": values["tmpc_vehicle_state_topic"],
-                "hyu_formular_control/performance_trajectory_topic": values[
+                "hyu_tmpc/vehicle_state_topic": values["tmpc_vehicle_state_topic"],
+                "hyu_tmpc/performance_trajectory_topic": values[
                     "tmpc_performance_trajectory_topic"
                 ],
-                "hyu_formular_control/emergency_trajectory_topic": values[
+                "hyu_tmpc/emergency_trajectory_topic": values[
                     "tmpc_emergency_trajectory_topic"
                 ],
-                "hyu_formular_control/output_topic": values["tmpc_output_topic"],
-                "hyu_formular_control/loop_rate_hz": publish_rate,
-                "hyu_formular_control/steering_angle_min_rad": tmpc_steering_min,
-                "hyu_formular_control/steering_angle_max_rad": tmpc_steering_max,
+                "hyu_tmpc/output_topic": values["tmpc_output_topic"],
+                "hyu_tmpc/loop_rate_hz": publish_rate,
+                "hyu_tmpc/steering_angle_min_rad": tmpc_steering_min,
+                "hyu_tmpc/steering_angle_max_rad": tmpc_steering_max,
             }
         ],
     )

@@ -8,7 +8,7 @@
 #include "hyu_tmpc_msgs/msg/tum_mpc_output.hpp"
 #include "hyu_tmpc_msgs/msg/tum_trajectory.hpp"
 #include "hyu_tmpc_msgs/msg/tum_vehicle_state.hpp"
-#include "hyu_formular_control_config.hpp"
+#include "hyu_tmpc_config.hpp"
 
 #include "mvdc_path_matching.h"
 #include "mvdc_mpc.h"

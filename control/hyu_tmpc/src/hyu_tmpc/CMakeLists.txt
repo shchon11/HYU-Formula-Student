@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(hyu_formular_control)
+project(hyu_tmpc)
 
 if(NOT CMAKE_C_STANDARD)
   set(CMAKE_C_STANDARD 99)
@@ -51,7 +51,7 @@ target_compile_options(hyu_tum_codegen PRIVATE
 )
 
 add_executable(${PROJECT_NAME}
-  src/hyu_formular_control_node.cpp
+  src/hyu_tmpc_node.cpp
 )
 target_include_directories(${PROJECT_NAME} PRIVATE
   include

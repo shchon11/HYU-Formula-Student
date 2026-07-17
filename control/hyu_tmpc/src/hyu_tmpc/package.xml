@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>hyu_formular_control</name>
+  <name>hyu_tmpc</name>
   <version>0.0.0</version>
   <description>Standalone ROS2 wrapper for HYU Formula path matching and TUM generated TMPC code.</description>
   <maintainer email="simseunghwan@example.com">simseunghwan</maintainer>
