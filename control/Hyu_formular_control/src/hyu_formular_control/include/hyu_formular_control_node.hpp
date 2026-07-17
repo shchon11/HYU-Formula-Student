@@ -5,9 +5,9 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
-#include "hyu_formular_control_msgs/msg/tum_mpc_output.hpp"
-#include "hyu_formular_control_msgs/msg/tum_trajectory.hpp"
-#include "hyu_formular_control_msgs/msg/tum_vehicle_state.hpp"
+#include "hyu_tmpc_msgs/msg/tum_mpc_output.hpp"
+#include "hyu_tmpc_msgs/msg/tum_trajectory.hpp"
+#include "hyu_tmpc_msgs/msg/tum_vehicle_state.hpp"
 #include "hyu_formular_control_config.hpp"
 
 #include "mvdc_path_matching.h"
@@ -20,9 +20,9 @@ public:
   ~HyuFormulaControlNode() override;
 
 private:
-  using TumTrajectory = hyu_formular_control_msgs::msg::TumTrajectory;
-  using TumVehicleState = hyu_formular_control_msgs::msg::TumVehicleState;
-  using TumMpcOutput = hyu_formular_control_msgs::msg::TumMpcOutput;
+  using TumTrajectory = hyu_tmpc_msgs::msg::TumTrajectory;
+  using TumVehicleState = hyu_tmpc_msgs::msg::TumVehicleState;
+  using TumMpcOutput = hyu_tmpc_msgs::msg::TumMpcOutput;
   using AppliedCommand = ackermann_msgs::msg::AckermannDriveStamped;
 
   void ProcessParams();

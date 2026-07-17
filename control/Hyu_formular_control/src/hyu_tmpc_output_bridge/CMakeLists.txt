@@ -7,7 +7,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(ackermann_msgs REQUIRED)
-find_package(hyu_formular_control_msgs REQUIRED)
+find_package(hyu_tmpc_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 
@@ -27,7 +27,7 @@ target_link_libraries(${PROJECT_NAME}
 )
 ament_target_dependencies(${PROJECT_NAME}
   ackermann_msgs
-  hyu_formular_control_msgs
+  hyu_tmpc_msgs
   rclcpp
   std_msgs
 )

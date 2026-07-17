@@ -22,7 +22,7 @@
 #include "rclcpp/rclcpp.hpp"
 
 #include "eufs_msgs/msg/waypoint_array_stamped.hpp"
-#include "hyu_formular_control_msgs/msg/tum_trajectory.hpp"
+#include "hyu_tmpc_msgs/msg/tum_trajectory.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/int32.hpp"
@@ -94,9 +94,9 @@ private:
   rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr lap_count_sub_;
   rclcpp::Publisher<eufs_msgs::msg::WaypointArrayStamped>::SharedPtr path_waypoints_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
-  rclcpp::Publisher<hyu_formular_control_msgs::msg::TumTrajectory>::SharedPtr
+  rclcpp::Publisher<hyu_tmpc_msgs::msg::TumTrajectory>::SharedPtr
   tmpc_performance_pub_;
-  rclcpp::Publisher<hyu_formular_control_msgs::msg::TumTrajectory>::SharedPtr
+  rclcpp::Publisher<hyu_tmpc_msgs::msg::TumTrajectory>::SharedPtr
   tmpc_emergency_pub_;
   rclcpp::TimerBase::SharedPtr validity_watchdog_timer_;
   rclcpp::TimerBase::SharedPtr tmpc_timer_;

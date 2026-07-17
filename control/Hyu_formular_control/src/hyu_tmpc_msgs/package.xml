@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>hyu_formular_control_msgs</name>
+  <name>hyu_tmpc_msgs</name>
   <version>0.0.0</version>
   <description>Messages for the HYU Formula TMPC ROS2 wrapper.</description>
   <maintainer email="simseunghwan@example.com">simseunghwan</maintainer>

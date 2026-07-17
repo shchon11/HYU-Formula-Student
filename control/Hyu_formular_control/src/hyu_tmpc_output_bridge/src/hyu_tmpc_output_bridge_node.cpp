@@ -7,7 +7,7 @@
 #include <string>
 
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
-#include "hyu_formular_control_msgs/msg/tum_mpc_output.hpp"
+#include "hyu_tmpc_msgs/msg/tum_mpc_output.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "hyu_tmpc_output_bridge/command_conversion.hpp"
@@ -60,7 +60,7 @@ public:
     command_publisher_ =
       create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(output_topic_, qos);
     valid_publisher_ = create_publisher<std_msgs::msg::Bool>(valid_topic_, qos);
-    output_subscription_ = create_subscription<hyu_formular_control_msgs::msg::TumMpcOutput>(
+    output_subscription_ = create_subscription<hyu_tmpc_msgs::msg::TumMpcOutput>(
       input_topic_, qos,
       std::bind(&TumMpcOutputBridgeNode::OnMpcOutput, this, std::placeholders::_1));
 
@@ -80,7 +80,7 @@ public:
   }
 
 private:
-  void OnMpcOutput(const hyu_formular_control_msgs::msg::TumMpcOutput::SharedPtr message)
+  void OnMpcOutput(const hyu_tmpc_msgs::msg::TumMpcOutput::SharedPtr message)
   {
     MpcCommand input;
     input.steering_angle_rad = message->request_steering_angle_rad;
@@ -148,7 +148,7 @@ private:
   CommandState last_state_{CommandState::kNoInput};
   bool has_last_state_{false};
 
-  rclcpp::Subscription<hyu_formular_control_msgs::msg::TumMpcOutput>::SharedPtr
+  rclcpp::Subscription<hyu_tmpc_msgs::msg::TumMpcOutput>::SharedPtr
     output_subscription_;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr command_publisher_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr valid_publisher_;

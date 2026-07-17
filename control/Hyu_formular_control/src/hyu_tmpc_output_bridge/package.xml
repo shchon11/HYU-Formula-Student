@@ -8,7 +8,7 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>ackermann_msgs</depend>
-  <depend>hyu_formular_control_msgs</depend>
+  <depend>hyu_tmpc_msgs</depend>
   <depend>rclcpp</depend>
   <depend>std_msgs</depend>
 

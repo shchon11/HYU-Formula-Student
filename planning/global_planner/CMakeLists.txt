@@ -16,7 +16,7 @@ find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(ament_index_cpp REQUIRED)
-find_package(hyu_formular_control_msgs REQUIRED)
+find_package(hyu_tmpc_msgs REQUIRED)
 
 add_library(global_planner_slam_geometry
   src/planner_geometry.cpp
@@ -80,7 +80,7 @@ ament_target_dependencies(global_planner_tmpc_trajectory_builder
   eufs_msgs
   std_msgs
   nav_msgs
-  hyu_formular_control_msgs
+  hyu_tmpc_msgs
 )
 
 add_library(global_planner_wpnt_publisher STATIC
@@ -101,7 +101,7 @@ ament_target_dependencies(global_planner_wpnt_publisher
   nav_msgs
   geometry_msgs
   ament_index_cpp
-  hyu_formular_control_msgs
+  hyu_tmpc_msgs
 )
 
 add_executable(wpnt_publisher_node
@@ -115,7 +115,7 @@ ament_target_dependencies(wpnt_publisher_node
   eufs_msgs
   std_msgs
   nav_msgs
-  hyu_formular_control_msgs
+  hyu_tmpc_msgs
 )
 
 install(TARGETS
@@ -165,7 +165,7 @@ if(BUILD_TESTING)
     eufs_msgs
     std_msgs
     nav_msgs
-    hyu_formular_control_msgs
+    hyu_tmpc_msgs
   )
 
   ament_add_gtest(global_path_validity_gate_test
@@ -179,7 +179,7 @@ if(BUILD_TESTING)
     eufs_msgs
     std_msgs
     nav_msgs
-    hyu_formular_control_msgs
+    hyu_tmpc_msgs
   )
 
   ament_add_gtest(wpnt_publisher_tmpc_test
@@ -195,7 +195,7 @@ if(BUILD_TESTING)
     nav_msgs
     geometry_msgs
     ament_index_cpp
-    hyu_formular_control_msgs
+    hyu_tmpc_msgs
   )
 endif()
 

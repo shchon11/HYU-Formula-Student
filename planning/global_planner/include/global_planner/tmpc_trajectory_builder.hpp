@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "global_planner/path_snapshot.hpp"
-#include "hyu_formular_control_msgs/msg/tum_trajectory.hpp"
+#include "hyu_tmpc_msgs/msg/tum_trajectory.hpp"
 
 namespace global_planner::tmpc
 {
@@ -115,8 +115,8 @@ struct BuildInput
 struct BuildResult
 {
   bool success{false};
-  hyu_formular_control_msgs::msg::TumTrajectory performance;
-  hyu_formular_control_msgs::msg::TumTrajectory emergency;
+  hyu_tmpc_msgs::msg::TumTrajectory performance;
+  hyu_tmpc_msgs::msg::TumTrajectory emergency;
   double horizon_m{0.0};
   bool used_max_horizon{false};
   // True when at least one final performance/emergency sample used an endpoint
@@ -138,7 +138,7 @@ public:
   // as the final build path. This includes the Formula path-matching L1
   // acceleration-utilization equation.
   [[nodiscard]] bool validateTrajectory(
-    const hyu_formular_control_msgs::msg::TumTrajectory & trajectory,
+    const hyu_tmpc_msgs::msg::TumTrajectory & trajectory,
     bool require_emergency_stop,
     std::string * error = nullptr) const;
 

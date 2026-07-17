@@ -5,7 +5,7 @@ HYU Formula TMPC 래퍼와 관련 메시지 및 어댑터 패키지를 위한 �
 
 ## 패키지 구성
 
-- `hyu_formular_control_msgs`: `TumVehicleState`, `TumTrajectory`, `TumMpcOutput` 메시지
+- `hyu_tmpc_msgs`: `TumVehicleState`, `TumTrajectory`, `TumMpcOutput` 메시지
 - `hyu_formular_control`: 자동 생성된 경로 매칭/TMPC 래퍼와 저장소에 포함된 OSQP 런타임
 - [`hyu_tmpc_state_bridge`](src/hyu_tmpc_state_bridge/README.md): HYU-Formula-Student 시뮬레이션 상태 어댑터
 - [`hyu_tmpc_output_bridge`](src/hyu_tmpc_output_bridge/README.md): TMPC force/steering 출력을 EUFS Ackermann acceleration 명령으로 변환하는 어댑터
@@ -22,7 +22,7 @@ HYU Formula TMPC 래퍼와 관련 메시지 및 어댑터 패키지를 위한 �
 ```zsh
 cd Hyu_formular_control
 source /opt/ros/humble/setup.zsh
-colcon build --packages-select hyu_formular_control_msgs hyu_formular_control
+colcon build --packages-select hyu_tmpc_msgs hyu_formular_control
 source install/setup.zsh
 ```
 
@@ -33,7 +33,7 @@ cd Hyu_formular_control
 source /opt/ros/humble/setup.zsh
 source /home/shchon11/fsk/install/setup.zsh
 colcon build --packages-select \
-  hyu_formular_control_msgs hyu_tmpc_state_bridge \
+  hyu_tmpc_msgs hyu_tmpc_state_bridge \
   hyu_tmpc_output_bridge hyu_formular_control
 source install/setup.zsh
 ```
@@ -48,13 +48,13 @@ ros2 launch hyu_formular_control hyu_formular_control.launch.xml
 
 기본 구독 토픽:
 
-- `/tmpc/vehicle_state` (`hyu_formular_control_msgs/msg/TumVehicleState`)
-- `/tmpc/trajectory_performance` (`hyu_formular_control_msgs/msg/TumTrajectory`)
-- `/tmpc/trajectory_emergency` (`hyu_formular_control_msgs/msg/TumTrajectory`)
+- `/tmpc/vehicle_state` (`hyu_tmpc_msgs/msg/TumVehicleState`)
+- `/tmpc/trajectory_performance` (`hyu_tmpc_msgs/msg/TumTrajectory`)
+- `/tmpc/trajectory_emergency` (`hyu_tmpc_msgs/msg/TumTrajectory`)
 
 기본 발행 토픽:
 
-- `/output` (`hyu_formular_control_msgs/msg/TumMpcOutput`)
+- `/output` (`hyu_tmpc_msgs/msg/TumMpcOutput`)
 
 ## TMPC 출력 브리지
 

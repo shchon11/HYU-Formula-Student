@@ -8,7 +8,7 @@ Pure Pursuit와 나란히 실행하면서 값을 먼저 비교할 수 있습니�
 ## 데이터 흐름
 
 ```text
-/output (hyu_formular_control_msgs/msg/TumMpcOutput)
+/output (hyu_tmpc_msgs/msg/TumMpcOutput)
   request_steering_angle_rad ───────────────> drive.steering_angle
   request_long_force_n ── clamp, divide ───> drive.acceleration
   tube_mpc_status ──────────────────────────> validity gate
@@ -109,7 +109,7 @@ cd /home/shchon11/fsk
 source /opt/ros/humble/setup.zsh
 
 colcon build --base-paths src --packages-select \
-  hyu_formular_control_msgs \
+  hyu_tmpc_msgs \
   hyu_tmpc_output_bridge
 
 source install/setup.zsh

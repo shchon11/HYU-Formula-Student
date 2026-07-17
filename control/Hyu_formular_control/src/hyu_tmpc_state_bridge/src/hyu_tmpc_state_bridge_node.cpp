@@ -9,7 +9,7 @@
 
 #include "eufs_msgs/msg/car_state.hpp"
 #include "eufs_msgs/msg/wheel_speeds_stamped.hpp"
-#include "hyu_formular_control_msgs/msg/tum_vehicle_state.hpp"
+#include "hyu_tmpc_msgs/msg/tum_vehicle_state.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "tf2/LinearMath/Quaternion.h"
@@ -37,7 +37,7 @@ class TumVehicleStateBridge : public rclcpp::Node
 public:
   using CarState = eufs_msgs::msg::CarState;
   using Odometry = nav_msgs::msg::Odometry;
-  using TumVehicleState = hyu_formular_control_msgs::msg::TumVehicleState;
+  using TumVehicleState = hyu_tmpc_msgs::msg::TumVehicleState;
   using WheelSpeedsStamped = eufs_msgs::msg::WheelSpeedsStamped;
 
   TumVehicleStateBridge()

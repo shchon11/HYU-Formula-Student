@@ -180,10 +180,10 @@ WpntPublisher::WpntPublisher(const rclcpp::NodeOptions & options)
   const auto tmpc_output_qos =
     rclcpp::QoS(rclcpp::KeepLast(10)).reliable().durability_volatile();
   tmpc_performance_pub_ =
-    create_publisher<hyu_formular_control_msgs::msg::TumTrajectory>(
+    create_publisher<hyu_tmpc_msgs::msg::TumTrajectory>(
     tmpc_performance_trajectory_topic_, tmpc_output_qos);
   tmpc_emergency_pub_ =
-    create_publisher<hyu_formular_control_msgs::msg::TumTrajectory>(
+    create_publisher<hyu_tmpc_msgs::msg::TumTrajectory>(
     tmpc_emergency_trajectory_topic_, tmpc_output_qos);
 
   const auto watchdog_period = std::chrono::duration_cast<std::chrono::nanoseconds>(

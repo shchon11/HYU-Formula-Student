@@ -11,7 +11,7 @@ find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(eufs_msgs REQUIRED)
 find_package(tf2 REQUIRED)
-find_package(hyu_formular_control_msgs REQUIRED)
+find_package(hyu_tmpc_msgs REQUIRED)
 
 add_library(${PROJECT_NAME}_heading_conversion
   src/heading_conversion.cpp
@@ -33,7 +33,7 @@ ament_target_dependencies(${PROJECT_NAME}
   geometry_msgs
   eufs_msgs
   tf2
-  hyu_formular_control_msgs
+  hyu_tmpc_msgs
 )
 
 install(TARGETS

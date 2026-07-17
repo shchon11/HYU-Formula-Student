@@ -1,7 +1,7 @@
 # hyu_tmpc_state_bridge
 
 ROS2 Humble package that combines HYU-Formula-Student simulation/localization
-topics into `hyu_formular_control_msgs/msg/TumVehicleState` for the TUM MPC
+topics into `hyu_tmpc_msgs/msg/TumVehicleState` for the TUM MPC
 wrapper.
 
 ## Build and run
@@ -12,7 +12,7 @@ The HYU-Formula-Student overlay is required for `eufs_msgs`.
 cd /home/shchon11/fsk/src/Hyu_formular_control
 source /opt/ros/humble/setup.zsh
 source /home/shchon11/fsk/install/setup.zsh
-colcon build --packages-select hyu_formular_control_msgs hyu_tmpc_state_bridge
+colcon build --packages-select hyu_tmpc_msgs hyu_tmpc_state_bridge
 source install/setup.zsh
 ```
 
@@ -32,7 +32,7 @@ Run `hyu_formular_control` separately after its trajectory inputs are ready.
 
 `hyu_tmpc_state_bridge`는 HYU-Formula-Student 시뮬레이터와 localization에서
 발행하는 여러 메시지의 최신값을 합쳐 MPC 입력 메시지
-`hyu_formular_control_msgs/msg/TumVehicleState`를 만든다.
+`hyu_tmpc_msgs/msg/TumVehicleState`를 만든다.
 
 ```text
 /localization/ego_odom --------------------┐

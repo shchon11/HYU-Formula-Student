@@ -14,7 +14,7 @@ namespace global_planner::tmpc
 namespace
 {
 
-using TumTrajectory = hyu_formular_control_msgs::msg::TumTrajectory;
+using TumTrajectory = hyu_tmpc_msgs::msg::TumTrajectory;
 
 constexpr double kPi = 3.141592653589793238462643383279502884;
 constexpr double kGeometryEpsilon = 1.0e-9;

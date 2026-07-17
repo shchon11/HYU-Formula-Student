@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "eufs_msgs/msg/waypoint_array_stamped.hpp"
-#include "hyu_formular_control_msgs/msg/tum_trajectory.hpp"
+#include "hyu_tmpc_msgs/msg/tum_trajectory.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
@@ -22,7 +22,7 @@
 namespace
 {
 using namespace std::chrono_literals;
-using TumTrajectory = hyu_formular_control_msgs::msg::TumTrajectory;
+using TumTrajectory = hyu_tmpc_msgs::msg::TumTrajectory;
 
 eufs_msgs::msg::WaypointArrayStamped makeCircularPath()
 {

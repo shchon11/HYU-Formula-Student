@@ -124,8 +124,8 @@ though it were valid.
 
 | Topic | Type | QoS |
 | --- | --- | --- |
-| `/tmpc/trajectory_performance` | `hyu_formular_control_msgs/msg/TumTrajectory` | reliable, volatile, KeepLast 10 |
-| `/tmpc/trajectory_emergency` | `hyu_formular_control_msgs/msg/TumTrajectory` | reliable, volatile, KeepLast 10 |
+| `/tmpc/trajectory_performance` | `hyu_tmpc_msgs/msg/TumTrajectory` | reliable, volatile, KeepLast 10 |
+| `/tmpc/trajectory_emergency` | `hyu_tmpc_msgs/msg/TumTrajectory` | reliable, volatile, KeepLast 10 |
 
 Each output contains exactly 50 uniformly spaced global-arc-length samples.
 The interval starts 0.5 m behind the current Frenet `s`, extends forward by a
