@@ -50,7 +50,7 @@ stack already owns the graph-SLAM outputs.
 
 | Topic | Sole default writer |
 | --- | --- |
-| `/global_waypoints` | Selected `planner_source` writer |
+| `/planning/global_waypoints` | Selected `planner_source` writer |
 | `/planning/global_path_valid` | Selected `planner_source` writer |
 | `/planning/global_path_waypoints` | `wpnt_publisher` |
 | `/planning/path` | `hyu_path_selector_node` |

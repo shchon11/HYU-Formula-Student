@@ -37,6 +37,9 @@ sim은 위 토픽명을 그대로 흉내내어 발행한다(실차/sim 동일 �
 | `/localization/gnss_odom` | nav_msgs/Odometry | sbg_odometry_bridge | hyu_localization | Reliable |
 | `/localization/wheel_odom` | hyu_msgs/CarState | wheel_odometry | hyu_localization, perception(deskew), tmpc_state_bridge | Reliable |
 | `/initialpose` | PoseWithCovarianceStamped | RViz(수동 재국지화) | hyu_localization | 표준 |
+| `/localization/ins_odom` | hyu_msgs/CarState | sbg_odometry_bridge | (구성에 따라) SLAM 모션 입력 | Reliable |
+| `/localization/drift_odom` | hyu_msgs/CarState | drift_odom(평가 도구) | evaluate_slam | 도구 |
+| `/localization/debug/{markers,path,status_overlay,gnss_markers,gnss_overlay}` | Marker/Path/Overlay | hyu_localization·sbg_bridge | RViz/HUD | 디버그 |
 
 TF: `map→odom`, `odom→base_footprint`는 hyu_localization이 발행.
 센서 마운트 TF는 robot_state_publisher(URDF).
@@ -51,7 +54,9 @@ TF: `map→odom`, `odom→base_footprint`는 hyu_localization이 발행.
 | `/planning/trajectory_performance` / `_emergency` | hyu_tmpc_msgs 궤적 | planning(TMPC 경로) | hyu_tmpc |
 | `/planning/stop_zone/{valid,s_start,s_end}` | Bool/Float | planning | planning/control |
 | `/planning/stop_request`, `/planning/lap_count`, `/planning/*_path_valid`, `/planning/path_source`, `/planning/global_handoff_ready` 등 | 기존 유지 | planning | selector/HUD |
-| `/planning/debug/path`, `/planning/debug/frenet`, `/planning/debug` | 디버그 | planning | RViz |
+| `/planning/global_waypoints` (+`/path` 파생) | 글로벌 웨이포인트 (latched) | hyu_global_planner | selector/TMPC 경로 |
+| `/planning/skidpad/{cone_map,phase}` | ConeArray/phase | skidpad_director | hyu_local_planner |
+| `/planning/debug/path`, `/planning/debug/frenet`, `/planning/debug`, `/planning/debug/global_planner_markers` | 디버그 | planning | RViz |
 
 ## Control (`/control`)
 

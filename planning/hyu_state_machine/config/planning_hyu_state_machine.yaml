@@ -1,7 +1,7 @@
 planning_hyu_state_machine_node:
   ros__parameters:
     frenet_odom_topic: "/planning/frenet_odom"
-    global_waypoints_topic: "/global_waypoints"
+    global_waypoints_topic: "/planning/global_waypoints"
     graph_slam_status_topic: "/localization/status"
     global_path_valid_topic: "/planning/global_path_valid"
     local_path_valid_topic: "/planning/local_path_valid"

@@ -317,8 +317,8 @@ Graph SLAM output:
 ```text
 /localization/map
 /graph_slam/odom
-/graph_slam/path
-/graph_slam/markers
+/localization/debug/path
+/localization/debug/markers
 /tf
 ```
 
@@ -369,7 +369,7 @@ cd /path/to/HYU-FS-Sim
 
 ```text
 /perception_baseline_node
-/graph_slam
+/localization/debug
 
 /perception/cones
 Publisher count: 1

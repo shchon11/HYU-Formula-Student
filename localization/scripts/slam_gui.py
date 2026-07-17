@@ -260,7 +260,7 @@ class MainWindow(QtWidgets.QWidget):
 
 def build_arg_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--slam-ns", default="/graph_slam")
+    parser.add_argument("--slam-ns", default="/localization/debug")
     parser.add_argument("--map-topic", default="/localization/cone_map")
     parser.add_argument("--map-dir", default="")
     return parser

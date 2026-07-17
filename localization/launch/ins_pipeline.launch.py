@@ -8,7 +8,7 @@ Simulated Ellipse-D INS pipeline: sim INS -> SBG bridge -> graph SLAM.
 
 One-command harness for running the real-hardware GNSS/INS pipeline against
 the EUFS simulator. The bridge publishes its INS odometry on
-/ins_odom/car_state and the GNSS anchor on /localization/gnss_odom. The simulator
+/localization/ins_odom and the GNSS anchor on /localization/gnss_odom. The simulator
 race-car plugin's synthetic localisation car state is disabled in the robot
 xacro (publishLocalisationCarState=false) — this pipeline plus wheel
 odometry is the only state-estimation source, in sim and on the car alike.
@@ -43,13 +43,13 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "slam_motion_topic",
-                default_value="/ins_odom/car_state",
+                default_value="/localization/ins_odom",
                 description="SLAM motion input (fused INS odometry; set to "
                 "/localization/wheel_odom for the legacy always-DR wiring).",
             ),
             DeclareLaunchArgument(
                 "ins_odom_topic",
-                default_value="/ins_odom/car_state",
+                default_value="/localization/ins_odom",
                 description="INS odometry topic published by the SBG bridge.",
             ),
             DeclareLaunchArgument(

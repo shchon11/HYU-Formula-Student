@@ -18,7 +18,7 @@ hyu_global_planner_trajectory_publisher_node:
     # Publishing (data only; visualization lives in the debug visualizer node).
     # This CSV publisher and planner_node are mutually exclusive writers unless
     # both global_waypoints_topic and global_path_valid_topic are remapped.
-    global_waypoints_topic: "/global_waypoints"
+    global_waypoints_topic: "/planning/global_waypoints"
     # Reliable volatile std_msgs/Bool heartbeat; do not use transient-local.
     global_path_valid_topic: "/planning/global_path_valid"
     valid_heartbeat_hz: 5.0
@@ -41,7 +41,7 @@ planner_node:
     # Outputs. Do not run planner_node and the CSV publisher against these same
     # topics at the same time. /planning/global_path_valid is reliable volatile
     # std_msgs/Bool, not transient-local.
-    global_waypoints_topic: "/global_waypoints"
+    global_waypoints_topic: "/planning/global_waypoints"
     global_path_valid_topic: "/planning/global_path_valid"
     # Latched std_msgs/String: why the path is invalid ("" while valid).
     global_path_reason_topic: "/planning/global_path_reason"
@@ -95,9 +95,9 @@ planner_node:
 wpnt_publisher:
   ros__parameters:
     # Republishes the next `waypoint_num` global points ahead of the vehicle,
-    # selecting the window by an s-based lookup over /global_waypoints using
+    # selecting the window by an s-based lookup over /planning/global_waypoints using
     # /planning/frenet_odom (produced by the hyu_frenet_conversion package).
-    global_waypoints_topic: "/global_waypoints"
+    global_waypoints_topic: "/planning/global_waypoints"
     # Reliable volatile std_msgs/Bool heartbeat; do not use transient-local.
     global_path_valid_topic: "/planning/global_path_valid"
     global_path_valid_timeout_sec: 0.5
@@ -170,9 +170,9 @@ wpnt_publisher:
 frenet_odom_node:
   ros__parameters:
     # EUFS simulation publishes vehicle odometry on /ground_truth/odom. For a
-    # localization stack, override launch arg odom_topic:=/pf/pose/odom.
+    # localization stack, override launch arg odom_topic:=/localization/ego_odom.
     odom_topic: "/localization/ego_odom"
-    waypoint_topic: "/global_waypoints"
+    waypoint_topic: "/planning/global_waypoints"
     # Reliable volatile std_msgs/Bool heartbeat; do not use transient-local.
     global_path_valid_topic: "/planning/global_path_valid"
     global_path_valid_timeout_sec: 0.5
@@ -191,7 +191,7 @@ hyu_global_planner_debug_visualizer_node:
 
     # Publishing
     frame_id: "map"
-    markers_topic: "/hyu_global_planner/debug/markers"
+    markers_topic: "/planning/debug/global_planner_markers"
     marker_line_width: 0.1
     close_loops: true
 
@@ -211,9 +211,9 @@ hyu_global_planner_debug_visualizer_node:
 frenet_odom_node:
   ros__parameters:
     # EUFS simulation publishes vehicle odometry on /ground_truth/odom. For a
-    # localization stack, override launch arg odom_topic:=/pf/pose/odom.
+    # localization stack, override launch arg odom_topic:=/localization/ego_odom.
     odom_topic: "/localization/ego_odom"
-    waypoint_topic: "/global_waypoints"
+    waypoint_topic: "/planning/global_waypoints"
     # Reliable volatile std_msgs/Bool heartbeat; do not use transient-local.
     global_path_valid_topic: "/planning/global_path_valid"
     global_path_valid_timeout_sec: 0.5
@@ -232,7 +232,7 @@ hyu_global_planner_debug_visualizer_node:
 
     # Publishing
     frame_id: "map"
-    markers_topic: "/hyu_global_planner/debug/markers"
+    markers_topic: "/planning/debug/global_planner_markers"
     marker_line_width: 0.1
     close_loops: true
 

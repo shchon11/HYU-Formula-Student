@@ -7,7 +7,7 @@
 """
 Path-tracking cross-track-error (CTE) monitor for RViz.
 
-The planned raceline (/global_waypoints) is the d=0 reference. The ego pose's
+The planned raceline (/planning/global_waypoints) is the d=0 reference. The ego pose's
 Frenet lateral offset d — published by frenet_odom_node as
 pose.pose.position.y on /planning/frenet_odom — is treated as the tracking
 error and evaluated ATE-style (running RMSE of d, max |d|). GT-based ATE was
@@ -19,7 +19,7 @@ Publishes:
   global path is invalid (frenet_odom_node stops publishing then).
 - /planning/cte and /planning/cte_rmse (Float32): the same numbers for
   rqt_plot.
-- /graph_slam/status_overlay (OverlayText): SLAM lifecycle box (unchanged).
+- /localization/debug/status_overlay (OverlayText): SLAM lifecycle box (unchanged).
 
 Stats reset each time the global path becomes valid again — a new raceline is
 a new evaluation window.
@@ -91,7 +91,7 @@ class CTEMonitor(Node):
             self.overlay_pub = self.create_publisher(
                 OverlayText, "/planning/cte_overlay", latched)
             self.status_overlay_pub = self.create_publisher(
-                OverlayText, "/graph_slam/status_overlay", latched)
+                OverlayText, "/localization/debug/status_overlay", latched)
         else:
             self.overlay_pub = None
             self.status_overlay_pub = None

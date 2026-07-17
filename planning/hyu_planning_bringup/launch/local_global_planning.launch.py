@@ -19,13 +19,13 @@ ARGUMENTS = (
     # Fused INS odometry (RTK-fused yaw, mode-managed DR fallback) — the
     # always-DR wheel odometry carried a ~1.1 deg constant heading error that
     # fought the GNSS anchors inside the graph (2026-07-18 budget analysis).
-    ("car_state_topic", "/ins_odom/car_state", "Graph SLAM motion input."),
+    ("car_state_topic", "/localization/ins_odom", "Graph SLAM motion input."),
     ("cones_topic", "/perception/cones", "Live cone observations for local planning and state."),
     ("cone_map_topic", "/localization/cone_map", "Graph SLAM cone-map output."),
     ("ego_odom_topic", "/localization/ego_odom", "Planner-facing odometry."),
     ("graph_slam_status_topic", "/localization/status", "Graph SLAM lifecycle status."),
     ("graph_slam_map_converged_topic", "/localization/map_converged", "Graph SLAM map-ready status."),
-    ("global_waypoints_topic", "/global_waypoints", "Latched full global waypoint path."),
+    ("global_waypoints_topic", "/planning/global_waypoints", "Latched full global waypoint path."),
     ("global_path_valid_topic", "/planning/global_path_valid", "Global-path validity heartbeat."),
     ("global_path_reason_topic", "/planning/global_path_reason", "Why the global path is invalid (latched)."),
     ("global_path_waypoints_topic", "/planning/global_path_waypoints", "Global rolling waypoint window."),
@@ -80,8 +80,8 @@ ARGUMENTS = (
     ("skidpad", "false", "Skidpad mission: phase-gated local-only planning."),
     ("skidpad_right_laps", "2", "Skidpad right-circle laps before switching left."),
     ("skidpad_left_laps", "2", "Skidpad left-circle laps before exiting."),
-    ("skidpad_cone_map_topic", "/skidpad/cone_map", "Phase-gated cone map for the local planner."),
-    ("skidpad_phase_topic", "/skidpad/phase", "Latched skidpad mission phase."),
+    ("skidpad_cone_map_topic", "/planning/skidpad/cone_map", "Phase-gated cone map for the local planner."),
+    ("skidpad_phase_topic", "/planning/skidpad/phase", "Latched skidpad mission phase."),
     # Acceleration mission: local-only straight-line sprint. Like skidpad the
     # global planner stays down, but there is no phase director and no map
     # gating -- the local planner drives the full SLAM cone map straight down

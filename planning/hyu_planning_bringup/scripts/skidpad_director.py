@@ -50,9 +50,9 @@ class SkidpadDirector(Node):
         self.ego_odom_topic = self.declare_parameter(
             "ego_odom_topic", "/localization/ego_odom").value
         self.output_topic = self.declare_parameter(
-            "output_cone_map_topic", "/skidpad/cone_map").value
+            "output_cone_map_topic", "/planning/skidpad/cone_map").value
         self.phase_topic = self.declare_parameter(
-            "phase_topic", "/skidpad/phase").value
+            "phase_topic", "/planning/skidpad/phase").value
 
         # Mission tuning: laps per circle.
         self.right_laps = int(self.declare_parameter("right_laps", 2).value)

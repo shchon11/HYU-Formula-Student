@@ -17,7 +17,7 @@ PlanningStateMachineNode::PlanningStateMachineNode()
   frenet_odom_topic_ = declare_parameter<std::string>(
     "frenet_odom_topic", "/planning/frenet_odom");
   global_waypoints_topic_ = declare_parameter<std::string>(
-    "global_waypoints_topic", "/global_waypoints");
+    "global_waypoints_topic", "/planning/global_waypoints");
   graph_slam_status_topic_ = declare_parameter<std::string>(
     "graph_slam_status_topic", "/localization/status");
   global_path_valid_topic_ = declare_parameter<std::string>(

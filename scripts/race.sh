@@ -111,7 +111,7 @@ case "$TRACK" in
     PLAN_EXTRA=" skidpad:=true"
     AMI_STATE=12   # AMI_SKIDPAD
     MISSION_NOTE="skidpad: entry → right x2 → left x2 → exit (laps via skidpad_right/left_laps)."
-    MONITOR_EXTRA="echo -n 'skidpad:     '; timeout 1 ros2 topic echo --once /skidpad/phase 2>/dev/null | grep -o 'data:.*'; "
+    MONITOR_EXTRA="echo -n 'skidpad:     '; timeout 1 ros2 topic echo --once /planning/skidpad/phase 2>/dev/null | grep -o 'data:.*'; "
     if [ "$TMPC_MODE" -eq 1 ]; then
       echo "race: 'tmpc' needs a GLOBAL phase — skidpad is local-only. Ignoring 'tmpc'." >&2
       TMPC_MODE=0

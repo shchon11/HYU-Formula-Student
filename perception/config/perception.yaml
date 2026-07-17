@@ -20,7 +20,7 @@ perception_node:
     output_cones_topic: /perception/cones
     output_frame: base_footprint
     camera_frame: zed_left_camera_optical_frame
-    debug_prefix: /fusion/debug
+    debug_prefix: /perception/debug
     publish_debug: true
     sync_queue_size: 10
     # Periodic "now - header.stamp" for /perception/cones. The header carries the bbox

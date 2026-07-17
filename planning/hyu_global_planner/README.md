@@ -24,11 +24,11 @@ Default topics:
 | `/localization/cone_map` | `hyu_msgs/msg/ConeArrayWithCovariance` | reliable transient-local | `graph_slam` |
 | `/localization/ego_odom` | `nav_msgs/msg/Odometry` | reliable volatile | `graph_slam` |
 | `/localization/status` | `std_msgs/msg/String` | reliable transient-local | `graph_slam` |
-| `/global_waypoints` | `hyu_msgs/msg/WaypointArrayStamped` | reliable transient-local | selected global waypoint writer |
+| `/planning/global_waypoints` | `hyu_msgs/msg/WaypointArrayStamped` | reliable transient-local | selected global waypoint writer |
 | `/planning/global_path_valid` | `std_msgs/msg/Bool` | reliable volatile | selected global waypoint writer |
 | `/planning/path` | `hyu_msgs/msg/WaypointArrayStamped` | reliable volatile | `hyu_path_selector_node` in integrated bringup |
 
-Only one node may write `/global_waypoints` and `/planning/global_path_valid`
+Only one node may write `/planning/global_waypoints` and `/planning/global_path_valid`
 in a launch. Use `slam_hyu_global_planner.launch.py planner_source:=slam` for the
 Graph SLAM path generator, or `planner_source:=csv` for the CSV publisher. Do
 not run both writers on the default topics; remap both output topics if a
@@ -42,7 +42,7 @@ In the integrated bringup, `hyu_path_selector_node` is the sole
 published as reliable volatile `std_msgs/Bool`: `false` on startup, while Graph
 SLAM is not in `localization`, on stale inputs, or before the first path can be
 generated. By default `planner_node` holds the last valid SLAM-derived
-`/global_waypoints` snapshot if a later refresh fails, so transient
+`/planning/global_waypoints` snapshot if a later refresh fails, so transient
 `/localization/cone_map` geometry failures do not invalidate the accepted
 global path. When a later refresh succeeds, `planner_node` publishes the new
 snapshot and consumers switch to it. Consumers still clear cached state on
@@ -67,7 +67,7 @@ ros2 launch hyu_global_planner slam_hyu_global_planner.launch.py planner_source:
 This launch starts `planner_node`, `frenet_odom_node`, and
 `wpnt_publisher_node`. It wires `frenet_odom_node` to
 `/localization/ego_odom`, not `/ground_truth/odom`, and uses the selected writer
-as the sole owner of `/global_waypoints` and `/planning/global_path_valid`.
+as the sole owner of `/planning/global_waypoints` and `/planning/global_path_valid`.
 
 The standalone rolling-window and time defaults are preserved:
 
@@ -111,7 +111,7 @@ and independently builds a fixed-size Formula TMPC trajectory pair at 20 Hz.
 It publishes only while all of the following are true:
 
 - `/planning/global_path_valid` is a fresh `true` heartbeat and the accepted
-  `/global_waypoints` snapshot is valid;
+  `/planning/global_waypoints` snapshot is valid;
 - `/planning/path_source` is a fresh `GLOBAL_FULL` or `GLOBAL_FINAL_STOP`;
 - `/planning/frenet_odom`, `/localization/ego_odom`, and
   `/planning/lap_count` are fresh and finite.
@@ -184,7 +184,7 @@ export ROS_LOCALHOST_ONLY=1
 ros2 launch hyu_global_planner hyu_global_planner_trajectory_publisher_debug.launch.py
 ```
 
-RViz should show `/hyu_global_planner/debug/markers` as a
+RViz should show `/planning/debug/global_planner_markers` as a
 `visualization_msgs/msg/MarkerArray` topic. Use a `MarkerArray` display, not a
 `Path` display.
 

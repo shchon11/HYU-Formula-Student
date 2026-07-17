@@ -30,8 +30,8 @@ FrenetOutputOptions FrenetOdomParameters::outputOptions() const
 
 void declareFrenetOdomParameters(rclcpp::Node & node)
 {
-  node.declare_parameter<std::string>("odom_topic", "/pf/pose/odom");
-  node.declare_parameter<std::string>("waypoint_topic", "/global_waypoints");
+  node.declare_parameter<std::string>("odom_topic", "/localization/ego_odom");
+  node.declare_parameter<std::string>("waypoint_topic", "/planning/global_waypoints");
   node.declare_parameter<std::string>("global_path_valid_topic", "/planning/global_path_valid");
   node.declare_parameter<std::string>("frenet_odom_topic", "/planning/frenet_odom");
   node.declare_parameter<std::string>("debug_topic", "/planning/debug/frenet");

@@ -48,7 +48,7 @@ def generate_launch_description():
     )
     global_waypoints_topic_arg = DeclareLaunchArgument(
         "global_waypoints_topic",
-        default_value="/global_waypoints",
+        default_value="/planning/global_waypoints",
         description="Global waypoint topic shared by the selected writer and consumers.",
     )
     global_path_valid_topic_arg = DeclareLaunchArgument(

@@ -260,7 +260,7 @@ def build_arg_parser():
     parser.add_argument("--output", required=True, help="output json path")
     parser.add_argument("--gt-topic", default="/ground_truth/state")
     parser.add_argument("--slam-odom", default="/localization/ego_odom")
-    parser.add_argument("--raw-odom", default="/drift_odom/car_state")
+    parser.add_argument("--raw-odom", default="/localization/drift_odom")
     parser.add_argument("--map-topic", default="/localization/cone_map")
     parser.add_argument("--match-dist", type=float, default=1.0)
     return parser

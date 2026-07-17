@@ -105,7 +105,7 @@ class DriftOdom(Node):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", default="/ground_truth/state")
-    parser.add_argument("--output", default="/drift_odom/car_state")
+    parser.add_argument("--output", default="/localization/drift_odom")
     parser.add_argument("--v-bias", type=float, default=0.02)
     parser.add_argument("--w-bias", type=float, default=0.01)
     parser.add_argument("--sigma-v", type=float, default=0.05)

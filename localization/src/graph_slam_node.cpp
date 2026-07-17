@@ -133,8 +133,8 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<std::string>("lifecycle_diagnostics_topic", "~/lifecycle_diagnostics");
   map_converged_topic_ =
     declare_parameter<std::string>("map_converged_topic", "~/map_converged");
-  path_topic_ = declare_parameter<std::string>("path_topic", "/graph_slam/path");
-  marker_topic_ = declare_parameter<std::string>("marker_topic", "/graph_slam/markers");
+  path_topic_ = declare_parameter<std::string>("path_topic", "/localization/debug/path");
+  marker_topic_ = declare_parameter<std::string>("marker_topic", "/localization/debug/markers");
   map_frame_ = declare_parameter<std::string>("map_frame", "map");
   odom_frame_ = declare_parameter<std::string>("odom_frame", "odom");
   slam_base_frame_ = declare_parameter<std::string>("slam_base_frame", "base_footprint");

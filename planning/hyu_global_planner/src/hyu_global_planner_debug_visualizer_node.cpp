@@ -94,7 +94,7 @@ void GlobalPlannerDebugVisualizerNode::declareParameters()
   declare_parameter<std::string>("output_root", "");
   declare_parameter<std::string>("map_name", "");
   declare_parameter<std::string>("frame_id", "map");
-  declare_parameter<std::string>("markers_topic", "/hyu_global_planner/debug/markers");
+  declare_parameter<std::string>("markers_topic", "/planning/debug/global_planner_markers");
   declare_parameter<double>("marker_line_width", 0.1);
   declare_parameter<double>("reload_period_sec", 1.0);
   declare_parameter<bool>("close_loops", true);

@@ -31,7 +31,7 @@ enum class PlanningState
 ## SLAM/global path contract
 
 `planning_hyu_state_machine_node`는 global waypoint writer가 아니라 consumer이다.
-`/global_waypoints`와 `/planning/global_path_valid`는 launch 안에서 정확히
+`/planning/global_waypoints`와 `/planning/global_path_valid`는 launch 안에서 정확히
 하나의 writer만 가져야 한다. SLAM integration에서는
 `hyu_global_planner/slam_hyu_global_planner.launch.py planner_source:=slam`이
 `planner_node`를 writer로 선택하고, CSV replay/debug에서는
@@ -47,7 +47,7 @@ heartbeat이다. latched true 상태로 쓰지 않는다. `false` 또는
 `global_path_valid_timeout_sec` 초과 timeout이면 state machine은 accepted
 global waypoint snapshot을 버리고 GLOBAL에서 LOCAL로 demote한다. 복구 시
 fresh true heartbeat만으로는 충분하지 않으며, invalidation 이후에 새
-non-empty `/global_waypoints` snapshot이 들어와야 한다.
+non-empty `/planning/global_waypoints` snapshot이 들어와야 한다.
 
 SLAM `planner_node` writer의 기본 동작은 후속 refresh가 실패하면 마지막 valid
 global waypoint snapshot을 유지하는 것이다. 따라서 한 번 accepted global path가
@@ -66,7 +66,7 @@ phase로 defer되어 있다.
 | Topic | Type | 설명 |
 | --- | --- | --- |
 | `/planning/frenet_odom` | `nav_msgs/msg/Odometry` | Frenet odometry. `pose.pose.position.x`를 `current_s`, `pose.pose.position.y`를 `current_d`로 저장한다. |
-| `/global_waypoints` | `hyu_msgs/msg/WaypointArrayStamped` | reliable transient-local QoS로 받는 latched global waypoint snapshot. non-empty snapshot만 accept한다. |
+| `/planning/global_waypoints` | `hyu_msgs/msg/WaypointArrayStamped` | reliable transient-local QoS로 받는 latched global waypoint snapshot. non-empty snapshot만 accept한다. |
 | `/localization/status` | `std_msgs/msg/String` | reliable transient-local QoS로 받는 Graph SLAM lifecycle state. 최신 latched 값이 `localization`일 때만 global path를 사용할 수 있다. status message age만으로 demote하지 않는다. |
 | `/planning/global_path_valid` | `std_msgs/msg/Bool` | reliable volatile QoS로 받는 global path validity heartbeat. `false` 또는 timeout이면 기존 waypoint snapshot을 invalidation하고 새 snapshot을 기다린다. |
 | `/planning/local_path_valid` | `std_msgs/msg/Bool` | reliable volatile QoS로 받는 local planner validity heartbeat. 값, 수신 여부, 수신 시각, freshness를 debug에 기록하며 state/STOP 전이에는 사용하지 않는다. |
@@ -97,7 +97,7 @@ planning/hyu_state_machine/config/planning_hyu_state_machine.yaml
 | Parameter | Default | 설명 |
 | --- | --- | --- |
 | `frenet_odom_topic` | `/planning/frenet_odom` | Frenet odometry 입력 topic |
-| `global_waypoints_topic` | `/global_waypoints` | latched global waypoint 입력 topic |
+| `global_waypoints_topic` | `/planning/global_waypoints` | latched global waypoint 입력 topic |
 | `graph_slam_status_topic` | `/localization/status` | Graph SLAM lifecycle status 입력 topic |
 | `global_path_valid_topic` | `/planning/global_path_valid` | global path validity heartbeat 입력 topic |
 | `local_path_valid_topic` | `/planning/local_path_valid` | local path validity heartbeat 입력 topic |
@@ -129,7 +129,7 @@ planning/hyu_state_machine/config/planning_hyu_state_machine.yaml
 
 `LOCAL -> GLOBAL` 조건:
 
-- global path가 ready: non-empty `/global_waypoints` snapshot, fresh true `/planning/global_path_valid`, and Graph SLAM status `localization`
+- global path가 ready: non-empty `/planning/global_waypoints` snapshot, fresh true `/planning/global_path_valid`, and Graph SLAM status `localization`
 - Frenet odometry가 fresh
 - `abs(current_d) <= max_abs_d_for_global`
 - `/planning/global_handoff_ready`가 `global_handoff_timeout_sec` 이내의 fresh true이며 `global_entry_dwell_sec` 동안 연속 유지됨
@@ -145,7 +145,7 @@ racing-line optimizer가 아니며, offline minimum-curvature CSV workflow와
 분리되어 있다. 기본 설정에서는 refresh 실패 시 마지막 valid 결과를 유지하고,
 refresh 성공 시 새 global path를 publish한다.
 
-`/global_waypoints`는 latched snapshot으로 처리하므로 wall-clock freshness timeout을 적용하지 않는다. 대신 `/planning/global_path_valid`가 `false`이거나 stale이면 state machine은 invalidation generation을 기록하고 현재 accepted waypoint snapshot을 버린다. 그 뒤에는 true heartbeat만으로 복구하지 않고, invalidation 이후에 새 non-empty waypoint snapshot을 받은 뒤에만 global path ready가 될 수 있다. 기본 SLAM `planner_node`는 refresh 실패 시 기존 valid snapshot을 유지해 이 invalidation 경로를 피한다.
+`/planning/global_waypoints`는 latched snapshot으로 처리하므로 wall-clock freshness timeout을 적용하지 않는다. 대신 `/planning/global_path_valid`가 `false`이거나 stale이면 state machine은 invalidation generation을 기록하고 현재 accepted waypoint snapshot을 버린다. 그 뒤에는 true heartbeat만으로 복구하지 않고, invalidation 이후에 새 non-empty waypoint snapshot을 받은 뒤에만 global path ready가 될 수 있다. 기본 SLAM `planner_node`는 refresh 실패 시 기존 valid snapshot을 유지해 이 invalidation 경로를 피한다.
 
 `GLOBAL -> LOCAL` demotion 조건:
 

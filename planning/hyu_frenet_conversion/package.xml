@@ -4,7 +4,7 @@
   <name>hyu_frenet_conversion</name>
   <version>0.0.1</version>
   <description>
-    Converts /global_waypoints (hyu_msgs/WaypointArrayStamped) and vehicle
+    Converts /planning/global_waypoints (hyu_msgs/WaypointArrayStamped) and vehicle
     odometry into Frenet (s, d) coordinates using the CommonRoad curvilinear
     coordinate system, publishing /planning/frenet_odom for Formula Student
     Korea autonomous planning.

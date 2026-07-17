@@ -10,8 +10,8 @@ graph_slam:
     status_topic: ~/status
     lifecycle_diagnostics_topic: ~/lifecycle_diagnostics
     map_converged_topic: ~/map_converged
-    path_topic: /graph_slam/path
-    marker_topic: /graph_slam/markers
+    path_topic: /localization/debug/path
+    marker_topic: /localization/debug/markers
 
     map_frame: map
     odom_frame: odom

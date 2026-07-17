@@ -274,7 +274,7 @@ race skidpad sim             # simulated perception으로도 동일하게 동작
 | 주행 속도 | `planning/hyu_local_planner/config/hyu_local_planner_skidpad.yaml` | 4.0 m/s |
 | 컨트롤러 (lookahead·상한) | `hyu_pure_pursuit/config/hyu_pure_pursuit_skidpad.yaml` | 3.0 m / 4.0 m/s |
 
-진행 단계는 `/skidpad/phase`로 확인 (모니터 pane에 표시됨).
+진행 단계는 `/planning/skidpad/phase`로 확인 (모니터 pane에 표시됨).
 
 ### 🚀 Acceleration (직선 가속 미션)
 `acceleration` 트랙(또는 `accel` 약칭)이면 **자동으로 가속 프로필**로 뜹니다: global
@@ -400,7 +400,7 @@ ros2 launch hyu_localization ins_pipeline.launch.py slam:=false
 | `/localization/cone_map` | `ConeArrayWithCovariance` | SLAM 콘 맵 (map) |
 | `/localization/ego_odom` | `Odometry` | SLAM 위치추정 |
 | `/localization/status` | `String` | `mapping` / `localization` |
-| `/global_waypoints` (+`/path`) | `WaypointArrayStamped` | 전역 레이스라인 (latched) |
+| `/planning/global_waypoints` (+`/path`) | `WaypointArrayStamped` | 전역 레이스라인 (latched) |
 | `/planning/local_waypoints` (+`/path`) | `WaypointArrayStamped` | 로컬 즉석 경로 |
 | `/planning/path_source` | `String` | 상태기계의 경로 선택 (`LOCAL`/`GLOBAL_FULL`/`GLOBAL_FINAL_STOP`/`STOP`) |
 | `/planning/path` (+`/path`) | `WaypointArrayStamped` | **selector 확정 경로 = 컨트롤러 입력** |

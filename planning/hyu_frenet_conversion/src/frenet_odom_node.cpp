@@ -144,7 +144,7 @@ private:
         wait_reason = "a fresh true global path validity heartbeat";
         wait_topic = parameters_.global_path_valid_topic;
       } else if (!global_path_validity_.hasAcceptedWaypointsForCurrentGeneration()) {
-        wait_reason = "a /global_waypoints snapshot after the latest invalidation";
+        wait_reason = "a /planning/global_waypoints snapshot after the latest invalidation";
         wait_topic = parameters_.waypoint_topic;
       } else if (!converter_) {
         wait_reason = "a valid CLCS reference path";

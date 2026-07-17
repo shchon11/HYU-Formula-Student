@@ -75,10 +75,10 @@ void SlamStack::populate()
   setName("FSK SLAM");
   addTopicDisplay(
     "rviz_default_plugins/MarkerArray", "SLAM Map (cones + graph)",
-    "/graph_slam/markers");
+    "/localization/debug/markers");
 
   rviz_common::Display * path = addTopicDisplay(
-    "rviz_default_plugins/Path", "SLAM Path", "/graph_slam/path", "Best Effort");
+    "rviz_default_plugins/Path", "SLAM Path", "/localization/debug/path", "Best Effort");
   path->subProp("Color")->setValue(QColor(25, 255, 240));
 
   rviz_common::Display * odom = addTopicDisplay(
@@ -127,7 +127,7 @@ void HudStack::populate()
     "rviz_2d_overlay_plugins/TextOverlay", "Stack Banner",
     "/planning/stack_hud_banner", "Reliable", "Transient Local");
   addTopicDisplay(
-    "rviz_2d_overlay_plugins/TextOverlay", "GNSS HUD", "/gnss/overlay",
+    "rviz_2d_overlay_plugins/TextOverlay", "GNSS HUD", "/localization/debug/gnss_overlay",
     "Reliable", "Transient Local");
 }
 

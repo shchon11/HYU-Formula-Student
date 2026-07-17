@@ -3,7 +3,7 @@
 <package format="3">
   <name>hyu_global_planner</name>
   <version>0.0.1</version>
-  <description>Publishes the offline global race trajectory (traj_race_cl.csv) as latched /global_waypoints, and republishes the next N trajectory points ahead of the vehicle on /planning/path, for Formula Student Korea autonomous planning.</description>
+  <description>Publishes the offline global race trajectory (traj_race_cl.csv) as latched /planning/global_waypoints, and republishes the next N trajectory points ahead of the vehicle on /planning/path, for Formula Student Korea autonomous planning.</description>
   <maintainer email="haejun@example.com">haejun</maintainer>
   <license>MIT</license>
 

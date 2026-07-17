@@ -8,7 +8,7 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     # This launch path owns the CSV global waypoint writer. Do not start
-    # planner_node here unless /global_waypoints and /planning/global_path_valid
+    # planner_node here unless /planning/global_waypoints and /planning/global_path_valid
     # are remapped so the two producers are not competing writers.
     default_params = PathJoinSubstitution([
         FindPackageShare("hyu_global_planner"),

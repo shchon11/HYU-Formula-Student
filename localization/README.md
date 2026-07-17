@@ -11,8 +11,8 @@ It publishes:
 
 - `/localization/cone_map` (`hyu_msgs/msg/ConeArrayWithCovariance`)
 - `/localization/ego_odom` (`nav_msgs/msg/Odometry`)
-- `/graph_slam/path` (`nav_msgs/msg/Path`)
-- `/graph_slam/markers` (`visualization_msgs/msg/MarkerArray`)
+- `/localization/debug/path` (`nav_msgs/msg/Path`)
+- `/localization/debug/markers` (`visualization_msgs/msg/MarkerArray`)
 - `status_topic`, default `~/status` (`std_msgs/msg/String`)
 - `map_converged_topic`, default `~/map_converged` (`std_msgs/msg/Bool`)
 
@@ -36,7 +36,7 @@ The planning stack only allows global waypoint use when `/localization/status` i
 from the selected global waypoint writer's reliable volatile
 `/planning/global_path_valid` heartbeat.
 
-Graph SLAM does not publish `/global_waypoints` or
+Graph SLAM does not publish `/planning/global_waypoints` or
 `/planning/global_path_valid`. Those topics must have one writer in any launch:
 the SLAM `planner_node` or the CSV global planner, never both on the default
 topics.
@@ -129,7 +129,7 @@ The lifecycle is published (latched) on:
 
 - `status_topic`, default `~/status` (`std_msgs/String`): `mapping`,
   `mapping_converged`, or `localization` — RViz HUD via
-  `/graph_slam/status_overlay`.
+  `/localization/debug/status_overlay`.
 - `map_converged_topic`, default `~/map_converged` (`std_msgs/Bool`):
   planning can switch from local to global planning on this flag. It also
   publishes true in localization mode after a fixed map has been loaded.

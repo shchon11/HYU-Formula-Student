@@ -40,7 +40,7 @@ ARGUMENTS = (
     # Deliberately NOT named car_state_topic: launch configurations are global,
     # so a "car_state_topic" declared here leaks into the included
     # local_global_planning and shadows ITS car_state_topic default -- graph
-    # SLAM's motion input, whose default is the fused INS (/ins_odom/car_state).
+    # SLAM's motion input, whose default is the fused INS (/localization/ins_odom).
     # The leak fed graph SLAM the raw wheel odometry (~1.1 deg heading error) in
     # tmpc mode only, degrading the map so lap-1 local tracking diverged while
     # plain trackdrive was fine. ins_pipeline.launch.py dodges the identical trap
@@ -116,7 +116,7 @@ def generate_launch_description() -> LaunchDescription:
             "tmpc_emergency_trajectory_topic": values["tmpc_emergency_trajectory_topic"],
             "ego_odom_topic": values["localization_topic"],
             # car_state_topic is intentionally NOT forwarded: local_global_planning
-            # owns it as graph SLAM's motion input and its /ins_odom/car_state
+            # owns it as graph SLAM's motion input and its /localization/ins_odom
             # default must win. The bridge's own dynamics input is carried by the
             # bridge-scoped vehicle_state_car_state_topic argument (see above) so
             # it cannot collide with this name in the global launch-config scope.

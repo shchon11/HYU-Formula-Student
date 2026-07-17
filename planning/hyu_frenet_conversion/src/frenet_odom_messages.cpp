@@ -43,7 +43,7 @@ std::vector<ReferenceWaypoint> toReferenceWaypoints(
     // hyu_msgs/Waypoint carries both the geometric pose (position) and the
     // offline-CSV echo fields (x_m/y_m). The HYU hyu_global_planner fills both, so
     // x_m/y_m are the primary source. Fall back to position when the CSV fields
-    // are left unset (both exactly zero) so any /global_waypoints producer that
+    // are left unset (both exactly zero) so any /planning/global_waypoints producer that
     // only populates position still yields a usable reference path.
     double x = waypoint.x_m;
     double y = waypoint.y_m;

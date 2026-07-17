@@ -107,7 +107,7 @@ class SbgOdometryBridge(Node):
 
         # Topics.
         self.car_state_topic = self.declare_parameter(
-            "car_state_topic", "/ins_odom/car_state"
+            "car_state_topic", "/localization/ins_odom"
         ).value
         self.gnss_odom_topic = self.declare_parameter(
             "gnss_odom_topic", "/localization/gnss_odom"
@@ -119,11 +119,11 @@ class SbgOdometryBridge(Node):
         # RViz. Re-enable with publish_markers:=true when debugging GNSS.
         self.publish_markers = self.declare_parameter("publish_markers", False).value
         self.marker_topic = self.declare_parameter(
-            "marker_topic", "/gnss/markers"
+            "marker_topic", "/localization/debug/gnss_markers"
         ).value
         self.publish_overlay = self.declare_parameter("publish_overlay", True).value
         self.overlay_topic = self.declare_parameter(
-            "overlay_topic", "/gnss/overlay"
+            "overlay_topic", "/localization/debug/gnss_overlay"
         ).value
         self.ekf_nav_topic = self.declare_parameter(
             "ekf_nav_topic", "/sbg/ekf_nav"

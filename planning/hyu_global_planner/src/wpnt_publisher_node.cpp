@@ -17,7 +17,7 @@ WpntPublisher::WpntPublisher(const rclcpp::NodeOptions & options)
 : Node("wpnt_publisher", options)
 {
   global_waypoints_topic_ =
-    declare_parameter<std::string>("global_waypoints_topic", "/global_waypoints");
+    declare_parameter<std::string>("global_waypoints_topic", "/planning/global_waypoints");
   global_path_valid_topic_ =
     declare_parameter<std::string>("global_path_valid_topic", "/planning/global_path_valid");
   global_path_valid_timeout_sec_ =

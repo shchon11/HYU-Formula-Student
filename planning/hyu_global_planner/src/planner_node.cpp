@@ -67,7 +67,7 @@ void PlannerNode::declareParameters()
   declare_parameter<std::string>("ego_odom_topic", "/localization/ego_odom");
   declare_parameter<std::string>("graph_slam_status_topic", "/localization/status");
   declare_parameter<std::string>("graph_slam_map_converged_topic", "/localization/map_converged");
-  declare_parameter<std::string>("global_waypoints_topic", "/global_waypoints");
+  declare_parameter<std::string>("global_waypoints_topic", "/planning/global_waypoints");
   declare_parameter<std::string>("global_path_valid_topic", "/planning/global_path_valid");
   declare_parameter<std::string>("global_path_reason_topic", "/planning/global_path_reason");
   declare_parameter<double>("valid_heartbeat_hz", 5.0);

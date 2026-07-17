@@ -53,7 +53,7 @@ void GlobalPlannerTrajectoryPublisherNode::declareParameters()
   declare_parameter<std::string>("output_root", "");
   declare_parameter<std::string>("map_name", "");
   declare_parameter<std::string>("trajectory_filename", "traj_race_cl.csv");
-  declare_parameter<std::string>("global_waypoints_topic", "/global_waypoints");
+  declare_parameter<std::string>("global_waypoints_topic", "/planning/global_waypoints");
   declare_parameter<std::string>("global_path_valid_topic", "/planning/global_path_valid");
   declare_parameter<std::string>("frame_id", "map");
   declare_parameter<double>("reload_period_sec", 1.0);
@@ -257,7 +257,7 @@ void GlobalPlannerTrajectoryPublisherNode::publishTrajectory()
   if (!has_valid_trajectory_ || trajectory_points_.empty()) {
     RCLCPP_WARN_THROTTLE(
       get_logger(), *get_clock(), 5000,
-      "No valid trajectory loaded; not publishing /global_waypoints.");
+      "No valid trajectory loaded; not publishing /planning/global_waypoints.");
     return;
   }
 

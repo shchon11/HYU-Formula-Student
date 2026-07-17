@@ -240,7 +240,7 @@ class PerceptionNode(Node):
         self.declare_parameter("output_cones_topic", "/perception/cones")
         self.declare_parameter("output_frame", "base_footprint")
         self.declare_parameter("camera_frame", "zed_left_camera_optical_frame")
-        self.declare_parameter("debug_prefix", "/fusion/debug")
+        self.declare_parameter("debug_prefix", "/perception/debug")
         self.declare_parameter("publish_debug", True)
         self.declare_parameter("sync_queue_size", 10)
         self.declare_parameter("latency_log_period_sec", 5.0)
