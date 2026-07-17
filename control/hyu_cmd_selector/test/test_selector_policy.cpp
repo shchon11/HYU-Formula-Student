@@ -1,16 +1,16 @@
 #include <limits>
 
 #include "gtest/gtest.h"
-#include "tmpc_cmd_selector/selector_policy.hpp"
+#include "hyu_cmd_selector/selector_policy.hpp"
 
 namespace
 {
 
-using tmpc_cmd_selector::CommandSource;
-using tmpc_cmd_selector::SelectorDecision;
-using tmpc_cmd_selector::SelectorInputs;
-using tmpc_cmd_selector::SelectorPolicy;
-using tmpc_cmd_selector::SelectorStatus;
+using hyu_cmd_selector::CommandSource;
+using hyu_cmd_selector::SelectorDecision;
+using hyu_cmd_selector::SelectorInputs;
+using hyu_cmd_selector::SelectorPolicy;
+using hyu_cmd_selector::SelectorStatus;
 
 SelectorInputs FreshInputs(const std::string & state, double now_sec = 1.0)
 {

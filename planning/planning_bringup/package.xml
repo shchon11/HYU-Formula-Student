@@ -25,9 +25,9 @@
   <exec_depend>ackermann_msgs</exec_depend>
   <exec_depend>rviz_2d_overlay_msgs</exec_depend>
   <exec_depend>hyu_formular_control</exec_depend>
-  <exec_depend>tum_vehicle_state_bridge</exec_depend>
+  <exec_depend>hyu_tmpc_state_bridge</exec_depend>
   <exec_depend>tum_mpc_output_bridge</exec_depend>
-  <exec_depend>tmpc_cmd_selector</exec_depend>
+  <exec_depend>hyu_cmd_selector</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

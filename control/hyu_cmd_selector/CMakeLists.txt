@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(tmpc_cmd_selector)
+project(hyu_cmd_selector)
 
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
@@ -19,7 +19,7 @@ target_include_directories(${PROJECT_NAME}_policy PUBLIC
 )
 
 add_library(${PROJECT_NAME}_node
-  src/tmpc_cmd_selector_node.cpp
+  src/hyu_cmd_selector_node.cpp
 )
 target_include_directories(${PROJECT_NAME}_node PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -55,10 +55,10 @@ if(BUILD_TESTING)
     target_link_libraries(test_selector_policy ${PROJECT_NAME}_policy)
   endif()
 
-  ament_add_gtest(test_tmpc_cmd_selector_node test/test_tmpc_cmd_selector_node.cpp)
-  if(TARGET test_tmpc_cmd_selector_node)
-    target_link_libraries(test_tmpc_cmd_selector_node ${PROJECT_NAME}_node)
-    ament_target_dependencies(test_tmpc_cmd_selector_node
+  ament_add_gtest(test_hyu_cmd_selector_node test/test_hyu_cmd_selector_node.cpp)
+  if(TARGET test_hyu_cmd_selector_node)
+    target_link_libraries(test_hyu_cmd_selector_node ${PROJECT_NAME}_node)
+    ament_target_dependencies(test_hyu_cmd_selector_node
       ackermann_msgs
       rclcpp
       std_msgs

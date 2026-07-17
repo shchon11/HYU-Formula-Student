@@ -11,7 +11,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/string.hpp"
-#include "tmpc_cmd_selector/tmpc_cmd_selector_node.hpp"
+#include "hyu_cmd_selector/hyu_cmd_selector_node.hpp"
 
 namespace
 {
@@ -54,9 +54,9 @@ protected:
       rclcpp::Parameter("tmpc_command_timeout_sec", 0.1),
       rclcpp::Parameter("tmpc_valid_timeout_sec", 0.1),
       rclcpp::Parameter("tmpc_ready_dwell_sec", 0.1)};
-    selector_ = std::make_shared<tmpc_cmd_selector::TmpcCmdSelectorNode>(
+    selector_ = std::make_shared<hyu_cmd_selector::TmpcCmdSelectorNode>(
       rclcpp::NodeOptions().parameter_overrides(overrides));
-    driver_ = std::make_shared<rclcpp::Node>("tmpc_cmd_selector_test_driver");
+    driver_ = std::make_shared<rclcpp::Node>("hyu_cmd_selector_test_driver");
 
     const auto qos = rclcpp::QoS(10).reliable().durability_volatile();
     state_pub_ = driver_->create_publisher<std_msgs::msg::String>(
@@ -155,7 +155,7 @@ protected:
   }
 
   rclcpp::executors::SingleThreadedExecutor executor_;
-  std::shared_ptr<tmpc_cmd_selector::TmpcCmdSelectorNode> selector_;
+  std::shared_ptr<hyu_cmd_selector::TmpcCmdSelectorNode> selector_;
   rclcpp::Node::SharedPtr driver_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr stop_pub_;

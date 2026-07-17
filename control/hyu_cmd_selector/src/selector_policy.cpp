@@ -1,9 +1,9 @@
-#include "tmpc_cmd_selector/selector_policy.hpp"
+#include "hyu_cmd_selector/selector_policy.hpp"
 
 #include <cmath>
 #include <stdexcept>
 
-namespace tmpc_cmd_selector
+namespace hyu_cmd_selector
 {
 
 namespace
@@ -212,4 +212,4 @@ const char * ToString(SelectorStatus status)
   return "INPUT_BRAKE";
 }
 
-}  // namespace tmpc_cmd_selector
+}  // namespace hyu_cmd_selector

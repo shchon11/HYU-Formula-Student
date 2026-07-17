@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>tmpc_cmd_selector</name>
+  <name>hyu_cmd_selector</name>
   <version>0.1.0</version>
   <description>Select Pure Pursuit in LOCAL and fail-closed TMPC control in GLOBAL.</description>
   <maintainer email="simseunghwan@example.com">simseunghwan</maintainer>

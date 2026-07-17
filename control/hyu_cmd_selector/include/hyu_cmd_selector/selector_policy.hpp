@@ -4,7 +4,7 @@
 #include <optional>
 #include <string>
 
-namespace tmpc_cmd_selector
+namespace hyu_cmd_selector
 {
 
 enum class PlanningState
@@ -108,6 +108,6 @@ private:
 const char * ToString(CommandSource source);
 const char * ToString(SelectorStatus status);
 
-}  // namespace tmpc_cmd_selector
+}  // namespace hyu_cmd_selector
 
 #endif  // TMPC_CMD_SELECTOR__SELECTOR_POLICY_HPP_

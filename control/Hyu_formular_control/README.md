@@ -7,7 +7,7 @@ HYU Formula TMPC 래퍼와 관련 메시지 및 어댑터 패키지를 위한 �
 
 - `hyu_formular_control_msgs`: `TumVehicleState`, `TumTrajectory`, `TumMpcOutput` 메시지
 - `hyu_formular_control`: 자동 생성된 경로 매칭/TMPC 래퍼와 저장소에 포함된 OSQP 런타임
-- [`tum_vehicle_state_bridge`](src/tum_vehicle_state_bridge/README.md): HYU-Formula-Student 시뮬레이션 상태 어댑터
+- [`hyu_tmpc_state_bridge`](src/hyu_tmpc_state_bridge/README.md): HYU-Formula-Student 시뮬레이션 상태 어댑터
 - [`tum_mpc_output_bridge`](src/tum_mpc_output_bridge/README.md): TMPC force/steering 출력을 EUFS Ackermann acceleration 명령으로 변환하는 어댑터
 
 컨트롤러를 빌드할 때 전체 `mod_vehicle_dynamics_control` 저장소는 필요하지 않습니다.
@@ -33,7 +33,7 @@ cd Hyu_formular_control
 source /opt/ros/humble/setup.zsh
 source /home/shchon11/fsk/install/setup.zsh
 colcon build --packages-select \
-  hyu_formular_control_msgs tum_vehicle_state_bridge \
+  hyu_formular_control_msgs hyu_tmpc_state_bridge \
   tum_mpc_output_bridge hyu_formular_control
 source install/setup.zsh
 ```

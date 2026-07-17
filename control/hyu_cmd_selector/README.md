@@ -1,6 +1,6 @@
 # TMPC Command Selector
 
-`tmpc_cmd_selector` is the only writer of the final EUFS `/cmd` topic in the
+`hyu_cmd_selector` is the only writer of the final EUFS `/cmd` topic in the
 hybrid Trackdrive setup. It forwards Pure Pursuit in `LOCAL`, waits for a
 continuously valid TMPC command after entering `GLOBAL` (a configurable ready
 dwell), and then hands `/cmd` to TMPC. A TMPC dropout after takeover falls
@@ -33,5 +33,5 @@ ros2 launch planning_bringup tmpc_trackdrive.launch.py
 ```
 
 기존 standard planning/Pure Pursuit launch는 먼저 종료해야 합니다. 실행 후
-`ros2 topic info /cmd --verbose`에서 `tmpc_cmd_selector` 하나만 publisher로
+`ros2 topic info /cmd --verbose`에서 `hyu_cmd_selector` 하나만 publisher로
 표시되는지 확인하십시오.

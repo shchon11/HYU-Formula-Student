@@ -22,7 +22,7 @@ ros2 launch planning_bringup tmpc_trackdrive.launch.py
 ```
 
 이 구성에서는 Pure Pursuit가 `/cmd/pure_pursuit`, TMPC bridge가 `/cmd/tmpc`를
-발행하며 `tmpc_cmd_selector`만 최종 `/cmd`를 발행합니다. GLOBAL 진입 후 TMPC
+발행하며 `hyu_cmd_selector`만 최종 `/cmd`를 발행합니다. GLOBAL 진입 후 TMPC
 명령과 validity가 0.1초 연속 정상일 때 takeover하고, takeover 이후 fault가
 나면 Pure Pursuit로 폴백한 뒤 TMPC가 다시 0.1초 연속 정상이어야 재인계합니다.
 STOP에서는 경로를 따라 제동하는 Pure Pursuit 명령을 우선 포워딩하고, 그것도
@@ -31,7 +31,7 @@ STOP에서는 경로를 따라 제동하는 Pure Pursuit 명령을 우선 포워
 기존 `local_global_planning.launch.py`나 별도 Pure Pursuit 노드를 먼저 종료한 뒤
 실행해야 합니다. 두 launch를 동시에 실행하면 기존 Pure Pursuit가 `/cmd`에 남아
 최종 명령 publisher가 중복됩니다. 실행 후 아래 결과가 `Publisher count: 1`,
-`Node name: tmpc_cmd_selector`인지 확인합니다.
+`Node name: hyu_cmd_selector`인지 확인합니다.
 
 ```zsh
 ros2 topic info /cmd --verbose
@@ -55,7 +55,7 @@ stack already owns the graph-SLAM outputs.
 | `/planning/global_path_waypoints` | `wpnt_publisher` |
 | `/path_waypoints` | `path_selector_node` |
 | `/planning/selected_path_valid` | `path_selector_node` |
-| `/cmd` | Standard launch: `pure_pursuit_controller_node`; TMPC launch: `tmpc_cmd_selector` |
+| `/cmd` | Standard launch: `pure_pursuit_controller_node`; TMPC launch: `hyu_cmd_selector` |
 
 `planner_source` is either `slam` or `csv`, so the two global writers are never
 started together. The global rolling window is remapped to

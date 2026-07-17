@@ -10,9 +10,9 @@
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/string.hpp"
-#include "tmpc_cmd_selector/selector_policy.hpp"
+#include "hyu_cmd_selector/selector_policy.hpp"
 
-namespace tmpc_cmd_selector
+namespace hyu_cmd_selector
 {
 
 class TmpcCmdSelectorNode final : public rclcpp::Node
@@ -103,6 +103,6 @@ private:
   rclcpp::TimerBase::SharedPtr timer_;
 };
 
-}  // namespace tmpc_cmd_selector
+}  // namespace hyu_cmd_selector
 
 #endif  // TMPC_CMD_SELECTOR__TMPC_CMD_SELECTOR_NODE_HPP_

@@ -1,4 +1,4 @@
-# tum_vehicle_state_bridge
+# hyu_tmpc_state_bridge
 
 ROS2 Humble package that combines HYU-Formula-Student simulation/localization
 topics into `hyu_formular_control_msgs/msg/TumVehicleState` for the TUM MPC
@@ -12,25 +12,25 @@ The HYU-Formula-Student overlay is required for `eufs_msgs`.
 cd /home/shchon11/fsk/src/Hyu_formular_control
 source /opt/ros/humble/setup.zsh
 source /home/shchon11/fsk/install/setup.zsh
-colcon build --packages-select hyu_formular_control_msgs tum_vehicle_state_bridge
+colcon build --packages-select hyu_formular_control_msgs hyu_tmpc_state_bridge
 source install/setup.zsh
 ```
 
 Run the bridge as a standalone executable or with its launch file:
 
 ```zsh
-ros2 run tum_vehicle_state_bridge tum_vehicle_state_bridge
+ros2 run hyu_tmpc_state_bridge hyu_tmpc_state_bridge
 ```
 
 ```zsh
-ros2 launch tum_vehicle_state_bridge tum_vehicle_state_bridge.launch.xml
+ros2 launch hyu_tmpc_state_bridge hyu_tmpc_state_bridge.launch.xml
 ```
 
 Run `hyu_formular_control` separately after its trajectory inputs are ready.
 
 ## 역할과 전체 흐름
 
-`tum_vehicle_state_bridge`는 HYU-Formula-Student 시뮬레이터와 localization에서
+`hyu_tmpc_state_bridge`는 HYU-Formula-Student 시뮬레이터와 localization에서
 발행하는 여러 메시지의 최신값을 합쳐 MPC 입력 메시지
 `hyu_formular_control_msgs/msg/TumVehicleState`를 만든다.
 
@@ -108,7 +108,7 @@ AND ax, ay가 finite함
 실행한다.
 
 ```zsh
-ros2 launch tum_vehicle_state_bridge tum_vehicle_state_bridge.launch.xml \
+ros2 launch hyu_tmpc_state_bridge hyu_tmpc_state_bridge.launch.xml \
   valid_imu_default:=false
 ```
 
@@ -181,7 +181,7 @@ localization, acceleration, wheel-speeds 중 하나라도 아직 수신되지 �
 
 ## 파라미터
 
-실제 ROS 파라미터 이름에는 `tum_vehicle_state_bridge/` prefix가 붙는다. Launch에서는
+실제 ROS 파라미터 이름에는 `hyu_tmpc_state_bridge/` prefix가 붙는다. Launch에서는
 아래 suffix를 argument 이름으로 그대로 사용할 수 있다.
 
 | Launch argument / parameter suffix | 기본값 | 설명 |

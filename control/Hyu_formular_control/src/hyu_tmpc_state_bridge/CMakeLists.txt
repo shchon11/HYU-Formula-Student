@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(tum_vehicle_state_bridge)
+project(hyu_tmpc_state_bridge)
 
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 14)
@@ -22,7 +22,7 @@ target_include_directories(${PROJECT_NAME}_heading_conversion PUBLIC
 )
 
 add_executable(${PROJECT_NAME}
-  src/tum_vehicle_state_bridge_node.cpp
+  src/hyu_tmpc_state_bridge_node.cpp
 )
 target_link_libraries(${PROJECT_NAME}
   ${PROJECT_NAME}_heading_conversion

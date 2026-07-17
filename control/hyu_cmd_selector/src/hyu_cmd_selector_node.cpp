@@ -1,4 +1,4 @@
-#include "tmpc_cmd_selector/tmpc_cmd_selector_node.hpp"
+#include "hyu_cmd_selector/hyu_cmd_selector_node.hpp"
 
 #include <cmath>
 #include <functional>
@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace tmpc_cmd_selector
+namespace hyu_cmd_selector
 {
 
 namespace
@@ -35,7 +35,7 @@ SelectorConfig DeclareSelectorConfig(rclcpp::Node & node)
 }  // namespace
 
 TmpcCmdSelectorNode::TmpcCmdSelectorNode(const rclcpp::NodeOptions & options)
-: Node("tmpc_cmd_selector", options),
+: Node("hyu_cmd_selector", options),
   planning_state_topic_(declare_parameter<std::string>(
       "planning_state_topic", "/planning/state")),
   stop_request_topic_(declare_parameter<std::string>(
@@ -284,4 +284,4 @@ TmpcCmdSelectorNode::AckermannCommand TmpcCmdSelectorNode::SafeBrakeCommand() co
   return command;
 }
 
-}  // namespace tmpc_cmd_selector
+}  // namespace hyu_cmd_selector

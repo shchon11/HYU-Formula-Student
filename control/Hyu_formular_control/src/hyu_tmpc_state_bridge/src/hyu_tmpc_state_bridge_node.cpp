@@ -14,7 +14,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "tf2/LinearMath/Quaternion.h"
 #include "tf2/utils.h"
-#include "tum_vehicle_state_bridge/heading_conversion.hpp"
+#include "hyu_tmpc_state_bridge/heading_conversion.hpp"
 
 namespace
 {
@@ -41,7 +41,7 @@ public:
   using WheelSpeedsStamped = eufs_msgs::msg::WheelSpeedsStamped;
 
   TumVehicleStateBridge()
-  : Node("tum_vehicle_state_bridge")
+  : Node("hyu_tmpc_state_bridge")
   {
     DeclareAndReadParameters();
     ValidateConfig();
@@ -77,38 +77,38 @@ private:
   void DeclareAndReadParameters()
   {
     localization_topic_ = declare_parameter<std::string>(
-      "tum_vehicle_state_bridge/localization_topic", "/localization/ego_odom");
+      "hyu_tmpc_state_bridge/localization_topic", "/localization/ego_odom");
     car_state_topic_ = declare_parameter<std::string>(
-      "tum_vehicle_state_bridge/car_state_topic", "/wheel_odometry/car_state");
+      "hyu_tmpc_state_bridge/car_state_topic", "/wheel_odometry/car_state");
     wheel_speeds_topic_ = declare_parameter<std::string>(
-      "tum_vehicle_state_bridge/wheel_speeds_topic", "/ros_can/wheel_speeds");
+      "hyu_tmpc_state_bridge/wheel_speeds_topic", "/ros_can/wheel_speeds");
     output_topic_ = declare_parameter<std::string>(
-      "tum_vehicle_state_bridge/output_topic", "/tmpc/vehicle_state");
+      "hyu_tmpc_state_bridge/output_topic", "/tmpc/vehicle_state");
 
     publish_rate_hz_ = declare_parameter<double>(
-      "tum_vehicle_state_bridge/publish_rate_hz", 100.0);
+      "hyu_tmpc_state_bridge/publish_rate_hz", 100.0);
     localization_timeout_sec_ = declare_parameter<double>(
-      "tum_vehicle_state_bridge/localization_timeout_sec", 0.2);
+      "hyu_tmpc_state_bridge/localization_timeout_sec", 0.2);
     car_state_timeout_sec_ = declare_parameter<double>(
-      "tum_vehicle_state_bridge/car_state_timeout_sec", 0.2);
+      "hyu_tmpc_state_bridge/car_state_timeout_sec", 0.2);
     wheel_speeds_timeout_sec_ = declare_parameter<double>(
-      "tum_vehicle_state_bridge/wheel_speeds_timeout_sec", 0.2);
+      "hyu_tmpc_state_bridge/wheel_speeds_timeout_sec", 0.2);
 
     const auto se_status = declare_parameter<int64_t>(
-      "tum_vehicle_state_bridge/se_status", 2);
+      "hyu_tmpc_state_bridge/se_status", 2);
     const auto se_state = declare_parameter<int64_t>(
-      "tum_vehicle_state_bridge/se_state", 1);
+      "hyu_tmpc_state_bridge/se_state", 1);
     se_status_ = static_cast<uint16_t>(se_status);
     se_state_ = static_cast<uint16_t>(se_state);
     valid_imu_default_ = declare_parameter<bool>(
-      "tum_vehicle_state_bridge/valid_imu_default", true);
+      "hyu_tmpc_state_bridge/valid_imu_default", true);
     min_speed_for_beta_mps_ = declare_parameter<double>(
-      "tum_vehicle_state_bridge/min_speed_for_beta_mps", 0.1);
+      "hyu_tmpc_state_bridge/min_speed_for_beta_mps", 0.1);
     // Matches the plant's command transport delay (eufs controlDelay).
     prediction_horizon_sec_ = declare_parameter<double>(
-      "tum_vehicle_state_bridge/prediction_horizon_sec", 0.2);
+      "hyu_tmpc_state_bridge/prediction_horizon_sec", 0.2);
     ax_vel_filter_tau_sec_ = declare_parameter<double>(
-      "tum_vehicle_state_bridge/ax_vel_filter_tau_sec", 0.1);
+      "hyu_tmpc_state_bridge/ax_vel_filter_tau_sec", 0.1);
   }
 
   void ValidateConfig() const
@@ -343,7 +343,7 @@ private:
     output.se_state = se_state_;
     output.x_m = predicted_x_m;
     output.y_m = predicted_y_m;
-    output.psi_rad = tum_vehicle_state_bridge::RosYawToFormulaHeading(predicted_yaw_rad);
+    output.psi_rad = hyu_tmpc_state_bridge::RosYawToFormulaHeading(predicted_yaw_rad);
     output.dpsi_radps = localization.twist.twist.angular.z;
     output.vx_mps = vx_mps;
     output.vy_mps = vy_mps;

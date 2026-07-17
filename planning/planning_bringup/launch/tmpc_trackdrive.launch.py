@@ -124,18 +124,18 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     vehicle_state_bridge = Node(
-        package="tum_vehicle_state_bridge",
-        executable="tum_vehicle_state_bridge",
-        name="tum_vehicle_state_bridge",
+        package="hyu_tmpc_state_bridge",
+        executable="hyu_tmpc_state_bridge",
+        name="hyu_tmpc_state_bridge",
         output="screen",
         parameters=[
             {
                 "use_sim_time": use_sim_time,
-                "tum_vehicle_state_bridge/localization_topic": values["localization_topic"],
-                "tum_vehicle_state_bridge/car_state_topic": values["vehicle_state_car_state_topic"],
-                "tum_vehicle_state_bridge/wheel_speeds_topic": values["wheel_speeds_topic"],
-                "tum_vehicle_state_bridge/output_topic": values["tmpc_vehicle_state_topic"],
-                "tum_vehicle_state_bridge/publish_rate_hz": publish_rate,
+                "hyu_tmpc_state_bridge/localization_topic": values["localization_topic"],
+                "hyu_tmpc_state_bridge/car_state_topic": values["vehicle_state_car_state_topic"],
+                "hyu_tmpc_state_bridge/wheel_speeds_topic": values["wheel_speeds_topic"],
+                "hyu_tmpc_state_bridge/output_topic": values["tmpc_vehicle_state_topic"],
+                "hyu_tmpc_state_bridge/publish_rate_hz": publish_rate,
             }
         ],
     )
@@ -186,9 +186,9 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     selector = Node(
-        package="tmpc_cmd_selector",
-        executable="tmpc_cmd_selector",
-        name="tmpc_cmd_selector",
+        package="hyu_cmd_selector",
+        executable="hyu_cmd_selector",
+        name="hyu_cmd_selector",
         output="screen",
         parameters=[
             {

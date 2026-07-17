@@ -1,8 +1,8 @@
-#include "tum_vehicle_state_bridge/heading_conversion.hpp"
+#include "hyu_tmpc_state_bridge/heading_conversion.hpp"
 
 #include <cmath>
 
-namespace tum_vehicle_state_bridge
+namespace hyu_tmpc_state_bridge
 {
 namespace
 {
@@ -28,4 +28,4 @@ double RosYawToFormulaHeading(double ros_yaw_rad)
   return NormalizeAngle(ros_yaw_rad - 0.5 * kPi);
 }
 
-}  // namespace tum_vehicle_state_bridge
+}  // namespace hyu_tmpc_state_bridge
