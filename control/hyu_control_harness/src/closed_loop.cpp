@@ -1,4 +1,4 @@
-#include "control_harness/closed_loop.hpp"
+#include "hyu_control_harness/closed_loop.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -12,7 +12,7 @@
 
 #include "eufs_models/dynamic_bicycle.hpp"
 
-namespace control_harness
+namespace hyu_control_harness
 {
 
 namespace
@@ -497,4 +497,4 @@ HarnessResult runMapHarness(const HarnessConfig & config)
   return runMapHarness(config, *track);
 }
 
-}  // namespace control_harness
+}  // namespace hyu_control_harness

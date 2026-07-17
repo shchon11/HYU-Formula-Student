@@ -3,7 +3,7 @@
 #include <iostream>
 #include <string>
 
-#include "control_harness/closed_loop.hpp"
+#include "hyu_control_harness/closed_loop.hpp"
 
 namespace
 {
@@ -27,7 +27,7 @@ Prints one JSON object with the run metrics to stdout.
 )";
 
 bool parseArg(const std::string & key, const std::string & value,
-  control_harness::HarnessConfig & config)
+  hyu_control_harness::HarnessConfig & config)
 {
   auto & controller = config.controller;
   auto & planner = config.planner;
@@ -111,11 +111,11 @@ bool parseArg(const std::string & key, const std::string & value,
 
 int main(int argc, char ** argv)
 {
-  control_harness::HarnessConfig config;
-  config.controller = control_harness::trackdriveControllerConfig();
-  config.lut_model = control_harness::trackdriveLutModel();
-  config.lut_grid = control_harness::trackdriveLutGrid();
-  config.planner = control_harness::trackdrivePlannerConfig();
+  hyu_control_harness::HarnessConfig config;
+  config.controller = hyu_control_harness::trackdriveControllerConfig();
+  config.lut_model = hyu_control_harness::trackdriveLutModel();
+  config.lut_grid = hyu_control_harness::trackdriveLutGrid();
+  config.planner = hyu_control_harness::trackdrivePlannerConfig();
 
   for (int i = 1; i < argc; ++i) {
     const std::string arg(argv[i]);
@@ -134,7 +134,7 @@ int main(int argc, char ** argv)
     return 2;
   }
 
-  const auto result = control_harness::runMapHarness(config);
+  const auto result = hyu_control_harness::runMapHarness(config);
   std::cout << result.toJson() << std::endl;
   return result.dnf ? 1 : 0;
 }

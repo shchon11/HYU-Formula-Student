@@ -1,11 +1,11 @@
-#include "control_harness/track.hpp"
+#include "hyu_control_harness/track.hpp"
 
 #include <cmath>
 #include <fstream>
 #include <limits>
 #include <sstream>
 
-namespace control_harness
+namespace hyu_control_harness
 {
 
 namespace
@@ -172,4 +172,4 @@ double Centerline::wrappedDelta(double s_prev, double s_next) const
   return delta;
 }
 
-}  // namespace control_harness
+}  // namespace hyu_control_harness

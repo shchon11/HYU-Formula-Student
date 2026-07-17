@@ -1,4 +1,4 @@
-# control_harness
+# hyu_control_harness
 
 Headless closed-loop controller tuning harness. Runs the real planning/control
 code against the real simulator plant, without Gazebo or a ROS graph, at ~45x
@@ -33,7 +33,7 @@ latency noiseless loop is too optimistic to tune against.
 ## Usage
 
 ```bash
-./install/control_harness/lib/control_harness/map_harness \
+./install/hyu_control_harness/lib/hyu_control_harness/map_harness \
   track=src/sim/eufs_sim/eufs_tracks/csv/trackdrive_kase2026.csv \
   plant_yaml=src/sim/eufs_sim/eufs_racecar/robots/eufs/configDry.yaml \
   map_lookahead_max_m=5.0 two_sided_speed_mps=4.5 \
@@ -48,8 +48,8 @@ trackdrive configs (`pure_pursuit_controller.yaml`, `local_planner.yaml`).
 Grid sweeps (cartesian product, parallel, ranked summary + CSV):
 
 ```bash
-python3 src/control/control_harness/scripts/sweep_map.py \
-  --bin install/control_harness/lib/control_harness/map_harness \
+python3 src/control/hyu_control_harness/scripts/sweep_map.py \
+  --bin install/hyu_control_harness/lib/hyu_control_harness/map_harness \
   --track src/sim/eufs_sim/eufs_tracks/csv/trackdrive_kase2026.csv \
   --plant-yaml src/sim/eufs_sim/eufs_racecar/robots/eufs/configDry.yaml \
   --grid map_lookahead_max_m=3.0,4.0,5.0,6.0 \

@@ -3,12 +3,12 @@
 #include <string>
 #include <vector>
 
-#include "control_harness/track.hpp"
+#include "hyu_control_harness/track.hpp"
 #include "local_planner/local_path_builder.hpp"
 #include "pure_pursuit_controller/controller.hpp"
 #include "pure_pursuit_controller/steering_lookup.hpp"
 
-namespace control_harness
+namespace hyu_control_harness
 {
 
 // Closed-loop chain mirrored from the live stack:
@@ -92,4 +92,4 @@ struct HarnessResult
 HarnessResult runMapHarness(const HarnessConfig & config, const Track & track);
 HarnessResult runMapHarness(const HarnessConfig & config);
 
-}  // namespace control_harness
+}  // namespace hyu_control_harness

@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace control_harness
+namespace hyu_control_harness
 {
 
 struct Vec2
@@ -70,4 +70,4 @@ private:
   double length_m_{0.0};
 };
 
-}  // namespace control_harness
+}  // namespace hyu_control_harness

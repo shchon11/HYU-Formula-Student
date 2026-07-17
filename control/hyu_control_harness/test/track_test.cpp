@@ -2,9 +2,9 @@
 
 #include <cmath>
 
-#include "control_harness/track.hpp"
+#include "hyu_control_harness/track.hpp"
 
-namespace ch = control_harness;
+namespace ch = hyu_control_harness;
 
 namespace
 {
