@@ -177,6 +177,21 @@ python3 "$SCRIPTS/drive_track.py" \
     > "$LOG_DIR/drive.log" 2>&1 &
 PIDS+=($!)
 
+# Fail fast instead of hanging when the simulator dies mid-run: the
+# evaluator counts SIM time and waits forever once the clock stops. The
+# patched gazebo segfaults roughly 1 run in 10 under GPU contention, and an
+# unattended batch must not wedge on it.
+(
+    while kill -0 "$EVAL_PID" 2>/dev/null; do
+        if ! pgrep -x gzserver >/dev/null 2>&1; then
+            echo "gzserver died mid-run — aborting this run" >&2
+            kill "$EVAL_PID" 2>/dev/null
+            break
+        fi
+        sleep 5
+    done
+) &
+
 wait $EVAL_PID
 EVAL_RC=$?
 echo "== evaluator finished (rc=$EVAL_RC) =="
