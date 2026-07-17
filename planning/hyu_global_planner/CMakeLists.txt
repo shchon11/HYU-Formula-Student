@@ -135,7 +135,7 @@ install(DIRECTORY
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
 
-  get_filename_component(GLOBAL_PLANNER_SRC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+  get_filename_component(HYU_GLOBAL_PLANNER_SRC_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 
   foreach(test_target
       slam_boundary_ordering_test
@@ -148,7 +148,7 @@ if(BUILD_TESTING)
     ament_add_gtest(${test_target} test/${test_target}.cpp)
     target_link_libraries(${test_target} hyu_global_planner_slam_geometry)
     target_compile_definitions(${test_target} PRIVATE
-      GLOBAL_PLANNER_SRC_ROOT="${GLOBAL_PLANNER_SRC_ROOT}")
+      HYU_GLOBAL_PLANNER_SRC_ROOT="${HYU_GLOBAL_PLANNER_SRC_ROOT}")
     ament_target_dependencies(${test_target}
       hyu_msgs
       nav_msgs
