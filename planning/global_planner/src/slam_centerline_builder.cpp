@@ -204,6 +204,15 @@ bool hasInvalidNearestTrackWidth(
   const SlamCenterlineConfig & config,
   std::string & reason)
 {
+  // A single off-width cone must not reject the whole map: a missing cone
+  // (its neighbour's nearest opposite jumps to the next one) or a lone
+  // colour misclassification (a blue and yellow reading 1.1 m apart) are
+  // routine local defects the centerline builder already skips by pairing.
+  // Only a WIDESPREAD failure (crossed/swapped boundaries) is a genuinely
+  // wrong map — count the violators and reject on the same 1/4 fraction the
+  // downstream width check uses, so the two gates agree.
+  std::size_t total = 0U;
+  std::size_t violations = 0U;
   for (const auto * points : {&blue_points, &yellow_points}) {
     const auto & opposite = points == &blue_points ? yellow_points : blue_points;
     for (const auto & point : *points) {
@@ -211,11 +220,15 @@ bool hasInvalidNearestTrackWidth(
       for (const auto & candidate : opposite) {
         best_width = std::min(best_width, distance(point, candidate));
       }
+      ++total;
       if (best_width < config.min_track_width_m || best_width > config.max_track_width_m) {
-        reason = "invalid_width";
-        return true;
+        ++violations;
       }
     }
+  }
+  if (total > 0U && violations > total / 4U) {
+    reason = "invalid_width";
+    return true;
   }
   return false;
 }
