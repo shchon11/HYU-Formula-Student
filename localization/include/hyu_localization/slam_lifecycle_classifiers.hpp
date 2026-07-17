@@ -4,8 +4,8 @@
 // license that can be found in the LICENSE file or at
 // https://opensource.org/licenses/MIT.
 
-#ifndef EUFS_GRAPH_SLAM__SLAM_LIFECYCLE_CLASSIFIERS_HPP_
-#define EUFS_GRAPH_SLAM__SLAM_LIFECYCLE_CLASSIFIERS_HPP_
+#ifndef HYU_LOCALIZATION__SLAM_LIFECYCLE_CLASSIFIERS_HPP_
+#define HYU_LOCALIZATION__SLAM_LIFECYCLE_CLASSIFIERS_HPP_
 
 #include <algorithm>
 #include <cmath>
@@ -360,4 +360,4 @@ inline const char * toString(LoopConfirmationReason reason)
 
 }  // namespace hyu_localization
 
-#endif  // EUFS_GRAPH_SLAM__SLAM_LIFECYCLE_CLASSIFIERS_HPP_
+#endif  // HYU_LOCALIZATION__SLAM_LIFECYCLE_CLASSIFIERS_HPP_

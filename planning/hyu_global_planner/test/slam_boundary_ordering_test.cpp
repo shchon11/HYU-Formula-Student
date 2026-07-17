@@ -8,7 +8,7 @@ namespace hyu_global_planner::test
 
 TEST(SlamBoundaryOrdering, OrdersSmallTrackAsClosedBoundaries)
 {
-  const auto map = loadConeMapCsv("eufs_sim/eufs_tracks/csv/small_track.csv");
+  const auto map = loadConeMapCsv("sim/eufs_sim/eufs_tracks/csv/small_track.csv");
   std::vector<PlannerPoint> ordered_blue;
   std::vector<PlannerPoint> ordered_yellow;
   std::string reason;
@@ -25,7 +25,7 @@ TEST(SlamBoundaryOrdering, OrdersSmallTrackAsClosedBoundaries)
 
 TEST(SlamBoundaryOrdering, HandlesPeanutCloseBranchesWithoutLargeBoundaryJump)
 {
-  const auto map = loadConeMapCsv("eufs_sim/eufs_tracks/csv/peanut.csv");
+  const auto map = loadConeMapCsv("sim/eufs_sim/eufs_tracks/csv/peanut.csv");
   std::vector<PlannerPoint> ordered_blue;
   std::vector<PlannerPoint> ordered_yellow;
   std::string reason;

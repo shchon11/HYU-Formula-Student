@@ -1,5 +1,5 @@
-#ifndef TMPC_CMD_SELECTOR__SELECTOR_POLICY_HPP_
-#define TMPC_CMD_SELECTOR__SELECTOR_POLICY_HPP_
+#ifndef HYU_CMD_SELECTOR__SELECTOR_POLICY_HPP_
+#define HYU_CMD_SELECTOR__SELECTOR_POLICY_HPP_
 
 #include <optional>
 #include <string>
@@ -110,4 +110,4 @@ const char * ToString(SelectorStatus status);
 
 }  // namespace hyu_cmd_selector
 
-#endif  // TMPC_CMD_SELECTOR__SELECTOR_POLICY_HPP_
+#endif  // HYU_CMD_SELECTOR__SELECTOR_POLICY_HPP_

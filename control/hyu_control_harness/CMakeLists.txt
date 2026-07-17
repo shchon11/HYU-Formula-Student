@@ -51,7 +51,7 @@ if(BUILD_TESTING)
   ament_add_gtest(closed_loop_test test/closed_loop_test.cpp TIMEOUT 180)
   target_link_libraries(closed_loop_test hyu_control_harness_core)
   target_compile_definitions(closed_loop_test PRIVATE
-    "PLANT_CONFIG_PATH=\"${CMAKE_CURRENT_SOURCE_DIR}/../eufs_sim/eufs_racecar/robots/eufs/configDry.yaml\"")
+    "PLANT_CONFIG_PATH=\"${CMAKE_CURRENT_SOURCE_DIR}/../../sim/eufs_sim/eufs_racecar/robots/eufs/configDry.yaml\"")
 endif()
 
 ament_package()

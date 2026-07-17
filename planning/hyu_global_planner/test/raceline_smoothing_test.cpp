@@ -321,7 +321,7 @@ TEST(MinimumCurvatureRaceline, RunsWideInClipsApexAndTracksOut)
 // than the pure centerline it was turned on to improve.
 TEST(MinimumCurvatureRaceline, ShippedTrackFlattensCorners)
 {
-  const std::string track = "eufs_sim/eufs_tracks/csv/small_track.csv";
+  const std::string track = "sim/eufs_sim/eufs_tracks/csv/small_track.csv";
   const auto map = loadConeMapCsv(track);
   std::vector<PlannerWaypoint> centerline;
   std::vector<PlannerWaypoint> raceline;

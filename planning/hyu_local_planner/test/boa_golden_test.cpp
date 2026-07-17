@@ -18,7 +18,7 @@
 // this file byte-identical, or regenerate it as an explicitly reviewed,
 // deliberate behavior change:
 //
-//   LOCAL_PLANNER_WRITE_GOLDEN=1 ./hyu_local_planner_boa_golden_test
+//   HYU_LOCAL_PLANNER_WRITE_GOLDEN=1 ./hyu_local_planner_boa_golden_test
 //
 // The pose set reuses the chicane_fold_test midline walk (nearest-neighbour
 // over the blue ring, each blue paired with its nearest yellow) subsampled to
@@ -190,7 +190,7 @@ std::string renderGolden()
   std::ostringstream out;
   out << std::setprecision(17);
   out << "# boa_constrictor golden waypoints; regenerate with"
-      << " LOCAL_PLANNER_WRITE_GOLDEN=1\n";
+      << " HYU_LOCAL_PLANNER_WRITE_GOLDEN=1\n";
   for (std::size_t i = 0; i < poses.size(); ++i) {
     const Pose & pose = poses[i];
     const BuildResult result = buildLocalPath(vehicleFrame(track, pose), config);
@@ -217,7 +217,7 @@ TEST(BoaGolden, WaypointsMatchGoldenBaseline)
   const std::string current = renderGolden();
   ASSERT_FALSE(current.empty());
 
-  if (std::getenv("LOCAL_PLANNER_WRITE_GOLDEN") != nullptr) {
+  if (std::getenv("HYU_LOCAL_PLANNER_WRITE_GOLDEN") != nullptr) {
     std::ofstream out(BOA_GOLDEN_PATH, std::ios::trunc);
     ASSERT_TRUE(out.is_open()) << BOA_GOLDEN_PATH;
     out << current;
@@ -227,7 +227,7 @@ TEST(BoaGolden, WaypointsMatchGoldenBaseline)
 
   std::ifstream in(BOA_GOLDEN_PATH);
   ASSERT_TRUE(in.is_open())
-    << BOA_GOLDEN_PATH << " missing; run once with LOCAL_PLANNER_WRITE_GOLDEN=1";
+    << BOA_GOLDEN_PATH << " missing; run once with HYU_LOCAL_PLANNER_WRITE_GOLDEN=1";
   std::stringstream stored;
   stored << in.rdbuf();
 
@@ -253,7 +253,7 @@ TEST(BoaGolden, WaypointsMatchGoldenBaseline)
              << (lhs_ok ? lhs_line : "<eof>") << "\n  golden:  "
              << (rhs_ok ? rhs_line : "<eof>")
              << "\nIf this change is intentional, regenerate with"
-             << " LOCAL_PLANNER_WRITE_GOLDEN=1 and review the diff.";
+             << " HYU_LOCAL_PLANNER_WRITE_GOLDEN=1 and review the diff.";
     }
   }
   FAIL() << "golden content mismatch";  // unreachable guard

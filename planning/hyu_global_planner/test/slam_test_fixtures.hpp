@@ -31,7 +31,7 @@ inline std::vector<std::string> splitCsvLine(const std::string & line)
 
 inline std::string fixturePath(const std::string & relative)
 {
-  return std::string(GLOBAL_PLANNER_SRC_ROOT) + "/" + relative;
+  return std::string(HYU_GLOBAL_PLANNER_SRC_ROOT) + "/" + relative;
 }
 
 inline hyu_msgs::msg::ConeArrayWithCovariance loadConeMapCsv(const std::string & relative)

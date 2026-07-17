@@ -1,5 +1,5 @@
-#ifndef TUM_MPC_OUTPUT_BRIDGE__COMMAND_CONVERSION_HPP_
-#define TUM_MPC_OUTPUT_BRIDGE__COMMAND_CONVERSION_HPP_
+#ifndef HYU_TMPC_OUTPUT_BRIDGE__COMMAND_CONVERSION_HPP_
+#define HYU_TMPC_OUTPUT_BRIDGE__COMMAND_CONVERSION_HPP_
 
 #include <cstdint>
 
@@ -80,4 +80,4 @@ const char * CommandStateName(CommandState state);
 
 }  // namespace hyu_tmpc_output_bridge
 
-#endif  // TUM_MPC_OUTPUT_BRIDGE__COMMAND_CONVERSION_HPP_
+#endif  // HYU_TMPC_OUTPUT_BRIDGE__COMMAND_CONVERSION_HPP_

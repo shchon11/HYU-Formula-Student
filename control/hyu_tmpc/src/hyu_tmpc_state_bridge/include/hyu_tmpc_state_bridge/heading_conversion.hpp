@@ -1,5 +1,5 @@
-#ifndef TUM_VEHICLE_STATE_BRIDGE__HEADING_CONVERSION_HPP_
-#define TUM_VEHICLE_STATE_BRIDGE__HEADING_CONVERSION_HPP_
+#ifndef HYU_TMPC_STATE_BRIDGE__HEADING_CONVERSION_HPP_
+#define HYU_TMPC_STATE_BRIDGE__HEADING_CONVERSION_HPP_
 
 namespace hyu_tmpc_state_bridge
 {
@@ -13,4 +13,4 @@ double RosYawToFormulaHeading(double ros_yaw_rad);
 
 }  // namespace hyu_tmpc_state_bridge
 
-#endif  // TUM_VEHICLE_STATE_BRIDGE__HEADING_CONVERSION_HPP_
+#endif  // HYU_TMPC_STATE_BRIDGE__HEADING_CONVERSION_HPP_

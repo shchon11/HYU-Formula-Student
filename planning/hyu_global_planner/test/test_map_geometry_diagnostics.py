@@ -8,7 +8,7 @@ from pathlib import Path
 
 SRC_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = SRC_ROOT / "planning/hyu_global_planner/scripts/map_geometry_diagnostics.py"
-BAD_WIDTH_MAP = SRC_ROOT / "hyu_localization/map/map_20260713_002645.csv"
+BAD_WIDTH_MAP = SRC_ROOT / "localization/map/map_20260713_002645.csv"
 
 
 def run_diagnostic(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -80,7 +80,7 @@ def test_expect_valid_postfix_rejects_invalid_width_map() -> None:
 
 
 def test_rejects_missing_glob_when_no_inputs() -> None:
-    result = run_diagnostic(["--glob", "hyu_localization/map/no-such-map-*.csv"])
+    result = run_diagnostic(["--glob", "localization/map/no-such-map-*.csv"])
 
     assert result.returncode == 2
     assert "glob matched no files" in result.stderr

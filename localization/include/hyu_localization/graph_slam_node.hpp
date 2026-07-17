@@ -6,8 +6,8 @@
 // SIZE_OK: This integration only preserves topic/config compatibility; splitting
 // the legacy monolithic graph SLAM node declaration is outside this focused scope.
 
-#ifndef EUFS_GRAPH_SLAM__GRAPH_SLAM_NODE_HPP_
-#define EUFS_GRAPH_SLAM__GRAPH_SLAM_NODE_HPP_
+#ifndef HYU_LOCALIZATION__GRAPH_SLAM_NODE_HPP_
+#define HYU_LOCALIZATION__GRAPH_SLAM_NODE_HPP_
 
 #include <Eigen/Core>
 #include <g2o/core/sparse_optimizer.h>
@@ -592,4 +592,4 @@ private:
 
 }  // namespace hyu_localization
 
-#endif  // EUFS_GRAPH_SLAM__GRAPH_SLAM_NODE_HPP_
+#endif  // HYU_LOCALIZATION__GRAPH_SLAM_NODE_HPP_

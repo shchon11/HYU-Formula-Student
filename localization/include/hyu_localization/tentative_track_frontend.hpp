@@ -4,8 +4,8 @@
 // license that can be found in the LICENSE file or at
 // https://opensource.org/licenses/MIT.
 
-#ifndef EUFS_GRAPH_SLAM__TENTATIVE_TRACK_FRONTEND_HPP_
-#define EUFS_GRAPH_SLAM__TENTATIVE_TRACK_FRONTEND_HPP_
+#ifndef HYU_LOCALIZATION__TENTATIVE_TRACK_FRONTEND_HPP_
+#define HYU_LOCALIZATION__TENTATIVE_TRACK_FRONTEND_HPP_
 
 #include <Eigen/Core>
 #include <Eigen/LU>
@@ -541,4 +541,4 @@ private:
 
 }  // namespace hyu_localization
 
-#endif  // EUFS_GRAPH_SLAM__TENTATIVE_TRACK_FRONTEND_HPP_
+#endif  // HYU_LOCALIZATION__TENTATIVE_TRACK_FRONTEND_HPP_

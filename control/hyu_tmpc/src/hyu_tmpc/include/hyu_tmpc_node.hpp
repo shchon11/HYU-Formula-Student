@@ -1,5 +1,5 @@
-#ifndef HYU_FORMULAR_CONTROL_NODE_HPP_
-#define HYU_FORMULAR_CONTROL_NODE_HPP_
+#ifndef HYU_TMPC_NODE_HPP_
+#define HYU_TMPC_NODE_HPP_
 
 #include <mutex>
 
@@ -81,4 +81,4 @@ private:
   RT_MODEL_mvdc_mpc_T * mpc_model_{nullptr};
 };
 
-#endif  // HYU_FORMULAR_CONTROL_NODE_HPP_
+#endif  // HYU_TMPC_NODE_HPP_

@@ -38,8 +38,8 @@ INSTANTIATE_TEST_SUITE_P(
   ShippedCsvTracks,
   SlamCenterlineFixtureTest,
   ::testing::Values(
-    "eufs_sim/eufs_tracks/csv/small_track.csv",
-    "eufs_sim/eufs_tracks/csv/peanut.csv"));
+    "sim/eufs_sim/eufs_tracks/csv/small_track.csv",
+    "sim/eufs_sim/eufs_tracks/csv/peanut.csv"));
 
 // Regression for the arc-pinning bug: on a closed loop the ordered yellow's
 // front (arc 0) and back (arc = full length) are physically adjacent at the
@@ -175,7 +175,7 @@ TEST(SlamCenterlineBuilder, LiveSlamMapDoesNotFoldBackAtSeam)
 
 TEST(SlamCenterlineBuilder, WidthFixtureFailsClosedWithExplicitReason)
 {
-  const auto map = loadConeMapCsv("hyu_localization/map/map_20260713_002645.csv");
+  const auto map = loadConeMapCsv("localization/map/map_20260713_002645.csv");
   std::vector<PlannerWaypoint> waypoints{{1.0, 2.0, 3.0, 4.0, 5.0}};
   std::string reason;
 
@@ -199,7 +199,7 @@ TEST(SlamCenterlineBuilder, WidthFixtureFailsClosedWithExplicitReason)
 // Folding the markers into the boundary they flank halves that gap.
 TEST(SlamCenterlineBuilder, StartFinishGateIsBridgedFromCarStart)
 {
-  const std::string track = "eufs_sim/eufs_tracks/csv/small_track.csv";
+  const std::string track = "sim/eufs_sim/eufs_tracks/csv/small_track.csv";
   const auto map = loadConeMapCsv(track);
   ASSERT_EQ(map.big_orange_cones.size(), 4U) << "small_track should ship a 4-cone start/finish gate";
 
@@ -240,8 +240,8 @@ TEST(SlamCenterlineBuilder, StartFinishGateIsBridgedFromCarStart)
 // now rejects a seed whose ring does not close and retries from another.
 TEST(SlamCenterlineBuilder, ClosesFromEveryEgoPositionOnShippedTracks)
 {
-  for (const char * track : {"eufs_sim/eufs_tracks/csv/small_track.csv",
-      "eufs_sim/eufs_tracks/csv/peanut.csv",
+  for (const char * track : {"sim/eufs_sim/eufs_tracks/csv/small_track.csv",
+      "sim/eufs_sim/eufs_tracks/csv/peanut.csv",
       "planning/hyu_global_planner/test/fixtures/seam_fold_cone_map.csv"})
   {
     const auto map = loadConeMapCsv(track);
@@ -285,7 +285,7 @@ TEST(SlamCenterlineBuilder, ClosesFromEveryEgoPositionOnShippedTracks)
 // Pin the invariant outright: the ego must not move the path at all.
 TEST(SlamCenterlineBuilder, PathIsIndependentOfEgoPosition)
 {
-  const auto map = loadConeMapCsv("eufs_sim/eufs_tracks/csv/small_track.csv");
+  const auto map = loadConeMapCsv("sim/eufs_sim/eufs_tracks/csv/small_track.csv");
   std::string reason;
   std::vector<PlannerWaypoint> reference;
   ASSERT_TRUE(

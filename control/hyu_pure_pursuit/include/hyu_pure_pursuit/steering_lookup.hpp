@@ -1,5 +1,5 @@
-#ifndef PURE_PURSUIT_CONTROLLER__STEERING_LOOKUP_HPP_
-#define PURE_PURSUIT_CONTROLLER__STEERING_LOOKUP_HPP_
+#ifndef HYU_PURE_PURSUIT__STEERING_LOOKUP_HPP_
+#define HYU_PURE_PURSUIT__STEERING_LOOKUP_HPP_
 
 #include <cstddef>
 #include <optional>
@@ -130,4 +130,4 @@ SteeringLookup buildSteeringLookup(const VehicleModel & model, const LutGrid & g
 
 }  // namespace hyu_pure_pursuit
 
-#endif  // PURE_PURSUIT_CONTROLLER__STEERING_LOOKUP_HPP_
+#endif  // HYU_PURE_PURSUIT__STEERING_LOOKUP_HPP_

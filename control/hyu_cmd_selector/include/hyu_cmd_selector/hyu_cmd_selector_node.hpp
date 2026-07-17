@@ -1,5 +1,5 @@
-#ifndef TMPC_CMD_SELECTOR__TMPC_CMD_SELECTOR_NODE_HPP_
-#define TMPC_CMD_SELECTOR__TMPC_CMD_SELECTOR_NODE_HPP_
+#ifndef HYU_CMD_SELECTOR__HYU_CMD_SELECTOR_NODE_HPP_
+#define HYU_CMD_SELECTOR__HYU_CMD_SELECTOR_NODE_HPP_
 
 #include <chrono>
 #include <memory>
@@ -105,4 +105,4 @@ private:
 
 }  // namespace hyu_cmd_selector
 
-#endif  // TMPC_CMD_SELECTOR__TMPC_CMD_SELECTOR_NODE_HPP_
+#endif  // HYU_CMD_SELECTOR__HYU_CMD_SELECTOR_NODE_HPP_

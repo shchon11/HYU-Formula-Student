@@ -1,5 +1,5 @@
-#ifndef HYU_FORMULAR_CONTROL_CONFIG_HPP_
-#define HYU_FORMULAR_CONTROL_CONFIG_HPP_
+#ifndef HYU_TMPC_CONFIG_HPP_
+#define HYU_TMPC_CONFIG_HPP_
 
 #include <string>
 
@@ -48,4 +48,4 @@ struct HyuFormulaControlConfig
   double drive_force_max_n{6000.0};
 };
 
-#endif  // HYU_FORMULAR_CONTROL_CONFIG_HPP_
+#endif  // HYU_TMPC_CONFIG_HPP_

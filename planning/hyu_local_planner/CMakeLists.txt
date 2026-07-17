@@ -88,7 +88,7 @@ if(BUILD_TESTING)
   ament_add_gtest(hyu_local_planner_boa_golden_test test/boa_golden_test.cpp)
   target_link_libraries(hyu_local_planner_boa_golden_test hyu_local_planner_core)
   target_compile_definitions(hyu_local_planner_boa_golden_test PRIVATE
-    BOA_TRACK_CSV="${CMAKE_CURRENT_SOURCE_DIR}/../../eufs_sim/eufs_tracks/csv/boa_constrictor.csv"
+    BOA_TRACK_CSV="${CMAKE_CURRENT_SOURCE_DIR}/../../sim/eufs_sim/eufs_tracks/csv/boa_constrictor.csv"
     BOA_GOLDEN_PATH="${CMAKE_CURRENT_SOURCE_DIR}/test/data/boa_golden.txt")
 
   ament_add_gtest(hyu_local_planner_input_policy_test test/hyu_local_planner_input_policy_test.cpp)
@@ -100,7 +100,7 @@ if(BUILD_TESTING)
   ament_add_gtest(hyu_local_planner_chicane_fold_test test/chicane_fold_test.cpp)
   target_link_libraries(hyu_local_planner_chicane_fold_test hyu_local_planner_core)
   target_compile_definitions(hyu_local_planner_chicane_fold_test PRIVATE
-    BOA_TRACK_CSV="${CMAKE_CURRENT_SOURCE_DIR}/../../eufs_sim/eufs_tracks/csv/boa_constrictor.csv")
+    BOA_TRACK_CSV="${CMAKE_CURRENT_SOURCE_DIR}/../../sim/eufs_sim/eufs_tracks/csv/boa_constrictor.csv")
 
   ament_add_gtest(hyu_local_planner_validity_test
     test/hyu_local_planner_validity_test.cpp
