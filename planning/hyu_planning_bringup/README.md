@@ -11,14 +11,14 @@ launches remain available for standalone use.
 cd /home/shchon11/fsk
 source /opt/ros/humble/setup.zsh
 source install/setup.zsh
-ros2 launch planning_bringup local_global_planning.launch.py
+ros2 launch hyu_planning_bringup local_global_planning.launch.py
 ```
 
 GLOBAL 구간에서 Formula TMPC를 사용하고 LOCAL 구간에서는 Pure Pursuit를
 유지하려면 hybrid launch를 사용합니다.
 
 ```zsh
-ros2 launch planning_bringup tmpc_trackdrive.launch.py
+ros2 launch hyu_planning_bringup tmpc_trackdrive.launch.py
 ```
 
 이 구성에서는 Pure Pursuit가 `/cmd/pure_pursuit`, TMPC bridge가 `/cmd/tmpc`를

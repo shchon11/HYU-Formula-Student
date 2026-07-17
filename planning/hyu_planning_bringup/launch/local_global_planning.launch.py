@@ -231,7 +231,7 @@ def generate_launch_description() -> LaunchDescription:
         condition=UnlessCondition(local_only),
     )
     skidpad_director = Node(
-        package="planning_bringup",
+        package="hyu_planning_bringup",
         executable="skidpad_director.py",
         name="skidpad_director",
         output="screen",
@@ -399,7 +399,7 @@ def generate_launch_description() -> LaunchDescription:
         remappings=controller_remappings,
     )
     stack_hud = Node(
-        package="planning_bringup",
+        package="hyu_planning_bringup",
         executable="stack_hud.py",
         name="stack_hud",
         output="screen",

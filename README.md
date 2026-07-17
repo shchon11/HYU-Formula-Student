@@ -447,7 +447,7 @@ sbg_ros2_driver/          SBG INS/GNSS ROS 드라이버 (vendored v3.3.2 — apt
 scripts/                  race.sh (자율 전체 스택 tmux 런처) + fsk-shellrc
 tools/gazebo-patches/     GPU LiDAR용 패치 Gazebo 11.10.2 빌드 킷 (SkyX 돔 제거 · 해상도 노브 → ~/opt/gazebo11-fsk)
 planning/
-  ├─ planning_bringup/    ★ planning 전체 조립 launch (아래 전부 + graph_slam + controller)
+  ├─ hyu_planning_bringup/    ★ planning 전체 조립 launch (아래 전부 + graph_slam + controller)
   ├─ local_planner/       라이브 콘 → 즉석 로컬 경로 (랩 1)
   ├─ global_planner/      SLAM 콘맵 → 전역 레이스라인
   ├─ frenet_conversion/   전역경로 기준 Frenet (s,d) — CTE의 원천

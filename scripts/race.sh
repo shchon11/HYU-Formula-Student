@@ -14,7 +14,7 @@
 # GNSS HUD) as the single clock-domain switch; it defaults to true because
 # this script always brings up the Gazebo sim.
 #
-# Brings up sim+perception, the whole planning_bringup graph (graph_slam +
+# Brings up sim+perception, the whole hyu_planning_bringup graph (graph_slam +
 # global/local planner + state machine + path_selector + pure-pursuit
 # controller), then arms the mission so the CONTROLLER drives the car itself —
 # no teleop. Panes self-sequence; a monitor pane shows the live path source /
@@ -220,7 +220,7 @@ tmux send-keys -t "$P_SIM" \
 # 1 · Full planning graph (starts its OWN graph_slam) ────────────────────────
 P_PLAN=$(tmux split-window -h -t "$P_SIM" -P -F '#{pane_id}')
 tmux send-keys -t "$P_PLAN" \
-  "$SRC echo '[② PLANNING: slam+global+local+SM+selector+controller] waiting for car…'; $WAIT_CAR; ros2 launch planning_bringup $PLAN_LAUNCH use_sim_time:=$USE_SIM_TIME graph_slam_ate_monitor:=true local_max_stamp_skew_sec:=2.0 local_max_input_age_sec:=3.0 local_max_start_distance_m:=8.0$PLAN_EXTRA" C-m
+  "$SRC echo '[② PLANNING: slam+global+local+SM+selector+controller] waiting for car…'; $WAIT_CAR; ros2 launch hyu_planning_bringup $PLAN_LAUNCH use_sim_time:=$USE_SIM_TIME graph_slam_ate_monitor:=true local_max_stamp_skew_sec:=2.0 local_max_input_age_sec:=3.0 local_max_start_distance_m:=8.0$PLAN_EXTRA" C-m
 
 # 2 · Arm the mission — then the controller drives autonomously ──────────────
 P_DRIVE=$(tmux split-window -v -t "$P_SIM" -P -F '#{pane_id}')

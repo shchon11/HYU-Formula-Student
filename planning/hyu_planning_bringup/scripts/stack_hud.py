@@ -453,7 +453,7 @@ class StackHud(Node):
         driving = st.get("as_state") == 2
 
         if self.debug.rx is None or not self.debug.fresh(2.0):
-            return "✕ PLANNING GRAPH SILENT — is planning_bringup up?", ERR
+            return "✕ PLANNING GRAPH SILENT — is hyu_planning_bringup up?", ERR
         if st.get("as_state") == 3:
             return "✕ EMERGENCY BRAKE (AS:EBS)", ERR
         if state == "STOP" or st.get("as_state") == 4:

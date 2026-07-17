@@ -29,7 +29,7 @@ The status values are `LOCAL_PP`, `GLOBAL_WAITING_TMPC`, `GLOBAL_TMPC`,
 Run the complete control/planning composition with:
 
 ```zsh
-ros2 launch planning_bringup tmpc_trackdrive.launch.py
+ros2 launch hyu_planning_bringup tmpc_trackdrive.launch.py
 ```
 
 기존 standard planning/Pure Pursuit launch는 먼저 종료해야 합니다. 실행 후

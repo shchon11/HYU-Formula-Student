@@ -48,7 +48,7 @@ except ImportError:
 
 class CTEMonitor(Node):
     # Node/executable name stays "ate_monitor" so existing launch arguments
-    # (graph_slam.launch.py ate_monitor:=..., planning_bringup
+    # (graph_slam.launch.py ate_monitor:=..., hyu_planning_bringup
     # graph_slam_ate_monitor:=...) keep working unchanged.
     def __init__(self, args):
         super().__init__("ate_monitor")

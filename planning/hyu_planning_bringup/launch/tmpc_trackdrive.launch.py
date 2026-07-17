@@ -91,7 +91,7 @@ def generate_launch_description() -> LaunchDescription:
     planning = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution(
-                [FindPackageShare("planning_bringup"), "launch", "local_global_planning.launch.py"]
+                [FindPackageShare("hyu_planning_bringup"), "launch", "local_global_planning.launch.py"]
             )
         ),
         launch_arguments={
