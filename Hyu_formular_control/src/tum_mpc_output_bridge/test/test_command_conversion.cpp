@@ -63,6 +63,27 @@ TEST(CommandConversion, ClampsAccelerationAndSteering)
   EXPECT_DOUBLE_EQ(negative.command.steering_angle_rad, -0.52);
 }
 
+TEST(CommandConversion, RejectsDivergedSteeringInsteadOfClampingIt)
+{
+  // Observed at a GLOBAL handoff far outside the tube: the QP returned
+  // -2.89 rad on a +-0.52 rad actuator. Clamping would forward a confident
+  // full-lock command; the guard must fail closed instead.
+  const auto diverged = BuildCommand(ValidInput(-2.89, 500.0), true, 0.01, ConversionConfig{});
+  EXPECT_EQ(diverged.state, CommandState::kDivergedSteering);
+  EXPECT_FALSE(diverged.valid());
+  EXPECT_DOUBLE_EQ(diverged.command.acceleration_mps2, -5.0);
+  EXPECT_DOUBLE_EQ(diverged.command.steering_angle_rad, 0.0);
+
+  // Just past the reject bound (3.0 * 0.52 = 1.56) fails; the model's own
+  // internal saturation (~1.04 rad) stays clamped-drivable.
+  EXPECT_EQ(
+    BuildCommand(ValidInput(1.57, 500.0), true, 0.01, ConversionConfig{}).state,
+    CommandState::kDivergedSteering);
+  const auto saturated = BuildCommand(ValidInput(1.04, 500.0), true, 0.01, ConversionConfig{});
+  ASSERT_TRUE(saturated.valid());
+  EXPECT_DOUBLE_EQ(saturated.command.steering_angle_rad, 0.52);
+}
+
 TEST(CommandConversion, RejectsNonFiniteMpcInputs)
 {
   auto nan_steering = ValidInput();

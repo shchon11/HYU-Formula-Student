@@ -13,6 +13,9 @@ namespace
 {
 constexpr std::size_t kTrajectoryPoints = 50;
 constexpr std::size_t kPredictionPoints = 41;
+// ~0.5 s at the 100 Hz loop: RTI iterations granted to a freshly reinitialized
+// MPC before its output is trusted again.
+constexpr int kPostResetSettleCycles = 50;
 
 TUMStateEstimationState ToStateEstimationState(uint16_t value)
 {
@@ -64,6 +67,14 @@ HyuFormulaControlNode::HyuFormulaControlNode()
     "hyu_formular_control/steering_angle_max_rad", cfg_.steering_angle_max_rad);
   this->declare_parameter("hyu_formular_control/drive_force_min_n", cfg_.drive_force_min_n);
   this->declare_parameter("hyu_formular_control/drive_force_max_n", cfg_.drive_force_max_n);
+  this->declare_parameter(
+    "hyu_formular_control/applied_command_topic", cfg_.applied_command_topic);
+  this->declare_parameter(
+    "hyu_formular_control/applied_command_timeout_sec", cfg_.applied_command_timeout_sec);
+  this->declare_parameter(
+    "hyu_formular_control/applied_command_mass_kg", cfg_.applied_command_mass_kg);
+  this->declare_parameter(
+    "hyu_formular_control/divergence_reset_factor", cfg_.divergence_reset_factor);
 
   ProcessParams();
   UpdateActuatorLimitations();
@@ -82,6 +93,9 @@ HyuFormulaControlNode::HyuFormulaControlNode()
   emergency_trajectory_sub_ = this->create_subscription<TumTrajectory>(
     cfg_.emergency_trajectory_topic, rclcpp::QoS(10),
     std::bind(&HyuFormulaControlNode::CallbackEmergencyTrajectory, this, std::placeholders::_1));
+  applied_command_sub_ = this->create_subscription<AppliedCommand>(
+    cfg_.applied_command_topic, rclcpp::QoS(10),
+    std::bind(&HyuFormulaControlNode::CallbackAppliedCommand, this, std::placeholders::_1));
   output_pub_ = this->create_publisher<TumMpcOutput>(cfg_.output_topic, rclcpp::QoS(10));
 
   const auto period_ms = static_cast<int64_t>(1000.0 / std::max(cfg_.loop_rate_hz, 1.0));
@@ -138,6 +152,14 @@ void HyuFormulaControlNode::ProcessParams()
     "hyu_formular_control/steering_angle_max_rad", cfg_.steering_angle_max_rad);
   this->get_parameter("hyu_formular_control/drive_force_min_n", cfg_.drive_force_min_n);
   this->get_parameter("hyu_formular_control/drive_force_max_n", cfg_.drive_force_max_n);
+  this->get_parameter(
+    "hyu_formular_control/applied_command_topic", cfg_.applied_command_topic);
+  this->get_parameter(
+    "hyu_formular_control/applied_command_timeout_sec", cfg_.applied_command_timeout_sec);
+  this->get_parameter(
+    "hyu_formular_control/applied_command_mass_kg", cfg_.applied_command_mass_kg);
+  this->get_parameter(
+    "hyu_formular_control/divergence_reset_factor", cfg_.divergence_reset_factor);
 }
 
 void HyuFormulaControlNode::CallbackVehicleState(const TumVehicleState::SharedPtr msg)
@@ -168,6 +190,21 @@ void HyuFormulaControlNode::CallbackEmergencyTrajectory(const TumTrajectory::Sha
   latest_emergency_trajectory_ = converted;
   last_emergency_trajectory_time_ = stamp;
   has_emergency_trajectory_ = true;
+}
+
+void HyuFormulaControlNode::CallbackAppliedCommand(const AppliedCommand::SharedPtr msg)
+{
+  if (!std::isfinite(msg->drive.steering_angle) || !std::isfinite(msg->drive.acceleration)) {
+    return;
+  }
+  VehicleControl applied{};
+  applied.RequestSteeringAngle_rad = msg->drive.steering_angle;
+  applied.RequestLongForce_N = msg->drive.acceleration * cfg_.applied_command_mass_kg;
+  const auto stamp = this->now();
+  std::lock_guard<std::mutex> lock(data_mutex_);
+  applied_vehicle_control_ = applied;
+  last_applied_command_time_ = stamp;
+  has_applied_command_ = true;
 }
 
 VehicleDynamicState HyuFormulaControlNode::ConvertVehicleState(const TumVehicleState & msg) const
@@ -243,8 +280,15 @@ void HyuFormulaControlNode::UpdateActuatorLimitations()
 
 bool HyuFormulaControlNode::IsPathMatchingValid(TUMPathMatchingState status) const
 {
-  return status == PM_VALID || status == PM_VALID_HIGHDEVIATION ||
-         status == PM_VALID_VERYHIGHDEVIATION;
+  // PM_VALID_VERYHIGHDEVIATION is deliberately NOT drivable: it means the car
+  // sits far outside the reference tube (seen at the GLOBAL handoff, where the
+  // ego is still on the lap-1 centerline while the reference is the raceline).
+  // The tube MPC solved from there diverges -- observed -2.89 rad steering on a
+  // 0.52 rad actuator -- and publishing it parked the car at full lock.
+  // Withholding the output makes the bridge report invalid, so the selector
+  // keeps Pure Pursuit driving the raceline until the deviation shrinks and
+  // TMPC can take over from a feasible state.
+  return status == PM_VALID || status == PM_VALID_HIGHDEVIATION;
 }
 
 void HyuFormulaControlNode::Run()
@@ -261,24 +305,30 @@ void HyuFormulaControlNode::Run()
   VehicleDynamicState vehicle_state{};
   Trajectory performance_trajectory{};
   Trajectory emergency_trajectory{};
+  VehicleControl applied_vehicle_control{};
   rclcpp::Time last_vehicle_state_time;
   rclcpp::Time last_performance_trajectory_time;
   rclcpp::Time last_emergency_trajectory_time;
+  rclcpp::Time last_applied_command_time;
   bool has_vehicle_state = false;
   bool has_performance_trajectory = false;
   bool has_emergency_trajectory = false;
+  bool has_applied_command = false;
 
   {
     std::lock_guard<std::mutex> lock(data_mutex_);
     vehicle_state = latest_vehicle_state_;
     performance_trajectory = latest_performance_trajectory_;
     emergency_trajectory = latest_emergency_trajectory_;
+    applied_vehicle_control = applied_vehicle_control_;
     last_vehicle_state_time = last_vehicle_state_time_;
     last_performance_trajectory_time = last_performance_trajectory_time_;
     last_emergency_trajectory_time = last_emergency_trajectory_time_;
+    last_applied_command_time = last_applied_command_time_;
     has_vehicle_state = has_vehicle_state_;
     has_performance_trajectory = has_performance_trajectory_;
     has_emergency_trajectory = has_emergency_trajectory_;
+    has_applied_command = has_applied_command_;
   }
 
   const auto now = this->now();
@@ -314,14 +364,50 @@ void HyuFormulaControlNode::Run()
   const bool enable_driving_controller =
     state_ok && performance_trajectory_ok && emergency_trajectory_ok && path_matching_valid;
 
+  // Feed back what the plant actually received (selector-owned /cmd), not this
+  // node's own last request: during Pure Pursuit phases the MPC's requests are
+  // never applied, and pretending they were poisons its internal learning --
+  // the first post-takeover commands then saturate in the wrong direction.
+  const bool applied_fresh = has_applied_command &&
+    ((now - last_applied_command_time).seconds() <= cfg_.applied_command_timeout_sec);
   mpc_model_->inputs->EnableEmergency = cfg_.enable_emergency;
   mpc_model_->inputs->TargetTrajectory = path_matching_model_->outputs->ActualTargetTrajectory;
   mpc_model_->inputs->VehicleDynamicState_p = vehicle_state;
   mpc_model_->inputs->EnableDrivingController = enable_driving_controller;
   mpc_model_->inputs->ActualTrajectoryPoint = path_matching_model_->outputs->ActualTrajectoryPoint;
-  mpc_model_->inputs->ActualVehicleControl = actual_vehicle_control_;
+  mpc_model_->inputs->ActualVehicleControl =
+    applied_fresh ? applied_vehicle_control : actual_vehicle_control_;
   mpc_model_->inputs->ActuatorLimitations_e = actuator_limitations_;
   mvdc_mpc_step(mpc_model_);
+
+  // Diverged-solution recovery: one RTI iteration per cycle cannot heal a
+  // diverged iterate, and the poisoned solution resurfaces at the next
+  // takeover as a saturated wrong-direction command. Reinitialize (initialize
+  // only -- terminate would free the model instance and permanently kill the
+  // chain) and hold publishing for a settle window so the fresh iterate
+  // re-converges before the bridge sees it. The bound sits ABOVE the model's
+  // own internal steering saturation (~2x the road-wheel limit, observed
+  // riding 1.04 rad on a 0.52 rad actuator): saturation is drivable after the
+  // bridge clamp, only a truly runaway solution (observed -2.89 rad) resets.
+  const double divergence_bound_rad = cfg_.divergence_reset_factor *
+    std::max(std::abs(cfg_.steering_angle_min_rad), std::abs(cfg_.steering_angle_max_rad));
+  const double raw_steering_rad = mpc_model_->outputs->RequestSteeringAngle_rad;
+  if (cfg_.divergence_reset_factor > 0.0 &&
+    (!std::isfinite(raw_steering_rad) || std::abs(raw_steering_rad) > divergence_bound_rad))
+  {
+    RCLCPP_WARN_THROTTLE(
+      this->get_logger(), *this->get_clock(), 1000,
+      "TMPC solution diverged (steering %.2f rad, bound %.2f); reinitializing the MPC model",
+      raw_steering_rad, divergence_bound_rad);
+    mvdc_mpc_initialize(mpc_model_);
+    actual_vehicle_control_ = VehicleControl{};
+    settle_cycles_remaining_ = kPostResetSettleCycles;
+    return;
+  }
+  if (settle_cycles_remaining_ > 0) {
+    --settle_cycles_remaining_;
+    return;
+  }
 
   if (!enable_driving_controller && !cfg_.publish_on_timeout) {
     RCLCPP_WARN_THROTTLE(

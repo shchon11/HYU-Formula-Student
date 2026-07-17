@@ -148,6 +148,12 @@ wpnt_publisher:
     tmpc_air_density_kgpm3: 1.22
     tmpc_vehicle_mass_kg: 225.0
     tmpc_acceleration_utilization_limit: 1.0
+    # TMPC reference-speed cap (0 disables). The raceline itself is drivable at
+    # ~9 m/s under MAP, but the tube MPC still fights the plant's 0.2 s command
+    # dead time; beyond ~7 m/s on tight tracks its corrections land too late
+    # (observed: steering saturation -> diverged QP at the first corner after
+    # takeover). Raise once the dead time is fully compensated.
+    tmpc_performance_speed_cap_mps: 6.5
 
     # The launch sets formula_north_zero for the CSV writer and ros_yaw for the
     # SLAM writer. Direct ros2 run defaults to the SLAM convention.

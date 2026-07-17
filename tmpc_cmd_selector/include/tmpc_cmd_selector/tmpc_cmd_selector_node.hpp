@@ -29,6 +29,23 @@ private:
   void OnTmpcCommand(const AckermannCommand::SharedPtr message);
   void OnTmpcValid(const std_msgs::msg::Bool::SharedPtr message);
   void OnTimer();
+  // Run the selection policy and publish the chosen command + status. Invoked
+  // both by the heartbeat timer and immediately whenever a fresh candidate
+  // command arrives, so a new Pure Pursuit / TMPC command reaches /cmd without
+  // waiting up to a full timer period. Under a coarse sim /clock (10 Hz) that
+  // resampling wait was ~100 ms of pure latency on top of the plant's control
+  // delay -- enough to blow the first corner and corrupt the map. The default
+  // single-threaded executor serializes this with the timer, so policy_ needs
+  // no extra locking.
+  //
+  // Publish discipline: the selector is a 1:1 RELAY, not a resampler. A
+  // forwarded source command is published exactly once per received message
+  // (tracked by sequence number), plus once immediately on a source switch, so
+  // in LOCAL the /cmd stream is message-for-message identical to Pure Pursuit
+  // publishing /cmd directly (the proven plain-trackdrive path). Only the
+  // safe-brake synthesizes at the timer rate -- it has no upstream message
+  // stream and the plant's 1 s command-staleness rule needs a heartbeat.
+  void EvaluateAndPublish();
 
   static double AgeSeconds(
     bool present, const rclcpp::Time & received, const rclcpp::Time & now);
@@ -45,6 +62,7 @@ private:
   double publish_rate_hz_{100.0};
   double safe_brake_mps2_{-5.0};
 
+  SelectorConfig selector_config_;
   SelectorPolicy policy_;
 
   mutable std::mutex data_mutex_;
@@ -52,6 +70,14 @@ private:
   bool stop_requested_{false};
   AckermannCommand local_command_;
   AckermannCommand tmpc_command_;
+  // Receive counters and relay bookkeeping: a stored command is forwarded at
+  // most once per received message (see EvaluateAndPublish).
+  uint64_t local_command_seq_{0U};
+  uint64_t tmpc_command_seq_{0U};
+  uint64_t last_forwarded_local_seq_{0U};
+  uint64_t last_forwarded_tmpc_seq_{0U};
+  CommandSource last_published_source_{CommandSource::kSafeBrake};
+  bool has_published_{false};
   bool tmpc_valid_{false};
   rclcpp::Time planning_state_time_{0, 0, RCL_ROS_TIME};
   rclcpp::Time stop_request_time_{0, 0, RCL_ROS_TIME};

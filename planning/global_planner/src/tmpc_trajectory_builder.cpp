@@ -291,7 +291,10 @@ bool buildPerformance(
     output.y_m[i] = point.y_m;
     output.psi_rad[i] = point.psi_rad;
     output.kappa_radpm[i] = point.kappa_radpm;
-    output.v_mps[i] = point.v_mps;
+    // Capped BEFORE recalculateAcceleration so the ax feed-forward stays
+    // consistent with the capped speed profile.
+    output.v_mps[i] = config.performance_speed_cap_mps > 0.0 ?
+      std::min(point.v_mps, config.performance_speed_cap_mps) : point.v_mps;
     output.banking_rad[i] = config.banking_rad;
     output.tube_l_m[i] = config.tube_l_m;
     output.tube_r_m[i] = config.tube_r_m;

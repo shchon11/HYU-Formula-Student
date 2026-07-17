@@ -206,6 +206,9 @@ TEST_F(TmpcCmdSelectorNodeTest, SelectsCommandsAndFallsBackOnGlobalFault)
 
   publishInputs("LOCAL", false);
   ASSERT_TRUE(spinUntilStatus("LOCAL_PP", 300ms));
+  // The relay publishes the switch command just before the status message;
+  // drain one more round so the command subscription has delivered it too.
+  spinFor(30ms);
   EXPECT_DOUBLE_EQ(last_output_.drive.speed, 3.0);
 }
 

@@ -27,6 +27,8 @@ SelectorConfig DeclareSelectorConfig(rclcpp::Node & node)
     "tmpc_valid_timeout_sec", config.tmpc_valid_timeout_sec);
   config.tmpc_ready_dwell_sec = node.declare_parameter<double>(
     "tmpc_ready_dwell_sec", config.tmpc_ready_dwell_sec);
+  config.max_steering_disagreement_rad = node.declare_parameter<double>(
+    "max_steering_disagreement_rad", config.max_steering_disagreement_rad);
   return config;
 }
 
@@ -49,7 +51,8 @@ TmpcCmdSelectorNode::TmpcCmdSelectorNode(const rclcpp::NodeOptions & options)
       "status_topic", "/tmpc/cmd_selector/status")),
   publish_rate_hz_(declare_parameter<double>("publish_rate_hz", 100.0)),
   safe_brake_mps2_(declare_parameter<double>("safe_brake_mps2", -5.0)),
-  policy_(DeclareSelectorConfig(*this))
+  selector_config_(DeclareSelectorConfig(*this)),
+  policy_(selector_config_)
 {
   if (planning_state_topic_.empty() || stop_request_topic_.empty() ||
     local_command_topic_.empty() || tmpc_command_topic_.empty() ||
@@ -118,19 +121,28 @@ void TmpcCmdSelectorNode::OnStopRequest(const std_msgs::msg::Bool::SharedPtr mes
 void TmpcCmdSelectorNode::OnLocalCommand(const AckermannCommand::SharedPtr message)
 {
   const auto stamp = get_clock()->now();
-  std::lock_guard<std::mutex> lock(data_mutex_);
-  local_command_ = *message;
-  local_command_time_ = stamp;
-  has_local_command_ = true;
+  {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    local_command_ = *message;
+    local_command_time_ = stamp;
+    has_local_command_ = true;
+    ++local_command_seq_;
+  }
+  // Forward the fresh command now instead of at the next timer tick.
+  EvaluateAndPublish();
 }
 
 void TmpcCmdSelectorNode::OnTmpcCommand(const AckermannCommand::SharedPtr message)
 {
   const auto stamp = get_clock()->now();
-  std::lock_guard<std::mutex> lock(data_mutex_);
-  tmpc_command_ = *message;
-  tmpc_command_time_ = stamp;
-  has_tmpc_command_ = true;
+  {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    tmpc_command_ = *message;
+    tmpc_command_time_ = stamp;
+    has_tmpc_command_ = true;
+    ++tmpc_command_seq_;
+  }
+  EvaluateAndPublish();
 }
 
 void TmpcCmdSelectorNode::OnTmpcValid(const std_msgs::msg::Bool::SharedPtr message)
@@ -144,10 +156,17 @@ void TmpcCmdSelectorNode::OnTmpcValid(const std_msgs::msg::Bool::SharedPtr messa
 
 void TmpcCmdSelectorNode::OnTimer()
 {
+  EvaluateAndPublish();
+}
+
+void TmpcCmdSelectorNode::EvaluateAndPublish()
+{
   const auto current_time = get_clock()->now();
   SelectorInputs inputs;
   AckermannCommand local_command;
   AckermannCommand tmpc_command;
+  uint64_t local_seq = 0U;
+  uint64_t tmpc_seq = 0U;
   {
     std::lock_guard<std::mutex> lock(data_mutex_);
     if (has_planning_state_) {
@@ -170,22 +189,54 @@ void TmpcCmdSelectorNode::OnTimer()
       has_tmpc_valid_, tmpc_valid_time_, current_time);
     local_command = local_command_;
     tmpc_command = tmpc_command_;
+    local_seq = local_command_seq_;
+    tmpc_seq = tmpc_command_seq_;
   }
   inputs.now_sec = current_time.seconds();
   inputs.local_command_valid = IsCommandFinite(local_command);
   inputs.tmpc_command_valid = IsCommandFinite(tmpc_command);
+  const bool local_fresh_for_reference = inputs.has_local_command &&
+    inputs.local_command_valid &&
+    inputs.local_command_age_sec <= selector_config_.local_command_timeout_sec;
+  if (local_fresh_for_reference && inputs.has_tmpc_command && inputs.tmpc_command_valid) {
+    inputs.has_steering_disagreement = true;
+    inputs.steering_disagreement_rad = std::abs(
+      tmpc_command.drive.steering_angle - local_command.drive.steering_angle);
+  }
 
   const SelectorDecision decision = policy_.update(inputs);
+
+  // Relay, don't resample: forward each source message exactly once (plus once
+  // on a source switch so takeover/fallback is not held to the next message).
+  // Timer ticks between messages therefore publish nothing while forwarding,
+  // keeping the LOCAL /cmd stream identical to Pure Pursuit driving /cmd
+  // directly. The synthesized safe brake has no upstream stream, so it heartbeats
+  // at the evaluate cadence.
+  const bool source_switched = !has_published_ || last_published_source_ != decision.source;
+  bool publish_command = false;
   AckermannCommand output;
   if (decision.source == CommandSource::kPurePursuit) {
-    output = std::move(local_command);
+    if (source_switched || local_seq != last_forwarded_local_seq_) {
+      output = std::move(local_command);
+      last_forwarded_local_seq_ = local_seq;
+      publish_command = true;
+    }
   } else if (decision.source == CommandSource::kTmpc) {
-    output = std::move(tmpc_command);
+    if (source_switched || tmpc_seq != last_forwarded_tmpc_seq_) {
+      output = std::move(tmpc_command);
+      last_forwarded_tmpc_seq_ = tmpc_seq;
+      publish_command = true;
+    }
   } else {
     output = SafeBrakeCommand();
+    publish_command = true;
   }
-  output.header.stamp = get_clock()->now();
-  output_pub_->publish(output);
+  if (publish_command) {
+    output.header.stamp = current_time;
+    output_pub_->publish(output);
+    last_published_source_ = decision.source;
+    has_published_ = true;
+  }
 
   std_msgs::msg::String status;
   status.data = ToString(decision.status);

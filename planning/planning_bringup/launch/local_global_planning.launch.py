@@ -4,6 +4,7 @@ from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node, SetRemap
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -55,6 +56,13 @@ ARGUMENTS = (
     ("local_max_input_age_sec", "0.5", "Local planner input freshness gate (sec, sim time)."),
     ("local_max_start_distance_m", "4.0", "Max distance from ego to the local path start (m)."),
     ("enable_controller", "true", "Start the Pure Pursuit controller."),
+    (
+        "controller_max_speed_mps",
+        "10.0",
+        "Pure Pursuit speed cap override (trackdrive yaml default 10.0). The TMPC "
+        "hybrid launch lowers it to the TMPC reference cap so takeover/fallback "
+        "hand the tube MPC a state inside its feasible envelope.",
+    ),
     ("cmd_topic", "/cmd", "Command topic monitored by the HUD."),
     (
         "controller_cmd_topic",
@@ -382,7 +390,11 @@ def generate_launch_description() -> LaunchDescription:
         condition=IfCondition(values["enable_controller"]),
         parameters=[
             controller_params_selected,
-            {"use_sim_time": values["use_sim_time"]},
+            {
+                "use_sim_time": values["use_sim_time"],
+                "max_speed_mps": ParameterValue(
+                    values["controller_max_speed_mps"], value_type=float),
+            },
         ],
         remappings=controller_remappings,
     )

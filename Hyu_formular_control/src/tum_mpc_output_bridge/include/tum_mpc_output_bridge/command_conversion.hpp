@@ -25,6 +25,14 @@ struct ConversionConfig
   double acceleration_max_mps2{3.0};
   double safe_brake_mps2{-5.0};
   double output_timeout_sec{0.1};
+  // Divergence guard: the generated model's own internal steering saturation
+  // sits near 2x the road-wheel limit (rides 1.04 rad on a 0.52 rad actuator)
+  // and is drivable after the clamp, but a solution this factor beyond the
+  // actuator means the QP diverged (observed -2.89 rad at a handoff far
+  // outside the tube). Clamping that would forward a "valid" full-lock command
+  // and park the car; reject it instead so the selector falls back to Pure
+  // Pursuit until the MPC recovers.
+  double steering_reject_factor{3.0};
 };
 
 struct MpcCommand
@@ -48,6 +56,7 @@ enum class CommandState
   kStale,
   kInvalidStatus,
   kNonFiniteInput,
+  kDivergedSteering,
   kInvalidConfig,
 };
 

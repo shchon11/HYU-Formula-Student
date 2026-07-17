@@ -67,6 +67,8 @@ WpntPublisher::WpntPublisher(const rclcpp::NodeOptions & options)
     declare_parameter<double>("tmpc_vehicle_mass_kg", 225.0);
   const double tmpc_acceleration_utilization_limit =
     declare_parameter<double>("tmpc_acceleration_utilization_limit", 1.0);
+  const double tmpc_performance_speed_cap_mps =
+    declare_parameter<double>("tmpc_performance_speed_cap_mps", 0.0);
   const std::string tmpc_input_heading_convention = declare_parameter<std::string>(
     "tmpc_input_heading_convention", "ros_yaw");
 
@@ -118,6 +120,7 @@ WpntPublisher::WpntPublisher(const rclcpp::NodeOptions & options)
   builder_config.air_density_kgpm3 = tmpc_air_density_kgpm3;
   builder_config.vehicle_mass_kg = tmpc_vehicle_mass_kg;
   builder_config.acceleration_utilization_limit = tmpc_acceleration_utilization_limit;
+  builder_config.performance_speed_cap_mps = tmpc_performance_speed_cap_mps;
   if (tmpc_input_heading_convention == "ros_yaw") {
     builder_config.heading_convention =
       global_planner::tmpc::HeadingConvention::kRosEastZero;

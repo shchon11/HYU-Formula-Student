@@ -54,7 +54,9 @@ bool IsConversionConfigValid(const ConversionConfig & config)
          config.acceleration_min_mps2 <= config.acceleration_max_mps2 &&
          config.safe_brake_mps2 >= config.acceleration_min_mps2 &&
          config.safe_brake_mps2 <= config.acceleration_max_mps2 &&
-         config.output_timeout_sec > 0.0;
+         config.output_timeout_sec > 0.0 &&
+         std::isfinite(config.steering_reject_factor) &&
+         config.steering_reject_factor >= 1.0;
 }
 
 ConversionResult BuildCommand(
@@ -88,6 +90,16 @@ ConversionResult BuildCommand(
     return SafeResult(config, CommandState::kNonFiniteInput);
   }
 
+  // A solution far beyond the actuator range is a diverged QP, not saturation;
+  // clamping it would turn garbage into a confident full-lock command.
+  const double steering_reject_low = config.steering_reject_factor * config.steering_min_rad;
+  const double steering_reject_high = config.steering_reject_factor * config.steering_max_rad;
+  if (input.steering_angle_rad < steering_reject_low ||
+    input.steering_angle_rad > steering_reject_high)
+  {
+    return SafeResult(config, CommandState::kDivergedSteering);
+  }
+
   const double force_n = Clamp(input.long_force_n, config.force_min_n, config.force_max_n);
   const double acceleration_mps2 = force_n / config.conversion_mass_kg;
 
@@ -114,6 +126,8 @@ const char * CommandStateName(CommandState state)
       return "invalid_status";
     case CommandState::kNonFiniteInput:
       return "non_finite_input";
+    case CommandState::kDivergedSteering:
+      return "diverged_steering";
     case CommandState::kInvalidConfig:
       return "invalid_config";
     default:

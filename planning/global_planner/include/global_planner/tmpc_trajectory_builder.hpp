@@ -81,6 +81,15 @@ struct BuilderConfig
   double tube_l_m{0.1};
   double tube_r_m{0.1};
 
+  // Cap on the performance-trajectory reference speed (<= 0 disables). The
+  // raceline speeds are what the plant can hold under the MAP steering law;
+  // the tube MPC additionally fights the plant's 0.2 s command dead time, and
+  // past ~7 m/s on tight tracks its corrections land too late (observed:
+  // steering saturation -> diverged QP at the first corner after takeover).
+  // Keep the TMPC operating envelope inside what it can track until the dead
+  // time is fully compensated.
+  double performance_speed_cap_mps{0.0};
+
   double emergency_decel_scale{0.95};
   double emergency_final_speed_mps{0.5};
 

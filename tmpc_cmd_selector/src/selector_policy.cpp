@@ -160,6 +160,14 @@ bool SelectorPolicy::fresh(bool present, double age_sec, double timeout_sec) con
 
 bool SelectorPolicy::tmpcReady(const SelectorInputs & inputs) const
 {
+  // With a fresh Pure Pursuit command as the independent reference, a large
+  // steering disagreement means the TMPC chain is tracking the wrong thing
+  // (wrong-branch path matching); refuse it before the yank reaches the plant.
+  if (config_.max_steering_disagreement_rad > 0.0 && inputs.has_steering_disagreement &&
+    inputs.steering_disagreement_rad > config_.max_steering_disagreement_rad)
+  {
+    return false;
+  }
   return inputs.tmpc_valid && inputs.tmpc_command_valid &&
          fresh(
     inputs.has_tmpc_valid, inputs.tmpc_valid_age_sec, config_.tmpc_valid_timeout_sec) &&

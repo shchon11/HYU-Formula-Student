@@ -104,6 +104,9 @@ private:
       "tum_vehicle_state_bridge/valid_imu_default", true);
     min_speed_for_beta_mps_ = declare_parameter<double>(
       "tum_vehicle_state_bridge/min_speed_for_beta_mps", 0.1);
+    // Matches the plant's command transport delay (eufs controlDelay).
+    prediction_horizon_sec_ = declare_parameter<double>(
+      "tum_vehicle_state_bridge/prediction_horizon_sec", 0.2);
     ax_vel_filter_tau_sec_ = declare_parameter<double>(
       "tum_vehicle_state_bridge/ax_vel_filter_tau_sec", 0.1);
   }
@@ -311,12 +314,36 @@ private:
     const auto sample_time = LocalizationSampleTime(localization, localization_received_time);
     const double ax_vel_mps2 = UpdateAxVel(speed_mps, sample_time, localization_sequence);
 
+    // Actuation dead-time compensation. The plant applies commands with a pure
+    // transport delay (eufs controlDelay 0.2 s) the generated MPC does not
+    // model (its steering path is a 0.04 s first-order lag), so the MPC's every
+    // correction lands ~0.2 s late and it chases its own tail at speed. Feeding
+    // it the pose forward-integrated by that dead time (constant body velocity
+    // and yaw rate over a few sub-steps, so the prediction bends with the arc)
+    // makes the command it computes apply roughly at the state it planned for.
+    // 0.0 disables.
+    double predicted_x_m = localization.pose.pose.position.x;
+    double predicted_y_m = localization.pose.pose.position.y;
+    double predicted_yaw_rad = yaw_rad;
+    if (prediction_horizon_sec_ > 0.0) {
+      const double yaw_rate_radps = localization.twist.twist.angular.z;
+      constexpr int kPredictionSubSteps = 5;
+      const double dt_sec = prediction_horizon_sec_ / kPredictionSubSteps;
+      for (int i = 0; i < kPredictionSubSteps; ++i) {
+        predicted_x_m +=
+          (vx_mps * std::cos(predicted_yaw_rad) - vy_mps * std::sin(predicted_yaw_rad)) * dt_sec;
+        predicted_y_m +=
+          (vx_mps * std::sin(predicted_yaw_rad) + vy_mps * std::cos(predicted_yaw_rad)) * dt_sec;
+        predicted_yaw_rad += yaw_rate_radps * dt_sec;
+      }
+    }
+
     TumVehicleState output;
     output.se_status = se_status_;
     output.se_state = se_state_;
-    output.x_m = localization.pose.pose.position.x;
-    output.y_m = localization.pose.pose.position.y;
-    output.psi_rad = tum_vehicle_state_bridge::RosYawToFormulaHeading(yaw_rad);
+    output.x_m = predicted_x_m;
+    output.y_m = predicted_y_m;
+    output.psi_rad = tum_vehicle_state_bridge::RosYawToFormulaHeading(predicted_yaw_rad);
     output.dpsi_radps = localization.twist.twist.angular.z;
     output.vx_mps = vx_mps;
     output.vy_mps = vy_mps;
@@ -342,6 +369,7 @@ private:
   uint16_t se_state_{1U};
   bool valid_imu_default_{true};
   double min_speed_for_beta_mps_{0.1};
+  double prediction_horizon_sec_{0.2};
   double ax_vel_filter_tau_sec_{0.1};
 
   std::mutex data_mutex_;

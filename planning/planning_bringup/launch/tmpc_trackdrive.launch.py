@@ -37,7 +37,16 @@ ARGUMENTS = (
     ("tmpc_output_topic", "/tmpc/output", "Raw Formula TMPC output."),
     ("tmpc_valid_topic", "/tmpc/cmd_valid", "Output-bridge validity heartbeat."),
     ("localization_topic", "/localization/ego_odom", "Vehicle-state localization input."),
-    ("car_state_topic", "/wheel_odometry/car_state", "Vehicle-state dynamics input."),
+    # Deliberately NOT named car_state_topic: launch configurations are global,
+    # so a "car_state_topic" declared here leaks into the included
+    # local_global_planning and shadows ITS car_state_topic default -- graph
+    # SLAM's motion input, whose default is the fused INS (/ins_odom/car_state).
+    # The leak fed graph SLAM the raw wheel odometry (~1.1 deg heading error) in
+    # tmpc mode only, degrading the map so lap-1 local tracking diverged while
+    # plain trackdrive was fine. ins_pipeline.launch.py dodges the identical trap
+    # by naming its arg ins_odom_topic; this is the vehicle-state bridge's own
+    # dynamics input, so give it a bridge-scoped name.
+    ("vehicle_state_car_state_topic", "/wheel_odometry/car_state", "Vehicle-state bridge dynamics input."),
     ("wheel_speeds_topic", "/ros_can/wheel_speeds", "Vehicle-state wheel-speed input."),
     ("publish_rate_hz", "100.0", "Bridge and selector command rate."),
     ("state_timeout_sec", "0.25", "Planning state freshness limit."),
@@ -45,7 +54,22 @@ ARGUMENTS = (
     ("local_command_timeout_sec", "0.25", "Pure Pursuit command freshness limit."),
     ("tmpc_command_timeout_sec", "0.1", "TMPC command freshness limit."),
     ("tmpc_valid_timeout_sec", "0.1", "TMPC valid heartbeat freshness limit."),
-    ("tmpc_ready_dwell_sec", "0.1", "Continuous readiness required for takeover."),
+    # 1.0 s (not 0.1): GLOBAL flips while the car is still on the lap-1
+    # centerline; Pure Pursuit needs about a second on the raceline before the
+    # ego is inside the TMPC tube. A 0.1 s dwell handed over at peak deviation.
+    ("tmpc_ready_dwell_sec", "1.0", "Continuous readiness required for takeover."),
+    # Keep Pure Pursuit (waiting/fallback phases) inside the same speed envelope
+    # as the capped TMPC reference: a takeover inherited at raceline speed
+    # (8-10 m/s) starts the tube MPC above its feasible envelope and it diverges
+    # at the next corner, and a fault handed back at that speed throws Pure
+    # Pursuit off the line. Matches tmpc_performance_speed_cap_mps.
+    ("controller_max_speed_mps", "6.5", "Pure Pursuit speed cap in the TMPC hybrid."),
+    (
+        "tmpc_max_steering_disagreement_rad",
+        "0.4",
+        "Refuse TMPC while its steering differs from fresh Pure Pursuit by more "
+        "than this (wrong-branch path-matching guard; <=0 disables).",
+    ),
     ("tmpc_steering_min_rad", "-0.52", "TMPC minimum road-wheel steering angle."),
     ("tmpc_steering_max_rad", "0.52", "TMPC maximum road-wheel steering angle."),
     ("safe_brake_mps2", "-5.0", "Fail-closed braking acceleration."),
@@ -85,12 +109,17 @@ def generate_launch_description() -> LaunchDescription:
             "stop_request_topic": values["stop_request_topic"],
             "controller_cmd_topic": values["pure_pursuit_cmd_topic"],
             "cmd_topic": values["final_cmd_topic"],
+            "controller_max_speed_mps": values["controller_max_speed_mps"],
             "tmpc_performance_trajectory_topic": values[
                 "tmpc_performance_trajectory_topic"
             ],
             "tmpc_emergency_trajectory_topic": values["tmpc_emergency_trajectory_topic"],
             "ego_odom_topic": values["localization_topic"],
-            "car_state_topic": values["car_state_topic"],
+            # car_state_topic is intentionally NOT forwarded: local_global_planning
+            # owns it as graph SLAM's motion input and its /ins_odom/car_state
+            # default must win. The bridge's own dynamics input is carried by the
+            # bridge-scoped vehicle_state_car_state_topic argument (see above) so
+            # it cannot collide with this name in the global launch-config scope.
         }.items(),
     )
 
@@ -103,7 +132,7 @@ def generate_launch_description() -> LaunchDescription:
             {
                 "use_sim_time": use_sim_time,
                 "tum_vehicle_state_bridge/localization_topic": values["localization_topic"],
-                "tum_vehicle_state_bridge/car_state_topic": values["car_state_topic"],
+                "tum_vehicle_state_bridge/car_state_topic": values["vehicle_state_car_state_topic"],
                 "tum_vehicle_state_bridge/wheel_speeds_topic": values["wheel_speeds_topic"],
                 "tum_vehicle_state_bridge/output_topic": values["tmpc_vehicle_state_topic"],
                 "tum_vehicle_state_bridge/publish_rate_hz": publish_rate,
@@ -187,6 +216,9 @@ def generate_launch_description() -> LaunchDescription:
                 ),
                 "tmpc_ready_dwell_sec": ParameterValue(
                     values["tmpc_ready_dwell_sec"], value_type=float
+                ),
+                "max_steering_disagreement_rad": ParameterValue(
+                    values["tmpc_max_steering_disagreement_rad"], value_type=float
                 ),
                 "safe_brake_mps2": safe_brake,
             }

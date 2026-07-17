@@ -41,6 +41,8 @@ public:
       "tum_mpc_output_bridge/safe_brake_mps2", config_.safe_brake_mps2);
     config_.output_timeout_sec = declare_parameter<double>(
       "tum_mpc_output_bridge/output_timeout_sec", config_.output_timeout_sec);
+    config_.steering_reject_factor = declare_parameter<double>(
+      "tum_mpc_output_bridge/steering_reject_factor", config_.steering_reject_factor);
     publish_rate_hz_ = declare_parameter<double>(
       "tum_mpc_output_bridge/publish_rate_hz", 100.0);
 

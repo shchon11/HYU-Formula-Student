@@ -11,6 +11,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(hyu_formular_control_msgs REQUIRED)
+find_package(ackermann_msgs REQUIRED)
 
 set(TUM_CODEGEN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor/tum_codegen)
 set(MVDC_PATH_MATCHING_DIR ${TUM_CODEGEN_DIR}/mvdc_path_matching_ert_rtw)
@@ -64,6 +65,7 @@ target_compile_options(${PROJECT_NAME} PRIVATE
 ament_target_dependencies(${PROJECT_NAME}
   rclcpp
   hyu_formular_control_msgs
+  ackermann_msgs
 )
 
 install(TARGETS ${PROJECT_NAME}

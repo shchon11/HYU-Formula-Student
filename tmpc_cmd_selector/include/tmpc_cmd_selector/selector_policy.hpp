@@ -42,6 +42,13 @@ struct SelectorConfig
   double tmpc_command_timeout_sec{0.1};
   double tmpc_valid_timeout_sec{0.1};
   double tmpc_ready_dwell_sec{0.1};
+  // Sanity envelope against a wrong-branch TMPC reference: with a fresh Pure
+  // Pursuit command available, TMPC is only trusted while its steering agrees
+  // with Pure Pursuit's to within this bound. A healthy tube MPC tracks the
+  // same raceline and differs by <= ~0.28 rad; the observed failure (path
+  // matching snapping to a parallel/folded track section) commands 0.6+ rad
+  // the WRONG way and throws the car off the corridor. <= 0 disables.
+  double max_steering_disagreement_rad{0.4};
 };
 
 struct SelectorInputs
@@ -60,6 +67,10 @@ struct SelectorInputs
   bool has_tmpc_valid{false};
   bool tmpc_valid{false};
   double tmpc_valid_age_sec{0.0};
+  // |tmpc steering - pure pursuit steering| when both commands are present and
+  // finite; guarded by has_steering_disagreement.
+  bool has_steering_disagreement{false};
+  double steering_disagreement_rad{0.0};
   double now_sec{0.0};
 };
 
