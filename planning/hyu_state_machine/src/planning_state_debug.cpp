@@ -1,8 +1,8 @@
-#include "state_machine/planning_state_debug.hpp"
+#include "hyu_state_machine/planning_state_debug.hpp"
 
 #include <sstream>
 
-namespace state_machine
+namespace hyu_state_machine
 {
 
 PathSource selectPathSource(

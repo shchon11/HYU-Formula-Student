@@ -1,8 +1,8 @@
-#include "state_machine/global_path_readiness.hpp"
+#include "hyu_state_machine/global_path_readiness.hpp"
 
 #include <cmath>
 
-namespace state_machine
+namespace hyu_state_machine
 {
 
 bool globalEntryAllowed(const GlobalEntryConditions & conditions)

@@ -93,7 +93,7 @@ PARAMETER_FILES = (
     ("graph_slam_params_file", "hyu_localization", "graph_slam.yaml", "Graph SLAM parameter file."),
     ("global_params_file", "hyu_global_planner", "hyu_global_planner.yaml", "Global planner and Frenet parameter file."),
     ("local_params_file", "hyu_local_planner", "hyu_local_planner.yaml", "Local planner parameter file."),
-    ("state_params_file", "state_machine", "planning_state_machine.yaml", "Planning state-machine parameter file."),
+    ("state_params_file", "hyu_state_machine", "planning_hyu_state_machine.yaml", "Planning state-machine parameter file."),
     ("selector_params_file", "hyu_path_selector", "hyu_path_selector.yaml", "Path selector parameter file."),
     ("controller_params_file", "hyu_pure_pursuit", "hyu_pure_pursuit.yaml", "Pure Pursuit controller parameter file."),
 )
@@ -316,10 +316,10 @@ def generate_launch_description() -> LaunchDescription:
             },
         ],
     )
-    state_machine = Node(
-        package="state_machine",
-        executable="planning_state_machine_node",
-        name="planning_state_machine_node",
+    hyu_state_machine = Node(
+        package="hyu_state_machine",
+        executable="planning_hyu_state_machine_node",
+        name="planning_hyu_state_machine_node",
         output="screen",
         parameters=[
             values["state_params_file"],
@@ -433,7 +433,7 @@ def generate_launch_description() -> LaunchDescription:
         hyu_global_planner,
         skidpad_director,
         hyu_local_planner,
-        state_machine,
+        hyu_state_machine,
         selector,
         controller,
         stack_hud,

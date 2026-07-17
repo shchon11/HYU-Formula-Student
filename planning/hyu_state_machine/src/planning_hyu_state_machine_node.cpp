@@ -1,4 +1,4 @@
-#include "state_machine/planning_state_machine_node.hpp"
+#include "hyu_state_machine/planning_hyu_state_machine_node.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -6,11 +6,11 @@
 #include <functional>
 #include <string>
 
-namespace state_machine
+namespace hyu_state_machine
 {
 
 PlanningStateMachineNode::PlanningStateMachineNode()
-: Node("planning_state_machine_node")
+: Node("planning_hyu_state_machine_node")
 {
   using std::placeholders::_1;
 
@@ -404,4 +404,4 @@ bool PlanningStateMachineNode::isSInStopZone(double s) const
   return s >= start || s <= end;
 }
 
-}  // namespace state_machine
+}  // namespace hyu_state_machine

@@ -1,8 +1,8 @@
-# planning_state_machine_node
+# planning_hyu_state_machine_node
 
 ## 목적
 
-`planning_state_machine_node`는 Formula Student Korea 자율주행 planning 흐름에서 현재
+`planning_hyu_state_machine_node`는 Formula Student Korea 자율주행 planning 흐름에서 현재
 planning 상태를 결정하고, `hyu_path_selector_node`가 사용할 `path_source`를 publish한다.
 이 노드는 path를 생성하지 않으며, local/global 후보의 선택과 최종
 `/path_waypoints` publish는 selector가 소유한다. Pure Pursuit controller는
@@ -30,7 +30,7 @@ enum class PlanningState
 
 ## SLAM/global path contract
 
-`planning_state_machine_node`는 global waypoint writer가 아니라 consumer이다.
+`planning_hyu_state_machine_node`는 global waypoint writer가 아니라 consumer이다.
 `/global_waypoints`와 `/planning/global_path_valid`는 launch 안에서 정확히
 하나의 writer만 가져야 한다. SLAM integration에서는
 `hyu_global_planner/slam_hyu_global_planner.launch.py planner_source:=slam`이
@@ -91,7 +91,7 @@ phase로 defer되어 있다.
 파라미터 파일 위치:
 
 ```bash
-planning/state_machine/config/planning_state_machine.yaml
+planning/hyu_state_machine/config/planning_hyu_state_machine.yaml
 ```
 
 | Parameter | Default | 설명 |
@@ -211,12 +211,12 @@ normalized length 기준을 사용한다.
 빌드:
 
 ```bash
-colcon build --packages-select state_machine
+colcon build --packages-select hyu_state_machine
 ```
 
 실행:
 
 ```bash
 source install/setup.zsh
-ros2 launch state_machine planning_state_machine.launch.py
+ros2 launch hyu_state_machine planning_hyu_state_machine.launch.py
 ```

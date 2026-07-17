@@ -11,13 +11,13 @@
 #include "eufs_msgs/msg/waypoint_array_stamped.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
-#include "state_machine/global_path_readiness.hpp"
+#include "hyu_state_machine/global_path_readiness.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/float64.hpp"
 #include "std_msgs/msg/int32.hpp"
 #include "std_msgs/msg/string.hpp"
 
-namespace state_machine
+namespace hyu_state_machine
 {
 
 enum class PathSource
@@ -260,4 +260,4 @@ private:
   rclcpp::TimerBase::SharedPtr timer_;
 };
 
-}  // namespace state_machine
+}  // namespace hyu_state_machine

@@ -8,9 +8,9 @@ from launch.substitutions import PathJoinSubstitution
 
 def generate_launch_description():
     default_params = PathJoinSubstitution([
-        FindPackageShare("state_machine"),
+        FindPackageShare("hyu_state_machine"),
         "config",
-        "planning_state_machine.yaml",
+        "planning_hyu_state_machine.yaml",
     ])
 
     params_arg = DeclareLaunchArgument(
@@ -22,9 +22,9 @@ def generate_launch_description():
     return LaunchDescription([
         params_arg,
         Node(
-            package="state_machine",
-            executable="planning_state_machine_node",
-            name="planning_state_machine_node",
+            package="hyu_state_machine",
+            executable="planning_hyu_state_machine_node",
+            name="planning_hyu_state_machine_node",
             output="screen",
             parameters=[LaunchConfiguration("params_file")],
         ),

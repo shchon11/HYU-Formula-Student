@@ -119,7 +119,7 @@ sleep 2
 for pat in gzserver gzclient graph_slam_node sim_ellipse_d sbg_odometry_bridge \
     wheel_odometry lidar_realism yolov8_bbox_node perception_node \
     planner_node wpnt_publisher_node frenet_odom_node hyu_local_planner_node \
-    hyu_pure_pursuit_node ate_monitor planning_state_machine \
+    hyu_pure_pursuit_node ate_monitor planning_hyu_state_machine \
     hyu_path_selector robot_state_publisher; do
     pkill -9 -f "$pat" 2>/dev/null
 done

@@ -70,7 +70,7 @@ flowchart LR
         SKID["skidpad_director<br/>미션 phase 콘 게이트"]
         LP["hyu_local_planner<br/>즉석 경로"]
         GP["hyu_global_planner<br/>레이스라인"]
-        SM["state_machine<br/>랩 · 전환 · 정지"]
+        SM["hyu_state_machine<br/>랩 · 전환 · 정지"]
         SEL["hyu_path_selector"]
         SKID -.->|"skidpad만: 게이트된 cone_map"| LP
         LP -->|local_waypoints| SEL
@@ -112,7 +112,7 @@ flowchart LR
 
 - **PERCEPTION**은 카메라·LiDAR만 소비해 `/cones`(색·위치·공분산) 하나로 요약합니다. 콘마다 provenance(`cluster_camera`/`cluster_only`/`sparse`/`monocular_zncc`)가 붙고, 운용 범위는 **robust-inside-10 m** — 비전 계열(sparse·ZNCC)은 12 m에서 캡(10 m 존 진입 전 2 m 온램프), LiDAR 클러스터는 캡 없음. LiDAR는 콘 앞면만 보므로 전방 range bias(+0.046 m)를 보정합니다. 수치와 근거는 전부 `hyu_perception/config/perception.yaml` 주석에 있습니다. sim 모드에선 Gazebo 플러그인이 이 토픽을 직접 냅니다.
 - **SLAM**은 `/cones` + 휠 odometry + (RTK일 때만) GNSS prior로 콘 랜드마크 포즈그래프를 풀어 **cone_map과 ego_odom**을 만들고, 루프 클로저가 확정되면 localization으로 전환합니다.
-- **PLANNING**에서 state_machine이 랩·상태 기반으로 `path_source`를 정하고, selector가 local/global 중 하나를 `/path_waypoints`로 확정 — **컨트롤러는 항상 이 토픽 하나만** 봅니다. skidpad 미션에선 director가 cone_map을 phase별로 걸러 local planner에 공급합니다.
+- **PLANNING**에서 hyu_state_machine이 랩·상태 기반으로 `path_source`를 정하고, selector가 local/global 중 하나를 `/path_waypoints`로 확정 — **컨트롤러는 항상 이 토픽 하나만** 봅니다. skidpad 미션에선 director가 cone_map을 phase별로 걸러 local planner에 공급합니다.
 
 **2단계 주행 시나리오** — 이게 설계의 핵심입니다:
 
@@ -121,7 +121,7 @@ flowchart LR
 | **랩 1 · 탐험** | `LOCAL` | SLAM이 누적한 **콘맵과 현재 pose로 local 경로** 생성, SLAM은 주행하며 콘맵 보강 |
 | **핸드오프** | — | 랩 완주 → SLAM `localization` 전환 → hyu_global_planner가 콘맵에서 **레이스라인** 생성 → selector가 안전 전환 |
 | **랩 2+ · 레이싱** | `GLOBAL_FULL` | 컨트롤러가 레이스라인 롤링 윈도우 추종. HUD `TRACKING` 줄이 추종 오차(d) 표시 |
-| **종료** | — | state_machine이 스톱존 감지 → `stop_request` → 제동 |
+| **종료** | — | hyu_state_machine이 스톱존 감지 → `stop_request` → 제동 |
 
 컨트롤러는 항상 `/path_waypoints` 하나만 봅니다 — local이냐 global이냐는 selector가 숨겨줍니다.
 
@@ -451,7 +451,7 @@ planning/
   ├─ hyu_local_planner/       라이브 콘 → 즉석 로컬 경로 (랩 1)
   ├─ hyu_global_planner/      SLAM 콘맵 → 전역 레이스라인
   ├─ hyu_frenet_conversion/   전역경로 기준 Frenet (s,d) — CTE의 원천
-  ├─ state_machine/       랩 카운트 · local↔global 전환 · 스톱존
+  ├─ hyu_state_machine/       랩 카운트 · local↔global 전환 · 스톱존
   ├─ hyu_path_selector/       local/global 중 컨트롤러가 따를 경로 확정
   └─ trajectory_generator/ 오프라인 raceline (CSV)
 ```

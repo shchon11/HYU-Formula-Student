@@ -1,8 +1,8 @@
-#include "state_machine/planning_state_machine_node.hpp"
+#include "hyu_state_machine/planning_hyu_state_machine_node.hpp"
 
-#include "state_machine/planning_state_debug.hpp"
+#include "hyu_state_machine/planning_state_debug.hpp"
 
-namespace state_machine
+namespace hyu_state_machine
 {
 
 void PlanningStateMachineNode::publishOutputs()

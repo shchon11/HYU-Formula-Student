@@ -1,4 +1,4 @@
-planning_state_machine_node:
+planning_hyu_state_machine_node:
   ros__parameters:
     frenet_odom_topic: "/car_state/frenet/odom"
     global_waypoints_topic: "/global_waypoints"

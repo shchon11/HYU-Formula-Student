@@ -4,9 +4,9 @@
 #include <cstdint>
 #include <string>
 
-#include "state_machine/planning_state_machine_node.hpp"
+#include "hyu_state_machine/planning_hyu_state_machine_node.hpp"
 
-namespace state_machine
+namespace hyu_state_machine
 {
 
 struct PlanningStateDebugSnapshot

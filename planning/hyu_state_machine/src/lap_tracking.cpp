@@ -1,9 +1,9 @@
-#include "state_machine/planning_state_machine_node.hpp"
+#include "hyu_state_machine/planning_hyu_state_machine_node.hpp"
 
 #include <algorithm>
 #include <cmath>
 
-namespace state_machine
+namespace hyu_state_machine
 {
 
 namespace

@@ -7,7 +7,7 @@
 #include "eufs_msgs/msg/waypoint_array_stamped.hpp"
 #include "rclcpp/time.hpp"
 
-namespace state_machine
+namespace hyu_state_machine
 {
 
 enum class PlanningState
