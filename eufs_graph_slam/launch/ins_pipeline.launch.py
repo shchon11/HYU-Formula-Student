@@ -42,6 +42,12 @@ def generate_launch_description():
                 description="Use the simulator clock.",
             ),
             DeclareLaunchArgument(
+                "slam_motion_topic",
+                default_value="/ins_odom/car_state",
+                description="SLAM motion input (fused INS odometry; set to "
+                "/wheel_odometry/car_state for the legacy always-DR wiring).",
+            ),
+            DeclareLaunchArgument(
                 "ins_odom_topic",
                 default_value="/ins_odom/car_state",
                 description="INS odometry topic published by the SBG bridge.",
@@ -127,9 +133,15 @@ def generate_launch_description():
                 ),
                 launch_arguments={
                     "use_sim_time": use_sim_time,
-                    # SLAM motion input stays on graph_slam.launch.py's default
-                    # (/wheel_odometry/car_state); the bridge contributes the
-                    # absolute /gnss/odom anchor, not the motion chain.
+                    # SLAM motion input: the bridge's mode-managed fused INS
+                    # odometry (RTK-fused yaw, DR fallback tiers with honest
+                    # per-tier sigmas). The always-DR wheel odometry carried a
+                    # constant ~1.1 deg initial-heading error that fought the
+                    # mm-grade GNSS anchors inside the graph (2026-07-18
+                    # error-budget decomposition); wheel odometry remains the
+                    # bridge's own fallback tier, and slam_motion_topic:=
+                    # /wheel_odometry/car_state restores the old wiring.
+                    "car_state_topic": LaunchConfiguration("slam_motion_topic"),
                     "gui": LaunchConfiguration("gui"),
                     "ate_monitor": LaunchConfiguration("ate_monitor"),
                 }.items(),
