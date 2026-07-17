@@ -130,7 +130,7 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<std::string>("slam_odom_topic", "/localization/ego_odom");
   status_topic_ = declare_parameter<std::string>("status_topic", "~/status");
   lifecycle_diagnostics_topic_ =
-    declare_parameter<std::string>("lifecycle_diagnostics_topic", "~/lifecycle_diagnostics");
+    declare_parameter<std::string>("lifecycle_diagnostics_topic", "/localization/debug/lifecycle_diagnostics");
   map_converged_topic_ =
     declare_parameter<std::string>("map_converged_topic", "~/map_converged");
   path_topic_ = declare_parameter<std::string>("path_topic", "/localization/debug/path");
@@ -469,7 +469,7 @@ GraphSlamNode::GraphSlamNode()
   // Latched status so planning (local vs global) and RViz always see the
   // current SLAM lifecycle even when subscribing late.
   status_pub_ = create_publisher<std_msgs::msg::String>(status_topic_, transient_qos);
-  timing_pub_ = create_publisher<std_msgs::msg::String>("~/timing", 1);
+  timing_pub_ = create_publisher<std_msgs::msg::String>("/localization/debug/timing", 1);
   lifecycle_diagnostics_pub_ =
     create_publisher<std_msgs::msg::String>(lifecycle_diagnostics_topic_, transient_qos);
   converged_pub_ = create_publisher<std_msgs::msg::Bool>(map_converged_topic_, transient_qos);

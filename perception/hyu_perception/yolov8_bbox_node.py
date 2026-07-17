@@ -189,7 +189,7 @@ class YoloV8BBoxNode(Node):
         # Pose-weight keypoint output. Enabled by the pose launch path; a
         # detect-only weight leaves this off and the stereo tier stays disabled.
         self.declare_parameter("publish_keypoints", False)
-        self.declare_parameter("keypoints_topic", "/yolo_cone_keypoints")
+        self.declare_parameter("keypoints_topic", "/perception/debug/cone_keypoints")
 
     def _load_parameters(self) -> None:
         self.image_topic = self.get_parameter("image_topic").value

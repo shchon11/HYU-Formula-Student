@@ -22,7 +22,7 @@ project's own cone-pose detector.
 /zed/left/image_rect_color
     -> yolov8_bbox_node        (YOLO26n-pose: box + keypoints, one forward pass)
     -> /perception/bounding_boxes     hyu_msgs/BoundingBoxes
-       /yolo_cone_keypoints     hyu_msgs/ConeKeypointsArray   (same header stamp)
+       /perception/debug/cone_keypoints     hyu_msgs/ConeKeypointsArray   (same header stamp)
     -> perception_baseline_node
        + /velodyne_points
        + /zed/{left,right}/image_rect_color
@@ -259,7 +259,7 @@ Nothing here has run in the simulator. In priority order:
      perception_publish_fusion_debug:=true
 
    ros2 topic hz /perception/bounding_boxes
-   ros2 topic hz /yolo_cone_keypoints     # new
+   ros2 topic hz /perception/debug/cone_keypoints     # new
    ros2 topic hz /perception/cones
    ros2 topic hz /localization/map
    ```

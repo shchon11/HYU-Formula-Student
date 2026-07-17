@@ -34,7 +34,7 @@ ARGUMENTS = (
         "/planning/trajectory_emergency",
         "Formula emergency trajectory.",
     ),
-    ("tmpc_output_topic", "/tmpc/output", "Raw Formula TMPC output."),
+    ("tmpc_output_topic", "/control/tmpc/output", "Raw Formula TMPC output."),
     ("tmpc_valid_topic", "/control/tmpc/valid", "Output-bridge validity heartbeat."),
     ("localization_topic", "/localization/ego_odom", "Vehicle-state localization input."),
     # Deliberately NOT named car_state_topic: launch configurations are global,
