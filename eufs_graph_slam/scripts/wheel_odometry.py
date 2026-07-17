@@ -224,9 +224,12 @@ class WheelOdometry(Node):
             dt = stamp - self.accel_lp_stamp
             alpha = dt / (self.slip_lp_tau + dt)
             self.accel_x_lp += alpha * (msg.acceleration.x - self.accel_x_lp)
-        else:
+        elif self.accel_lp_stamp is None:
+            # First sample initializes the filter; a duplicated/out-of-order
+            # stamp must NOT reset it to a raw sample (one unfiltered spike
+            # goes straight into the slip correction otherwise).
             self.accel_x_lp = msg.acceleration.x
-        self.accel_lp_stamp = stamp
+        self.accel_lp_stamp = max(self.accel_lp_stamp or stamp, stamp)
         self.ins_stamp = stamp
 
     def _check_frame(self, frame_id):
@@ -291,8 +294,15 @@ class WheelOdometry(Node):
             self.last_t = t
             return
         dt = t - self.last_t
+        # Validate BEFORE committing last_t: rewinding it on a rejected
+        # out-of-order sample makes the NEXT sample integrate an inflated dt
+        # (v*dt of phantom travel in one publish — with interleaved stamp
+        # sources this repeats and multiplies total distance).
+        if dt <= 0.0:
+            return
         self.last_t = t
-        if dt <= 0.0 or dt > self.max_dt:
+        if dt > self.max_dt:
+            # Resync after a gap: skip integration for this interval.
             return
 
         # Rear axle mean; the simulator (and real ros_can) report RPM.
@@ -333,8 +343,13 @@ class WheelOdometry(Node):
         # vy is unobservable from wheel spin and stays unmodelled.
         vy = w * self.rear_axle_to_base
 
-        cos_y = math.cos(self.yaw)
-        sin_y = math.sin(self.yaw)
+        # Midpoint heading: advancing with the start-of-interval yaw lags
+        # truth by 0.5*w*dt every step, a systematic outward bias on every
+        # arc that the graph cannot average out (shows up as track-width
+        # error in the map).
+        mid_yaw = self.yaw + 0.5 * w * dt
+        cos_y = math.cos(mid_yaw)
+        sin_y = math.sin(mid_yaw)
         self.x += (v * cos_y - vy * sin_y) * dt
         self.y += (v * sin_y + vy * cos_y) * dt
         self.yaw = math.atan2(
