@@ -14,19 +14,19 @@
 `hyu_perception`은 perception module의 baseline package이다.
 
 현재 package는 SLAM 출력 형식을 고정하고, IIT Bombay 논문의 우선순위를 따른
-three-tier baseline으로 실제 cone observation을 `/cones`에 publish한다. Tier 1은
+three-tier baseline으로 실제 cone observation을 `/perception/cones`에 publish한다. Tier 1은
 LiDAR-camera association, Tier 2는 normalized bbox-height monocular depth, Tier 3는
 ReKTNet 7-keypoint/PnP-guided SIFT stereo이다.
 
 SLAM output contract:
 
 ```text
-topic: /cones
+topic: /perception/cones
 type: hyu_msgs/msg/ConeArrayWithCovariance
 frame_id: base_footprint
 ```
 
-`/cones` message는 색상별 cone array를 따로 가진다.
+`/perception/cones` message는 색상별 cone array를 따로 가진다.
 
 ```text
 blue_cones
@@ -65,7 +65,7 @@ LiDAR -> monocular fallback
 (simulator bbox stereo is disabled)
         |
         v
-/cones
+/perception/cones
 ```
 
 역할:
@@ -75,12 +75,12 @@ LiDAR -> monocular fallback
 - `/custom_camera_info`: camera intrinsic
 - `/zed/right/image_rect_color`: simulator bbox와 같은 right-camera image contract
 - `/tf`: LiDAR, camera, `base_footprint` 사이의 extrinsic transform
-- `/cones`: graph SLAM으로 넘길 최종 cone observation
+- `/perception/cones`: graph SLAM으로 넘길 최종 cone observation
 
 주의:
 
 - `/noisy_bounding_boxes`는 simulator bbox source이며, YOLO mode에서는
-  `bbox_source:=yolov8`과 `/yolo_bounding_boxes`를 사용한다.
+  `bbox_source:=yolov8`과 `/perception/bounding_boxes`를 사용한다.
 - YOLO weight나 camera model을 바꾸면 bbox topic, projection 관련 parameter,
   confidence threshold를 다시 맞춰야 한다.
 
@@ -96,7 +96,7 @@ LiDAR -> monocular fallback
 yolov8_bbox_node
         |
         v
-/yolo_bounding_boxes
+/perception/bounding_boxes
 + /velodyne_points
 + /zed/left/camera_info
 + /zed/right/image_rect_color
@@ -107,7 +107,7 @@ yolov8_bbox_node
 perception_baseline_node
         |
         v
-/cones
+/perception/cones
 ```
 
 기본 모델:
@@ -146,18 +146,18 @@ Dependency boundary:
 SLAM 연결 확인용 모드이다.
 
 ```text
-/camera_0/cones -> /cones
+/camera_0/cones -> /perception/cones
 ```
 
 역할:
 
 - simulator가 제공하는 cone observation을 그대로 SLAM contract에 맞춰 재발행
-- graph SLAM이 `/cones`를 제대로 받는지 빠르게 확인
+- graph SLAM이 `/perception/cones`를 제대로 받는지 빠르게 확인
 
 주의:
 
 - perception baseline 성능 검증 모드가 아니다.
-- `fusion-bg`와 `adapter-bg`를 동시에 실행하면 둘 다 `/cones`를 publish하므로
+- `fusion-bg`와 `adapter-bg`를 동시에 실행하면 둘 다 `/perception/cones`를 publish하므로
   결과가 섞인다.
 
 ## 3. Important Files
@@ -201,13 +201,13 @@ hyu_perception/
     건너뛴 sample은 폐기한다.
   - 선택한 pair를 generation-tagged worker job으로 제출한다. 계산 완료 후에도
     같은 clock epoch와 같은 buffer entry이고 acquisition timestamp가
-    `output_commit_settle_sec`만큼 현재 ROS clock 뒤에 있을 때만 `/cones`를
+    `output_commit_settle_sec`만큼 현재 ROS clock 뒤에 있을 때만 `/perception/cones`를
     publish한다.
 
 - `_run_lidar_camera_fusion()`
   - three-tier pipeline 전체를 실행한다.
   - detection 추출, point cloud 변환, TF 변환, ROI filtering, clustering,
-    bbox-cluster/sparse association, mono/stereo fallback, `/cones` message 생성을
+    bbox-cluster/sparse association, mono/stereo fallback, `/perception/cones` message 생성을
     담당한다.
 
 - `_extract_detections()`
@@ -253,12 +253,12 @@ hyu_perception/
     `big_orange_cones`, `unknown_color_cones` 중 하나에 넣는다.
 
 - `_oracle_callback()`
-  - Oracle Adapter 모드에서 simulator cone message를 `/cones` contract로 정리한다.
+  - Oracle Adapter 모드에서 simulator cone message를 `/perception/cones` contract로 정리한다.
 
 YOLOv8 detector의 주요 정책:
 
 - 입력 image topic 기본값: `/zed/left/image_rect_color`
-- bbox output topic 기본값: `/yolo_bounding_boxes`
+- bbox output topic 기본값: `/perception/bounding_boxes`
 - model 기본값:
   `/home/dohyun/FS/artifacts/yolov8/fsoco_yolov8n/weights/best.pt`
 - bbox coordinate type: `BoundingBox.PIXEL`
@@ -281,7 +281,7 @@ pointcloud_topic: /velodyne_points
 bbox_topic: /noisy_bounding_boxes
 camera_info_topic: /custom_camera_info
 camera_frame: zed_right_camera_optical_frame
-output_cones_topic: /cones
+output_cones_topic: /perception/cones
 output_frame: base_footprint
 ```
 
@@ -290,7 +290,7 @@ YOLO mode default:
 ```text
 bbox_source: yolov8
 simulated_bbox_topic: /noisy_bounding_boxes
-yolo_bbox_topic: /yolo_bounding_boxes
+yolo_bbox_topic: /perception/bounding_boxes
 yolo_image_topic: /zed/left/image_rect_color
 yolo_camera_info_topic: /zed/left/camera_info
 yolo_camera_frame: zed_left_camera_optical_frame
@@ -308,14 +308,14 @@ yolo_unknown_color_policy: unknown
 Graph SLAM input:
 
 ```text
-/cones
+/perception/cones
 /odometry_integration/car_state
 ```
 
 Graph SLAM output:
 
 ```text
-/graph_slam/map
+/localization/map
 /graph_slam/odom
 /graph_slam/path
 /graph_slam/markers
@@ -363,7 +363,7 @@ cd /path/to/HYU-FS-Sim
 - `sim-gui-bg`: Gazebo GUI, RViz, simulator를 background container로 실행
 - `fusion-bg`: 기존 simulator container 안에서 perception fusion node 실행
 - `slam-bg`: 기존 simulator container 안에서 graph SLAM node 실행
-- `status`: ROS node와 `/cones` 연결 상태 확인
+- `status`: ROS node와 `/perception/cones` 연결 상태 확인
 
 정상 상태:
 
@@ -371,7 +371,7 @@ cd /path/to/HYU-FS-Sim
 /perception_baseline_node
 /graph_slam
 
-/cones
+/perception/cones
 Publisher count: 1
 Node name: perception_baseline_node
 
@@ -406,7 +406,7 @@ cd /path/to/HYU-FS-Sim
 ./scripts/hyu-docker status
 ```
 
-`/cones` publisher가 2개 이상이면 `fusion-bg`와 `adapter-bg`가 동시에 떠 있거나,
+`/perception/cones` publisher가 2개 이상이면 `fusion-bg`와 `adapter-bg`가 동시에 떠 있거나,
 이전 node가 남아있는 상태이다.
 
 ## 9. ROS Topic Check
@@ -437,14 +437,14 @@ ros2 topic list | sort
 /velodyne_points
 /custom_camera_info
 /tf
-/cones
-/graph_slam/map
+/perception/cones
+/localization/map
 ```
 
-### 9.2 `/cones` Connection
+### 9.2 `/perception/cones` Connection
 
 ```bash
-ros2 topic info -v /cones
+ros2 topic info -v /perception/cones
 ```
 
 정상 기준:
@@ -460,7 +460,7 @@ publisher는 `perception_baseline_node`, subscriber는 `graph_slam`이어야 한
 ### 9.3 Fusion Output Message
 
 ```bash
-ros2 topic echo --once /cones
+ros2 topic echo --once /perception/cones
 ```
 
 정상 message 예시:
@@ -494,16 +494,16 @@ unknown_color_cones: []
 ### 9.4 Publish Rate
 
 ```bash
-ros2 topic hz /cones
+ros2 topic hz /perception/cones
 ```
 
 ### 9.5 SLAM Map Output
 
 ```bash
-ros2 topic echo --once /graph_slam/map
+ros2 topic echo --once /localization/map
 ```
 
-정상이라면 `/cones`로 들어간 cone이 `map` frame의 landmark로 변환되어 나온다.
+정상이라면 `/perception/cones`로 들어간 cone이 `map` frame의 landmark로 변환되어 나온다.
 
 ```text
 header:
@@ -517,7 +517,7 @@ yellow_cones:
 즉 아래 연결이 살아있는 것이다.
 
 ```text
-fusion baseline -> /cones -> graph_slam -> /graph_slam/map
+fusion baseline -> /perception/cones -> graph_slam -> /localization/map
 ```
 
 ### 9.6 Input Topic Check
@@ -588,7 +588,7 @@ cd /path/to/HYU-FS-Sim
 adapter-bg and fusion-bg must not run at the same time.
 ```
 
-둘 다 `/cones`를 publish하기 때문이다.
+둘 다 `/perception/cones`를 publish하기 때문이다.
 
 ## 12. Direct ROS Launch
 
@@ -607,7 +607,7 @@ Fusion:
 
 ```bash
 ros2 launch hyu_perception perception_baseline.launch.py \
-  output_cones_topic:=/cones \
+  output_cones_topic:=/perception/cones \
   output_frame:=base_footprint \
   motion_compensation_frame:=odom \
   fusion_enabled:=true \
@@ -622,7 +622,7 @@ LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7 \
   bbox_source:=yolov8 \
   use_sim_time:=true \
   python_executable:=python3 \
-  output_cones_topic:=/cones \
+  output_cones_topic:=/perception/cones \
   output_frame:=base_footprint \
   motion_compensation_frame:=odom \
   fusion_enabled:=true \
@@ -636,7 +636,7 @@ Oracle adapter:
 ```bash
 ros2 launch hyu_perception perception_baseline.launch.py \
   oracle_cones_topic:=/camera_0/cones \
-  output_cones_topic:=/cones \
+  output_cones_topic:=/perception/cones \
   output_frame:=base_footprint \
   fusion_enabled:=false \
   publish_empty_on_sync:=false
@@ -667,7 +667,7 @@ bbox_topic: /noisy_bounding_boxes
 camera_info_topic: /custom_camera_info
 camera_frame: zed_right_camera_optical_frame
 projection_model: eufs_bbox
-output_cones_topic: /cones
+output_cones_topic: /perception/cones
 output_frame: base_footprint
 motion_compensation_frame: map
 fusion_enabled: true
@@ -764,7 +764,7 @@ min_variance: 0.0001
 
 - `bbox_source:=simulated` 기본값은 simulator의 `/noisy_bounding_boxes`를 사용한다.
 - `bbox_source:=yolov8`은 YOLOv8 detector node를 함께 실행하고
-  `/yolo_bounding_boxes`를 fusion bbox 입력으로 사용한다.
+  `/perception/bounding_boxes`를 fusion bbox 입력으로 사용한다.
 - 기본 YOLO weight는 FSOCO fine-tuned model이고, `yolo_class_map`은 FSOCO class를
   EUFS cone color contract로 매핑한다. Offline target에서도 first-run download에
   의존하지 않고 absolute path weight를 사용한다.
@@ -776,7 +776,7 @@ min_variance: 0.0001
   기본 `yolo_sync_tolerance_sec`는 `0.15`이며, bbox/cloud queue front 중 늦은
   timestamp를 anchor로 삼아 반대 stream의 predecessor/첫 이후 frame 중 가까운
   것을 one-to-one으로 선택한다.
-- `/cones` header는 bbox acquisition timestamp를 사용한다. LiDAR point는
+- `/perception/cones` header는 bbox acquisition timestamp를 사용한다. LiDAR point는
   `motion_compensation_frame`(기본 `map`)의 TF history로 cloud time에서 bbox-time
   `base_footprint`로 변환하므로 한 array 안의 LiDAR/vision cone이 같은 시각과
   좌표계 계약을 갖는다. 해당 동적 TF history가 없으면 pair를 소비하지 않고
@@ -841,7 +841,7 @@ min_variance: 0.0001
 - Headless simulator에서는 camera rendering topic이 충분히 나오지 않을 수 있으므로
   fusion 확인은 GUI mode를 권장한다.
 - RViz에서 `eufs_rviz_plugins` display plugin 관련 error가 나올 수 있지만,
-  `/cones`와 `/graph_slam/map` topic 자체가 publish되면 ROS pipeline은 동작 중이다.
+  `/perception/cones`와 `/localization/map` topic 자체가 publish되면 ROS pipeline은 동작 중이다.
 
 ## 15. Troubleshooting
 
@@ -866,7 +866,7 @@ docker ps -a --filter name=hyu_eufs_sim
 ./scripts/hyu-docker sim-gui-bg
 ```
 
-### `/cones` publisher가 2개 이상
+### `/perception/cones` publisher가 2개 이상
 
 증상:
 
@@ -888,7 +888,7 @@ Publisher count: 2
 ./scripts/hyu-docker slam-bg
 ```
 
-### `/cones`가 비어 있음
+### `/perception/cones`가 비어 있음
 
 확인할 topic:
 
@@ -905,7 +905,7 @@ YOLO mode에서는 아래도 같이 확인한다:
 ```bash
 ros2 topic hz /zed/left/image_rect_color
 ros2 topic echo --once /zed/left/camera_info
-ros2 topic echo --once /yolo_bounding_boxes
+ros2 topic echo --once /perception/bounding_boxes
 ros2 run tf2_ros tf2_echo zed_left_camera_optical_frame velodyne
 ```
 
@@ -918,30 +918,30 @@ ros2 run tf2_ros tf2_echo zed_left_camera_optical_frame velodyne
 - mono/stereo fallback이면 bbox visibility, synchronized left/right image,
   CameraInfo, rectification, SIFT match 수와 depth bound가 유효하지 않음
 
-### `/graph_slam/map`이 비어 있음
+### `/localization/map`이 비어 있음
 
 확인:
 
 ```bash
-ros2 topic info -v /cones
-ros2 topic echo --once /cones
+ros2 topic info -v /perception/cones
+ros2 topic echo --once /perception/cones
 ros2 topic echo --once /odometry_integration/car_state
-ros2 topic echo --once /graph_slam/map
+ros2 topic echo --once /localization/map
 ```
 
 가능한 원인:
 
 - graph SLAM이 실행되지 않음
-- `/cones`에 cone이 없음
+- `/perception/cones`에 cone이 없음
 - `/odometry_integration/car_state`가 없음
-- `/cones` publisher가 여러 개라 입력이 섞임
+- `/perception/cones` publisher가 여러 개라 입력이 섞임
 
 ## 16. Recommended Development Flow
 
 1. `adapter-bg`로 SLAM wiring 확인
 2. `fusion-bg`로 three-tier perception output 확인
-3. `/cones`와 `/graph_slam/map`을 동시에 확인
+3. `/perception/cones`와 `/localization/map`을 동시에 확인
 4. 차량을 천천히 움직이며 detection 개수와 map 안정성 확인
-5. `bbox_source:=yolov8`으로 YOLO bbox path를 켜고 `/yolo_bounding_boxes` 확인
+5. `bbox_source:=yolov8`으로 YOLO bbox path를 켜고 `/perception/bounding_boxes` 확인
 6. cone fine-tuned weight, `yolo_class_map`, projection, ROI, clustering,
    covariance parameter tuning

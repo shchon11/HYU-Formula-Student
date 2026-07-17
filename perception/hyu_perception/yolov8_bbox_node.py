@@ -151,7 +151,7 @@ class YoloV8BBoxNode(Node):
 
     def _declare_parameters(self) -> None:
         self.declare_parameter("image_topic", "/zed/left/image_rect_color")
-        self.declare_parameter("bbox_topic", "/yolo_bounding_boxes")
+        self.declare_parameter("bbox_topic", "/perception/bounding_boxes")
         # 'all' infers every frame the worker can take (30 Hz). 'lidar_locked'
         # infers ONE frame per LiDAR period — the frame landing just before
         # the NEXT predicted scan end, so inference (~30 ms) completes right

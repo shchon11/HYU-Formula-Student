@@ -1,7 +1,7 @@
 // wpnt_publisher_node
 //
 // Slices the next `waypoint_num` points of the global race trajectory ahead of
-// the vehicle and republishes them as /path_waypoints (+ /path_waypoints/path).
+// the vehicle and republishes them as /planning/path (+ /planning/debug/path).
 //
 // The window start is chosen by an s-based binary search over the global
 // waypoints' s_m values, NOT by parsing the frenet segment index. The frenet

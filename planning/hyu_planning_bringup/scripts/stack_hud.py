@@ -111,9 +111,9 @@ class StackHud(Node):
         self.banner_topic = p(
             "banner_topic", "/planning/stack_hud_banner").value
 
-        cones_topic = p("cones_topic", "/cones").value
+        cones_topic = p("cones_topic", "/perception/cones").value
         cone_map_topic = p("cone_map_topic", "/localization/cone_map").value
-        slam_status_topic = p("slam_status_topic", "/graph_slam/status").value
+        slam_status_topic = p("slam_status_topic", "/localization/status").value
         ego_odom_topic = p("ego_odom_topic", "/localization/ego_odom").value
         planning_debug_topic = p("planning_debug_topic", "/planning/debug").value
         selector_debug_topic = p(
@@ -128,8 +128,8 @@ class StackHud(Node):
             "global_path_reason_topic", "/planning/global_path_reason").value
         selected_valid_topic = p(
             "selected_path_valid_topic", "/planning/selected_path_valid").value
-        cmd_topic = p("cmd_topic", "/cmd").value
-        can_state_topic = p("can_state_topic", "/ros_can/state").value
+        cmd_topic = p("cmd_topic", "/vehicle/cmd").value
+        can_state_topic = p("can_state_topic", "/vehicle/as_state").value
         cte_topic = p("cte_topic", "/planning/cte").value
         cte_rmse_topic = p("cte_rmse_topic", "/planning/cte_rmse").value
         self.target_laps = p("target_lap_count", 4).value
@@ -174,7 +174,7 @@ class StackHud(Node):
         sub(String, global_reason_topic, self.global_reason.put, latched)
         sub(Bool, selected_valid_topic, self.selected_valid.put, reliable)
         sub(AckermannDriveStamped, cmd_topic, self.cmd.put, be)
-        # NOTE: the sim publishes /ros_can/state only while it has
+        # NOTE: the sim publishes /vehicle/as_state only while it has
         # subscribers — this subscription is what makes it flow.
         sub(CanState, can_state_topic, self.can.put, be)
         sub(Float32, cte_topic, self.cte.put, reliable)
@@ -256,9 +256,9 @@ class StackHud(Node):
         lines = [span("FSK STACK", TEXT) + NBSP * 2 + span(
             time.strftime("%H:%M:%S"), DIM)]
 
-        # PERCEPTION — live /cones flow.
+        # PERCEPTION — live /perception/cones flow.
         if self.cones.rx is None:
-            perc = (B_DIM, DIM, "waiting for /cones")
+            perc = (B_DIM, DIM, "waiting for /perception/cones")
         elif not self.cones.fresh(1.5):
             perc = (B_ERR, ERR, f"SILENT {self.cones.age():.1f}s — check perception")
         else:
@@ -357,9 +357,9 @@ class StackHud(Node):
         actual = self.ego.msg.twist.twist.linear.x if self.ego.msg else float("nan")
         st["actual_speed"] = actual
         if self.cmd.rx is None:
-            ctl = (B_DIM, DIM, "waiting for /cmd")
+            ctl = (B_DIM, DIM, "waiting for /vehicle/cmd")
         elif not self.cmd.fresh(1.5):
-            ctl = (B_ERR, ERR, f"/cmd silent {self.cmd.age():.0f}s — controller down?")
+            ctl = (B_ERR, ERR, f"/vehicle/cmd silent {self.cmd.age():.0f}s — controller down?")
         else:
             d = self.cmd.msg.drive
             braking = d.speed == 0.0 and d.acceleration < -1.0
@@ -380,7 +380,7 @@ class StackHud(Node):
         lap = debug.get("lap_count", "?")
         self.target_laps = debug.get("target_lap_count", self.target_laps)
         if self.can.msg is None:
-            mis = (B_DIM, DIM, "waiting for /ros_can/state")
+            mis = (B_DIM, DIM, "waiting for /vehicle/as_state")
         else:
             as_name = AS_NAMES.get(as_state, f"AS:{as_state}")
             ami = AMI_NAMES.get(self.can.msg.ami_state, str(self.can.msg.ami_state))
@@ -462,7 +462,7 @@ class StackHud(Node):
             return "WAITING MISSION — run: race (auto-arms) or set_mission", WARN
         # From here on the car is armed & driving: diagnose why it may be stuck.
         if self.cmd.rx is not None and not self.cmd.fresh(1.5):
-            return "✕ CONTROLLER SILENT — /cmd stopped", ERR
+            return "✕ CONTROLLER SILENT — /vehicle/cmd stopped", ERR
         if not st.get("selected_valid"):
             cause = st.get("selection_failure")
             if not cause or cause == "none":

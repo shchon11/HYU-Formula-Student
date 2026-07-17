@@ -28,7 +28,7 @@ def generate_launch_description():
     )
     odom_topic_arg = DeclareLaunchArgument(
         "odom_topic",
-        default_value="/ground_truth/odom",
+        default_value="/localization/ego_odom",
         description="Vehicle odometry topic consumed by frenet_odom_node.",
     )
 

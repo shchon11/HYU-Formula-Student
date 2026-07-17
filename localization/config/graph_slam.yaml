@@ -2,8 +2,8 @@ graph_slam:
   ros__parameters:
     use_sim_time: true
 
-    car_state_topic: /wheel_odometry/car_state
-    cones_topic: /cones
+    car_state_topic: /localization/wheel_odom
+    cones_topic: /perception/cones
 
     map_topic: /localization/cone_map
     slam_odom_topic: /localization/ego_odom
@@ -131,13 +131,13 @@ graph_slam:
     # bridge/wheel-odometry mode then weakens its own constraints.
     use_odom_covariance: true
 
-    # GNSS global anchor (Level 2): consume the SBG bridge's /gnss/odom absolute
+    # GNSS global anchor (Level 2): consume the SBG bridge's /localization/gnss_odom absolute
     # ENU fix as a unary EdgeSE2XYPrior on each keyframe. gnss_prior_max_position_sigma
     # gates it so only mode-4/RTK fixes (small covariance) anchor the graph;
     # degraded modes publish a huge covariance and are dropped automatically, so
     # the anchor fades out gracefully on RTK dropout while odometry keeps flowing.
     gnss_prior_enable: true
-    gnss_prior_topic: /gnss/odom
+    gnss_prior_topic: /localization/gnss_odom
     # Accept DEGRADED fixes with their honest (large) sigma instead of
     # dropping them: a 1-2 m anchor at 2 Hz still bounds a sustained GM
     # excursion, which is what prevents the drifted second-copy overlay

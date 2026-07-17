@@ -309,7 +309,7 @@ def main():
                         help="fit against a running simulator")
     parser.add_argument("--duration", type=float, default=60.0,
                         help="seconds of sim time to collect for --live")
-    parser.add_argument("--bbox-topic", default="/yolo_bounding_boxes")
+    parser.add_argument("--bbox-topic", default="/perception/bounding_boxes")
     parser.add_argument("--truth-topic", default="/ground_truth/track",
                         help="the UNFILTERED full track; /ground_truth/cones is "
                              "FOV-filtered by the plugin and fitting on it fits "

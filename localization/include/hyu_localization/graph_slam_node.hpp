@@ -575,7 +575,7 @@ private:
   KeyframeSnapshot keyframe_snapshot_;
   std::mutex snapshot_mutex_;
 
-  // Latest GNSS absolute fix (map/ENU frame) from the bridge's /gnss/odom,
+  // Latest GNSS absolute fix (map/ENU frame) from the bridge's /localization/gnss_odom,
   // consumed as a unary prior on new keyframes. Guarded by gnss_mutex_ so the
   // GNSS callback can write while the keyframe/optimization thread reads.
   struct GnssFix

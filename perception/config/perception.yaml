@@ -13,17 +13,17 @@ perception_node:
     # ======================================================================
 
     pointcloud_topic: /velodyne_points
-    bbox_topic: /yolo_bounding_boxes
+    bbox_topic: /perception/bounding_boxes
     camera_info_topic: /zed/left/camera_info
     left_image_topic: /zed/left/image_rect_color
     right_image_topic: /zed/right/image_rect_color
-    output_cones_topic: /cones
+    output_cones_topic: /perception/cones
     output_frame: base_footprint
     camera_frame: zed_left_camera_optical_frame
     debug_prefix: /fusion/debug
     publish_debug: true
     sync_queue_size: 10
-    # Periodic "now - header.stamp" for /cones. The header carries the bbox
+    # Periodic "now - header.stamp" for /perception/cones. The header carries the bbox
     # capture time, so this is the whole pipeline's age as the planner sees it.
     # 0 disables.
     latency_log_period_sec: 5.0
@@ -85,7 +85,7 @@ perception_node:
     # measured on the ideal cloud; the realism pipeline reads +0.076 lon with
     # causes entangled, so no constant is honest right now.
     deskew_enabled: true
-    deskew_twist_topic: /wheel_odometry/car_state
+    deskew_twist_topic: /localization/wheel_odom
     deskew_twist_timeout: 0.5
     roi_min_x: 0.5
     roi_max_x: 30.0
@@ -350,7 +350,7 @@ perception_node:
     # THE ANISOTROPY IS NOT SUPPORTED BY CLEAN DATA. Read this before trusting it.
     #
     # It was introduced on a longitudinal spread of 0.047 / 0.088 / 0.125 m that
-    # turned out to be TWO perception nodes publishing to /cones at once -- the
+    # turned out to be TWO perception nodes publishing to /perception/cones at once -- the
     # tell was n jumping 2322 -> 5784 for the same 60 s, which no code change can
     # do. Re-measured on a verified single stack, three runs:
     #
@@ -449,7 +449,7 @@ perception_node:
 yolov8_bbox_node:
   ros__parameters:
     image_topic: /zed/left/image_rect_color
-    bbox_topic: /yolo_bounding_boxes
+    bbox_topic: /perception/bounding_boxes
     # One inference per LiDAR period, phase-locked to land just before the
     # NEXT predicted scan end: the bbox<->cloud pairing gap drops to the
     # 30 Hz grid minimum (<=16 ms) and the YOLO load falls 3x. 'all'

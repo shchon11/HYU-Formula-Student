@@ -13,7 +13,7 @@ ros2 run hyu_teleop teleop
 ```
 
 The node sets the `MANUAL` mission automatically (`auto_mission` parameter),
-which lets `/cmd` through immediately — no mission GUI needed.
+which lets `/vehicle/cmd` through immediately — no mission GUI needed.
 
 ## Keys
 
@@ -53,5 +53,5 @@ which lets `/cmd` through immediately — no mission GUI needed.
 `max_brake` (8), `max_jerk` (12), `speed_step` (0.4 m/s per tap),
 `steer_step` (0.09 per tap), `steer_expo` (1.6), `counter_steer_gain` (2),
 `auto_center_rate` (0.16 per m/s), `speed_steer_falloff` (0.07 per m/s),
-`speed_kp` (1.6), `cmd_topic` (`/cmd`),
+`speed_kp` (1.6), `cmd_topic` (`/vehicle/cmd`),
 `car_state_topic` (`/odometry_integration/car_state`), `auto_mission` (true).

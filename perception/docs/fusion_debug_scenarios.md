@@ -62,31 +62,31 @@ LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7 \
 ```bash
 ros2 node list | grep -E 'yolo|perception'
 ros2 topic list | grep -E 'zed/left|yolo|cones|fusion/debug|velodyne'
-ros2 topic info /yolo_bounding_boxes
-ros2 topic info /cones
-ros2 topic info /cones/viz
+ros2 topic info /perception/bounding_boxes
+ros2 topic info /perception/cones
+ros2 topic info /perception/debug/cones_viz
 ```
 
 ### PASS
 
 - `yolov8_bbox_node`와 `perception_baseline_node`가 보인다.
-- `/yolo_bounding_boxes`, `/velodyne_points`, `/zed/left/camera_info`, `/cones`, `/cones/viz`,
+- `/perception/bounding_boxes`, `/velodyne_points`, `/zed/left/camera_info`, `/perception/cones`, `/perception/debug/cones_viz`,
   `/fusion/debug/rejections`가 보인다.
-- `/yolo_bounding_boxes`와 `/cones`에 publisher/subscriber가 있다.
+- `/perception/bounding_boxes`와 `/perception/cones`에 publisher/subscriber가 있다.
 
 ### FAIL이면
 
 - perception node가 없으면 launch 인자 `perception:=true` 또는 별도 perception launch를 먼저 고친다.
 - `/fusion/debug/*`가 없으면 `publish_fusion_debug:=true`가 적용되지 않은 것이다.
-- `/yolo_bounding_boxes` publisher가 없으면 YOLO node 실행 또는 Python executable 문제가 먼저다.
+- `/perception/bounding_boxes` publisher가 없으면 YOLO node 실행 또는 Python executable 문제가 먼저다.
 
 ## 2. Scenario B: YOLO bbox가 충분히 나오는지 확인
 
 ### 실행
 
 ```bash
-ros2 topic hz /yolo_bounding_boxes
-ros2 topic echo --once /yolo_bounding_boxes
+ros2 topic hz /perception/bounding_boxes
+ros2 topic echo --once /perception/bounding_boxes
 ```
 
 RViz에서는 `/yolo_bounding_boxes/debug_image`를 image display로 확인한다.
@@ -189,7 +189,7 @@ LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7 \
 
 ```bash
 ros2 topic echo /fusion/debug/rejections
-ros2 topic echo --once /cones
+ros2 topic echo --once /perception/cones
 ```
 
 RViz에서는 아래를 같이 켠다.
@@ -197,17 +197,17 @@ RViz에서는 아래를 같이 켠다.
 ```text
 /fusion/debug/cluster_candidates
 /fusion/debug/sparse_support_points
-/cones/viz
+/perception/debug/cones_viz
 ```
 
 ### PASS
 
-- `roi>0`인 bbox가 있고, `/fusion/debug/sparse_support_points` 또는 `/cones/viz`가 같이 증가한다.
+- `roi>0`인 bbox가 있고, `/fusion/debug/sparse_support_points` 또는 `/perception/debug/cones_viz`가 같이 증가한다.
 - 이 경우 sparse association이 LiDAR sparse support를 받아내는 중이다.
 
 ### FAIL 패턴
 
-- `raw>0, roi>0, cl=0`이 많은데 `/cones/viz`가 거의 늘지 않는다.
+- `raw>0, roi>0, cl=0`이 많은데 `/perception/debug/cones_viz`가 거의 늘지 않는다.
 - 이 경우 ROI까지는 살아남았지만 cluster 후보가 실패했고, sparse 조건도 충분히 받아주지 못하는 상태다.
 
 ### 다음 액션
@@ -275,12 +275,12 @@ ros2 topic echo --once /fusion/debug/cluster_candidates
 ```
 
 RViz에서는 `/fusion/debug/cluster_candidates`, `/fusion/debug/sparse_support_points`,
-`/cones/viz`를 같이 켠다.
+`/perception/debug/cones_viz`를 같이 켠다.
 
 ### PASS
 
 - `/fusion/debug/cluster_candidates`가 cone 위치에 늘어난다.
-- `/cones/viz`가 늘고, 엉뚱한 위치의 cone이 크게 늘지 않는다.
+- `/perception/debug/cones_viz`가 늘고, 엉뚱한 위치의 cone이 크게 늘지 않는다.
 
 ### FAIL이면
 
@@ -299,7 +299,7 @@ RViz에서는 `/fusion/debug/cluster_candidates`, `/fusion/debug/sparse_support_
 run name:
 launch override:
 visible YOLO bbox count:
-/cones count:
+/perception/cones count:
 rejections dominant pattern: raw=0 / roi=0 / cl=0 / assigned_sparse / assigned_cluster
 RViz false positive:
 RViz missed obvious cone:
@@ -308,7 +308,7 @@ notes:
 
 최종 선택 기준:
 
-1. YOLO bbox 대비 `/cones/viz`가 가장 많이 살아난다.
+1. YOLO bbox 대비 `/perception/debug/cones_viz`가 가장 많이 살아난다.
 2. 엉뚱한 cone false positive가 늘지 않는다.
 3. `assigned_sparse`가 늘어도 cone 위치가 안정적이다.
 4. `cluster_min_points:=2` 없이 해결되면 그 설정을 우선한다.

@@ -1,9 +1,9 @@
 <launch>
   <arg name="use_sim_time" default="true"/>
   <arg name="localization_topic" default="/localization/ego_odom"/>
-  <arg name="car_state_topic" default="/wheel_odometry/car_state"/>
-  <arg name="wheel_speeds_topic" default="/ros_can/wheel_speeds"/>
-  <arg name="output_topic" default="/tmpc/vehicle_state"/>
+  <arg name="car_state_topic" default="/localization/wheel_odom"/>
+  <arg name="wheel_speeds_topic" default="/vehicle/wheel_speeds"/>
+  <arg name="output_topic" default="/control/tmpc/vehicle_state"/>
   <arg name="publish_rate_hz" default="100.0"/>
   <arg name="localization_timeout_sec" default="0.2"/>
   <arg name="car_state_timeout_sec" default="0.2"/>

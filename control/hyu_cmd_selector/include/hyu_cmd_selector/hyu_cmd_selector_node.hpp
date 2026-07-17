@@ -31,7 +31,7 @@ private:
   void OnTimer();
   // Run the selection policy and publish the chosen command + status. Invoked
   // both by the heartbeat timer and immediately whenever a fresh candidate
-  // command arrives, so a new Pure Pursuit / TMPC command reaches /cmd without
+  // command arrives, so a new Pure Pursuit / TMPC command reaches /vehicle/cmd without
   // waiting up to a full timer period. Under a coarse sim /clock (10 Hz) that
   // resampling wait was ~100 ms of pure latency on top of the plant's control
   // delay -- enough to blow the first corner and corrupt the map. The default
@@ -41,8 +41,8 @@ private:
   // Publish discipline: the selector is a 1:1 RELAY, not a resampler. A
   // forwarded source command is published exactly once per received message
   // (tracked by sequence number), plus once immediately on a source switch, so
-  // in LOCAL the /cmd stream is message-for-message identical to Pure Pursuit
-  // publishing /cmd directly (the proven plain-trackdrive path). Only the
+  // in LOCAL the /vehicle/cmd stream is message-for-message identical to Pure Pursuit
+  // publishing /vehicle/cmd directly (the proven plain-trackdrive path). Only the
   // safe-brake synthesizes at the timer rate -- it has no upstream message
   // stream and the plant's 1 s command-staleness rule needs a heartbeat.
   void EvaluateAndPublish();

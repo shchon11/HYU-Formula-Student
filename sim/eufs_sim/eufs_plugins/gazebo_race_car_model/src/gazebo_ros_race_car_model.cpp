@@ -97,7 +97,7 @@ void RaceCarModelPlugin::Load(gazebo::physics::ModelPtr model, sdf::ElementPtr s
 
   // ROS Services
   _reset_vehicle_pos_srv = _rosnode->create_service<std_srvs::srv::Trigger>(
-      "/ros_can/reset_vehicle_pos", std::bind(&RaceCarModelPlugin::resetVehiclePosition, this,
+      "/vehicle/reset_vehicle_pos", std::bind(&RaceCarModelPlugin::resetVehiclePosition, this,
                                               std::placeholders::_1, std::placeholders::_2));
   _command_mode_srv = _rosnode->create_service<std_srvs::srv::Trigger>(
       "/race_car_model/command_mode", std::bind(&RaceCarModelPlugin::returnCommandMode, this,
@@ -105,7 +105,7 @@ void RaceCarModelPlugin::Load(gazebo::physics::ModelPtr model, sdf::ElementPtr s
 
   // ROS Subscriptions
   _sub_cmd = _rosnode->create_subscription<ackermann_msgs::msg::AckermannDriveStamped>(
-      "/cmd", 1, std::bind(&RaceCarModelPlugin::onCmd, this, std::placeholders::_1));
+      "/vehicle/cmd", 1, std::bind(&RaceCarModelPlugin::onCmd, this, std::placeholders::_1));
 
   // Connect to Gazebo
   _update_connection =

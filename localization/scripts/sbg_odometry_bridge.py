@@ -39,7 +39,7 @@ never stops the odometry:
     through arbitrary mode flapping. Publication stops only when dead
     reckoning is impossible too (mode <= 1: heading drifts freely; or stale
     wheel speeds / heading).
-  * ``/gnss/odom`` (nav_msgs/Odometry) -- **global anchor**. Pose is the raw
+  * ``/localization/gnss_odom`` (nav_msgs/Odometry) -- **global anchor**. Pose is the raw
     ekf_nav absolute ENU position with a mode-tiered covariance (tight only at
     mode 4 / RTK, huge otherwise). graph_slam_node adds this as a unary GPS
     prior (EdgeSE2XYPrior) gated on the covariance, so the anchor fades out
@@ -110,7 +110,7 @@ class SbgOdometryBridge(Node):
             "car_state_topic", "/ins_odom/car_state"
         ).value
         self.gnss_odom_topic = self.declare_parameter(
-            "gnss_odom_topic", "/gnss/odom"
+            "gnss_odom_topic", "/localization/gnss_odom"
         ).value
         self.health_topic = self.declare_parameter(
             "health_topic", "/sbg_bridge/status"
@@ -167,7 +167,7 @@ class SbgOdometryBridge(Node):
         self.min_odom_solution_mode = self.declare_parameter(
             "min_odom_solution_mode", 3
         ).value
-        # The absolute /gnss/odom prior is only trustworthy at/above this mode;
+        # The absolute /localization/gnss_odom prior is only trustworthy at/above this mode;
         # below it we still publish but with a huge covariance so the SLAM
         # prior gate drops it.
         self.absolute_min_solution_mode = self.declare_parameter(
@@ -209,7 +209,7 @@ class SbgOdometryBridge(Node):
             "ahrs_fallback_enable", True
         ).value
         self.wheel_speeds_topic = self.declare_parameter(
-            "wheel_speeds_topic", "/ros_can/wheel_speeds"
+            "wheel_speeds_topic", "/vehicle/wheel_speeds"
         ).value
         self.wheel_radius = self.declare_parameter("wheel_radius", 0.2525).value
         # Wheel-speed / heading staleness beyond which dead reckoning is not
@@ -237,7 +237,7 @@ class SbgOdometryBridge(Node):
         self._last_vel_enu = None
         self._started = False
         # True once the origin datum is fixed from a real absolute fix; the
-        # /gnss/odom anchor only publishes when georeferenced (a DR-only start
+        # /localization/gnss_odom anchor only publishes when georeferenced (a DR-only start
         # runs un-georeferenced until a fix arrives).
         self._georeferenced = False
         # Stamp of the last nav message that reached the publishers, for the
@@ -423,7 +423,7 @@ class SbgOdometryBridge(Node):
                 # but heading + wheels are live. SLAM consumes CarState as
                 # deltas, so a provisional (0,0) origin is harmless — start
                 # feeding motion NOW instead of leaving the whole stack with
-                # no state input. The /gnss/odom anchor stays gated until a
+                # no state input. The /localization/gnss_odom anchor stays gated until a
                 # real fix georeferences the origin (below).
                 self._odom_xy = [0.0, 0.0]
                 self._odom_yaw = self._yaw
@@ -449,7 +449,7 @@ class SbgOdometryBridge(Node):
             msg.status.position_valid and mode >= self.start_min_solution_mode
         ):
             # A real fix arrived after a DR-only start: georeference the datum
-            # so /gnss/odom can begin. The absolute origin is taken here, and
+            # so /localization/gnss_odom can begin. The absolute origin is taken here, and
             # the CarState motion frame stays as it was — SLAM's own map frame
             # is provisional either way, and its GNSS prior suppress/rearm
             # machinery reconciles the resulting offset.

@@ -180,7 +180,7 @@ void GazeboGroundTruthCones::Load(gazebo::physics::ModelPtr _parent, sdf::Elemen
 
   // Cone position reset service
   this->reset_cone_pos_srv = this->rosnode_->create_service<std_srvs::srv::Trigger>(
-      "/ros_can/reset_cone_pos",
+      "/vehicle/reset_cone_pos",
       std::bind(&GazeboGroundTruthCones::resetConePosition,
                         this,
                         std::placeholders::_1,

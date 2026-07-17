@@ -16,13 +16,13 @@ LocalPlannerNode::LocalPlannerNode(const rclcpp::NodeOptions & options)
 : Node("hyu_local_planner_node", options),
   source_mode_(parseSourceMode(declare_parameter<std::string>("source_mode", "slam_map")))
 {
-  const auto cones_topic = declare_parameter<std::string>("cones_topic", "/cones");
+  const auto cones_topic = declare_parameter<std::string>("cones_topic", "/perception/cones");
   const auto slam_map_topic = declare_parameter<std::string>(
     "slam_map_topic", "/localization/cone_map");
   const auto odom_topic = declare_parameter<std::string>(
     "odom_topic", "/localization/ego_odom");
   const auto slam_status_topic = declare_parameter<std::string>(
-    "slam_status_topic", "/graph_slam/status");
+    "slam_status_topic", "/localization/status");
   const auto waypoints_topic = declare_parameter<std::string>(
     "waypoints_topic", "/planning/local_waypoints");
   const auto path_topic = declare_parameter<std::string>(

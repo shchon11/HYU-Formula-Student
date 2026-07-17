@@ -5,10 +5,10 @@
 hyu_local_planner_node:
   ros__parameters:
     source_mode: slam_map
-    cones_topic: /cones
+    cones_topic: /perception/cones
     slam_map_topic: /localization/cone_map
     odom_topic: /localization/ego_odom
-    slam_status_topic: /graph_slam/status
+    slam_status_topic: /localization/status
     waypoints_topic: /planning/local_waypoints
     path_topic: /planning/local_waypoints/path
     validity_topic: /planning/local_path_valid

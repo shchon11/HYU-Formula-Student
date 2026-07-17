@@ -18,13 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - New ADS-DV mesh
 - Sensor positions for the ADS-DV robot
-- Simulated perception topic to `/cones` from `/fusion/cones`
+- Simulated perception topic to `/perception/cones` from `/fusion/cones`
 - `base_link` renamed to `chassis`
 - Topic prefix for sensors
 - Revise track generation
 - Launcher module structure
-- Robot Steering GUI defaults to `/cmd` topic
-- Replace the `/ros_can/set_mission` topic with an equivalent service
+- Robot Steering GUI defaults to `/vehicle/cmd` topic
+- Replace the `/vehicle/set_mission` topic with an equivalent service
 - Reduce artifact overhead in CI pipeline
 
 ### Fixed

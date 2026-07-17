@@ -20,7 +20,7 @@ YOLOv5 detector and its separate per-crop RektNet keypoint network.
 
 It is committed in-tree deliberately. The previous default was an absolute path
 under a single developer's home directory, so on any other machine the detector
-raised at startup, the fusion node waited forever for boxes, and `/cones`
+raised at startup, the fusion node waited forever for boxes, and `/perception/cones`
 published nothing — a silent, total perception failure. Keeping the weight with
 the package removes that class of bug.
 

@@ -15,28 +15,28 @@ PlanningStateMachineNode::PlanningStateMachineNode()
   using std::placeholders::_1;
 
   frenet_odom_topic_ = declare_parameter<std::string>(
-    "frenet_odom_topic", "/car_state/frenet/odom");
+    "frenet_odom_topic", "/planning/frenet_odom");
   global_waypoints_topic_ = declare_parameter<std::string>(
     "global_waypoints_topic", "/global_waypoints");
   graph_slam_status_topic_ = declare_parameter<std::string>(
-    "graph_slam_status_topic", "/graph_slam/status");
+    "graph_slam_status_topic", "/localization/status");
   global_path_valid_topic_ = declare_parameter<std::string>(
     "global_path_valid_topic", "/planning/global_path_valid");
   local_path_valid_topic_ = declare_parameter<std::string>(
     "local_path_valid_topic", "/planning/local_path_valid");
   global_handoff_ready_topic_ = declare_parameter<std::string>(
     "global_handoff_ready_topic", "/planning/global_handoff_ready");
-  cone_map_topic_ = declare_parameter<std::string>("cone_map_topic", "/cones");
+  cone_map_topic_ = declare_parameter<std::string>("cone_map_topic", "/perception/cones");
   slam_cone_map_topic_ = declare_parameter<std::string>(
     "slam_cone_map_topic", "/localization/cone_map");
   ego_odom_topic_ = declare_parameter<std::string>(
     "ego_odom_topic", "/localization/ego_odom");
   stop_zone_s_start_topic_ = declare_parameter<std::string>(
-    "stop_zone_s_start_topic", "/stop_zone_s_start");
+    "stop_zone_s_start_topic", "/planning/stop_zone/s_start");
   stop_zone_s_end_topic_ = declare_parameter<std::string>(
-    "stop_zone_s_end_topic", "/stop_zone_s_end");
+    "stop_zone_s_end_topic", "/planning/stop_zone/s_end");
   stop_zone_valid_topic_ = declare_parameter<std::string>(
-    "stop_zone_valid_topic", "/stop_zone_valid");
+    "stop_zone_valid_topic", "/planning/stop_zone/valid");
 
   target_lap_count_ = declare_parameter<int>("target_lap_count", 4);
   initial_lap_count_ = declare_parameter<int>("initial_lap_count", 0);

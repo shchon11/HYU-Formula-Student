@@ -30,7 +30,7 @@ opinion that should reach as far as the camera can see. Two consequences that
 - **`monocular_min_bbox_height_px` IS the "trustworthy range" boundary.** It is
   the design, not a heuristic to be optimised away. §4 Step 3 proposed deleting
   it; measurement put it back (see there).
-- **`/cones` is paced by the LiDAR, by construction.** Its information rate
+- **`/perception/cones` is paced by the LiDAR, by construction.** Its information rate
   cannot exceed the LiDAR's 10 Hz, because the backbone updates at 10 Hz.
   Publishing faster would republish the same clusters with only the vision cones
   moving. See §6b.
@@ -102,7 +102,7 @@ exponent away from −1 — which is the same reason the paper carries −0.954.
 
 `fit_mono_depth_curve.py --bag`, which would automate this, is **an
 unimplemented stub** (`--analytic` works). The fit above was done by hand from a
-recorded bag: pair `/yolo_bounding_boxes` with `/ground_truth/cones` by stamp,
+recorded bag: pair `/perception/bounding_boxes` with `/ground_truth/cones` by stamp,
 project each truth cone with the camera's own `K` and the URDF extrinsics, match
 to the nearest box, then least-squares `ln D = ln c + e·ln h_n`.
 
@@ -113,7 +113,7 @@ price is not. With the monocular tier disabled so every cone fell through to
 stereo:
 
 - `perception_baseline_node` → **287 % CPU**
-- `/cones` → **~1 Hz** (from ~7 Hz)
+- `/perception/cones` → **~1 Hz** (from ~7 Hz)
 - meanwhile YOLO idled at 9 % CPU / 12–18 % GPU
 
 Per-crop `cv2.SIFT.detectAndCompute` on ~40 crops/frame is 150–300 ms of pyramid
@@ -136,7 +136,7 @@ Tier 3. It is a latency bomb waiting for conditions that send more cones there.
 
 ### 2.4 The evaluator was measuring the wrong thing (fixed), and now measures against the wrong truth (open)
 
-`/cones` is stamped at bbox capture but was compared against the *latest*
+`/perception/cones` is stamped at bbox capture but was compared against the *latest*
 ground truth. Adding stamp matching moved every tier:
 
 | tier | before | after | paper |
@@ -238,7 +238,7 @@ Nothing below can be judged without this.
   time-to-confirm — plus **covariance consistency**, which was not in the
   original plan and turned out to be the acceptance test Steps 2–3 needed.
 - **Latency probe**: `_record_output_latency` in the node logs
-  `now − header.stamp` at `/cones` publish every `latency_log_period_sec`.
+  `now − header.stamp` at `/perception/cones` publish every `latency_log_period_sec`.
 
 What the implementation had to add beyond the plan:
 
@@ -265,7 +265,7 @@ What the implementation had to add beyond the plan:
 
 `/ground_truth/odom` (200 Hz, `map`→`base_footprint`) supplies the transform.
 Not `/odometry_integration/car_state`, which is deliberately drifted
-(`driftOdometry: true`). Matched by stamp, since `/cones` is stamped at bbox
+(`driftOdometry: true`). Matched by stamp, since `/perception/cones` is stamped at bbox
 capture and trails sim time.
 
 Note the sim camera's far clip is **20 m** — that is a hard ceiling on any
@@ -414,7 +414,7 @@ of which are detector properties and both of which will move.
 ### Step 5 — ZNCC cross-check replaces SIFT (2–3 days) — **NOW A THROUGHPUT FIX**
 
 Filed here as a robustness/cross-check improvement. Measured (§6b), it is what
-stands between `/cones` and the sensor rate: the fusion node burns **200–235 %
+stands between `/perception/cones` and the sensor rate: the fusion node burns **200–235 %
 CPU** and publishes at **4.0 Hz against an 8.8 Hz input, with ~0.8 s of
 latency**, because n=130 cones/run now reach Tier 3's per-crop SIFT. §2.2 called
 this a latency bomb; it has gone off under normal driving.
@@ -517,10 +517,10 @@ before committing. ZNCC is the safe default until then.
 
 ## 6b. Rate and latency — measured, and it is not where §2.2/§2.3 looked
 
-Goal: **`/cones` should publish at the sensor input rate.** Per §0 that means
+Goal: **`/perception/cones` should publish at the sensor input rate.** Per §0 that means
 the **LiDAR's 10 Hz**, not the camera's: LiDAR clusters are the backbone, so the
 backbone's rate is the pipeline's rate. Fusion requires a one-to-one bbox/LiDAR
-pair, so `/cones` cannot structurally exceed 10 Hz today. A 30 Hz `/cones` would
+pair, so `/perception/cones` cannot structurally exceed 10 Hz today. A 30 Hz `/perception/cones` would
 need the vision tiers decoupled from the LiDAR frame — which is a different
 pipeline from the one §0 describes, and would republish identical clusters
 between LiDAR frames.
@@ -532,9 +532,9 @@ is that hop's cumulative age (`--duration 30`, driving):
 | hop | rate | age | stamps passed on |
 |---|---|---|---|
 | `/zed/left/image_rect_color` | 8.8 Hz | −30 ms | — |
-| `/yolo_bounding_boxes` | **8.8 Hz** | **−28 ms** | 84 % of images |
+| `/perception/bounding_boxes` | **8.8 Hz** | **−28 ms** | 84 % of images |
 | `/velodyne_points` | 10.0 Hz | −94 ms | — |
-| **`/cones`** | **4.0 Hz** | **785 ms** | **44 % of boxes** |
+| **`/perception/cones`** | **4.0 Hz** | **785 ms** | **44 % of boxes** |
 
 (Ages are negative because sim `/clock` ticks at 7.9 Hz, so a subscriber's clock
 lags the stamps by up to one 126 ms tick. It biases every row equally.)
@@ -552,7 +552,7 @@ the stereo tier. The conditions arrived.
 normalised by the **LiDAR's achieved rate**, because the host drifts between runs
 and the LiDAR is the one thing none of this touches:
 
-| | perception CPU | `/cones` ÷ LiDAR |
+| | perception CPU | `/perception/cones` ÷ LiDAR |
 |---|---|---|
 | Tier 3 **on** | **200–235 %** | 0.40 |
 | Tier 3 **off** | **28 %** | 0.59 |
@@ -567,7 +567,7 @@ Step 5:
    camera free-runs at ~8.8 Hz against a LiDAR that hits 10.0 Hz exactly. That is
    §2.3's pathology, unfixed at this level.
 
-So **ZNCC (Step 5) would not get `/cones` to the backbone's rate.** It would buy
+So **ZNCC (Step 5) would not get `/perception/cones` to the backbone's rate.** It would buy
 back the CPU and most of the 0.8 s. The rate needs the sync fixed — or Tier 3
 deleted rather than optimised, which is the question §0 raises: the design as
 stated has a LiDAR backbone plus camera-only cones at trustworthy range, and
@@ -637,7 +637,7 @@ blaming on my changes.**
 
 - **`evaluate_slam.py` map RMSE has not been run.** The covariance is honest per
   §4; whether the map got better is still unverified.
-- **`/cones` is at 4 Hz against a 10 Hz backbone, with ~0.8 s of latency**, and
+- **`/perception/cones` is at 4 Hz against a 10 Hz backbone, with ~0.8 s of latency**, and
   the cause is measured: Tier 3 SIFT at 200–235 % CPU (§6b). This is the largest
   open item and it is Step 5.
 - **The monocular tier's −0.5 m bias is NOT the curve, and the sign proves it.**
@@ -675,7 +675,7 @@ blaming on my changes.**
   starts at ~8.8 m. Step 4 moves the cliff; then both numbers move.
 - Everything measured here is **small_track, one host, driving ~6 m/s**. The
   §2.1 warning applies to the whole §4 table, not just the curve.
-- `/cones` under-curves the skidpad left circle (`log_planner_diagnostics: true`
+- `/perception/cones` under-curves the skidpad left circle (`log_planner_diagnostics: true`
   is temporarily on in `hyu_local_planner_skidpad.yaml` for this; remove when done).
 - Colour-correct varies 54–95 % run to run. SLAM's `voteLandmarkColor` should
   absorb this — verify rather than fix in perception.

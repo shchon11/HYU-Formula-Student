@@ -35,8 +35,8 @@ planner_node:
     # Inputs
     cone_map_topic: "/localization/cone_map"
     ego_odom_topic: "/localization/ego_odom"
-    graph_slam_status_topic: "/graph_slam/status"
-    graph_slam_map_converged_topic: "/graph_slam/map_converged"
+    graph_slam_status_topic: "/localization/status"
+    graph_slam_map_converged_topic: "/localization/map_converged"
 
     # Outputs. Do not run planner_node and the CSV publisher against these same
     # topics at the same time. /planning/global_path_valid is reliable volatile
@@ -96,14 +96,14 @@ wpnt_publisher:
   ros__parameters:
     # Republishes the next `waypoint_num` global points ahead of the vehicle,
     # selecting the window by an s-based lookup over /global_waypoints using
-    # /car_state/frenet/odom (produced by the hyu_frenet_conversion package).
+    # /planning/frenet_odom (produced by the hyu_frenet_conversion package).
     global_waypoints_topic: "/global_waypoints"
     # Reliable volatile std_msgs/Bool heartbeat; do not use transient-local.
     global_path_valid_topic: "/planning/global_path_valid"
     global_path_valid_timeout_sec: 0.5
-    frenet_odom_topic: "/car_state/frenet/odom"
-    path_waypoints_topic: "/path_waypoints"
-    path_topic: "/path_waypoints/path"
+    frenet_odom_topic: "/planning/frenet_odom"
+    path_waypoints_topic: "/planning/path"
+    path_topic: "/planning/debug/path"
     waypoint_num: 50
     closed_loop: true
     closing_duplicate_tolerance: 0.001
@@ -118,8 +118,8 @@ wpnt_publisher:
     ego_odom_topic: "/localization/ego_odom"
     path_source_topic: "/planning/path_source"
     lap_count_topic: "/planning/lap_count"
-    tmpc_performance_trajectory_topic: "/tmpc/trajectory_performance"
-    tmpc_emergency_trajectory_topic: "/tmpc/trajectory_emergency"
+    tmpc_performance_trajectory_topic: "/planning/trajectory_performance"
+    tmpc_emergency_trajectory_topic: "/planning/trajectory_emergency"
     tmpc_publish_rate_hz: 20.0
     tmpc_input_timeout_sec: 0.5
 
@@ -171,13 +171,13 @@ frenet_odom_node:
   ros__parameters:
     # EUFS simulation publishes vehicle odometry on /ground_truth/odom. For a
     # localization stack, override launch arg odom_topic:=/pf/pose/odom.
-    odom_topic: "/ground_truth/odom"
+    odom_topic: "/localization/ego_odom"
     waypoint_topic: "/global_waypoints"
     # Reliable volatile std_msgs/Bool heartbeat; do not use transient-local.
     global_path_valid_topic: "/planning/global_path_valid"
     global_path_valid_timeout_sec: 0.5
-    frenet_odom_topic: "/car_state/frenet/odom"
-    debug_topic: "/car_state/frenet/debug"
+    frenet_odom_topic: "/planning/frenet_odom"
+    debug_topic: "/planning/debug/frenet"
     frenet_frame_id: "frenet"
     closed_loop: true
     publish_debug: true
@@ -212,13 +212,13 @@ frenet_odom_node:
   ros__parameters:
     # EUFS simulation publishes vehicle odometry on /ground_truth/odom. For a
     # localization stack, override launch arg odom_topic:=/pf/pose/odom.
-    odom_topic: "/ground_truth/odom"
+    odom_topic: "/localization/ego_odom"
     waypoint_topic: "/global_waypoints"
     # Reliable volatile std_msgs/Bool heartbeat; do not use transient-local.
     global_path_valid_topic: "/planning/global_path_valid"
     global_path_valid_timeout_sec: 0.5
-    frenet_odom_topic: "/car_state/frenet/odom"
-    debug_topic: "/car_state/frenet/debug"
+    frenet_odom_topic: "/planning/frenet_odom"
+    debug_topic: "/planning/debug/frenet"
     frenet_frame_id: "frenet"
     closed_loop: true
     publish_debug: true

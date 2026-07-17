@@ -18,12 +18,12 @@ PERCEPTION_LAUNCH_ARGUMENTS = [
     (
         'perception_camera_view_distance',
         '12',
-        'Camera range used by the /cones simulated perception plugin.',
+        'Camera range used by the /perception/cones simulated perception plugin.',
     ),
     (
         'perception_lidar_view_distance',
         '15',
-        'Radial lidar range used by the /cones simulated perception plugin.',
+        'Radial lidar range used by the /perception/cones simulated perception plugin.',
     ),
     (
         'perception_lidar_x_view_distance',
@@ -48,12 +48,12 @@ PERCEPTION_LAUNCH_ARGUMENTS = [
     (
         'perception_camera_fov',
         '1.91986',
-        'Camera FOV in radians used by the /cones simulated perception plugin.',
+        'Camera FOV in radians used by the /perception/cones simulated perception plugin.',
     ),
     (
         'perception_lidar_fov',
         '3.141593',
-        'Lidar FOV in radians used by the /cones simulated perception plugin.',
+        'Lidar FOV in radians used by the /perception/cones simulated perception plugin.',
     ),
     (
         'perception_lidar_on',
@@ -63,27 +63,27 @@ PERCEPTION_LAUNCH_ARGUMENTS = [
     (
         'perception_detection_probability',
         '0.9',
-        'Probability that an in-range /cones simulated perception cone is published.',
+        'Probability that an in-range /perception/cones simulated perception cone is published.',
     ),
     (
         'camera_cones_view_distance',
         '10',
-        'Camera range used by /camera_*/cones oracle topics.',
+        'Camera range used by /camera_*/perception/cones oracle topics.',
     ),
     (
         'camera_cones_min_view_distance',
         '0.5',
-        'Minimum camera range used by /camera_*/cones oracle topics.',
+        'Minimum camera range used by /camera_*/perception/cones oracle topics.',
     ),
     (
         'camera_cones_fov',
         '1.4',
-        'Camera FOV in radians used by /camera_*/cones oracle topics.',
+        'Camera FOV in radians used by /camera_*/perception/cones oracle topics.',
     ),
     (
         'camera_cones_detection_probability',
         '1.0',
-        'Probability that an in-range /camera_*/cones oracle cone is published.',
+        'Probability that an in-range /camera_*/perception/cones oracle cone is published.',
     ),
 ]
 
@@ -163,7 +163,7 @@ def _resolve_perception_mode(context):
     """Map the single `perception_mode` knob onto launch_group + perception.
 
     - real   : real YOLO+LiDAR fusion (launch_group=default, perception=true)
-    - sim     : lightweight simulated perception — Gazebo publishes /cones from
+    - sim     : lightweight simulated perception — Gazebo publishes /perception/cones from
                 the ground-truth cone plugin (colored in camera FOV, unknown for
                 LiDAR-only), no YOLO/fusion nodes (launch_group=no_perception,
                 perception=false). Use this when the CPU/GPU can't feed YOLO.
@@ -187,11 +187,11 @@ def _resolve_perception_mode(context):
 
 
 def _validate_perception_wiring(context):
-    """Fail fast on /cones wiring mistakes.
+    """Fail fast on /perception/cones wiring mistakes.
 
     launch_group semantics are inverted vs. intuition: 'no_perception' turns the
     raw camera/lidar sensors OFF and makes the sim publish simulated cones on
-    /cones; 'default' turns the raw sensors ON and publishes no simulated cones.
+    /perception/cones; 'default' turns the raw sensors ON and publishes no simulated cones.
     """
     perception = LaunchConfiguration('perception').perform(context).lower()
     launch_group = LaunchConfiguration('launch_group').perform(context)
@@ -201,14 +201,14 @@ def _validate_perception_wiring(context):
         raise RuntimeError(
             "perception:=true cannot be combined with launch_group:=no_perception: "
             "'no_perception' removes the ZED/velodyne sensors (fusion would be starved) "
-            "AND publishes simulated cones on /cones (two publishers would collide). "
+            "AND publishes simulated cones on /perception/cones (two publishers would collide). "
             "Use launch_group:=default with perception:=true for the real pipeline, "
             "or drop perception:=true to use simulated cones.")
 
     if not perception_on and launch_group != 'no_perception':
         return [LogInfo(msg=(
             "[simulation.launch.py] WARNING: perception:=false with "
-            f"launch_group:={launch_group} means NOTHING publishes /cones — "
+            f"launch_group:={launch_group} means NOTHING publishes /perception/cones — "
             "graph SLAM / planning will silently receive no cone observations. "
             "Pass perception:=true (real YOLO+fusion pipeline) or "
             "launch_group:=no_perception (simulated cones)."))]
@@ -315,7 +315,7 @@ def generate_launch_description():
         # from what the sensors actually support, so there is nothing to switch.
         DeclareLaunchArgument(
             name='perception_output_cones_topic',
-            default_value='/cones',
+            default_value='/perception/cones',
             description="Perception output cone topic"),
 
         DeclareLaunchArgument(

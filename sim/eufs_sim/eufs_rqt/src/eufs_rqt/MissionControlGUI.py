@@ -108,7 +108,7 @@ class MissionControlGUI(Plugin):
 
         # Subscribers
         self.state_sub = self.node.create_subscription(CanState,
-                                                       "/ros_can/state",
+                                                       "/vehicle/as_state",
                                                        self.stateCallback, 10)
         self.gnss_health_sub = self.node.create_subscription(
             DiagnosticArray, "/sbg_bridge/status", self.gnssHealthCallback, 10)
@@ -120,13 +120,13 @@ class MissionControlGUI(Plugin):
             String, "/sim_ins/set_correction_type", 10)
 
         # Services
-        self.ebs_srv = self.node.create_client(Trigger, "/ros_can/ebs")
-        self.reset_srv = self.node.create_client(Trigger, "/ros_can/reset")
-        self.set_mission_cli = self.node.create_client(SetCanState, "/ros_can/set_mission")
+        self.ebs_srv = self.node.create_client(Trigger, "/vehicle/ebs")
+        self.reset_srv = self.node.create_client(Trigger, "/vehicle/reset")
+        self.set_mission_cli = self.node.create_client(SetCanState, "/vehicle/set_mission")
         self.reset_vehicle_pos_srv = self.node.create_client(Trigger,
-                                                             "/ros_can/reset_vehicle_pos")
+                                                             "/vehicle/reset_vehicle_pos")
         self.reset_cone_pos_srv = self.node.create_client(Trigger,
-                                                          "/ros_can/reset_cone_pos")
+                                                          "/vehicle/reset_cone_pos")
 
         # Add widget to the user interface
         context.add_widget(self._widget)
@@ -159,7 +159,7 @@ class MissionControlGUI(Plugin):
             self.node.get_logger().debug(result)
         else:
             self.node.get_logger().warn(
-                "/ros_can/set_mission service is not available")
+                "/vehicle/set_mission service is not available")
 
     def setMission(self):
         """Requests ros_can to set mission"""
@@ -197,7 +197,7 @@ class MissionControlGUI(Plugin):
             self.node.get_logger().debug(result)
         else:
             self.node.get_logger().warn(
-                "/ros_can/reset service is not available")
+                "/vehicle/reset service is not available")
 
     def resetVehiclePos(self):
         """Requests race car model position reset"""
@@ -211,7 +211,7 @@ class MissionControlGUI(Plugin):
             self.node.get_logger().debug(result)
         else:
             self.node.get_logger().warn(
-                "/ros_can/reset_vehicle_pos service is not available")
+                "/vehicle/reset_vehicle_pos service is not available")
 
     def resetConePos(self):
         """Requests gazebo_cone_ground_truth to reset cone position"""
@@ -225,7 +225,7 @@ class MissionControlGUI(Plugin):
             self.node.get_logger().debug(result)
         else:
             self.node.get_logger().warn(
-                "/ros_can/reset_cone_pos service is not available")
+                "/vehicle/reset_cone_pos service is not available")
 
     def resetSim(self):
         """Requests state machine, vehicle position and cone position reset"""
@@ -251,7 +251,7 @@ class MissionControlGUI(Plugin):
             self.node.get_logger().debug(result)
         else:
             self.node.get_logger().warn(
-                "/ros_can/ebs service is not available")
+                "/vehicle/ebs service is not available")
 
     def setGnssMode(self, label):
         """Publishes the selected simulated GNSS solution mode."""

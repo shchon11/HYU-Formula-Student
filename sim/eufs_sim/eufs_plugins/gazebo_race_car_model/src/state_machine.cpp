@@ -49,23 +49,23 @@ StateMachine::StateMachine(std::shared_ptr<rclcpp::Node> rosnode) : rosnode(rosn
 
   // Subscriptions
   completed_sub_ = rosnode->create_subscription<std_msgs::msg::Bool>(
-      "/ros_can/mission_completed", 1,
+      "/vehicle/mission_completed", 1,
       std::bind(&StateMachine::completedCallback, this, std::placeholders::_1));
 
   // Services
   reset_srv_ = rosnode->create_service<std_srvs::srv::Trigger>(
-      "/ros_can/reset",
+      "/vehicle/reset",
       std::bind(&StateMachine::resetState, this, std::placeholders::_1, std::placeholders::_2));
   ebs_srv_ = rosnode->create_service<std_srvs::srv::Trigger>(
-      "/ros_can/ebs",
+      "/vehicle/ebs",
       std::bind(&StateMachine::requestEBS, this, std::placeholders::_1, std::placeholders::_2));
   set_mission_srv_ = rosnode->create_service<hyu_msgs::srv::SetCanState>(
-      "/ros_can/set_mission",
+      "/vehicle/set_mission",
       std::bind(&StateMachine::setMission, this, std::placeholders::_1,  std::placeholders::_2));
 
   // Publishers
-  state_pub_ = rosnode->create_publisher<hyu_msgs::msg::CanState>("/ros_can/state", 1);
-  state_pub_str_ = rosnode->create_publisher<std_msgs::msg::String>("/ros_can/state_str", 1);
+  state_pub_ = rosnode->create_publisher<hyu_msgs::msg::CanState>("/vehicle/as_state", 1);
+  state_pub_str_ = rosnode->create_publisher<std_msgs::msg::String>("/vehicle/as_state_str", 1);
 }
 
 StateMachine::~StateMachine() {}

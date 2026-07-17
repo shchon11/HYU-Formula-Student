@@ -41,14 +41,14 @@ TmpcCmdSelectorNode::TmpcCmdSelectorNode(const rclcpp::NodeOptions & options)
   stop_request_topic_(declare_parameter<std::string>(
       "stop_request_topic", "/planning/stop_request")),
   local_command_topic_(declare_parameter<std::string>(
-      "local_command_topic", "/cmd/pure_pursuit")),
+      "local_command_topic", "/control/pp/cmd")),
   tmpc_command_topic_(declare_parameter<std::string>(
-      "tmpc_command_topic", "/cmd/tmpc")),
+      "tmpc_command_topic", "/control/tmpc/cmd")),
   tmpc_valid_topic_(declare_parameter<std::string>(
-      "tmpc_valid_topic", "/tmpc/cmd_valid")),
-  output_topic_(declare_parameter<std::string>("output_topic", "/cmd")),
+      "tmpc_valid_topic", "/control/tmpc/valid")),
+  output_topic_(declare_parameter<std::string>("output_topic", "/vehicle/cmd")),
   status_topic_(declare_parameter<std::string>(
-      "status_topic", "/tmpc/cmd_selector/status")),
+      "status_topic", "/control/selector/status")),
   publish_rate_hz_(declare_parameter<double>("publish_rate_hz", 100.0)),
   safe_brake_mps2_(declare_parameter<double>("safe_brake_mps2", -5.0)),
   selector_config_(DeclareSelectorConfig(*this)),
@@ -209,7 +209,7 @@ void TmpcCmdSelectorNode::EvaluateAndPublish()
   // Relay, don't resample: forward each source message exactly once (plus once
   // on a source switch so takeover/fallback is not held to the next message).
   // Timer ticks between messages therefore publish nothing while forwarding,
-  // keeping the LOCAL /cmd stream identical to Pure Pursuit driving /cmd
+  // keeping the LOCAL /vehicle/cmd stream identical to Pure Pursuit driving /vehicle/cmd
   // directly. The synthesized safe brake has no upstream stream, so it heartbeats
   // at the evaluate cadence.
   const bool source_switched = !has_published_ || last_published_source_ != decision.source;

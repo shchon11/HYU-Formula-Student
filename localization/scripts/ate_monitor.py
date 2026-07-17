@@ -9,7 +9,7 @@ Path-tracking cross-track-error (CTE) monitor for RViz.
 
 The planned raceline (/global_waypoints) is the d=0 reference. The ego pose's
 Frenet lateral offset d — published by frenet_odom_node as
-pose.pose.position.y on /car_state/frenet/odom — is treated as the tracking
+pose.pose.position.y on /planning/frenet_odom — is treated as the tracking
 error and evaluated ATE-style (running RMSE of d, max |d|). GT-based ATE was
 removed: it needs ground truth, which does not exist on the real car.
 
@@ -217,8 +217,8 @@ class CTEMonitor(Node):
 
 def build_arg_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--frenet-odom", default="/car_state/frenet/odom")
-    parser.add_argument("--status-topic", default="/graph_slam/status")
+    parser.add_argument("--frenet-odom", default="/planning/frenet_odom")
+    parser.add_argument("--status-topic", default="/localization/status")
     parser.add_argument(
         "--path-valid-topic", default="/planning/global_path_valid")
     parser.add_argument("--stale-timeout", type=float, default=1.0)

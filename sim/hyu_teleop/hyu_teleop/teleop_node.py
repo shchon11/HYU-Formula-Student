@@ -51,8 +51,8 @@ class TeleopNode(Node):
     def __init__(self):
         super().__init__('hyu_teleop')
 
-        self.declare_parameter('cmd_topic', '/cmd')
-        self.declare_parameter('car_state_topic', '/wheel_odometry/car_state')
+        self.declare_parameter('cmd_topic', '/vehicle/cmd')
+        self.declare_parameter('car_state_topic', '/localization/wheel_odom')
         self.declare_parameter('rate_hz', 50.0)
         self.declare_parameter('max_steering', 0.52)      # rad, vehicle lock
         self.declare_parameter('max_speed', 8.0)          # m/s speed cap
@@ -101,7 +101,7 @@ class TeleopNode(Node):
             self.on_state,
             QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT),
         )
-        self.mission_client = self.create_client(SetCanState, '/ros_can/set_mission')
+        self.mission_client = self.create_client(SetCanState, '/vehicle/set_mission')
         self.create_timer(1.0 / self.rate_hz, self.on_tick)
 
         if bool(self.get_parameter('auto_mission').value):
@@ -288,7 +288,7 @@ def main():
         return 1
 
     # The EUFS launcher forces ROS_LOCALHOST_ONLY=1 on the simulator; a
-    # terminal without it lands in a separate DDS domain and /cmd silently
+    # terminal without it lands in a separate DDS domain and /vehicle/cmd silently
     # never reaches the sim. Match it unless the user set it explicitly.
     os.environ.setdefault('ROS_LOCALHOST_ONLY', '1')
 

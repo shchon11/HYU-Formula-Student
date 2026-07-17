@@ -123,8 +123,8 @@ GraphSlamNode::GraphSlamNode()
   lap_return_criteria_satisfied_(false)
 {
   car_state_topic_ =
-    declare_parameter<std::string>("car_state_topic", "/wheel_odometry/car_state");
-  cones_topic_ = declare_parameter<std::string>("cones_topic", "/cones");
+    declare_parameter<std::string>("car_state_topic", "/localization/wheel_odom");
+  cones_topic_ = declare_parameter<std::string>("cones_topic", "/perception/cones");
   map_topic_ = declare_parameter<std::string>("map_topic", "/localization/cone_map");
   slam_odom_topic_ =
     declare_parameter<std::string>("slam_odom_topic", "/localization/ego_odom");
@@ -317,11 +317,11 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<bool>("map_trust_after_loop_closure", map_trust_after_loop_closure_);
 
   // GNSS global anchor: add a unary EdgeSE2XYPrior on each keyframe from the
-  // SBG bridge's /gnss/odom absolute fix. gnss_prior_max_position_sigma gates
+  // SBG bridge's /localization/gnss_odom absolute fix. gnss_prior_max_position_sigma gates
   // it so only trustworthy (mode-4 / RTK) fixes anchor the graph; degraded
   // fixes arrive with a huge covariance and are dropped automatically.
   gnss_prior_enable_ = declare_parameter<bool>("gnss_prior_enable", true);
-  gnss_prior_topic_ = declare_parameter<std::string>("gnss_prior_topic", "/gnss/odom");
+  gnss_prior_topic_ = declare_parameter<std::string>("gnss_prior_topic", "/localization/gnss_odom");
   gnss_prior_max_position_sigma_ =
     declare_parameter<double>("gnss_prior_max_position_sigma", 0.5);
   gnss_prior_max_age_ = declare_parameter<double>("gnss_prior_max_age", 0.3);

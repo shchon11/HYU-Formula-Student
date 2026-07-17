@@ -364,7 +364,7 @@ void HyuFormulaControlNode::Run()
   const bool enable_driving_controller =
     state_ok && performance_trajectory_ok && emergency_trajectory_ok && path_matching_valid;
 
-  // Feed back what the plant actually received (selector-owned /cmd), not this
+  // Feed back what the plant actually received (selector-owned /vehicle/cmd), not this
   // node's own last request: during Pure Pursuit phases the MPC's requests are
   // never applied, and pretending they were poisons its internal learning --
   // the first post-takeover commands then saturate in the wrong direction.

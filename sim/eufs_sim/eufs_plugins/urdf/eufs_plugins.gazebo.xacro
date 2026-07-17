@@ -55,8 +55,8 @@
       <localisationCarStateTopic>/odometry_integration/car_state</localisationCarStateTopic>
       <!-- The synthetic localisation car state is a sim-only stand-in that the
            real car never publishes. The stack runs the simulated INS pipeline
-           instead (sim_ellipse_d -> sbg bridge -> /gnss/odom anchor, wheel
-           odometry -> /wheel_odometry/car_state motion), so it is disabled to
+           instead (sim_ellipse_d -> sbg bridge -> /localization/gnss_odom anchor, wheel
+           odometry -> /localization/wheel_odom motion), so it is disabled to
            keep anything from silently depending on it. -->
       <publishLocalisationCarState>false</publishLocalisationCarState>
       <!-- Drifting odometry for the localisation car state (GT stays on
@@ -113,7 +113,7 @@
       <!-- Fallback area, used only if the world has no 'track' model. -->
       <terrainHalfExtentX>60.0</terrainHalfExtentX>
       <terrainHalfExtentY>60.0</terrainHalfExtentY>
-      <wheelSpeedsTopicName>/ros_can/wheel_speeds</wheelSpeedsTopicName>
+      <wheelSpeedsTopicName>/vehicle/wheel_speeds</wheelSpeedsTopicName>
       <groundTruthWheelSpeedsTopicName>/ground_truth/wheel_speeds</groundTruthWheelSpeedsTopicName>
       <jointStatesTopicName>/eufs/joint_states</jointStatesTopicName>
       <odometryTopicName>/ground_truth/odom</odometryTopicName>
@@ -143,7 +143,7 @@
       <groundTruthConesTopicName>/ground_truth/cones</groundTruthConesTopicName>
       <groundTruthTrackTopicName>/ground_truth/track</groundTruthTrackTopicName>
       <simulatePerception>$(arg simulate_perception)</simulatePerception>
-      <perceptionConesTopicName>/cones</perceptionConesTopicName>
+      <perceptionConesTopicName>/perception/cones</perceptionConesTopicName>
       <detectionProbability>$(arg perception_detection_probability)</detectionProbability>
       <perceptionCameraNoisePercentage>$(arg perception_camera_noise_percentage)</perceptionCameraNoisePercentage>
       <perceptionCameraDepthNoiseParameterA>0.01</perceptionCameraDepthNoiseParameterA>

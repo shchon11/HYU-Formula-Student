@@ -63,7 +63,7 @@ This has to be inserted inside a robot URDF.
       <publishTransform>false</publishTransform>
       <groundTruthCarStateTopic>/ground_truth/state</groundTruthCarStateTopic>
       <localisationCarStateTopic>/odometry_integration/car_state</localisationCarStateTopic>
-      <wheelSpeedsTopicName>/ros_can/wheel_speeds</wheelSpeedsTopicName>
+      <wheelSpeedsTopicName>/vehicle/wheel_speeds</wheelSpeedsTopicName>
       <groundTruthWheelSpeedsTopicName>/ground_truth/wheel_speeds</groundTruthWheelSpeedsTopicName>
       <jointStatesTopicName>/eufs/joint_states</jointStatesTopicName>
       <odometryTopicName>/ground_truth/odom</odometryTopicName>
@@ -89,13 +89,13 @@ This has to be inserted inside a robot URDF.
 
 | Topic Name | Type | Purpose |
 | ---------- | ---- | ------- |
-| `/cmd` | [ackermann_msgs/AckermannDriveStamped](http://docs.ros.org/en/jade/api/ackermann_msgs/html/msg/AckermannDriveStamped.html) | Recieves desired vehicle command input. |
+| `/vehicle/cmd` | [ackermann_msgs/AckermannDriveStamped](http://docs.ros.org/en/jade/api/ackermann_msgs/html/msg/AckermannDriveStamped.html) | Recieves desired vehicle command input. |
 
 ### ROS 2 Services
 
 | Service Name | Type | Purpose |
 | ------------ | ---- | ------- |
-| `/ros_can/reset_vehicle_pos`   | [std_srvs/Trigger](http://docs.ros.org/en/melodic/api/std_srvs/html/srv/Trigger.html) | Resets the position of the simulated car. |
+| `/vehicle/reset_vehicle_pos`   | [std_srvs/Trigger](http://docs.ros.org/en/melodic/api/std_srvs/html/srv/Trigger.html) | Resets the position of the simulated car. |
 | `/race_car_model/command_mode` | [std_srvs/Trigger](http://docs.ros.org/en/melodic/api/std_srvs/html/srv/Trigger.html) | Returns the vehicle command mode (velocity or acceleration). |
 
 ## state_machine
@@ -106,22 +106,22 @@ Simulates the state machine of the FSUK-AI DDT vehicle. A design outline can be 
 
 | Topic Name | Type | Purpose |
 | ---------- | ---- | ------- |
-| `/ros_can/state`     | [hyu_msgs/CanState](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/CanState.msg) | Publishes the AS and AMI state of the simulated car. |
-| `/ros_can/state_str` | [std_msgs/String](http://docs.ros.org/en/noetic/api/std_msgs/html/msg/String.html)   | Publishes the AS and AMI state of the simulated car as a string. |
+| `/vehicle/as_state`     | [hyu_msgs/CanState](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/CanState.msg) | Publishes the AS and AMI state of the simulated car. |
+| `/vehicle/as_state_str` | [std_msgs/String](http://docs.ros.org/en/noetic/api/std_msgs/html/msg/String.html)   | Publishes the AS and AMI state of the simulated car as a string. |
 
 ### ROS 2 Subscribers
 
 | Topic Name | Type | Purpose |
 | ---------- | ---- | ------- |
-| `/ros_can/set_mission`      | [hyu_msgs/CanState](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/CanState.msg) | Sets the AMI state of the simulated car. |
-|`/ros_can/mission_completed` | [std_msgs/Bool](http://docs.ros.org/en/noetic/api/std_msgs/html/msg/Bool.html)       | True when the current autonomous mission has been completed. |
+| `/vehicle/set_mission`      | [hyu_msgs/CanState](https://gitlab.com/eufs/hyu_msgs/-/blob/ros2/msg/CanState.msg) | Sets the AMI state of the simulated car. |
+|`/vehicle/mission_completed` | [std_msgs/Bool](http://docs.ros.org/en/noetic/api/std_msgs/html/msg/Bool.html)       | True when the current autonomous mission has been completed. |
 
 ### ROS 2 Services 
 
 | Service Name | Type | Purpose |
 | ------------ | ---- | ------- |
-| `/ros_can/reset` | [std_srvs/Trigger](http://docs.ros.org/en/melodic/api/std_srvs/html/srv/Trigger.html) | Resets car state. |
-| `/ros_can/ebs`   | [std_srvs/Trigger](http://docs.ros.org/en/melodic/api/std_srvs/html/srv/Trigger.html) | Changes AS state to AS_EMERGENCY_BREAK, causing the racecar to come to an immediate stop. |
+| `/vehicle/reset` | [std_srvs/Trigger](http://docs.ros.org/en/melodic/api/std_srvs/html/srv/Trigger.html) | Resets car state. |
+| `/vehicle/ebs`   | [std_srvs/Trigger](http://docs.ros.org/en/melodic/api/std_srvs/html/srv/Trigger.html) | Changes AS state to AS_EMERGENCY_BREAK, causing the racecar to come to an immediate stop. |
 
 ## gazebo_cone_ground_truth
 
@@ -211,7 +211,7 @@ This has to be inserted inside a robot URDF.
 
 | Service Name | Type | Purpose |
 | ------------ | ---- | ------- |
-| `/ros_can/reset_cone_pos` | [std_srvs/Trigger](http://docs.ros.org/en/melodic/api/std_srvs/html/srv/Trigger.html) | Resets cone positions to initial track layout. |
+| `/vehicle/reset_cone_pos` | [std_srvs/Trigger](http://docs.ros.org/en/melodic/api/std_srvs/html/srv/Trigger.html) | Resets cone positions to initial track layout. |
 
 ## gazebo_simulate_bounding_boxes
 

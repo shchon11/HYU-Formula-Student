@@ -18,12 +18,12 @@
 
 ```bash
 race            # 이거 하나. YOLO+LiDAR perception + SLAM + planning 전체가 뜨고 차가 스스로 달림
-race sim        # Gazebo simulated /cones로만 돌릴 때
+race sim        # Gazebo simulated /perception/cones로만 돌릴 때
 race perception # 인지 평가 모드 — planner 없이 teleop 주행 + provenance별 채점
 race stop       # 전부 종료   |   race attach — 재접속
 ```
 
-tmux 창 하나에 5개 pane이 뜹니다: ①sim+perception ②planning(SLAM+global/local+상태기계+selector+controller) ③미션 자동 ARM ④GNSS HUD(`ins_pipeline slam:=false`) ⑤라이브 모니터(path_source/state/lap/CTE). **teleop 불필요** — 컨트롤러가 유일한 `/cmd` writer로 직접 주행합니다.
+tmux 창 하나에 5개 pane이 뜹니다: ①sim+perception ②planning(SLAM+global/local+상태기계+selector+controller) ③미션 자동 ARM ④GNSS HUD(`ins_pipeline slam:=false`) ⑤라이브 모니터(path_source/state/lap/CTE). **teleop 불필요** — 컨트롤러가 유일한 `/vehicle/cmd` writer로 직접 주행합니다.
 
 > 처음이라면 [패치 Gazebo 빌드](#15-패치-gazebo-빌드--gpu-lidar)부터 — LiDAR가 기본 `gpu_ray`라서, stock gazebo로 뜨면 하늘이 점군에 찍힙니다.
 
@@ -31,7 +31,7 @@ tmux 창 하나에 5개 pane이 뜹니다: ①sim+perception ②planning(SLAM+gl
 <summary><b>모듈별로 따로 띄우려면</b></summary>
 
 ```bash
-simfull track:=small_track    # ① sim + Gazebo /cones (+RViz, YOLO 없음)
+simfull track:=small_track    # ① sim + Gazebo /perception/cones (+RViz, YOLO 없음)
 pbring                        # ② planning 전체 (자체 graph_slam 포함 — slam 계열과 같이 켜지 말 것)
 mission                       # ③ 미션 ARM → 5초 뒤 자율주행 시작
 ```
@@ -84,8 +84,8 @@ flowchart LR
 
     CAM -->|image| YOLO
     LID -->|points| FUSE
-    FUSE -->|"/cones"| GS
-    SBG -->|"/gnss/odom · RTK prior"| GS
+    FUSE -->|"/perception/cones"| GS
+    SBG -->|"/localization/gnss_odom · RTK prior"| GS
     ENC -->|car_state| GS
 
     GS -->|"cone_map + ego_odom"| LP
@@ -95,8 +95,8 @@ flowchart LR
     GS -->|ego_odom| PP
 
     SM -.->|stop_request| PP
-    SEL ==>|"/path_waypoints"| PP
-    PP ==>|"/cmd"| CAR["🏎 차량 / Gazebo"]
+    SEL ==>|"/planning/path"| PP
+    PP ==>|"/vehicle/cmd"| CAR["🏎 차량 / Gazebo"]
 
     classDef sens fill:#0b3d5c,stroke:#39a0e0,color:#eaf6ff
     classDef perc fill:#4a2b57,stroke:#c77dde,color:#f7ecfc
@@ -110,9 +110,9 @@ flowchart LR
     class PP,CAR ctrl
 ```
 
-- **PERCEPTION**은 카메라·LiDAR만 소비해 `/cones`(색·위치·공분산) 하나로 요약합니다. 콘마다 provenance(`cluster_camera`/`cluster_only`/`sparse`/`monocular_zncc`)가 붙고, 운용 범위는 **robust-inside-10 m** — 비전 계열(sparse·ZNCC)은 12 m에서 캡(10 m 존 진입 전 2 m 온램프), LiDAR 클러스터는 캡 없음. LiDAR는 콘 앞면만 보므로 전방 range bias(+0.046 m)를 보정합니다. 수치와 근거는 전부 `hyu_perception/config/perception.yaml` 주석에 있습니다. sim 모드에선 Gazebo 플러그인이 이 토픽을 직접 냅니다.
-- **SLAM**은 `/cones` + 휠 odometry + (RTK일 때만) GNSS prior로 콘 랜드마크 포즈그래프를 풀어 **cone_map과 ego_odom**을 만들고, 루프 클로저가 확정되면 localization으로 전환합니다.
-- **PLANNING**에서 hyu_state_machine이 랩·상태 기반으로 `path_source`를 정하고, selector가 local/global 중 하나를 `/path_waypoints`로 확정 — **컨트롤러는 항상 이 토픽 하나만** 봅니다. skidpad 미션에선 director가 cone_map을 phase별로 걸러 local planner에 공급합니다.
+- **PERCEPTION**은 카메라·LiDAR만 소비해 `/perception/cones`(색·위치·공분산) 하나로 요약합니다. 콘마다 provenance(`cluster_camera`/`cluster_only`/`sparse`/`monocular_zncc`)가 붙고, 운용 범위는 **robust-inside-10 m** — 비전 계열(sparse·ZNCC)은 12 m에서 캡(10 m 존 진입 전 2 m 온램프), LiDAR 클러스터는 캡 없음. LiDAR는 콘 앞면만 보므로 전방 range bias(+0.046 m)를 보정합니다. 수치와 근거는 전부 `hyu_perception/config/perception.yaml` 주석에 있습니다. sim 모드에선 Gazebo 플러그인이 이 토픽을 직접 냅니다.
+- **SLAM**은 `/perception/cones` + 휠 odometry + (RTK일 때만) GNSS prior로 콘 랜드마크 포즈그래프를 풀어 **cone_map과 ego_odom**을 만들고, 루프 클로저가 확정되면 localization으로 전환합니다.
+- **PLANNING**에서 hyu_state_machine이 랩·상태 기반으로 `path_source`를 정하고, selector가 local/global 중 하나를 `/planning/path`로 확정 — **컨트롤러는 항상 이 토픽 하나만** 봅니다. skidpad 미션에선 director가 cone_map을 phase별로 걸러 local planner에 공급합니다.
 
 **2단계 주행 시나리오** — 이게 설계의 핵심입니다:
 
@@ -123,7 +123,7 @@ flowchart LR
 | **랩 2+ · 레이싱** | `GLOBAL_FULL` | 컨트롤러가 레이스라인 롤링 윈도우 추종. HUD `TRACKING` 줄이 추종 오차(d) 표시 |
 | **종료** | — | hyu_state_machine이 스톱존 감지 → `stop_request` → 제동 |
 
-컨트롤러는 항상 `/path_waypoints` 하나만 봅니다 — local이냐 global이냐는 selector가 숨겨줍니다.
+컨트롤러는 항상 `/planning/path` 하나만 봅니다 — local이냐 global이냐는 selector가 숨겨줍니다.
 
 ---
 
@@ -200,7 +200,7 @@ python3 -m pip install --user quadprog
 /usr/bin/python3 -m pip uninstall -y opencv-python              # 시스템 cv2 사용
 ```
 
-> 기본 `race`는 CUDA YOLO+LiDAR perception을 실행합니다. GraphSLAM이 `map` TF를 소유하므로 real perception의 cross-time 보정 프레임은 기본 `odom`입니다. Gazebo simulated `/cones`만 쓰려면 `race sim` 또는 `perception_mode:=sim`을 명시합니다.
+> 기본 `race`는 CUDA YOLO+LiDAR perception을 실행합니다. GraphSLAM이 `map` TF를 소유하므로 real perception의 cross-time 보정 프레임은 기본 `odom`입니다. Gazebo simulated `/perception/cones`만 쓰려면 `race sim` 또는 `perception_mode:=sim`을 명시합니다.
 >
 > **검출기는 YOLO26n-pose 콘 검출기로 저장소에 포함**되어 있습니다 (`hyu_perception/models/cone_pose_8kpt/weights/best.pt` — bbox+클래스+콘 키포인트 동시 출력; `fsoco_yolov8n`은 비교용 레거시). race/simfull 경유로 모델을 바꾸는 방법은 **가중치 파일 교체 또는 `perception.launch.py`의 기본값 수정** 두 가지뿐입니다 — `yolo_model_path:=<file>`은 simulation.launch.py가 선언하지 않는 인자라 조용히 무시되고, `perception.yaml`의 `model_path`는 launch가 항상 덮어써서(bare `ros2 run` 전용) 역시 조용히 무시됩니다.
 
@@ -247,7 +247,7 @@ source ~/fsk/src/scripts/fsk-shellrc
 랩 1은 local 경로로 탐험·매핑, 랩 완주 후 global 레이스라인으로 핸드오프.
 ```bash
 race                # small_track, CUDA YOLO+LiDAR perception (기본)
-race sim            # 같은 트랙, Gazebo simulated /cones (YOLO 없음 — 가볍고 빠름)
+race sim            # 같은 트랙, Gazebo simulated /perception/cones (YOLO 없음 — 가볍고 빠름)
 race peanut         # 다른 트랙 (eufs_tracks/csv/ 의 이름)
 race peanut sim gazebo_gui:=true    # 트랙/모드 뒤 인자는 simulation.launch.py로 전달
 ```
@@ -280,7 +280,7 @@ ARM. **별도 정지 로직 없음** — 피니시를 지나 코리도 콘이 �
 컨트롤러가 무효 경로에 대해 `brake_acceleration_mps2`로 자동 제동해 braking zone 안에서 멈춥니다.
 ```bash
 race accel           # 'acceleration' 트랙, CUDA YOLO+LiDAR perception (기본)
-race acceleration sim   # 같은 미션, Gazebo simulated /cones
+race acceleration sim   # 같은 미션, Gazebo simulated /perception/cones
 ```
 **제동 예산 (감속 성능 3 m/s² 가정 — 바뀌면 아래 두 감속값을 함께 수정):** 코리도 콘은 map
 x=+20에서 끝나고 경로는 그 1 m쯤 뒤에서 무효화되므로, 하드 브레이크는 top-speed V로 x≈21에서
@@ -367,7 +367,7 @@ pbring graph_slam_localization_mode:=true \
 ```bash
 ros2 topic echo /planning/path_source   # LOCAL? GLOBAL_FULL?
 ros2 topic echo /planning/cte           # 경로 추종 횡오차 d(m)
-ros2 topic echo --once /ros_can/state_str
+ros2 topic echo --once /vehicle/as_state_str
 ```
 
 ### INS/SBG 파이프라인 (선택)
@@ -393,21 +393,21 @@ ros2 launch hyu_localization ins_pipeline.launch.py slam:=false
 
 | 토픽 | 타입 | 의미 |
 |---|---|---|
-| `/cones` | `ConeArrayWithCovariance` | perception 콘 검출 (base_footprint) |
+| `/perception/cones` | `ConeArrayWithCovariance` | perception 콘 검출 (base_footprint) |
 | `/localization/cone_map` | `ConeArrayWithCovariance` | SLAM 콘 맵 (map) |
 | `/localization/ego_odom` | `Odometry` | SLAM 위치추정 |
-| `/graph_slam/status` | `String` | `mapping` / `localization` |
+| `/localization/status` | `String` | `mapping` / `localization` |
 | `/global_waypoints` (+`/path`) | `WaypointArrayStamped` | 전역 레이스라인 (latched) |
 | `/planning/local_waypoints` (+`/path`) | `WaypointArrayStamped` | 로컬 즉석 경로 |
 | `/planning/path_source` | `String` | 상태기계의 경로 선택 (`LOCAL`/`GLOBAL_FULL`/`GLOBAL_FINAL_STOP`/`STOP`) |
-| `/path_waypoints` (+`/path`) | `WaypointArrayStamped` | **selector 확정 경로 = 컨트롤러 입력** |
-| `/car_state/frenet/odom` | `Odometry` | Frenet (x=s, y=d) — global 기준 |
+| `/planning/path` (+`/path`) | `WaypointArrayStamped` | **selector 확정 경로 = 컨트롤러 입력** |
+| `/planning/frenet_odom` | `Odometry` | Frenet (x=s, y=d) — global 기준 |
 | `/planning/cte`, `/planning/cte_rmse` | `Float32` | 추종 횡오차 d, 누적 RMSE |
 | `/planning/local_path_reason`, `/planning/global_path_reason` | `String` | 경로 invalid **이유** (valid면 빈 문자열) |
 | `/planning/lap_count` | `Int32` | 완료 랩 수 (orange 게이트 통과 기준) |
 | `/planning/lap_time_last`, `/planning/lap_time_best` | `Float64` | 직전/최고 랩타임 (초) |
 | `/planning/stack_hud` (+`_banner`) | `OverlayText` | RViz 스택 HUD 보드/배너 (stack_hud 노드) |
-| `/cmd` | `AckermannDriveStamped` | 컨트롤러 출력 (유일 writer) |
+| `/vehicle/cmd` | `AckermannDriveStamped` | 컨트롤러 출력 (유일 writer) |
 
 </details>
 
@@ -415,8 +415,8 @@ ros2 launch hyu_localization ins_pipeline.launch.py slam:=false
 <summary><b>주요 서비스</b></summary>
 
 ```bash
-ros2 service call /ros_can/set_mission hyu_msgs/srv/SetCanState '{ami_state: 14}'  # 주행 미션
-ros2 service call /ros_can/reset_vehicle_pos std_srvs/srv/Trigger                   # 차 원위치
+ros2 service call /vehicle/set_mission hyu_msgs/srv/SetCanState '{ami_state: 14}'  # 주행 미션
+ros2 service call /vehicle/reset_vehicle_pos std_srvs/srv/Trigger                   # 차 원위치
 ros2 service call /graph_slam/start_mapping  std_srvs/srv/Trigger                   # 매핑 모드
 ros2 service call /graph_slam/save_map       std_srvs/srv/Trigger                   # 맵 CSV 저장
 ```
@@ -439,10 +439,10 @@ ros2 service call /graph_slam/save_map       std_srvs/srv/Trigger               
 eufs_sim/                 시뮬레이터 (Gazebo, 차량 URDF, 센서, 플러그인, 런처)
 hyu_msgs/                EUFS 메시지/서비스
 hyu_localization/          graph SLAM + INS/SBG 브리지 + CTE 모니터
-hyu_perception/ YOLO26n-pose + LiDAR 융합 → /cones (provenance별)
+hyu_perception/ YOLO26n-pose + LiDAR 융합 → /perception/cones (provenance별)
 hyu_teleop/              키보드 주행
 hyu_rviz_presets/         RViz 원클릭 디스플레이 그룹
-hyu_pure_pursuit/  경로 추종 제어 → /cmd (planning과 분리된 control 계층)
+hyu_pure_pursuit/  경로 추종 제어 → /vehicle/cmd (planning과 분리된 control 계층)
 sbg_ros2_driver/          SBG INS/GNSS ROS 드라이버 (vendored v3.3.2 — apt 버전은 overlay에 가려짐)
 scripts/                  race.sh (자율 전체 스택 tmux 런처) + fsk-shellrc
 tools/gazebo-patches/     GPU LiDAR용 패치 Gazebo 11.10.2 빌드 킷 (SkyX 돔 제거 · 해상도 노브 → ~/opt/gazebo11-fsk)
@@ -463,19 +463,19 @@ planning/
 <details>
 <summary><b>차가 안 움직임</b></summary>
 
-미션 미설정이 대부분. `race`는 자동 ARM하지만 수동 실행이면 `mission` → `/ros_can/state_str`가 `AS:DRIVING`인지 확인. `/reset_world`는 차를 못 되돌리니 `resetcar`.
+미션 미설정이 대부분. `race`는 자동 ARM하지만 수동 실행이면 `mission` → `/vehicle/as_state_str`가 `AS:DRIVING`인지 확인. `/reset_world`는 차를 못 되돌리니 `resetcar`.
 </details>
 
 <details>
 <summary><b>주행해도 콘맵이 안 참 / 전역경로가 안 생김</b></summary>
 
-SLAM이 `localization` 모드면 새 콘을 안 쌓습니다 — `slamreset`으로 매핑 모드 복귀 후 주행. 전역경로는 **랩 완주 → localization 전환 후** 생성됩니다 (`/graph_slam/status` 확인).
+SLAM이 `localization` 모드면 새 콘을 안 쌓습니다 — `slamreset`으로 매핑 모드 복귀 후 주행. 전역경로는 **랩 완주 → localization 전환 후** 생성됩니다 (`/localization/status` 확인).
 </details>
 
 <details>
-<summary><b>perception 결과(/cones)가 안 나옴 / 매핑이 너무 느림</b></summary>
+<summary><b>perception 결과(/perception/cones)가 안 나옴 / 매핑이 너무 느림</b></summary>
 
-GPU가 죽으면(과거 Xid 폴트) YOLO가 CPU 폴백으로 돌며 CPU를 포화시켜 RTF가 붕괴합니다 → 재부팅으로 GPU 복구가 근본 해결. `nvidia-smi`와 `/cones` rate 확인.
+GPU가 죽으면(과거 Xid 폴트) YOLO가 CPU 폴백으로 돌며 CPU를 포화시켜 RTF가 붕괴합니다 → 재부팅으로 GPU 복구가 근본 해결. `nvidia-smi`와 `/perception/cones` rate 확인.
 </details>
 
 <details>

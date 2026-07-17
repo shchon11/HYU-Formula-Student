@@ -1,6 +1,6 @@
 ## perception parameters
 ### bbox_topic
-String value is: /yolo_bounding_boxes
+String value is: /perception/bounding_boxes
 ### camera_info_topic
 String value is: /zed/left/camera_info
 ### camera_frame

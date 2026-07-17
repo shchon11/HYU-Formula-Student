@@ -8,12 +8,12 @@
 Wheel-encoder odometry for EUFS graph SLAM.
 
 Integrates rear-wheel speeds (RPM) with the INS yaw rate into a drifting SE2
-pose and publishes it as a CarState on ``/wheel_odometry/car_state`` — a
+pose and publishes it as a CarState on ``/localization/wheel_odom`` — a
 GNSS-independent odometry source for the graph SLAM motion input, so the
 GNSS prior stays the only absolute channel (no correlated double injection).
 
 Wiring — identical in the sim and on the car, which is the point:
-  - ``/ros_can/wheel_speeds``     hyu_msgs/WheelSpeedsStamped, wheel speeds
+  - ``/vehicle/wheel_speeds``     hyu_msgs/WheelSpeedsStamped, wheel speeds
     in RPM (all four are real: one AMK DD5 per wheel; this node uses the
     rears, which stay unsteered), steering in rad.
   - ``/sbg/ekf_rot_accel_body``   sbg_driver/SbgEkfRotAccel, the INS body-frame
@@ -95,9 +95,9 @@ class WheelOdometry(Node):
     def __init__(self):
         super().__init__("wheel_odometry")
 
-        self.declare_parameter("wheel_speeds_topic", "/ros_can/wheel_speeds")
+        self.declare_parameter("wheel_speeds_topic", "/vehicle/wheel_speeds")
         self.declare_parameter("rot_accel_topic", "/sbg/ekf_rot_accel_body")
-        self.declare_parameter("output_topic", "/wheel_odometry/car_state")
+        self.declare_parameter("output_topic", "/localization/wheel_odom")
         self.declare_parameter("wheel_radius", 0.2525)   # m (eufs configDry)
         self.declare_parameter("wheelbase", 1.58)        # m
         self.declare_parameter("track_width", 1.4)       # m (configDry axle_width)

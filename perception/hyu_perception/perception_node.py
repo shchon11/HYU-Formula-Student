@@ -12,9 +12,9 @@ come from the structure rather than from tuning.
 
 Three decisions carry it
 ------------------------
-**The camera drives the output.** Every bbox frame publishes ``/cones``. There is
+**The camera drives the output.** Every bbox frame publishes ``/perception/cones``. There is
 no one-to-one bbox/LiDAR pairing: that tied the output rate to the *worse* of the
-two sensors, and was measured to hold ``/cones`` at ~0.6x the LiDAR rate even
+two sensors, and was measured to hold ``/perception/cones`` at ~0.6x the LiDAR rate even
 with the node otherwise idle at 28% CPU. Nothing here waits.
 
 **Heavy work runs at the rate of the thing it depends on.** Clustering is a
@@ -39,7 +39,7 @@ LiDAR position always beats a vision position::
                              was there but too thin to cluster)
     detection alone       -> monocular, inside the bound, cross-checked by ZNCC
 
-Provenance is published because ``/cones`` cannot carry it, and error measured
+Provenance is published because ``/perception/cones`` cannot carry it, and error measured
 against ground truth is meaningless if it cannot be attributed to the thing that
 produced it.
 """
@@ -233,11 +233,11 @@ class PerceptionNode(Node):
 
     def _declare_parameters(self) -> None:
         self.declare_parameter("pointcloud_topic", "/velodyne_points")
-        self.declare_parameter("bbox_topic", "/yolo_bounding_boxes")
+        self.declare_parameter("bbox_topic", "/perception/bounding_boxes")
         self.declare_parameter("camera_info_topic", "/zed/left/camera_info")
         self.declare_parameter("left_image_topic", "/zed/left/image_rect_color")
         self.declare_parameter("right_image_topic", "/zed/right/image_rect_color")
-        self.declare_parameter("output_cones_topic", "/cones")
+        self.declare_parameter("output_cones_topic", "/perception/cones")
         self.declare_parameter("output_frame", "base_footprint")
         self.declare_parameter("camera_frame", "zed_left_camera_optical_frame")
         self.declare_parameter("debug_prefix", "/fusion/debug")
@@ -265,7 +265,7 @@ class PerceptionNode(Node):
         # (~0.3 m at 6 m/s ahead, 2x that to the left under cw spin).
         self.declare_parameter("deskew_enabled", True)
         self.declare_parameter(
-            "deskew_twist_topic", "/wheel_odometry/car_state")
+            "deskew_twist_topic", "/localization/wheel_odom")
         self.declare_parameter("deskew_twist_timeout", 0.5)
         self.declare_parameter("roi_min_x", 0.5)
         self.declare_parameter("roi_max_x", 30.0)
@@ -515,7 +515,7 @@ class PerceptionNode(Node):
         return int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
 
     def _cloud_callback(self, msg: PointCloud2) -> None:
-        """The output path. One cloud in, one /cones frame out.
+        """The output path. One cloud in, one /perception/cones frame out.
 
         The LiDAR is the backbone: it is what actually measures where a cone is,
         so it sets the rate. Running the output off the camera instead meant
@@ -613,7 +613,7 @@ class PerceptionNode(Node):
         # The array goes out under one stamp; carrying them forward is what makes
         # that stamp true for every cone in it rather than just for the clusters.
         cones = self._carry_vision_cones(cones, image_stamp, stamp)
-        # Provenance goes out FIRST. A consumer keys it by the /cones stamp, so
+        # Provenance goes out FIRST. A consumer keys it by the /perception/cones stamp, so
         # publishing it afterwards leaves that consumer holding cones it cannot
         # attribute for one frame -- which reads as "no provenance" rather than
         # as a race.
@@ -659,7 +659,7 @@ class PerceptionNode(Node):
             parts.append(f"{name} {median:.1f}/{p90:.1f}")
         n = max(len(v) for v in self._stage_ms.values())
         self.get_logger().info(
-            f"/cones stages median/p90 ms over {n} clouds: "
+            f"/perception/cones stages median/p90 ms over {n} clouds: "
             + "  ".join(parts) + f"   [sum of medians {total:.1f} ms]")
         self._stage_ms.clear()
 
@@ -1218,7 +1218,7 @@ class PerceptionNode(Node):
 
         ``candidate`` is NOT a publishable cone. It is the monocular curve's
         estimate, and it exists for one reason: to centre the disparity search.
-        Its depth never reaches /cones. A box-derived prior is 8 % low at 6 m and
+        Its depth never reaches /perception/cones. A box-derived prior is 8 % low at 6 m and
         46 % low at 15 m, so the search window has to come from the fitted curve
         or it misses the true peak outright at range -- but the MEASUREMENT is
         the correlation peak, which does not use the cone-size assumption at all.
@@ -1268,7 +1268,7 @@ class PerceptionNode(Node):
         # range; the fitted curve's depth puts the window on the truth. What
         # comes out is the correlation peak, which never uses the cone-size
         # assumption -- which is why the curve may pick the window without its
-        # depth reaching /cones.
+        # depth reaching /perception/cones.
         prior = fx * self.stereo_baseline_m / max(candidate.range_m, 1.0e-3)
         match = zncc_disparity(
             left_gray, right_gray,
@@ -1487,7 +1487,7 @@ class PerceptionNode(Node):
             self._cone_markers(cones, covariances, stamp))
 
     def _record_latency(self, stamp) -> None:
-        """Age of the data in /cones: now - header.stamp.
+        """Age of the data in /perception/cones: now - header.stamp.
 
         The header carries the bbox capture time, so this is the whole
         pipeline's latency as the planner experiences it -- detector, transport
@@ -1605,7 +1605,7 @@ class PerceptionNode(Node):
     def _provenance_markers(self, cones: List[Cone], stamp) -> MarkerArray:
         """One label per published cone, at the position that was published.
 
-        /cones carries no provenance, so error measured against ground truth
+        /perception/cones carries no provenance, so error measured against ground truth
         cannot otherwise be attributed to the thing that produced it.
         """
         array = MarkerArray()

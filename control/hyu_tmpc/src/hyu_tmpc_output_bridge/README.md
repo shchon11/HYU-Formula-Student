@@ -2,7 +2,7 @@
 
 `hyu_tmpc_output_bridge`는 Formula TMPC 래퍼의 `/output`을 EUFS 시뮬레이터가
 사용하는 `ackermann_msgs/msg/AckermannDriveStamped` 명령으로 변환합니다.
-기본 출력은 실제 차량 명령 토픽이 아닌 `/tmpc/cmd_shadow`이므로 기존
+기본 출력은 실제 차량 명령 토픽이 아닌 `/control/tmpc/cmd_shadow`이므로 기존
 Pure Pursuit와 나란히 실행하면서 값을 먼저 비교할 수 있습니다.
 
 ## 데이터 흐름
@@ -13,8 +13,8 @@ Pure Pursuit와 나란히 실행하면서 값을 먼저 비교할 수 있습니�
   request_long_force_n ── clamp, divide ───> drive.acceleration
   tube_mpc_status ──────────────────────────> validity gate
 
-/tmpc/cmd_shadow (ackermann_msgs/msg/AckermannDriveStamped)
-/tmpc/cmd_valid  (std_msgs/msg/Bool)
+/control/tmpc/cmd_shadow (ackermann_msgs/msg/AckermannDriveStamped)
+/control/tmpc/valid  (std_msgs/msg/Bool)
 ```
 
 `long_acc_target_mps2`는 MPC의 목표/진단 값이므로 제어 명령 변환에는 사용하지
@@ -75,12 +75,12 @@ Shadow mode:
 ros2 launch hyu_tmpc_output_bridge hyu_tmpc_output_bridge.launch.xml
 ```
 
-실제 EUFS `/cmd`로 내보내려면 Pure Pursuit 등 다른 `/cmd` publisher를 먼저 끈
+실제 EUFS `/vehicle/cmd`로 내보내려면 Pure Pursuit 등 다른 `/vehicle/cmd` publisher를 먼저 끈
 뒤 명시적으로 출력 토픽을 바꿉니다.
 
 ```zsh
-ros2 topic info /cmd --verbose
-ros2 launch hyu_tmpc_output_bridge hyu_tmpc_output_bridge.launch.xml output_topic:=/cmd
+ros2 topic info /vehicle/cmd --verbose
+ros2 launch hyu_tmpc_output_bridge hyu_tmpc_output_bridge.launch.xml output_topic:=/vehicle/cmd
 ```
 
 EUFS는 `commandMode:=acceleration`으로 실행해야 `drive.acceleration`을 실제
@@ -91,8 +91,8 @@ EUFS는 `commandMode:=acceleration`으로 실행해야 `drive.acceleration`을 �
 | 이름 | 기본값 | 설명 |
 | --- | ---: | --- |
 | `input_topic` | `/output` | TMPC 출력 토픽 |
-| `output_topic` | `/tmpc/cmd_shadow` | Ackermann 명령 출력 토픽 |
-| `valid_topic` | `/tmpc/cmd_valid` | 변환 결과 validity 토픽 |
+| `output_topic` | `/control/tmpc/cmd_shadow` | Ackermann 명령 출력 토픽 |
+| `valid_topic` | `/control/tmpc/valid` | 변환 결과 validity 토픽 |
 | `conversion_mass_kg` | `225.0` | force를 acceleration으로 바꾸는 질량 (생성 코드 질량과 동일해야 함) |
 | `steering_min_rad` | `-0.52` | 최소 조향각 |
 | `steering_max_rad` | `0.52` | 최대 조향각 |

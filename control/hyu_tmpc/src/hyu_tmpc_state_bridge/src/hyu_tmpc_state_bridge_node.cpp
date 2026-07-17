@@ -79,11 +79,11 @@ private:
     localization_topic_ = declare_parameter<std::string>(
       "hyu_tmpc_state_bridge/localization_topic", "/localization/ego_odom");
     car_state_topic_ = declare_parameter<std::string>(
-      "hyu_tmpc_state_bridge/car_state_topic", "/wheel_odometry/car_state");
+      "hyu_tmpc_state_bridge/car_state_topic", "/localization/wheel_odom");
     wheel_speeds_topic_ = declare_parameter<std::string>(
-      "hyu_tmpc_state_bridge/wheel_speeds_topic", "/ros_can/wheel_speeds");
+      "hyu_tmpc_state_bridge/wheel_speeds_topic", "/vehicle/wheel_speeds");
     output_topic_ = declare_parameter<std::string>(
-      "hyu_tmpc_state_bridge/output_topic", "/tmpc/vehicle_state");
+      "hyu_tmpc_state_bridge/output_topic", "/control/tmpc/vehicle_state");
 
     publish_rate_hz_ = declare_parameter<double>(
       "hyu_tmpc_state_bridge/publish_rate_hz", 100.0);

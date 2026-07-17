@@ -149,11 +149,11 @@ ros2 launch hyu_perception perception_baseline.launch.py \
 Verify detector topics before inspecting fusion:
 
 ```bash
-ros2 topic echo /yolo_bounding_boxes --once
-ros2 topic hz /yolo_bounding_boxes
+ros2 topic echo /perception/bounding_boxes --once
+ros2 topic hz /perception/bounding_boxes
 ros2 topic echo /yolo_bounding_boxes/debug_image --once
 ```
 
-Only after `/yolo_bounding_boxes` and `/yolo_bounding_boxes/debug_image` prove
-that detector output is present and correctly labeled should `/cones` or
-`/cones/viz` be used to debug fusion.
+Only after `/perception/bounding_boxes` and `/yolo_bounding_boxes/debug_image` prove
+that detector output is present and correctly labeled should `/perception/cones` or
+`/perception/debug/cones_viz` be used to debug fusion.

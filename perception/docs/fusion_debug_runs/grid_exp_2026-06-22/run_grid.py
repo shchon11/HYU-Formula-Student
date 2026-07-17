@@ -74,7 +74,7 @@ def launch_combo(
         "-p",
         "pointcloud_topic:=/velodyne_points",
         "-p",
-        "bbox_topic:=/yolo_bounding_boxes",
+        "bbox_topic:=/perception/bounding_boxes",
         "-p",
         "camera_info_topic:=/zed/left/camera_info",
         "-p",

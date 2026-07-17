@@ -61,7 +61,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "car_state_topic",
-                default_value="/wheel_odometry/car_state",
+                default_value="/localization/wheel_odom",
                 description="CarState topic used as the graph SLAM motion input.",
             ),
             DeclareLaunchArgument(
@@ -141,12 +141,12 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "ate_status_topic",
-                default_value="/graph_slam/status",
+                default_value="/localization/status",
                 description="Graph SLAM lifecycle status topic consumed by ate_monitor.",
             ),
             DeclareLaunchArgument(
                 "frenet_odom_topic",
-                default_value="/car_state/frenet/odom",
+                default_value="/planning/frenet_odom",
                 description="Frenet ego odometry (s,d) consumed by the CTE monitor.",
             ),
             DeclareLaunchArgument(
@@ -164,7 +164,7 @@ def generate_launch_description():
                 default_value="true",
                 description=(
                     "Start the wheel+INS odometry node that publishes the "
-                    "default SLAM motion input (/wheel_odometry/car_state)."
+                    "default SLAM motion input (/localization/wheel_odom)."
                 ),
             ),
             SetEnvironmentVariable(

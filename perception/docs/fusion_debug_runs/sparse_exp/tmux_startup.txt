@@ -14,7 +14,7 @@ n enabled. BBox class/color is fused with LiDAR clusters.
 [INFO] [1782121980.136870778] [perception_sparse_experiment]: Fusion debug topic
 s enabled under /fusion/debug_sparse_exp
 [WARN] [1782121980.185461406] [perception_sparse_experiment]: Fusion waiting for
- inputs: bboxes=/yolo_bounding_boxes, camera_info=/zed/left/camera_info
+ inputs: bboxes=/perception/bounding_boxes, camera_info=/zed/left/camera_info
 [INFO] [1782121980.767478590] [perception_sparse_experiment]: Fusion debug: raw=
 3378, roi=96, detections=17, clusters=4, cluster_assignments=3, sparse_assignmen
 ts=1; #0:big_orange(raw=40,roi=24,cl=19,assigned_cluster); #1:yellow(raw=4,roi=2

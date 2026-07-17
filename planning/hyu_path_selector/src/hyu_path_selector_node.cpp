@@ -36,9 +36,9 @@ PathSelectorNode::PathSelectorNode()
   odometry_topic_(declare_parameter<std::string>(
       "odometry_topic", "/localization/ego_odom")),
   selected_path_topic_(declare_parameter<std::string>(
-      "selected_path_topic", "/path_waypoints")),
+      "selected_path_topic", "/planning/path")),
   selected_path_viz_topic_(declare_parameter<std::string>(
-      "selected_path_viz_topic", "/path_waypoints/path")),
+      "selected_path_viz_topic", "/planning/debug/path")),
   selected_validity_topic_(declare_parameter<std::string>(
       "selected_validity_topic", "/planning/selected_path_valid")),
   handoff_ready_topic_(declare_parameter<std::string>(

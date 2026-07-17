@@ -8,7 +8,7 @@ Simulated Ellipse-D INS pipeline: sim INS -> SBG bridge -> graph SLAM.
 
 One-command harness for running the real-hardware GNSS/INS pipeline against
 the EUFS simulator. The bridge publishes its INS odometry on
-/ins_odom/car_state and the GNSS anchor on /gnss/odom. The simulator
+/ins_odom/car_state and the GNSS anchor on /localization/gnss_odom. The simulator
 race-car plugin's synthetic localisation car state is disabled in the robot
 xacro (publishLocalisationCarState=false) — this pipeline plus wheel
 odometry is the only state-estimation source, in sim and on the car alike.
@@ -31,7 +31,7 @@ def generate_launch_description():
     # Deliberately NOT named car_state_topic: launch configurations are global
     # across includes, so a same-named argument here would silently override
     # graph_slam.launch.py's car_state_topic default (the SLAM motion input,
-    # /wheel_odometry/car_state) with the bridge's pose-only INS odometry.
+    # /localization/wheel_odom) with the bridge's pose-only INS odometry.
     ins_odom_topic = LaunchConfiguration("ins_odom_topic")
 
     return LaunchDescription(
@@ -45,7 +45,7 @@ def generate_launch_description():
                 "slam_motion_topic",
                 default_value="/ins_odom/car_state",
                 description="SLAM motion input (fused INS odometry; set to "
-                "/wheel_odometry/car_state for the legacy always-DR wiring).",
+                "/localization/wheel_odom for the legacy always-DR wiring).",
             ),
             DeclareLaunchArgument(
                 "ins_odom_topic",
@@ -140,7 +140,7 @@ def generate_launch_description():
                     # mm-grade GNSS anchors inside the graph (2026-07-18
                     # error-budget decomposition); wheel odometry remains the
                     # bridge's own fallback tier, and slam_motion_topic:=
-                    # /wheel_odometry/car_state restores the old wiring.
+                    # /localization/wheel_odom restores the old wiring.
                     "car_state_topic": LaunchConfiguration("slam_motion_topic"),
                     "gui": LaunchConfiguration("gui"),
                     "ate_monitor": LaunchConfiguration("ate_monitor"),

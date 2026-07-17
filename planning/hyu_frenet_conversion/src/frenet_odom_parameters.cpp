@@ -33,8 +33,8 @@ void declareFrenetOdomParameters(rclcpp::Node & node)
   node.declare_parameter<std::string>("odom_topic", "/pf/pose/odom");
   node.declare_parameter<std::string>("waypoint_topic", "/global_waypoints");
   node.declare_parameter<std::string>("global_path_valid_topic", "/planning/global_path_valid");
-  node.declare_parameter<std::string>("frenet_odom_topic", "/car_state/frenet/odom");
-  node.declare_parameter<std::string>("debug_topic", "/car_state/frenet/debug");
+  node.declare_parameter<std::string>("frenet_odom_topic", "/planning/frenet_odom");
+  node.declare_parameter<std::string>("debug_topic", "/planning/debug/frenet");
   node.declare_parameter<std::string>("frenet_frame_id", "frenet");
   node.declare_parameter<std::string>("projection_failure_policy", "drop_message");
   node.declare_parameter<std::string>("velocity_frame", "body");

@@ -74,7 +74,7 @@ hyu_msgs::msg::WheelSpeeds VehicleModel::getWheelSpeeds(const State &state, cons
   // read zero, and braking slip would overstate by the drag share), and in
   // velocity command mode the plugin synthesizes acc = (v_des - v)/dt per
   // physics step - a deadbeat that saturates through transients and spikes
-  // for one step at every /cmd setpoint jump. The achieved tyre force is
+  // for one step at every /vehicle/cmd setpoint jump. The achieved tyre force is
   // m*a_x plus the drag share, drawn from a grip that grows with downforce
   // (mu = Pacejka D). Known approximation: the steering-projection term
   // (sin(delta)*FyF) of the drive force is not visible from here and is

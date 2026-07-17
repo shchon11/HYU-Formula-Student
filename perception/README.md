@@ -4,7 +4,7 @@ HYU Formula Student simulator와 graph SLAM을 연결하기 위한 ROS 2 percept
 baseline package이다.
 
 이 package의 핵심 역할은 perception 결과를 SLAM이 바로 받을 수 있는
-`/cones` contract로 publish하는 것이다.
+`/perception/cones` contract로 publish하는 것이다.
 
 ```text
 camera / YOLO bbox / simulator bbox / LiDAR / TF
@@ -13,7 +13,7 @@ camera / YOLO bbox / simulator bbox / LiDAR / TF
 hyu_perception
         |
         v
-/cones
+/perception/cones
   type: hyu_msgs/msg/ConeArrayWithCovariance
   frame: base_footprint
 ```
@@ -47,13 +47,13 @@ stereo로 보낸다. 실패한 추정치를 임의 거리로 대체하지 않는
 3-tier 입력(`bbox_source:=yolov8` 권장):
 
 ```text
-/noisy_bounding_boxes or /yolo_bounding_boxes
+/noisy_bounding_boxes or /perception/bounding_boxes
 + /velodyne_points
 + /zed/left|right/image_rect_color
 + /zed/left|right/camera_info
 + timestamped /tf
     -> prioritized LiDAR -> mono -> stereo routing
-    -> /cones
+    -> /perception/cones
 ```
 
 Simulator bbox mode에서는 right-camera 기준 `/noisy_bounding_boxes`와
@@ -67,7 +67,7 @@ Ground 제거는 수평 법선 제한이 있는 RANSAC을 사용한다. RANSAC�
 그 뒤 cone geometry와 bbox association 조건이 계속 적용된다.
 
 YOLO 추론과 fusion 계산은 각각 single-slot latest-only worker에서 실행한다.
-ROS subscription, `/cones`, bbox/debug publish는 `SingleThreadedExecutor`에 남고,
+ROS subscription, `/perception/cones`, bbox/debug publish는 `SingleThreadedExecutor`에 남고,
 worker 완료 결과는 `GuardCondition`을 통해 executor로 되돌아온다. `/clock`
 rollback 전에 generation을 증가시키므로 이전 rosbag epoch에서 끝난 추론은
 새 epoch의 bbox, cone, debug topic을 publish하거나 새 버퍼를 소비할 수 없다.
@@ -83,13 +83,13 @@ rollback 직전 결과가 먼저 publish되는 경쟁 조건을 막는다.
 ```text
 /zed/left/image_rect_color
     -> yolov8_bbox_node
-    -> /yolo_bounding_boxes
+    -> /perception/bounding_boxes
     -> perception_baseline_node
        + /velodyne_points
        + /zed/left|right/image_rect_color
        + /zed/left|right/camera_info
        + timestamped /tf
-    -> /cones
+    -> /perception/cones
 ```
 
 기본 모델은 FSOCO로 fine-tuning한 YOLOv8n weight이다. 이는 사용자가 승인한
@@ -123,7 +123,7 @@ source install/setup.bash
 ### 2. Preferred Launch: Simulator + RViz + YOLOv8 + Fusion
 
 아래 한 명령이 현재 권장 실행법이다. `perception:=true`가 빠지면 RViz의
-`Fusion Cones` display는 `/cones/viz`를 구독만 하고, fusion publisher는 뜨지
+`Fusion Cones` display는 `/perception/debug/cones_viz`를 구독만 하고, fusion publisher는 뜨지
 않는다.
 
 ```bash
@@ -157,14 +157,14 @@ ros2 launch eufs_launcher simulation.launch.py \
 ```text
 /zed/left/image_rect_color
     -> yolov8_bbox_node
-    -> /yolo_bounding_boxes
+    -> /perception/bounding_boxes
     -> perception_baseline_node
        + /velodyne_points
        + /zed/left|right/image_rect_color
        + /zed/left|right/camera_info
        + timestamped /tf
-    -> /cones
-    -> /cones/viz
+    -> /perception/cones
+    -> /perception/debug/cones_viz
 ```
 
 ### 3. Alternative: Simulator First, Perception Later
@@ -206,9 +206,9 @@ YOLO와 fusion이 실제로 떠 있는지 확인한다.
 ```bash
 ros2 node list | grep -E 'yolo|perception'
 ros2 topic list | grep -E 'zed/(left|right)|yolo|cones|fusion/debug|velodyne'
-ros2 topic info /yolo_bounding_boxes
-ros2 topic info /cones
-ros2 topic info /cones/viz
+ros2 topic info /perception/bounding_boxes
+ros2 topic info /perception/cones
+ros2 topic info /perception/debug/cones_viz
 ```
 
 Topic별 의미:
@@ -216,11 +216,11 @@ Topic별 의미:
 ```text
 Raw ZED image     -> /zed/left/image_rect_color
 Right ZED image   -> /zed/right/image_rect_color
-YOLO bbox         -> /yolo_bounding_boxes
+YOLO bbox         -> /perception/bounding_boxes
 YOLO bbox debug   -> /yolo_bounding_boxes/debug_image
 Raw LiDAR         -> /velodyne_points
-Fusion output     -> /cones
-Fusion RViz marker-> /cones/viz
+Fusion output     -> /perception/cones
+Fusion RViz marker-> /perception/debug/cones_viz
 Fusion debug      -> /fusion/debug/*
 ```
 
@@ -230,7 +230,7 @@ RViz에서 기본적으로 확인할 display:
 zed raw image       /zed/left/image_rect_color
 yolo bbox debug     /yolo_bounding_boxes/debug_image
 PointCloud2         /velodyne_points
-Fusion Cones        /cones/viz
+Fusion Cones        /perception/debug/cones_viz
 Fusion debug topics /fusion/debug/*
 ```
 
@@ -240,7 +240,7 @@ Fusion debug topics /fusion/debug/*
   shebang으로 실행되어 conda package를 못 보는 상태이다.
   `perception_python_executable:=/home/dohyun/anaconda3/envs/eufs/bin/python3`
   또는 `python_executable:=...`를 명시한다.
-- YOLO bbox는 보이는데 `/cones/viz`가 비어 있음: 먼저
+- YOLO bbox는 보이는데 `/perception/debug/cones_viz`가 비어 있음: 먼저
   `/fusion/debug/rejections`의 `raw`, `roi`, `cl` 값을 확인한다.
   `raw=0`이면 LiDAR-camera TF/projection/calibration 문제 가능성이 크다.
 - LiDAR가 없는 detection에서 mono/stereo cone이 나오지 않음: 이는 fail-closed
@@ -309,7 +309,7 @@ SLAM integration 확인용 모드이다. 실제 perception을 거치지 않고 s
 주는 cone topic을 SLAM contract에 맞춰 다시 publish한다.
 
 ```text
-/camera_0/cones -> /cones
+/camera_0/cones -> /perception/cones
 ```
 
 이 모드는 graph SLAM 연결 확인에는 유용하지만, perception baseline 성능을
@@ -355,9 +355,9 @@ propagation은 `hyu_perception/rektnet.py`에 있다.
 - `_associate_visual_detections()`: unmatched detection의 mono/ReKTNet-PnP-SIFT
   routing과 optional horizontal-border recovery
 - `_cluster_to_cone()`: SLAM용 `ConeWithCovariance` 생성
-- `_oracle_callback()`: simulator cone topic을 `/cones` contract로 변환
+- `_oracle_callback()`: simulator cone topic을 `/perception/cones` contract로 변환
 
-`sync_buffer.py`는 integer-nanosecond ordered buffer를 제공한다. `/cones`는 bbox
+`sync_buffer.py`는 integer-nanosecond ordered buffer를 제공한다. `/perception/cones`는 bbox
 timestamp를 canonical time으로 사용한다. LiDAR point는 `map` TF history를 통해
 cloud time에서 bbox-time output/camera frame으로 보상하고, visual TF도 bbox
 timestamp로 조회한다. Fusion 성공 후에만 pair를 소비하므로
@@ -425,7 +425,7 @@ cd /path/to/HYU-FS-Sim
 정상 기준:
 
 ```text
-/cones publisher: perception_baseline_node
-/cones subscriber: graph_slam
-/graph_slam/map topic exists
+/perception/cones publisher: perception_baseline_node
+/perception/cones subscriber: graph_slam
+/localization/map topic exists
 ```

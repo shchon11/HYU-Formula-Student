@@ -42,13 +42,13 @@ Run `hyu_tmpc` separately after its trajectory inputs are ready.
 /odometry_integration/car_state -----------+--> latest input cache
   linear_acceleration: ax, ay              │         │
                                            │         v
-/ros_can/wheel_speeds ---------------------┘    100 Hz timer
+/vehicle/wheel_speeds ---------------------┘    100 Hz timer
   speeds.steering: applied steering angle            │
                                                       ├─ freshness 검사
                                                       ├─ finite/quaternion 검사
                                                       ├─ v, beta, ax_vel 계산
                                                       v
-                                            /tmpc/vehicle_state
+                                            /control/tmpc/vehicle_state
                                                       │
                                                       v
                                             hyu_tmpc
@@ -76,15 +76,15 @@ Run `hyu_tmpc` separately after its trajectory inputs are ready.
 | `delta_wheel_rad` | `WheelSpeedsStamped.speeds.steering` | 시뮬레이터에 실제 적용된 등가 전륜 조향각 |
 | `valid_imu` | 파라미터와 acceleration freshness | 실제 IMU health가 아닌 임시 시뮬레이션 validity |
 
-기본 출력 토픽은 `/tmpc/vehicle_state`이며 MPC wrapper의 기본 구독 토픽과
+기본 출력 토픽은 `/control/tmpc/vehicle_state`이며 MPC wrapper의 기본 구독 토픽과
 동일하다. (과거의 `/tmcp` 오타는 양쪽에서 함께 수정되었다.)
 
 ## delta_wheel_rad
 
 현재 시뮬레이션에서는 값이 나온다. 브리지는
-`/ros_can/wheel_speeds.speeds.steering`을 그대로 사용한다. 시뮬레이터는
-`/cmd.drive.steering_angle`을 목표값으로 받은 뒤 steering-rate limit을 적용하고,
-현재 적용된 조향각을 wheel-speeds 메시지에 넣는다. 따라서 `/cmd`는 요청값이고
+`/vehicle/wheel_speeds.speeds.steering`을 그대로 사용한다. 시뮬레이터는
+`/vehicle/cmd.drive.steering_angle`을 목표값으로 받은 뒤 steering-rate limit을 적용하고,
+현재 적용된 조향각을 wheel-speeds 메시지에 넣는다. 따라서 `/vehicle/cmd`는 요청값이고
 `delta_wheel_rad`는 적용값이다. 조향 노이즈 설정이 활성화되어 있으면 이 토픽에도
 노이즈가 포함될 수 있다.
 
@@ -170,7 +170,7 @@ fresh = 0 <= age <= timeout
 ```
 
 localization, acceleration, wheel-speeds 중 하나라도 아직 수신되지 않았거나 stale이면
-브리지는 `/tmpc/vehicle_state` 발행을 중단한다. 오래된 조향이나 가속도를 정상값처럼
+브리지는 `/control/tmpc/vehicle_state` 발행을 중단한다. 오래된 조향이나 가속도를 정상값처럼
 계속 보내지 않기 위한 동작이다. 입력이 다시 들어오면 자동으로 발행을 재개하고
 `ax_vel` 필터는 0부터 다시 시작한다.
 
@@ -188,8 +188,8 @@ localization, acceleration, wheel-speeds 중 하나라도 아직 수신되지 �
 |---|---:|---|
 | `localization_topic` | `/localization/ego_odom` | pose, velocity, yaw-rate 입력 |
 | `car_state_topic` | `/odometry_integration/car_state` | acceleration 입력 |
-| `wheel_speeds_topic` | `/ros_can/wheel_speeds` | steering 입력 |
-| `output_topic` | `/tmpc/vehicle_state` | MPC vehicle-state 출력 |
+| `wheel_speeds_topic` | `/vehicle/wheel_speeds` | steering 입력 |
+| `output_topic` | `/control/tmpc/vehicle_state` | MPC vehicle-state 출력 |
 | `publish_rate_hz` | `100.0` | timer 발행 주기 |
 | `localization_timeout_sec` | `0.2` | localization freshness 한계 |
 | `car_state_timeout_sec` | `0.2` | acceleration freshness 한계 |
@@ -207,7 +207,7 @@ localization, acceleration, wheel-speeds 중 하나라도 아직 수신되지 �
    ```zsh
    ros2 topic hz /localization/ego_odom
    ros2 topic hz /odometry_integration/car_state
-   ros2 topic hz /ros_can/wheel_speeds
+   ros2 topic hz /vehicle/wheel_speeds
    ```
 
 2. `/localization/ego_odom.twist`의 `linear.x/y`가 0으로 고정되지 않는지 확인한다.
@@ -223,12 +223,12 @@ localization, acceleration, wheel-speeds 중 하나라도 아직 수신되지 �
 4. 요청 조향과 적용 조향의 차이를 확인한다.
 
    ```zsh
-   ros2 topic echo /cmd
-   ros2 topic echo /ros_can/wheel_speeds
-   ros2 topic echo /tmpc/vehicle_state
+   ros2 topic echo /vehicle/cmd
+   ros2 topic echo /vehicle/wheel_speeds
+   ros2 topic echo /control/tmpc/vehicle_state
    ```
 
-   조향 rate limit 때문에 빠르게 steering을 바꿀 때 `/cmd.drive.steering_angle`보다
+   조향 rate limit 때문에 빠르게 steering을 바꿀 때 `/vehicle/cmd.drive.steering_angle`보다
    `delta_wheel_rad`가 늦게 따라오는 것이 정상이다.
 
 5. 직선 가감속에서 `ax_mps2`와 `ax_vel_mps2`를 비교한다. 속도 step에서 미분값이
@@ -240,17 +240,17 @@ localization, acceleration, wheel-speeds 중 하나라도 아직 수신되지 �
 7. `valid_imu_default:=false`로 실행했을 때 출력의 `valid_imu`가 false가 되고 MPC의
    IMU 기반 보정 유무에 따른 결과 차이가 있는지 확인한다.
 
-8. 세 입력 중 하나를 끊었을 때 0.2초 후 `/tmpc/vehicle_state`가 멈추고, 다시
+8. 세 입력 중 하나를 끊었을 때 0.2초 후 `/control/tmpc/vehicle_state`가 멈추고, 다시
    연결하면 자동 복구되는지 확인한다.
 
    ```zsh
-   ros2 topic hz /tmpc/vehicle_state
+   ros2 topic hz /control/tmpc/vehicle_state
    ```
 
 9. 최종 메시지의 15개 필드가 모두 finite하고, 정상 입력 중 약 100 Hz로 나오는지
    확인한다.
 
    ```zsh
-   ros2 topic echo /tmpc/vehicle_state
-   ros2 topic hz /tmpc/vehicle_state
+   ros2 topic echo /control/tmpc/vehicle_state
+   ros2 topic hz /control/tmpc/vehicle_state
    ```

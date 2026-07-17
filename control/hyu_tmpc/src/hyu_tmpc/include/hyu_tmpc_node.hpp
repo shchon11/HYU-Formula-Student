@@ -65,7 +65,7 @@ private:
   bool has_performance_trajectory_{false};
   bool has_emergency_trajectory_{false};
 
-  // What the plant actually received (the selector-owned /cmd), converted back
+  // What the plant actually received (the selector-owned /vehicle/cmd), converted back
   // to the MPC's request units. Falls back to the last own request until the
   // first applied command arrives.
   VehicleControl applied_vehicle_control_{};

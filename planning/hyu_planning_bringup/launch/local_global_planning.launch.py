@@ -20,19 +20,19 @@ ARGUMENTS = (
     # always-DR wheel odometry carried a ~1.1 deg constant heading error that
     # fought the GNSS anchors inside the graph (2026-07-18 budget analysis).
     ("car_state_topic", "/ins_odom/car_state", "Graph SLAM motion input."),
-    ("cones_topic", "/cones", "Live cone observations for local planning and state."),
+    ("cones_topic", "/perception/cones", "Live cone observations for local planning and state."),
     ("cone_map_topic", "/localization/cone_map", "Graph SLAM cone-map output."),
     ("ego_odom_topic", "/localization/ego_odom", "Planner-facing odometry."),
-    ("graph_slam_status_topic", "/graph_slam/status", "Graph SLAM lifecycle status."),
-    ("graph_slam_map_converged_topic", "/graph_slam/map_converged", "Graph SLAM map-ready status."),
+    ("graph_slam_status_topic", "/localization/status", "Graph SLAM lifecycle status."),
+    ("graph_slam_map_converged_topic", "/localization/map_converged", "Graph SLAM map-ready status."),
     ("global_waypoints_topic", "/global_waypoints", "Latched full global waypoint path."),
     ("global_path_valid_topic", "/planning/global_path_valid", "Global-path validity heartbeat."),
     ("global_path_reason_topic", "/planning/global_path_reason", "Why the global path is invalid (latched)."),
     ("global_path_waypoints_topic", "/planning/global_path_waypoints", "Global rolling waypoint window."),
     ("global_path_topic", "/planning/global_path_waypoints/path", "Global rolling window visualization."),
-    ("frenet_odom_topic", "/car_state/frenet/odom", "Frenet odometry topic."),
-    ("tmpc_performance_trajectory_topic", "/tmpc/trajectory_performance", "Formula TMPC performance trajectory."),
-    ("tmpc_emergency_trajectory_topic", "/tmpc/trajectory_emergency", "Formula TMPC emergency trajectory."),
+    ("frenet_odom_topic", "/planning/frenet_odom", "Frenet odometry topic."),
+    ("tmpc_performance_trajectory_topic", "/planning/trajectory_performance", "Formula TMPC performance trajectory."),
+    ("tmpc_emergency_trajectory_topic", "/planning/trajectory_emergency", "Formula TMPC emergency trajectory."),
     ("local_waypoints_topic", "/planning/local_waypoints", "Local planner waypoint output."),
     ("local_path_topic", "/planning/local_waypoints/path", "Local planner path visualization."),
     ("local_path_valid_topic", "/planning/local_path_valid", "Local-path validity heartbeat."),
@@ -44,14 +44,14 @@ ARGUMENTS = (
     ("lap_time_best_topic", "/planning/lap_time_best", "Best lap time (orange-gate)."),
     ("stop_request_topic", "/planning/stop_request", "State-machine stop request."),
     ("planning_debug_topic", "/planning/debug", "State-machine debug output."),
-    ("selected_path_topic", "/path_waypoints", "Selector-owned controller path."),
-    ("selected_path_viz_topic", "/path_waypoints/path", "Selector path visualization."),
+    ("selected_path_topic", "/planning/path", "Selector-owned controller path."),
+    ("selected_path_viz_topic", "/planning/debug/path", "Selector path visualization."),
     ("selected_path_valid_topic", "/planning/selected_path_valid", "Selector validity heartbeat."),
     ("global_handoff_ready_topic", "/planning/global_handoff_ready", "Selector handoff readiness."),
     ("selector_debug_topic", "/planning/hyu_path_selector/debug", "Selector debug output."),
-    ("stop_zone_s_start_topic", "/stop_zone_s_start", "Final stop-zone start position."),
-    ("stop_zone_s_end_topic", "/stop_zone_s_end", "Final stop-zone end position."),
-    ("stop_zone_valid_topic", "/stop_zone_valid", "Final stop-zone validity."),
+    ("stop_zone_s_start_topic", "/planning/stop_zone/s_start", "Final stop-zone start position."),
+    ("stop_zone_s_end_topic", "/planning/stop_zone/s_end", "Final stop-zone end position."),
+    ("stop_zone_valid_topic", "/planning/stop_zone/valid", "Final stop-zone validity."),
     ("local_max_stamp_skew_sec", "0.1", "Local planner cones/odom stamp-skew gate (sec, sim time)."),
     ("local_max_input_age_sec", "0.5", "Local planner input freshness gate (sec, sim time)."),
     ("local_max_start_distance_m", "4.0", "Max distance from ego to the local path start (m)."),
@@ -63,7 +63,7 @@ ARGUMENTS = (
         "hybrid launch lowers it to the TMPC reference cap so takeover/fallback "
         "hand the tube MPC a state inside its feasible envelope.",
     ),
-    ("cmd_topic", "/cmd", "Command topic monitored by the HUD."),
+    ("cmd_topic", "/vehicle/cmd", "Command topic monitored by the HUD."),
     (
         "controller_cmd_topic",
         LaunchConfiguration("cmd_topic"),
@@ -221,7 +221,7 @@ def generate_launch_description() -> LaunchDescription:
     hyu_global_planner = GroupAction(
         actions=[
             SetRemap(
-                src="/graph_slam/map_converged",
+                src="/localization/map_converged",
                 dst=values["graph_slam_map_converged_topic"],
             ),
             hyu_global_planner_launch,
@@ -376,11 +376,11 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
     controller_remappings = [
-        ("/path_waypoints", values["selected_path_topic"]),
+        ("/planning/path", values["selected_path_topic"]),
         ("/planning/selected_path_valid", values["selected_path_valid_topic"]),
         ("/planning/stop_request", values["stop_request_topic"]),
         ("/localization/ego_odom", values["ego_odom_topic"]),
-        ("/cmd", values["controller_cmd_topic"]),
+        ("/vehicle/cmd", values["controller_cmd_topic"]),
     ]
     controller = Node(
         package="hyu_pure_pursuit",

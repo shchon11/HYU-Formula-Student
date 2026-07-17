@@ -71,9 +71,9 @@ def generate_launch_description() -> LaunchDescription:
                         "come from here and the TF, never from a constant."),
         DeclareLaunchArgument(
             "camera_frame", default_value="zed_left_camera_optical_frame"),
-        DeclareLaunchArgument("bbox_topic", default_value="/yolo_bounding_boxes"),
+        DeclareLaunchArgument("bbox_topic", default_value="/perception/bounding_boxes"),
         DeclareLaunchArgument("pointcloud_topic", default_value="/velodyne_points"),
-        DeclareLaunchArgument("output_cones_topic", default_value="/cones"),
+        DeclareLaunchArgument("output_cones_topic", default_value="/perception/cones"),
         DeclareLaunchArgument("output_frame", default_value="base_footprint"),
         DeclareLaunchArgument(
             "motion_compensation_frame", default_value="map",

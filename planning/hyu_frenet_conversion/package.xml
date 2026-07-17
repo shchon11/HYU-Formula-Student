@@ -6,7 +6,7 @@
   <description>
     Converts /global_waypoints (hyu_msgs/WaypointArrayStamped) and vehicle
     odometry into Frenet (s, d) coordinates using the CommonRoad curvilinear
-    coordinate system, publishing /car_state/frenet/odom for Formula Student
+    coordinate system, publishing /planning/frenet_odom for Formula Student
     Korea autonomous planning.
   </description>
   <maintainer email="parkm04@hanyang.ac.kr">haejun</maintainer>

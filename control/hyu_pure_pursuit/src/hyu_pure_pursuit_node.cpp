@@ -90,11 +90,11 @@ public:
 
     const auto qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable().durability_volatile();
     command_publisher_ =
-      create_publisher<ackermann_msgs::msg::AckermannDriveStamped>("/cmd", qos);
+      create_publisher<ackermann_msgs::msg::AckermannDriveStamped>("/vehicle/cmd", qos);
     lookahead_marker_publisher_ = create_publisher<visualization_msgs::msg::Marker>(
       "/control/lookahead_marker", rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
     path_subscription_ = create_subscription<hyu_msgs::msg::WaypointArrayStamped>(
-      "/path_waypoints", qos,
+      "/planning/path", qos,
       std::bind(&PurePursuitControllerNode::onPath, this, std::placeholders::_1));
     validity_subscription_ = create_subscription<std_msgs::msg::Bool>(
       "/planning/selected_path_valid", qos,

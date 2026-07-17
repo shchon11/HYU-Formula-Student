@@ -27,13 +27,13 @@ Observed nodes:
 
 Observed required topics:
 
-- `/yolo_bounding_boxes`
+- `/perception/bounding_boxes`
 - `/yolo_bounding_boxes/debug_image`
 - `/velodyne_points`
 - `/zed/left/camera_info`
 - `/zed/left/image_rect_color`
-- `/cones`
-- `/cones/viz`
+- `/perception/cones`
+- `/perception/debug/cones_viz`
 - `/fusion/debug/bbox_support`
 - `/fusion/debug/cluster_candidates`
 - `/fusion/debug/rejections`
@@ -44,7 +44,7 @@ Observed required topics:
 
 PASS.
 
-`/yolo_bounding_boxes` has one publisher and one subscriber. The captured message
+`/perception/bounding_boxes` has one publisher and one subscriber. The captured message
 contained 17 bbox detections in one frame. Example probabilities were high:
 
 - yellow: `0.894`
@@ -110,7 +110,7 @@ raw=3 roi=1 cl=0 insufficient_cluster_support
 raw=2 roi=1 cl=0 insufficient_cluster_support
 ```
 
-Published `/cones` was stable but sparse:
+Published `/perception/cones` was stable but sparse:
 
 ```text
 blue_cones: 1

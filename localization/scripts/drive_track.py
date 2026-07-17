@@ -131,7 +131,7 @@ class DriveTrack(Node):
         self.t_start = None
         self.done = False
 
-        self.cmd_pub = self.create_publisher(AckermannDriveStamped, "/cmd", 1)
+        self.cmd_pub = self.create_publisher(AckermannDriveStamped, "/vehicle/cmd", 1)
         self.state_sub = self.create_subscription(
             CarState,
             "/ground_truth/state",
@@ -140,7 +140,7 @@ class DriveTrack(Node):
         )
         self.timer = self.create_timer(0.05, self.on_timer)
 
-        self.mission_client = self.create_client(SetCanState, "/ros_can/set_mission")
+        self.mission_client = self.create_client(SetCanState, "/vehicle/set_mission")
         self.mission_sent = False
         self.get_logger().info(
             f"loaded centerline with {len(self.path)} points; waiting for sim"

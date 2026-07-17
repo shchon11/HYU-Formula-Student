@@ -23,7 +23,7 @@ WpntPublisher::WpntPublisher(const rclcpp::NodeOptions & options)
   global_path_valid_timeout_sec_ =
     declare_parameter<double>("global_path_valid_timeout_sec", 0.5);
   frenet_odom_topic_ =
-    declare_parameter<std::string>("frenet_odom_topic", "/car_state/frenet/odom");
+    declare_parameter<std::string>("frenet_odom_topic", "/planning/frenet_odom");
   ego_odom_topic_ =
     declare_parameter<std::string>("ego_odom_topic", "/localization/ego_odom");
   path_source_topic_ =
@@ -31,12 +31,12 @@ WpntPublisher::WpntPublisher(const rclcpp::NodeOptions & options)
   lap_count_topic_ =
     declare_parameter<std::string>("lap_count_topic", "/planning/lap_count");
   path_waypoints_topic_ =
-    declare_parameter<std::string>("path_waypoints_topic", "/path_waypoints");
-  path_topic_ = declare_parameter<std::string>("path_topic", "/path_waypoints/path");
+    declare_parameter<std::string>("path_waypoints_topic", "/planning/path");
+  path_topic_ = declare_parameter<std::string>("path_topic", "/planning/debug/path");
   tmpc_performance_trajectory_topic_ = declare_parameter<std::string>(
-    "tmpc_performance_trajectory_topic", "/tmpc/trajectory_performance");
+    "tmpc_performance_trajectory_topic", "/planning/trajectory_performance");
   tmpc_emergency_trajectory_topic_ = declare_parameter<std::string>(
-    "tmpc_emergency_trajectory_topic", "/tmpc/trajectory_emergency");
+    "tmpc_emergency_trajectory_topic", "/planning/trajectory_emergency");
   waypoint_num_ = declare_parameter<int>("waypoint_num", 50);
   closed_loop_ = declare_parameter<bool>("closed_loop", true);
   closing_duplicate_tolerance_ =

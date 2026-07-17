@@ -27,7 +27,7 @@ checkpoint and a vehicle-specific measured template/calibration.
 
 HYU graph SLAM subscribes to:
 
-- Topic: `/cones`
+- Topic: `/perception/cones`
 - Type: `hyu_msgs/msg/ConeArrayWithCovariance`
 - Frame: `base_footprint`
 
@@ -299,6 +299,6 @@ of detector recall, calibration, depth error, latency, or SLAM consistency.
 
 ## Oracle Adapter
 
-The oracle adapter converts a simulator cone topic directly to the `/cones`
+The oracle adapter converts a simulator cone topic directly to the `/perception/cones`
 contract. It is useful for SLAM wiring checks, but bypasses detection and depth
 estimation and therefore provides no evidence about perception performance.

@@ -19,23 +19,23 @@ ARGUMENTS = (
     ("enable_hud", "true", "Start the planning HUD."),
     ("planning_state_topic", "/planning/state", "LOCAL/GLOBAL/STOP state."),
     ("stop_request_topic", "/planning/stop_request", "Planning safety stop request."),
-    ("pure_pursuit_cmd_topic", "/cmd/pure_pursuit", "Pure Pursuit candidate command."),
-    ("tmpc_cmd_topic", "/cmd/tmpc", "TMPC candidate command."),
-    ("final_cmd_topic", "/cmd", "Selector-owned final command."),
-    ("selector_status_topic", "/tmpc/cmd_selector/status", "Selector state output."),
-    ("tmpc_vehicle_state_topic", "/tmpc/vehicle_state", "Formula vehicle-state input."),
+    ("pure_pursuit_cmd_topic", "/control/pp/cmd", "Pure Pursuit candidate command."),
+    ("tmpc_cmd_topic", "/control/tmpc/cmd", "TMPC candidate command."),
+    ("final_cmd_topic", "/vehicle/cmd", "Selector-owned final command."),
+    ("selector_status_topic", "/control/selector/status", "Selector state output."),
+    ("tmpc_vehicle_state_topic", "/control/tmpc/vehicle_state", "Formula vehicle-state input."),
     (
         "tmpc_performance_trajectory_topic",
-        "/tmpc/trajectory_performance",
+        "/planning/trajectory_performance",
         "Formula performance trajectory.",
     ),
     (
         "tmpc_emergency_trajectory_topic",
-        "/tmpc/trajectory_emergency",
+        "/planning/trajectory_emergency",
         "Formula emergency trajectory.",
     ),
     ("tmpc_output_topic", "/tmpc/output", "Raw Formula TMPC output."),
-    ("tmpc_valid_topic", "/tmpc/cmd_valid", "Output-bridge validity heartbeat."),
+    ("tmpc_valid_topic", "/control/tmpc/valid", "Output-bridge validity heartbeat."),
     ("localization_topic", "/localization/ego_odom", "Vehicle-state localization input."),
     # Deliberately NOT named car_state_topic: launch configurations are global,
     # so a "car_state_topic" declared here leaks into the included
@@ -46,8 +46,8 @@ ARGUMENTS = (
     # plain trackdrive was fine. ins_pipeline.launch.py dodges the identical trap
     # by naming its arg ins_odom_topic; this is the vehicle-state bridge's own
     # dynamics input, so give it a bridge-scoped name.
-    ("vehicle_state_car_state_topic", "/wheel_odometry/car_state", "Vehicle-state bridge dynamics input."),
-    ("wheel_speeds_topic", "/ros_can/wheel_speeds", "Vehicle-state wheel-speed input."),
+    ("vehicle_state_car_state_topic", "/localization/wheel_odom", "Vehicle-state bridge dynamics input."),
+    ("wheel_speeds_topic", "/vehicle/wheel_speeds", "Vehicle-state wheel-speed input."),
     ("publish_rate_hz", "100.0", "Bridge and selector command rate."),
     ("state_timeout_sec", "0.25", "Planning state freshness limit."),
     ("stop_timeout_sec", "0.25", "Stop-request freshness limit."),

@@ -1,6 +1,6 @@
 # Pure Pursuit controller
 
-The node publishes `/cmd` at 20 Hz from the selected `/path_waypoints` and
+The node publishes `/vehicle/cmd` at 20 Hz from the selected `/planning/path` and
 `/localization/ego_odom`. It brakes exactly with speed `0`, acceleration `-5`,
 and steering `0` unless every required input has been received and is valid.
 

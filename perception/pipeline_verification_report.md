@@ -29,7 +29,7 @@
 + /custom_camera_info
 + /tf
     -> perception_baseline_node
-    -> /cones
+    -> /perception/cones
 ```
 
 확인한 파일:
@@ -130,7 +130,7 @@ Arguments (pass arguments as '<name>:=<value>'):
     'camera_info_topic': default: '/custom_camera_info'
     'camera_frame': default: 'zed_right_camera_optical_frame'
     'projection_model': default: 'eufs_bbox'
-    'output_cones_topic': default: '/cones'
+    'output_cones_topic': default: '/perception/cones'
     'output_frame': default: 'base_footprint'
     'oracle_cones_topic': default: ''
     'publish_empty_on_sync': default: 'false'
@@ -241,14 +241,14 @@ Summary: 0 tests, 0 errors, 0 failures, 0 skipped
 from sensor_msgs_py import point_cloud2
 ```
 
-`conda run -n eufs`와 `/opt/ros/galactic/setup.bash`를 함께 사용해도 `sensor_msgs_py`는 import되지 않는다. `ros2 pkg list`에는 `sensor_msgs`만 있고 `sensor_msgs_py`는 없다. 따라서 노드는 `/cones`를 publish하기 전에 import 단계에서 종료된다.
+`conda run -n eufs`와 `/opt/ros/galactic/setup.bash`를 함께 사용해도 `sensor_msgs_py`는 import되지 않는다. `ros2 pkg list`에는 `sensor_msgs`만 있고 `sensor_msgs_py`는 없다. 따라서 노드는 `/perception/cones`를 publish하기 전에 import 단계에서 종료된다.
 
 영향:
 
 - Fusion mode 실행 불가.
 - Oracle adapter mode 실행 불가.
-- `/cones` publisher 생성 전 실패.
-- graph SLAM과의 `/cones` 연결도 현재 환경에서는 확인 불가.
+- `/perception/cones` publisher 생성 전 실패.
+- graph SLAM과의 `/perception/cones` 연결도 현재 환경에서는 확인 불가.
 
 비고:
 
@@ -333,7 +333,7 @@ launch argument로 노출된 일부 parameter만 launch에서 전달된다. YAML
 
 - `hyu_perception/perception_baseline_node.py:577`
 
-`projection_model == "eufs_bbox"`일 때만 특수 변환을 하고, 그 외 값은 그대로 projection한다. 잘못된 parameter 값이 들어가도 경고 없이 부정확한 `/cones`가 나올 수 있다.
+`projection_model == "eufs_bbox"`일 때만 특수 변환을 하고, 그 외 값은 그대로 projection한다. 잘못된 parameter 값이 들어가도 경고 없이 부정확한 `/perception/cones`가 나올 수 있다.
 
 ### 4. TF 누락 시 fusion이 publish 없이 skip됨
 
@@ -343,7 +343,7 @@ launch argument로 노출된 일부 parameter만 launch에서 전달된다. YAML
 - `hyu_perception/perception_baseline_node.py:325-326`
 - `hyu_perception/perception_baseline_node.py:643-648`
 
-LiDAR->base, LiDAR->camera TF가 없으면 fusion은 skip된다. 코드가 throttled warning은 남기지만, live topic 검증 없이 `/cones`가 비어 있거나 publish되지 않는 원인을 구분하기 어렵다.
+LiDAR->base, LiDAR->camera TF가 없으면 fusion은 skip된다. 코드가 throttled warning은 남기지만, live topic 검증 없이 `/perception/cones`가 비어 있거나 publish되지 않는 원인을 구분하기 어렵다.
 
 ## 최종 판정
 
@@ -354,7 +354,7 @@ LiDAR->base, LiDAR->camera TF가 없으면 fusion은 skip된다. 코드가 throt
 - Package registration: 통과.
 - Launch parse: 통과.
 - Node startup under conda `eufs`: 실패 (`sensor_msgs_py` 없음).
-- `/cones` publish: 미도달.
+- `/perception/cones` publish: 미도달.
 - Simulator + fusion + graph SLAM end-to-end: Docker 부재로 미검증.
 
 따라서 현재 상태는 "파이프라인 정상 동작"이 아니라 "`eufs` conda 환경에서는 Python 3.8/rclpy 문제는 없지만, 노드가 `sensor_msgs_py` import에서 실패하여 파이프라인이 기동하지 않음"이다.

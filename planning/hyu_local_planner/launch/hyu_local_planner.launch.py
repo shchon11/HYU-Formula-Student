@@ -22,7 +22,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument("source_mode", default_value="slam_map"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
-        DeclareLaunchArgument("slam_status_topic", default_value="/graph_slam/status"),
+        DeclareLaunchArgument("slam_status_topic", default_value="/localization/status"),
         Node(
             package="hyu_local_planner",
             executable="hyu_local_planner_node",

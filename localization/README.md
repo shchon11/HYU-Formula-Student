@@ -5,7 +5,7 @@
 The node subscribes to:
 
 - `/odometry_integration/car_state` (`hyu_msgs/msg/CarState`) for SE2 keyframe motion
-- `/cones` (`hyu_msgs/msg/ConeArrayWithCovariance`) for local cone observations in `base_footprint`
+- `/perception/cones` (`hyu_msgs/msg/ConeArrayWithCovariance`) for local cone observations in `base_footprint`
 
 It publishes:
 
@@ -27,11 +27,11 @@ Graph SLAM owns the localization outputs consumed by the planning integration:
 - `/localization/cone_map` is a reliable transient-local
   `hyu_msgs/msg/ConeArrayWithCovariance` map snapshot.
 - `/localization/ego_odom` is the live `nav_msgs/msg/Odometry` ego pose stream.
-- `/graph_slam/status` remains Graph-SLAM-owned lifecycle state with values
+- `/localization/status` remains Graph-SLAM-owned lifecycle state with values
   `mapping`, `mapping_converged`, and `localization`.
-- `/graph_slam/map_converged` remains a latched map convergence signal.
+- `/localization/map_converged` remains a latched map convergence signal.
 
-The planning stack only allows global waypoint use when `/graph_slam/status` is
+The planning stack only allows global waypoint use when `/localization/status` is
 `localization`. Planner liveness is not inferred from the status topic; it comes
 from the selected global waypoint writer's reliable volatile
 `/planning/global_path_valid` heartbeat.
@@ -139,15 +139,15 @@ that still expects the legacy Graph SLAM names, start with:
 
 ```bash
 ros2 launch hyu_localization graph_slam.launch.py \
-  map_topic:=/graph_slam/map \
+  map_topic:=/localization/map \
   slam_odom_topic:=/graph_slam/odom
 ```
 
 ## Wheel-encoder odometry
 
 `ros2 run hyu_localization wheel_odometry` integrates rear wheel speeds (RPM,
-`/ros_can/wheel_speeds`) with an IMU yaw rate (`/imu/data`; bicycle-model
-steering fallback) into `/wheel_odometry/car_state` — a GNSS-independent
+`/vehicle/wheel_speeds`) with an IMU yaw rate (`/imu/data`; bicycle-model
+steering fallback) into `/localization/wheel_odom` — a GNSS-independent
 odometry source for `car_state_topic`, keeping the GNSS prior as the only
 absolute channel. On the real car only the two input topics change.
 
@@ -240,7 +240,7 @@ Parameters live in `config/graph_slam.yaml`.
   input, and map quality (matches, RMSE, duplicates, false positives, colour
   accuracy) against the track CSV. It listens to `/localization/ego_odom` and
   `/localization/cone_map` by default; use `--slam-odom /graph_slam/odom` and
-  `--map-topic /graph_slam/map` for legacy runs.
+  `--map-topic /localization/map` for legacy runs.
 
 The drifting odometry the node consumes is produced by the simulator itself:
 the race-car plugin publishes ground truth on `/ground_truth/state` and a

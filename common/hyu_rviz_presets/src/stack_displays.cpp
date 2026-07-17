@@ -67,7 +67,7 @@ void PerceptionStack::populate()
 {
   setName("FSK Perception");
   addTopicDisplay(
-    "rviz_default_plugins/MarkerArray", "Live Cones (fusion)", "/cones/viz");
+    "rviz_default_plugins/MarkerArray", "Live Cones (fusion)", "/perception/debug/cones_viz");
 }
 
 void SlamStack::populate()
@@ -108,7 +108,7 @@ void PlanningStack::populate()
   local_path->subProp("Offset")->subProp("Z")->setValue(0.08f);
 
   rviz_common::Display * window = addTopicDisplay(
-    "rviz_default_plugins/Path", "Local Window", "/path_waypoints/path");
+    "rviz_default_plugins/Path", "Local Window", "/planning/debug/path");
   window->subProp("Color")->setValue(QColor(255, 255, 255));
   window->subProp("Line Style")->setValue("Billboards");
   window->subProp("Line Width")->setValue(0.08f);

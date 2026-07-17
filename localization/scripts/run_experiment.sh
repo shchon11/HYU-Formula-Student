@@ -2,7 +2,7 @@
 # Copyright 2026 shchon11
 #
 # Runs a full headless graph SLAM experiment on the real sensor chain:
-#   Gazebo (small_track) + sim Ellipse-D INS + SBG bridge (/gnss/odom anchor)
+#   Gazebo (small_track) + sim Ellipse-D INS + SBG bridge (/localization/gnss_odom anchor)
 #   + wheel odometry (SLAM motion input) + graph SLAM + scripted driver
 #   + evaluator, then tears everything down and leaves a JSON report.
 #
@@ -124,8 +124,8 @@ sleep 3
 echo "simulator up"
 
 # Real sensor chain: sim INS + SBG bridge (anchor) + wheel odometry (motion).
-SLAM_INPUT=/wheel_odometry/car_state
-RAW_TOPIC=/wheel_odometry/car_state
+SLAM_INPUT=/localization/wheel_odom
+RAW_TOPIC=/localization/wheel_odom
 
 # ros2 launch rejects name:= with an empty value as malformed, so the
 # schedule argument is only passed when it has content.

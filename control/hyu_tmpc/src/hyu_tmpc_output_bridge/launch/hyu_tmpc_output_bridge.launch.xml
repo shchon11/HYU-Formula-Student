@@ -1,8 +1,8 @@
 <launch>
   <arg name="use_sim_time" default="true"/>
   <arg name="input_topic" default="/output"/>
-  <arg name="output_topic" default="/tmpc/cmd_shadow"/>
-  <arg name="valid_topic" default="/tmpc/cmd_valid"/>
+  <arg name="output_topic" default="/control/tmpc/cmd_shadow"/>
+  <arg name="valid_topic" default="/control/tmpc/valid"/>
   <arg name="conversion_mass_kg" default="225.0"/>
   <arg name="steering_min_rad" default="-0.52"/>
   <arg name="steering_max_rad" default="0.52"/>

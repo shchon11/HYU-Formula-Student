@@ -24,9 +24,9 @@ public:
     input_topic_ = declare_parameter<std::string>(
       "hyu_tmpc_output_bridge/input_topic", "/output");
     output_topic_ = declare_parameter<std::string>(
-      "hyu_tmpc_output_bridge/output_topic", "/tmpc/cmd_shadow");
+      "hyu_tmpc_output_bridge/output_topic", "/control/tmpc/cmd_shadow");
     valid_topic_ = declare_parameter<std::string>(
-      "hyu_tmpc_output_bridge/valid_topic", "/tmpc/cmd_valid");
+      "hyu_tmpc_output_bridge/valid_topic", "/control/tmpc/valid");
     config_.conversion_mass_kg = declare_parameter<double>(
       "hyu_tmpc_output_bridge/conversion_mass_kg", config_.conversion_mass_kg);
     config_.steering_min_rad = declare_parameter<double>(

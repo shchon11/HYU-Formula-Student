@@ -22,7 +22,7 @@ filter counts as a false positive.
 So this uses `/ground_truth/track`: the unfiltered full track, every cone in the
 world.  The catch is that it publishes in `map` (the car's SPAWN pose, not the
 Gazebo origin), so it is transformed into `base_footprint` here using
-`/ground_truth/odom` -- matched by stamp, because `/cones` is stamped at bbox
+`/ground_truth/odom` -- matched by stamp, because `/perception/cones` is stamped at bbox
 capture and trails sim time by the detector's latency.
 
 Visibility gate
@@ -308,7 +308,7 @@ class TierEvaluator(Node):
         self.excluded_out_of_gate = 0
         self.estimates_seen = 0
         self.frames = 0
-        # /cones is stamped at BBOX CAPTURE time, which trails the simulator's
+        # /perception/cones is stamped at BBOX CAPTURE time, which trails the simulator's
         # ground truth by the detector's latency (~0.5 s). Comparing it against
         # the NEWEST truth measures how far the car drove in between, not
         # perception error -- so buffer truth and odom by stamp and match on it.
@@ -361,7 +361,7 @@ class TierEvaluator(Node):
         )
 
     def _on_tiers(self, msg):
-        # Emitted from the same fusion result as /cones, so it carries the same
+        # Emitted from the same fusion result as /perception/cones, so it carries the same
         # bbox stamp -- an exact key, no nearest-match needed.
         # MarkerArray has no header of its own; each Marker carries one, and
         # they all share the fusion result's bbox stamp. markers[0] is the
@@ -395,7 +395,7 @@ class TierEvaluator(Node):
         )
 
     def _truth_in_base(self, target_ns):
-        """Full track in base_footprint at the /cones stamp.
+        """Full track in base_footprint at the /perception/cones stamp.
 
         Returns ``(truths, keys, skew)``; ``keys`` is None when the truth topic
         is already base_footprint, because a cone's position in a moving frame
@@ -734,7 +734,7 @@ def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--cones-topic", default="/cones")
+    parser.add_argument("--cones-topic", default="/perception/cones")
     parser.add_argument("--truth-topic", default="/ground_truth/track",
                         help="unfiltered full track, map frame; pass "
                              "/ground_truth/cones for the plugin's own "
@@ -742,7 +742,7 @@ def main():
     parser.add_argument("--odom-topic", default="/ground_truth/odom",
                         help="map -> base_footprint pose, used only when the "
                              "truth topic publishes in map")
-    parser.add_argument("--tiers-topic", default="/fusion/debug/cone_provenance",
+    parser.add_argument("--tiers-topic", default="/perception/debug/cone_provenance",
                         help="Per-cone provenance markers. This was /fusion/debug/cone_tiers,\n"
                              "which the rebuilt node stopped publishing when the tiers\n"
                              "went away -- leaving every cone silently 'unattributed'.")

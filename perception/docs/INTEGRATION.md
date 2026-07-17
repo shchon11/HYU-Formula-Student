@@ -21,15 +21,15 @@ project's own cone-pose detector.
 ```
 /zed/left/image_rect_color
     -> yolov8_bbox_node        (YOLO26n-pose: box + keypoints, one forward pass)
-    -> /yolo_bounding_boxes     hyu_msgs/BoundingBoxes
+    -> /perception/bounding_boxes     hyu_msgs/BoundingBoxes
        /yolo_cone_keypoints     hyu_msgs/ConeKeypointsArray   (same header stamp)
     -> perception_baseline_node
        + /velodyne_points
        + /zed/{left,right}/image_rect_color
        + /zed/{left,right}/camera_info
        + timestamped /tf
-    -> /cones                   hyu_msgs/ConeArrayWithCovariance, base_footprint
-    -> hyu_localization -> /graph_slam/map -> hyu_global_planner -> pure_pursuit -> /cmd
+    -> /perception/cones                   hyu_msgs/ConeArrayWithCovariance, base_footprint
+    -> hyu_localization -> /localization/map -> hyu_global_planner -> pure_pursuit -> /vehicle/cmd
 ```
 
 ### Tier routing
@@ -171,8 +171,8 @@ is a **stub** — it is not implemented; the shipped fit was done by hand.
 
 - **`model_path` was `/home/dohyun/FS/artifacts/...`** — an absolute path that
   exists on nobody else's machine. The node raised at startup, so
-  `perception_baseline_node` waited forever for `/yolo_bounding_boxes` and
-  `/cones` published **nothing**. Weights are now in-tree and resolved against
+  `perception_baseline_node` waited forever for `/perception/bounding_boxes` and
+  `/perception/cones` published **nothing**. Weights are now in-tree and resolved against
   the package share.
 - **`ultralytics` was pinned to `==8.4.60`**, which predates YOLO26 and cannot
   load the checkpoint. Now `>=8.4.90,<9`.
@@ -215,7 +215,7 @@ Checked against `hyu_localization/src/graph_slam_node.cpp` on this branch:
 
 | SLAM requires | perception emits | |
 |---|---|---|
-| `/cones`, `ConeArrayWithCovariance` | same | ok |
+| `/perception/cones`, `ConeArrayWithCovariance` | same | ok |
 | all five colour lists | `_append_cone_by_color` fills all five | ok |
 | finite `point.x/y` | non-finite rejected | ok |
 | range within `[0.2, 30.0]` m | depth bounds `[0.5, 30.0]` | ok |
@@ -225,7 +225,7 @@ Checked against `hyu_localization/src/graph_slam_node.cpp` on this branch:
 fullstack's SLAM is the permissive one: it uses `stampOrNow()` and does not check
 `frame_id`, so a stamp or frame mistake will **not** be caught for you.
 
-One thing to watch: `/cones` is published **RELIABLE** while the SLAM subscribes
+One thing to watch: `/perception/cones` is published **RELIABLE** while the SLAM subscribes
 **BEST_EFFORT** (`rclcpp::SensorDataQoS()`). DDS allows this (a reliable writer
 can serve a best-effort reader), but it is inconsistent with the other sensor
 topics and worth confirming on the wire.
@@ -258,12 +258,12 @@ Nothing here has run in the simulator. In priority order:
      perception:=true perception_bbox_source:=yolov8 \
      perception_publish_fusion_debug:=true
 
-   ros2 topic hz /yolo_bounding_boxes
+   ros2 topic hz /perception/bounding_boxes
    ros2 topic hz /yolo_cone_keypoints     # new
-   ros2 topic hz /cones
-   ros2 topic hz /graph_slam/map
+   ros2 topic hz /perception/cones
+   ros2 topic hz /localization/map
    ```
-   If `/cones` is empty, check `/fusion/debug/rejections` first.
+   If `/perception/cones` is empty, check `/fusion/debug/rejections` first.
 
 4. **Measure the tiers against ground truth.** Tier-3's real accuracy is
    **unknown**. The end-to-end test run during development compared SIFT depth
@@ -285,7 +285,7 @@ Nothing here has run in the simulator. In priority order:
    `sigma_u_px` (lateral), `sigma_h_px` (mono depth) or `sigma_d_px` (stereo
    depth) by the square root of the offending column.
 
-   The node also logs `/cones` end-to-end latency (`now - header.stamp`, i.e.
+   The node also logs `/perception/cones` end-to-end latency (`now - header.stamp`, i.e.
    detector + sync + fusion) every `latency_log_period_sec`.
 
 5. **Sanity-check the recalibrated mono curve on real data.** `c = 0.5575,

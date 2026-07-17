@@ -9,7 +9,7 @@
 #   race attach                            # re-attach
 #
 # 'tmpc' swaps the planning pane to tmpc_trackdrive.launch.py: Pure Pursuit
-# drives LOCAL, the TUM TMPC takes /cmd in GLOBAL via the command selector.
+# drives LOCAL, the TUM TMPC takes /vehicle/cmd in GLOBAL via the command selector.
 # use_sim_time:= is threaded into every stack launch (planning/TMPC chain,
 # GNSS HUD) as the single clock-domain switch; it defaults to true because
 # this script always brings up the Gazebo sim.
@@ -45,7 +45,7 @@ case "${1:-start}" in
 esac
 
 # Perception selector: default real = YOLO+LiDAR fusion. A bare 'sim' token
-# switches to lightweight Gazebo cones on /cones without YOLO.
+# switches to lightweight Gazebo cones on /perception/cones without YOLO.
 TRACK="small_track"
 TRACK_SET=0
 PMODE="real"
@@ -132,13 +132,13 @@ case "$TRACK" in
     ;;
 esac
 
-# Planning launch selection: the TMPC hybrid stack owns /cmd through its
-# command selector; the plain stack lets Pure Pursuit own /cmd directly.
+# Planning launch selection: the TMPC hybrid stack owns /vehicle/cmd through its
+# command selector; the plain stack lets Pure Pursuit own /vehicle/cmd directly.
 PLAN_LAUNCH="local_global_planning.launch.py"
 if [ "$TMPC_MODE" -eq 1 ]; then
   PLAN_LAUNCH="tmpc_trackdrive.launch.py"
-  MISSION_NOTE="$MISSION_NOTE TMPC hybrid: PP drives LOCAL, TMPC takes /cmd in GLOBAL (selector on /tmpc/cmd_selector/status)."
-  MONITOR_EXTRA="${MONITOR_EXTRA}echo -n 'selector:    '; timeout 1 ros2 topic echo --once /tmpc/cmd_selector/status 2>/dev/null | grep -o 'data:.*'; "
+  MISSION_NOTE="$MISSION_NOTE TMPC hybrid: PP drives LOCAL, TMPC takes /vehicle/cmd in GLOBAL (selector on /control/selector/status)."
+  MONITOR_EXTRA="${MONITOR_EXTRA}echo -n 'selector:    '; timeout 1 ros2 topic echo --once /control/selector/status 2>/dev/null | grep -o 'data:.*'; "
 fi
 
 if [ ! -f "$WS_SETUP" ]; then
@@ -187,11 +187,11 @@ if [ "$EVAL_MODE" -eq 1 ]; then
   # guessing the lap time before the car has even moved.
   P_EVAL=$(tmux split-window -v -t "$P_TELE" -P -F '#{pane_id}')
   tmux send-keys -t "$P_EVAL" \
-    "$SRC echo '[④ EVALUATOR] collecting… drive a lap in pane ③, then Ctrl-C HERE for the per-tier report.'; until ros2 topic list 2>/dev/null | grep -q /cones; do sleep 2; done; ros2 run hyu_perception evaluate_perception_tiers.py --duration 0" C-m
+    "$SRC echo '[④ EVALUATOR] collecting… drive a lap in pane ③, then Ctrl-C HERE for the per-tier report.'; until ros2 topic list 2>/dev/null | grep -q /perception/cones; do sleep 2; done; ros2 run hyu_perception evaluate_perception_tiers.py --duration 0" C-m
 
   P_MON=$(tmux split-window -v -t "$P_SLAM" -P -F '#{pane_id}')
   tmux send-keys -t "$P_MON" \
-    "$SRC echo '[⑤ MONITOR] rates are WALL clock: ros2 topic hz cannot read sim time.'; echo '   At RTF ~0.35 a 10 Hz sim topic reads ~3.5 here. That is CORRECT, not slow.'; echo '   Divide by RTF, or use: ros2 run hyu_perception measure_sim_rates.py 25'; until ros2 topic list 2>/dev/null | grep -q /cones; do sleep 2; done; while true; do printf '\\n== %s (wall Hz) ==\\n' \"\$(date +%H:%M:%S)\"; for t in /yolo_bounding_boxes /yolo_cone_keypoints /cones /fusion/debug/cone_provenance /ground_truth/cones /ground_truth/track /graph_slam/map; do printf '%-32s ' \"\$t\"; r=\$(timeout 6 env PYTHONUNBUFFERED=1 ros2 topic hz \"\$t\" 2>/dev/null | grep -m1 -o 'average rate: [0-9.]*'); if [ -n \"\$r\" ]; then echo \"\$r\"; elif timeout 3 ros2 topic echo --once \"\$t\" >/dev/null 2>&1; then echo 'alive (slow)'; else echo '(silent)'; fi; done; sleep 3; done" C-m
+    "$SRC echo '[⑤ MONITOR] rates are WALL clock: ros2 topic hz cannot read sim time.'; echo '   At RTF ~0.35 a 10 Hz sim topic reads ~3.5 here. That is CORRECT, not slow.'; echo '   Divide by RTF, or use: ros2 run hyu_perception measure_sim_rates.py 25'; until ros2 topic list 2>/dev/null | grep -q /perception/cones; do sleep 2; done; while true; do printf '\\n== %s (wall Hz) ==\\n' \"\$(date +%H:%M:%S)\"; for t in /perception/bounding_boxes /yolo_cone_keypoints /perception/cones /perception/debug/cone_provenance /ground_truth/cones /ground_truth/track /localization/map; do printf '%-32s ' \"\$t\"; r=\$(timeout 6 env PYTHONUNBUFFERED=1 ros2 topic hz \"\$t\" 2>/dev/null | grep -m1 -o 'average rate: [0-9.]*'); if [ -n \"\$r\" ]; then echo \"\$r\"; elif timeout 3 ros2 topic echo --once \"\$t\" >/dev/null 2>&1; then echo 'alive (slow)'; else echo '(silent)'; fi; done; sleep 3; done" C-m
 
   tmux select-layout -t "$SESSION" tiled
   tmux select-pane   -t "$P_TELE"
@@ -201,7 +201,7 @@ if [ "$EVAL_MODE" -eq 1 ]; then
 race: perception+SLAM up on '$TRACK'.  attach → 'race attach'   |   stop → 'race stop'
   panes: ①sim+perception(provenance markers on)  ②ins+graph_slam  ③teleop  ④evaluator  ⑤monitor
   NO planner/controller — drive with teleop (pane ③), then run the evaluator (pane ④).
-  Per-provenance error comes from /fusion/debug/cone_provenance, measured against
+  Per-provenance error comes from /perception/debug/cone_provenance, measured against
   /ground_truth/track — the FULL track. Not /ground_truth/cones: that one is itself
   FOV/range-filtered by the sim plugin, so recall against it plots the instrument's
   limit rather than the pipeline's.
@@ -225,7 +225,7 @@ tmux send-keys -t "$P_PLAN" \
 # 2 · Arm the mission — then the controller drives autonomously ──────────────
 P_DRIVE=$(tmux split-window -v -t "$P_SIM" -P -F '#{pane_id}')
 tmux send-keys -t "$P_DRIVE" \
-  "$SRC echo '[③ MISSION] waiting for car…'; $WAIT_CAR; sleep 5; ros2 service call /ros_can/set_mission hyu_msgs/srv/SetCanState '{ami_state: $AMI_STATE}'; echo 'mission armed → controller now drives (no teleop). /cmd:'; ros2 topic hz /cmd" C-m
+  "$SRC echo '[③ MISSION] waiting for car…'; $WAIT_CAR; sleep 5; ros2 service call /vehicle/set_mission hyu_msgs/srv/SetCanState '{ami_state: $AMI_STATE}'; echo 'mission armed → controller now drives (no teleop). /vehicle/cmd:'; ros2 topic hz /vehicle/cmd" C-m
 
 P_GNSS=$(tmux split-window -v -t "$P_DRIVE" -P -F '#{pane_id}')
 tmux send-keys -t "$P_GNSS" \

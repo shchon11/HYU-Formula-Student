@@ -48,9 +48,9 @@ ros2 launch hyu_tmpc hyu_tmpc.launch.xml
 
 기본 구독 토픽:
 
-- `/tmpc/vehicle_state` (`hyu_tmpc_msgs/msg/TumVehicleState`)
-- `/tmpc/trajectory_performance` (`hyu_tmpc_msgs/msg/TumTrajectory`)
-- `/tmpc/trajectory_emergency` (`hyu_tmpc_msgs/msg/TumTrajectory`)
+- `/control/tmpc/vehicle_state` (`hyu_tmpc_msgs/msg/TumVehicleState`)
+- `/planning/trajectory_performance` (`hyu_tmpc_msgs/msg/TumTrajectory`)
+- `/planning/trajectory_emergency` (`hyu_tmpc_msgs/msg/TumTrajectory`)
 
 기본 발행 토픽:
 
@@ -60,11 +60,11 @@ ros2 launch hyu_tmpc hyu_tmpc.launch.xml
 
 [`hyu_tmpc_output_bridge`](src/hyu_tmpc_output_bridge/README.md)는 `/output`의
 steering과 longitudinal force를 EUFS용 `AckermannDriveStamped`로 변환합니다.
-기본 출력은 실제 `/cmd`가 아닌 `/tmpc/cmd_shadow`이며, 현재 1300 kg MPC 모델과
+기본 출력은 실제 `/vehicle/cmd`가 아닌 `/control/tmpc/cmd_shadow`이며, 현재 1300 kg MPC 모델과
 300 kg EUFS 차량 사이의 질량 변환 정책은 패키지 README에 정리되어 있습니다.
 
 차량 상태 토픽 이름은 현재 래퍼의 기본값을 의도적으로 따릅니다. 사용하는 스택의
-토픽이 `/tmpc/vehicle_state`라면 `hyu_tmpc/vehicle_state_topic`
+토픽이 `/control/tmpc/vehicle_state`라면 `hyu_tmpc/vehicle_state_topic`
 파라미터를 설정하세요.
 
 ## 컨트롤러 파라미터

@@ -25,7 +25,7 @@ What it measures (all timing from message stamps, i.e. sim-time aware):
                        scatter = error), empirical Gauss-Markov correlation
                        time (autocorr 1/e), mean reported accuracy for
                        comparison against the realized scatter.
-  /ros_can/wheel_speeds rear-wheel rate, sigma about the median, and the
+  /vehicle/wheel_speeds rear-wheel rate, sigma about the median, and the
                        detected quantization step (min positive gap between
                        sorted unique values) -> pins wheelSpeedQuantumRPM
                        (AMK N_act LSB / gear ratio) and wheelSpeedNoise.
@@ -304,7 +304,7 @@ def record():
         data["lidar"].append((rng, z[finite]))
 
     node.create_subscription(Imu, "/imu/data", on_imu, qos)
-    node.create_subscription(WheelSpeedsStamped, "/ros_can/wheel_speeds",
+    node.create_subscription(WheelSpeedsStamped, "/vehicle/wheel_speeds",
                              on_wheels, qos)
     node.create_subscription(PointCloud2, "/velodyne_points", on_cloud, qos)
     if SbgEkfNav is not None:

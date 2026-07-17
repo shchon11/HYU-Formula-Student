@@ -1,10 +1,10 @@
 hyu_local_planner_node:
   ros__parameters:
     source_mode: slam_map
-    cones_topic: /cones
+    cones_topic: /perception/cones
     slam_map_topic: /localization/cone_map
     odom_topic: /localization/ego_odom
-    slam_status_topic: /graph_slam/status
+    slam_status_topic: /localization/status
     waypoints_topic: /planning/local_waypoints
     path_topic: /planning/local_waypoints/path
     validity_topic: /planning/local_path_valid
@@ -47,7 +47,7 @@ hyu_local_planner_node:
     # the finish straight. Trackdrive/autocross only; the acceleration overlay
     # keeps its own straight-corridor fold-in and skidpad stays director-fed.
     use_orange_cones: true
-    # Live-cone extension: stitch fresh perception cones (/cones) beyond the
+    # Live-cone extension: stitch fresh perception cones (/perception/cones) beyond the
     # SLAM map frontier so the path does not end at the last confirmed
     # landmark when the car outruns the map. The map always wins: live cones
     # within live_merge_radius_m of any map cone are dropped, stale frames

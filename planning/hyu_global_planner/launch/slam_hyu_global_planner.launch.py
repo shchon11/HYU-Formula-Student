@@ -10,9 +10,9 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     path_waypoints_topic = LaunchConfiguration(
-        "path_waypoints_topic", default="/path_waypoints"
+        "path_waypoints_topic", default="/planning/path"
     )
-    path_topic = LaunchConfiguration("path_topic", default="/path_waypoints/path")
+    path_topic = LaunchConfiguration("path_topic", default="/planning/debug/path")
     use_sim_time = LaunchConfiguration("use_sim_time", default="false")
     default_params = PathJoinSubstitution([
         FindPackageShare("hyu_global_planner"),
@@ -43,7 +43,7 @@ def generate_launch_description():
     )
     graph_slam_status_topic_arg = DeclareLaunchArgument(
         "graph_slam_status_topic",
-        default_value="/graph_slam/status",
+        default_value="/localization/status",
         description="Graph SLAM status topic consumed by planner_node.",
     )
     global_waypoints_topic_arg = DeclareLaunchArgument(
@@ -58,7 +58,7 @@ def generate_launch_description():
     )
     frenet_odom_topic_arg = DeclareLaunchArgument(
         "frenet_odom_topic",
-        default_value="/car_state/frenet/odom",
+        default_value="/planning/frenet_odom",
         description="Frenet odometry consumed by the rolling and TMPC trajectory publishers.",
     )
     path_source_topic_arg = DeclareLaunchArgument(
@@ -73,12 +73,12 @@ def generate_launch_description():
     )
     tmpc_performance_topic_arg = DeclareLaunchArgument(
         "tmpc_performance_trajectory_topic",
-        default_value="/tmpc/trajectory_performance",
+        default_value="/planning/trajectory_performance",
         description="Formula TMPC performance trajectory output.",
     )
     tmpc_emergency_topic_arg = DeclareLaunchArgument(
         "tmpc_emergency_trajectory_topic",
-        default_value="/tmpc/trajectory_emergency",
+        default_value="/planning/trajectory_emergency",
         description="Formula TMPC emergency trajectory output.",
     )
     global_path_reason_topic_arg = DeclareLaunchArgument(
@@ -88,7 +88,7 @@ def generate_launch_description():
     )
     path_waypoints_topic_arg = DeclareLaunchArgument(
         "path_waypoints_topic",
-        default_value="/path_waypoints",
+        default_value="/planning/path",
         description=(
             "Rolling global waypoint window published by wpnt_publisher_node; "
             "the integrated launch overrides it to /planning/global_path_waypoints."
@@ -96,7 +96,7 @@ def generate_launch_description():
     )
     path_topic_arg = DeclareLaunchArgument(
         "path_topic",
-        default_value="/path_waypoints/path",
+        default_value="/planning/debug/path",
         description="RViz path matching the rolling global waypoint window.",
     )
     use_sim_time_arg = DeclareLaunchArgument(

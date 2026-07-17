@@ -39,7 +39,7 @@ flowchart TD
   FC -- yes --> CONES[/cones/]
   FC -- no --> DROP2[discard stale result]
   CONES --> SLAM[GraphSLAM bounded deferred input queues]
-  SLAM --> MAP[/graph_slam/map accumulated landmarks/]
+  SLAM --> MAP[/localization/map accumulated landmarks/]
   CONES --> VIZ[/cones/viz/]
 ```
 

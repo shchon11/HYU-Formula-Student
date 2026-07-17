@@ -66,7 +66,7 @@ while [ $(( $(date +%s) - START_WALL )) -lt "$TIMEOUT_SEC" ]; do
     # accepts it within a minute or never will — waiting out the full
     # timeout only slows the A/B down.
     if [ -z "$FROZE_AT" ]; then
-        SLAM_MODE=$(timeout 5 ros2 topic echo --once /graph_slam/status 2>/dev/null \
+        SLAM_MODE=$(timeout 5 ros2 topic echo --once /localization/status 2>/dev/null \
             | grep -oE "localization" | head -1)
         [ -n "$SLAM_MODE" ] && FROZE_AT=$(( $(date +%s) - START_WALL ))
     elif [ $(( $(date +%s) - START_WALL - FROZE_AT )) -gt 60 ]; then

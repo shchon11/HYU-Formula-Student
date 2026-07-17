@@ -24,8 +24,8 @@ TOPICS = [
     ("/zed/left/image_rect_color", Image),
     ("/zed/right/image_rect_color", Image),
     ("/velodyne_points", PointCloud2),
-    ("/yolo_bounding_boxes", BoundingBoxes),
-    ("/cones", ConeArrayWithCovariance),
+    ("/perception/bounding_boxes", BoundingBoxes),
+    ("/perception/cones", ConeArrayWithCovariance),
 ]
 
 

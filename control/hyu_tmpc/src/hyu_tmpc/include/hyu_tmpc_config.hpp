@@ -5,9 +5,9 @@
 
 struct HyuFormulaControlConfig
 {
-  std::string vehicle_state_topic{"/tmpc/vehicle_state"};
-  std::string performance_trajectory_topic{"/tmpc/trajectory_performance"};
-  std::string emergency_trajectory_topic{"/tmpc/trajectory_emergency"};
+  std::string vehicle_state_topic{"/control/tmpc/vehicle_state"};
+  std::string performance_trajectory_topic{"/planning/trajectory_performance"};
+  std::string emergency_trajectory_topic{"/planning/trajectory_emergency"};
   std::string output_topic{"/output"};
 
   double loop_rate_hz{100.0};
@@ -17,13 +17,13 @@ struct HyuFormulaControlConfig
   bool enable_emergency{false};
   bool publish_on_timeout{false};
 
-  // Actually-applied command feedback (the selector-owned /cmd). The MPC's
+  // Actually-applied command feedback (the selector-owned /vehicle/cmd). The MPC's
   // ActualVehicleControl input must be what the PLANT received, not this
-  // node's own last request: while Pure Pursuit owns /cmd (LOCAL, fallback,
+  // node's own last request: while Pure Pursuit owns /vehicle/cmd (LOCAL, fallback,
   // pre-takeover) the MPC's requests are never applied, and feeding them back
   // anyway poisons its disturbance/uncertainty learning -- the first commands
   // after a takeover then come out saturated in the wrong direction.
-  std::string applied_command_topic{"/cmd"};
+  std::string applied_command_topic{"/vehicle/cmd"};
   double applied_command_timeout_sec{0.5};
   // Mass for converting the applied acceleration back to the MPC's force
   // units; must match the generated model / output bridge (225 kg).

@@ -11,9 +11,9 @@ the local waypoint window publisher used by the planning stack.
   workflow for debug and replay launches.
 - `wpnt_publisher_node` republishes the next global window on its configured
   output topic only while the global path validity heartbeat is fresh. The
-  standalone default is `/path_waypoints`; integrated bringup remaps this
+  standalone default is `/planning/path`; integrated bringup remaps this
   output to `/planning/global_path_waypoints` so the selector owns the final
-  `/path_waypoints` topic.
+  `/planning/path` topic.
 
 ## SLAM Planning Contract
 
@@ -23,10 +23,10 @@ Default topics:
 | --- | --- | --- | --- |
 | `/localization/cone_map` | `hyu_msgs/msg/ConeArrayWithCovariance` | reliable transient-local | `graph_slam` |
 | `/localization/ego_odom` | `nav_msgs/msg/Odometry` | reliable volatile | `graph_slam` |
-| `/graph_slam/status` | `std_msgs/msg/String` | reliable transient-local | `graph_slam` |
+| `/localization/status` | `std_msgs/msg/String` | reliable transient-local | `graph_slam` |
 | `/global_waypoints` | `hyu_msgs/msg/WaypointArrayStamped` | reliable transient-local | selected global waypoint writer |
 | `/planning/global_path_valid` | `std_msgs/msg/Bool` | reliable volatile | selected global waypoint writer |
-| `/path_waypoints` | `hyu_msgs/msg/WaypointArrayStamped` | reliable volatile | `hyu_path_selector_node` in integrated bringup |
+| `/planning/path` | `hyu_msgs/msg/WaypointArrayStamped` | reliable volatile | `hyu_path_selector_node` in integrated bringup |
 
 Only one node may write `/global_waypoints` and `/planning/global_path_valid`
 in a launch. Use `slam_hyu_global_planner.launch.py planner_source:=slam` for the
@@ -35,7 +35,7 @@ not run both writers on the default topics; remap both output topics if a
 comparison launch needs both producers.
 
 In the integrated bringup, `hyu_path_selector_node` is the sole
-`/path_waypoints` writer and the global window is consumed through
+`/planning/path` writer and the global window is consumed through
 `/planning/global_path_waypoints`.
 
 `/planning/global_path_valid` is a heartbeat, not a latched state. It is
@@ -73,8 +73,8 @@ The standalone rolling-window and time defaults are preserved:
 
 | Launch argument | Default | Description |
 | --- | --- | --- |
-| `path_waypoints_topic` | `/path_waypoints` | Rolling global waypoint window published by `wpnt_publisher_node`; the integrated launch overrides it to `/planning/global_path_waypoints`. |
-| `path_topic` | `/path_waypoints/path` | RViz path matching the rolling global waypoint window. |
+| `path_waypoints_topic` | `/planning/path` | Rolling global waypoint window published by `wpnt_publisher_node`; the integrated launch overrides it to `/planning/global_path_waypoints`. |
+| `path_topic` | `/planning/debug/path` | RViz path matching the rolling global waypoint window. |
 | `use_sim_time` | `false` | Use ROS simulated time for all nodes started by this launch. |
 
 Override the rolling window only from an integrated launch, for example:
@@ -113,7 +113,7 @@ It publishes only while all of the following are true:
 - `/planning/global_path_valid` is a fresh `true` heartbeat and the accepted
   `/global_waypoints` snapshot is valid;
 - `/planning/path_source` is a fresh `GLOBAL_FULL` or `GLOBAL_FINAL_STOP`;
-- `/car_state/frenet/odom`, `/localization/ego_odom`, and
+- `/planning/frenet_odom`, `/localization/ego_odom`, and
   `/planning/lap_count` are fresh and finite.
 
 The input timeout defaults to 0.5 s. A static global waypoint snapshot does
@@ -124,8 +124,8 @@ though it were valid.
 
 | Topic | Type | QoS |
 | --- | --- | --- |
-| `/tmpc/trajectory_performance` | `hyu_tmpc_msgs/msg/TumTrajectory` | reliable, volatile, KeepLast 10 |
-| `/tmpc/trajectory_emergency` | `hyu_tmpc_msgs/msg/TumTrajectory` | reliable, volatile, KeepLast 10 |
+| `/planning/trajectory_performance` | `hyu_tmpc_msgs/msg/TumTrajectory` | reliable, volatile, KeepLast 10 |
+| `/planning/trajectory_emergency` | `hyu_tmpc_msgs/msg/TumTrajectory` | reliable, volatile, KeepLast 10 |
 
 Each output contains exactly 50 uniformly spaced global-arc-length samples.
 The interval starts 0.5 m behind the current Frenet `s`, extends forward by a
@@ -151,7 +151,7 @@ in `hyu_global_planner.yaml`. A malformed file, non-increasing speed axis, or
 nonpositive limit is a startup error. Speed queries beyond the table use the
 nearest endpoint.
 
-This adapter does not consume TMPC control output, write `/cmd`, disable Pure
+This adapter does not consume TMPC control output, write `/vehicle/cmd`, disable Pure
 Pursuit, or arbitrate command ownership. Those are separate integration steps.
 
 ## RViz debug visualization

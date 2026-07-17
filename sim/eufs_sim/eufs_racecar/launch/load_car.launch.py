@@ -19,12 +19,12 @@ PERCEPTION_XACRO_ARGS = [
     (
         'perception_camera_view_distance',
         '12',
-        'Camera range used by the /cones simulated perception plugin.',
+        'Camera range used by the /perception/cones simulated perception plugin.',
     ),
     (
         'perception_lidar_view_distance',
         '15',
-        'Radial lidar range used by the /cones simulated perception plugin.',
+        'Radial lidar range used by the /perception/cones simulated perception plugin.',
     ),
     (
         'perception_lidar_x_view_distance',
@@ -49,17 +49,17 @@ PERCEPTION_XACRO_ARGS = [
     (
         'perception_camera_fov',
         '1.91986',
-        'Camera FOV in radians used by the /cones simulated perception plugin.',
+        'Camera FOV in radians used by the /perception/cones simulated perception plugin.',
     ),
     (
         'perception_lidar_fov',
         '3.141593',
-        'Lidar FOV in radians used by the /cones simulated perception plugin.',
+        'Lidar FOV in radians used by the /perception/cones simulated perception plugin.',
     ),
     (
         'perception_camera_noise_percentage',
         '0.0',
-        'Blend of camera depth noise vs lidar noise on /cones positions; '
+        'Blend of camera depth noise vs lidar noise on /perception/cones positions; '
         '0.0 = lidar-accurate positions like the real fusion pipeline.',
     ),
     (
@@ -70,27 +70,27 @@ PERCEPTION_XACRO_ARGS = [
     (
         'perception_detection_probability',
         '1.0',
-        'Probability that an in-range /cones simulated perception cone is published.',
+        'Probability that an in-range /perception/cones simulated perception cone is published.',
     ),
     (
         'camera_cones_view_distance',
         '13',
-        'Camera range used by /camera_*/cones oracle topics.',
+        'Camera range used by /camera_*/perception/cones oracle topics.',
     ),
     (
         'camera_cones_min_view_distance',
         '0.5',
-        'Minimum camera range used by /camera_*/cones oracle topics.',
+        'Minimum camera range used by /camera_*/perception/cones oracle topics.',
     ),
     (
         'camera_cones_fov',
         '2.09',
-        'Camera FOV in radians used by /camera_*/cones oracle topics.',
+        'Camera FOV in radians used by /camera_*/perception/cones oracle topics.',
     ),
     (
         'camera_cones_detection_probability',
         '1.0',
-        'Probability that an in-range /camera_*/cones oracle cone is published.',
+        'Probability that an in-range /camera_*/perception/cones oracle cone is published.',
     ),
 ]
 

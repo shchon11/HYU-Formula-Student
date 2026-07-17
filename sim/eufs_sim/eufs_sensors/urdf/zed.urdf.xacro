@@ -84,7 +84,7 @@
          "fixing" this.
 
          Measured from the message stamps, which is the only clock that matters
-         here: left 29.41 Hz, velodyne 10.00 Hz (jitter 0.3 ms), /cones 29.41.
+         here: left 29.41 Hz, velodyne 10.00 Hz (jitter 0.3 ms), /perception/cones 29.41.
          `ros2 topic hz` reports WALL clock and will show ~24 instead, because
          the sim runs at RTF 0.83. Everything downstream (perception, SLAM,
          planning) runs on sim time, so a sensor firing every 33 ms of SIM time

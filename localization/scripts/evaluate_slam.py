@@ -173,7 +173,7 @@ class Evaluator(Node):
         # Instrumentation: is the driver actually commanding the car?
         self.cmd_count = 0
         self.last_cmd = None
-        self.create_subscription(AckermannDriveStamped, "/cmd", self.on_cmd, 10)
+        self.create_subscription(AckermannDriveStamped, "/vehicle/cmd", self.on_cmd, 10)
 
     def on_cmd(self, msg):
         self.cmd_count += 1

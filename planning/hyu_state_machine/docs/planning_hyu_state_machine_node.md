@@ -5,7 +5,7 @@
 `planning_hyu_state_machine_node`는 Formula Student Korea 자율주행 planning 흐름에서 현재
 planning 상태를 결정하고, `hyu_path_selector_node`가 사용할 `path_source`를 publish한다.
 이 노드는 path를 생성하지 않으며, local/global 후보의 선택과 최종
-`/path_waypoints` publish는 selector가 소유한다. Pure Pursuit controller는
+`/planning/path` publish는 selector가 소유한다. Pure Pursuit controller는
 selector의 유효성 heartbeat와 선택 path만 소비한다.
 
 ## 동작 원리
@@ -37,7 +37,7 @@ enum class PlanningState
 `planner_node`를 writer로 선택하고, CSV replay/debug에서는
 `planner_source:=csv`가 기존 CSV publisher를 선택한다.
 
-`/graph_slam/status`는 latched lifecycle state로 취급한다. 값이
+`/localization/status`는 latched lifecycle state로 취급한다. 값이
 `localization`일 때만 GLOBAL을 허용하고, status message age만으로는
 demote하지 않는다. Planner liveness는 `/planning/global_path_valid`에서
 판단한다.
@@ -65,16 +65,16 @@ phase로 defer되어 있다.
 
 | Topic | Type | 설명 |
 | --- | --- | --- |
-| `/car_state/frenet/odom` | `nav_msgs/msg/Odometry` | Frenet odometry. `pose.pose.position.x`를 `current_s`, `pose.pose.position.y`를 `current_d`로 저장한다. |
+| `/planning/frenet_odom` | `nav_msgs/msg/Odometry` | Frenet odometry. `pose.pose.position.x`를 `current_s`, `pose.pose.position.y`를 `current_d`로 저장한다. |
 | `/global_waypoints` | `hyu_msgs/msg/WaypointArrayStamped` | reliable transient-local QoS로 받는 latched global waypoint snapshot. non-empty snapshot만 accept한다. |
-| `/graph_slam/status` | `std_msgs/msg/String` | reliable transient-local QoS로 받는 Graph SLAM lifecycle state. 최신 latched 값이 `localization`일 때만 global path를 사용할 수 있다. status message age만으로 demote하지 않는다. |
+| `/localization/status` | `std_msgs/msg/String` | reliable transient-local QoS로 받는 Graph SLAM lifecycle state. 최신 latched 값이 `localization`일 때만 global path를 사용할 수 있다. status message age만으로 demote하지 않는다. |
 | `/planning/global_path_valid` | `std_msgs/msg/Bool` | reliable volatile QoS로 받는 global path validity heartbeat. `false` 또는 timeout이면 기존 waypoint snapshot을 invalidation하고 새 snapshot을 기다린다. |
 | `/planning/local_path_valid` | `std_msgs/msg/Bool` | reliable volatile QoS로 받는 local planner validity heartbeat. 값, 수신 여부, 수신 시각, freshness를 debug에 기록하며 state/STOP 전이에는 사용하지 않는다. |
 | `/planning/global_handoff_ready` | `std_msgs/msg/Bool` | reliable volatile QoS로 받는 selector continuity heartbeat. fresh true가 연속 dwell을 만족할 때만 LOCAL에서 GLOBAL로 진입한다. |
-| `/cones` | `hyu_msgs/msg/ConeArrayWithCovariance` | `base_footprint` 기준 local perception cone observation. 색상별 cone 개수와 freshness를 저장한다. |
-| `/stop_zone_s_start` | `std_msgs/msg/Float64` | stop zone 시작 지점의 global path projection `s` |
-| `/stop_zone_s_end` | `std_msgs/msg/Float64` | stop zone 끝 지점의 global path projection `s` |
-| `/stop_zone_valid` | `std_msgs/msg/Bool` | stop zone detector 결과 유효 여부 |
+| `/perception/cones` | `hyu_msgs/msg/ConeArrayWithCovariance` | `base_footprint` 기준 local perception cone observation. 색상별 cone 개수와 freshness를 저장한다. |
+| `/planning/stop_zone/s_start` | `std_msgs/msg/Float64` | stop zone 시작 지점의 global path projection `s` |
+| `/planning/stop_zone/s_end` | `std_msgs/msg/Float64` | stop zone 끝 지점의 global path projection `s` |
+| `/planning/stop_zone/valid` | `std_msgs/msg/Bool` | stop zone detector 결과 유효 여부 |
 
 ## Publish Topic
 
@@ -96,16 +96,16 @@ planning/hyu_state_machine/config/planning_hyu_state_machine.yaml
 
 | Parameter | Default | 설명 |
 | --- | --- | --- |
-| `frenet_odom_topic` | `/car_state/frenet/odom` | Frenet odometry 입력 topic |
+| `frenet_odom_topic` | `/planning/frenet_odom` | Frenet odometry 입력 topic |
 | `global_waypoints_topic` | `/global_waypoints` | latched global waypoint 입력 topic |
-| `graph_slam_status_topic` | `/graph_slam/status` | Graph SLAM lifecycle status 입력 topic |
+| `graph_slam_status_topic` | `/localization/status` | Graph SLAM lifecycle status 입력 topic |
 | `global_path_valid_topic` | `/planning/global_path_valid` | global path validity heartbeat 입력 topic |
 | `local_path_valid_topic` | `/planning/local_path_valid` | local path validity heartbeat 입력 topic |
 | `global_handoff_ready_topic` | `/planning/global_handoff_ready` | local/global continuity handoff heartbeat 입력 topic |
-| `cone_map_topic` | `/cones` | local perception cone 입력 topic. 기존 파라미터 이름은 호환을 위해 유지한다. |
-| `stop_zone_s_start_topic` | `/stop_zone_s_start` | stop zone 시작 `s` 입력 topic |
-| `stop_zone_s_end_topic` | `/stop_zone_s_end` | stop zone 끝 `s` 입력 topic |
-| `stop_zone_valid_topic` | `/stop_zone_valid` | stop zone 유효 여부 입력 topic |
+| `cone_map_topic` | `/perception/cones` | local perception cone 입력 topic. 기존 파라미터 이름은 호환을 위해 유지한다. |
+| `stop_zone_s_start_topic` | `/planning/stop_zone/s_start` | stop zone 시작 `s` 입력 topic |
+| `stop_zone_s_end_topic` | `/planning/stop_zone/s_end` | stop zone 끝 `s` 입력 topic |
+| `stop_zone_valid_topic` | `/planning/stop_zone/valid` | stop zone 유효 여부 입력 topic |
 | `target_lap_count` | `4` | STOP 후보가 되는 목표 lap count |
 | `initial_lap_count` | `0` | 시작 lap count |
 | `final_lap_start_count` | `3` | final stop path source로 넘어가는 lap count |
@@ -181,7 +181,7 @@ refresh 성공 시 새 global path를 publish한다.
 
 ## Lap Counting
 
-이 process가 `/graph_slam/status`에서 `mapping` 또는 `mapping_converged` 직후
+이 process가 `/localization/status`에서 `mapping` 또는 `mapping_converged` 직후
 `localization`을 직접 관측하면 discovery lap을 한 번만 반영해
 `lap_count = max(lap_count, 1)`로 만든다. 시작 시 첫 status가 `localization`인
 loaded-map 실행은 lap을 만들지 않는다.

@@ -28,7 +28,7 @@
        It costs real time factor, and that is the right trade. Measured: RTF
        0.406, and every sensor still hits its configured rate IN SIM TIME, which
        is the only clock perception, SLAM and planning read: both cameras 29.41
-       Hz, velodyne 10.00, /cones 10.00. Wall clock is 2.5x slower and nothing
+       Hz, velodyne 10.00, /perception/cones 10.00. Wall clock is 2.5x slower and nothing
        downstream can tell. Use scripts/measure_sim_rates.py, not
        `ros2 topic hz`, which reports wall clock and will make this look broken.
 

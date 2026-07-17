@@ -3,7 +3,7 @@
          type="hyu_rviz_presets::PerceptionStack"
          base_class_type="rviz_common::Display">
     <description>
-      One-click group: live fusion cone detections (/cones/viz) as 3D cone meshes.
+      One-click group: live fusion cone detections (/perception/debug/cones_viz) as 3D cone meshes.
     </description>
   </class>
   <class name="hyu_rviz_presets/SlamStack"
@@ -17,7 +17,7 @@
          type="hyu_rviz_presets::PlanningStack"
          base_class_type="rviz_common::Display">
     <description>
-      One-click group: global raceline (/global_waypoints/path) and local window (/path_waypoints/path).
+      One-click group: global raceline (/global_waypoints/path) and local window (/planning/debug/path).
     </description>
   </class>
   <class name="hyu_rviz_presets/HudStack"
