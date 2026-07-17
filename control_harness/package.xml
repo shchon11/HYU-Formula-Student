@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>control_harness</name>
+  <version>0.1.0</version>
+  <description>
+    Headless closed-loop tuning harness: EUFS DynamicBicycle plant + local planner +
+    controllers, no Gazebo/ROS runtime. Runs orders of magnitude faster than realtime
+    for controller parameter sweeps.
+  </description>
+  <maintainer email="shchon724@gmail.com">shchon11</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>eufs_models</depend>
+  <depend>pure_pursuit_controller</depend>
+  <depend>local_planner</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
