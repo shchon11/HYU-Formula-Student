@@ -391,6 +391,11 @@ perception_node:
     # mattered at the old 0.655 deg/ray, where a 15 m cone got 1.7 rays; at the
     # Puck's real 0.2 deg it gets 5.4 and the geometry takes over.
     range_variance_scale: 0.0
+    # Speed-proportional timing sigma (m per m/s): the LiDAR cluster's
+    # dominant residual is time alignment through the drifting odom TF, which
+    # grows with speed while the fixed lidar_variance (fit at ~6 m/s) does
+    # not. 0.02 -> ~0.26 m at 13 m/s, added in quadrature.
+    lidar_timing_sigma_per_mps: 0.02
     min_variance: 0.0001
     # Bbox centre noise for the monocular tier, in px. MEASURED: lat z^2 was
     # 10.71 at sigma_u 3.0 (n=75), implying ~10 px. Large because the 16 px gate

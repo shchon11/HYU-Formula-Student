@@ -177,6 +177,12 @@ class PerceptionNode(Node):
         self._pending_left: "OrderedDict[int, Image]" = OrderedDict()
         self._pending_right: "OrderedDict[int, Image]" = OrderedDict()
         self._pair: Optional[Tuple[Image, Image]] = None
+        # Recent complete pairs keyed by stamp. The ZNCC depth belongs to the
+        # PAIR's instant; measuring on the newest pair but attributing it to
+        # the bbox's instant smears v * gap (up to 1.3 m at 13 m/s) into the
+        # cone. The detector ran on a frame of this same stream, so an
+        # exact-stamp pair for the bbox usually exists — select it.
+        self._pairs: dict = {}
         self._pair_buffer_size = 8
         self._latencies: List[float] = []
         self._stage_ms: Dict[str, List[float]] = {}
@@ -348,6 +354,14 @@ class PerceptionNode(Node):
         self.declare_parameter("sparse_sigma_lat_m", 0.10)
         self.declare_parameter("sparse_sigma_lon_m", 0.25)
         self.declare_parameter("range_variance_scale", 0.0005)
+        # Speed-proportional timing sigma. The dominant residual on a LiDAR
+        # cluster is time alignment through the (now honestly drifting)
+        # odometry TF, not sensor geometry — so it grows with speed while
+        # the fixed variance above (calibrated at ~6 m/s) does not. sigma =
+        # this * speed; at 0.02 s and 13 m/s that is ~0.26 m, added in
+        # quadrature to keep the covariance honest where use_cone_covariance
+        # gating needs it.
+        self.declare_parameter("lidar_timing_sigma_per_mps", 0.02)
         self.declare_parameter("min_variance", 1.0e-4)
         self.declare_parameter("monocular_sigma_u_px", 10.0)
         self.declare_parameter("sigma_h_px", 4.0)
@@ -405,7 +419,7 @@ class PerceptionNode(Node):
             "lidar_only_variance_y", "cluster_range_bias_m",
             "sparse_sigma_lat_m", "sparse_sigma_lon_m",
             "range_variance_scale", "min_variance", "monocular_sigma_u_px",
-            "sigma_h_px", "vision_lateral_floor_m",
+            "sigma_h_px", "vision_lateral_floor_m", "lidar_timing_sigma_per_mps",
         ):
             setattr(self, name, float(g(name)))
 
@@ -484,6 +498,9 @@ class PerceptionNode(Node):
             match = theirs.pop(key, None)
             if match is not None:
                 self._pair = (msg, match) if left else (match, msg)
+                self._pairs[key] = self._pair
+                while len(self._pairs) > 10:
+                    self._pairs.pop(next(iter(self._pairs)))
                 theirs.clear()
                 mine.clear()
                 return
@@ -541,6 +558,7 @@ class PerceptionNode(Node):
             camera_info = self._camera_info
             bbox_msg = self._bbox_msg
             pair = self._pair
+            pairs = dict(self._pairs)
         left, right = pair if pair is not None else (None, None)
 
         stamp = frame.stamp
@@ -563,6 +581,13 @@ class PerceptionNode(Node):
         else:
             image_stamp = self._bbox_stamp(bbox_msg)
             detections = self._extract_detections(bbox_msg, camera_info)
+            # Prefer the stereo pair captured at the bbox's OWN instant: the
+            # disparity then measures that frame's geometry, not the car's
+            # motion since it. Falls back to the newest pair (still gated by
+            # max_image_age downstream) when the exact pair was dropped.
+            exact_pair = pairs.get(self._stamp_key(image_stamp))
+            if exact_pair is not None:
+                left, right = exact_pair
             # A stale bbox must degrade exactly like a missing one: keep the
             # LiDAR backbone and publish uncoloured. Letting _scene_at
             # return None here used to drop the cluster loop entirely — a
@@ -1346,11 +1371,21 @@ class PerceptionNode(Node):
             PROV_CLUSTER: (self.lidar_variance_x, self.lidar_variance_y),
         }.get(cone.provenance,
               (self.lidar_only_variance_x, self.lidar_only_variance_y))
+        # Speed-proportional timing variance (see the parameter comment):
+        # the alignment residual scales with speed, so the fixed variances
+        # above (fit at ~6 m/s) undercover at trackdrive speed exactly where
+        # SLAM gates on this covariance.
+        timing_var = 0.0
+        twist = self._twist
+        if twist is not None:
+            speed = (twist[0] * twist[0] + twist[1] * twist[1]) ** 0.5
+            timing_sigma = self.lidar_timing_sigma_per_mps * speed
+            timing_var = timing_sigma * timing_sigma
         return [
-            max(base_x + self.range_variance_scale * cone.range_m,
+            max(base_x + self.range_variance_scale * cone.range_m + timing_var,
                 self.min_variance),
             0.0, 0.0,
-            max(base_y + self.range_variance_scale * cone.range_m,
+            max(base_y + self.range_variance_scale * cone.range_m + timing_var,
                 self.min_variance),
         ]
 
