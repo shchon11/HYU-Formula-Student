@@ -23,6 +23,23 @@ typedef struct osqp_wrapper{
     c_int flag_q_upd;
     c_int flag_solve;
     c_int flag_setup;
+
+    // --- fail-closed guard state -------------------------------------------
+    // Appended fields are safe: the generated model allocates this struct with
+    // c_malloc(sizeof(osqp_wrapper)) against this same header. The stock
+    // wrapper ignored every failure signal: osqp_update_bounds() REJECTS the
+    // whole update when any l > u (the tube constraint crosses whenever the
+    // car sits outside the tube), so the QP was silently solved with the
+    // previous cycle's bounds, and osqp_solve()'s status was never read, so on
+    // a primal-infeasible problem the diverging ADMM iterate (it grows along
+    // an infeasibility certificate whose sign has nothing to do with the
+    // drivable direction) was copied out as if it were a solution -- observed
+    // as +-2.8 rad steering requests reported with an OK tube status.
+    c_float* last_good_x;        // solution of the last accepted solve
+    c_float* last_good_y;        // duals of the last accepted solve
+    c_int has_last_good;
+    c_int consecutive_failures;  // solves since the last accepted one
+    c_int last_status_val;       // OSQPWorkspace info->status_val of last solve
 } osqp_wrapper;
 
 void init_osqp_wrapper(osqp_wrapper* wrapper,

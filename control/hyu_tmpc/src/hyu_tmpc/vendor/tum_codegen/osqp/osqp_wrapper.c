@@ -99,17 +99,26 @@ c_float *p_8, c_float *p_9, c_float *p_10, c_float *p_11, c_float *p_12)
     wrapper->flag_solve = 0;
     wrapper->flag_setup = 0;
 
+    // fail-closed guard state
+    wrapper->last_good_x = calloc(n, sizeof(c_float));
+    wrapper->last_good_y = calloc(m, sizeof(c_float));
+    wrapper->has_last_good = 0;
+    wrapper->consecutive_failures = 0;
+    wrapper->last_status_val = 0;
+
     // create OSQP workspace and pass return value
     wrapper->flag_setup = osqp_setup(&(wrapper->work), wrapper->data, wrapper->settings);
 }
 
 void cleanup_osqp_wrapper(osqp_wrapper* wrapper)
 {
-    osqp_cleanup(wrapper->work); 
+    osqp_cleanup(wrapper->work);
     free(wrapper->data->A);
     free(wrapper->data->P);
     free(wrapper->data);
     free(wrapper->settings);
+    free(wrapper->last_good_x);
+    free(wrapper->last_good_y);
 }
 
 void restart_osqp_wrapper(osqp_wrapper* wrapper)
@@ -125,23 +134,83 @@ void restart_osqp_wrapper(osqp_wrapper* wrapper)
         y[i] = 0;
     }
     osqp_warm_start(wrapper->work, x, y);
+    // osqp_warm_start copies the vectors; the stock wrapper leaked both, which
+    // matters once the fail path below restarts at the control rate.
+    free(x);
+    free(y);
 }
+
+// Consecutive failed solves bridged with the last accepted solution before the
+// raw iterate is exposed again. 10 cycles = 100 ms at the 100 Hz loop: long
+// enough to ride out a one-or-two-cycle infeasibility blip (which used to flap
+// the whole TMPC chain to Pure Pursuit), short enough that a sustained
+// infeasibility surfaces to the downstream divergence guards and the selector
+// falls back for real instead of driving on a frozen command.
+#define OSQP_WRAPPER_BRIDGE_CYCLES 10
 
 void update_osqp_wrapper(osqp_wrapper* wrapper, c_float* q_upd, c_float* l_upd,
     c_float* u_upd, c_float* A_x_upd)
 {
-       
+    // osqp_update_bounds rejects the WHOLE update when any l > u and keeps the
+    // previous cycle's bounds -- solving yesterday's tube at today's position.
+    // A crossed pair means the reference demands the unreachable; collapse it
+    // to its midpoint so the update is accepted and the QP stays well-posed.
+    for(int i = 0; i < wrapper->m; i++){
+        if (l_upd[i] > u_upd[i]) {
+            c_float mid = (c_float)0.5 * (l_upd[i] + u_upd[i]);
+            l_upd[i] = mid;
+            u_upd[i] = mid;
+        }
+    }
+
     // update problem data
     wrapper->flag_q_upd =
       osqp_update_lin_cost(wrapper->work, q_upd);
     wrapper->flag_bound_upd =
       osqp_update_bounds(wrapper->work, l_upd, u_upd);
     wrapper->flag_A_upd = osqp_update_A(wrapper->work, A_x_upd, OSQP_NULL, wrapper->A_nnz);
-        
-    // specify warmstart
-    // osqp_warm_start(wrapper->work, x, y);
-    
+
     // solve problem
     wrapper->flag_solve = osqp_solve(wrapper->work);
+    wrapper->last_status_val = (c_int)wrapper->work->info->status_val;
+
+    const c_int solve_accepted = (wrapper->flag_solve == 0) &&
+        (wrapper->last_status_val == OSQP_SOLVED ||
+         wrapper->last_status_val == OSQP_SOLVED_INACCURATE);
+
+    if (solve_accepted) {
+        for(int i = 0; i < wrapper->n; i++){
+            wrapper->last_good_x[i] = wrapper->work->solution->x[i];
+        }
+        for(int i = 0; i < wrapper->m; i++){
+            wrapper->last_good_y[i] = wrapper->work->solution->y[i];
+        }
+        wrapper->has_last_good = 1;
+        wrapper->consecutive_failures = 0;
+        return;
+    }
+
+    // Failed solve. On an infeasible problem the ADMM iterate diverges along
+    // an infeasibility certificate; the caller copies work->solution->x out
+    // unconditionally, so left alone that runaway iterate becomes a saturated
+    // steering request in an arbitrary direction. Cold-restart the iterate so
+    // the NEXT cycle re-converges from scratch the moment the problem is
+    // feasible again (the stale warm start otherwise kept poisoning solves
+    // long after the car was back inside the tube), and bridge a short blip
+    // with the last accepted solution.
+    wrapper->consecutive_failures++;
+    restart_osqp_wrapper(wrapper);
+    if (wrapper->has_last_good &&
+        wrapper->consecutive_failures <= OSQP_WRAPPER_BRIDGE_CYCLES) {
+        for(int i = 0; i < wrapper->n; i++){
+            wrapper->work->solution->x[i] = wrapper->last_good_x[i];
+        }
+        for(int i = 0; i < wrapper->m; i++){
+            wrapper->work->solution->y[i] = wrapper->last_good_y[i];
+        }
+    }
+    // Past the bridge window the raw iterate stays exposed on purpose: the
+    // hyu node's divergence guard and the output bridge's steering reject are
+    // the designed fail-over path to Pure Pursuit.
 }
 

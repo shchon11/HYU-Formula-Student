@@ -8,7 +8,7 @@ graph_slam:
     map_topic: /localization/cone_map
     slam_odom_topic: /localization/ego_odom
     status_topic: ~/status
-    lifecycle_diagnostics_topic: ~/lifecycle_diagnostics
+    lifecycle_diagnostics_topic: /localization/debug/lifecycle_diagnostics
     map_converged_topic: ~/map_converged
     path_topic: /localization/debug/path
     marker_topic: /localization/debug/markers
