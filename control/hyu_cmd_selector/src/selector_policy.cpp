@@ -78,7 +78,12 @@ SelectorDecision SelectorPolicy::update(const SelectorInputs & inputs)
     return {CommandSource::kSafeBrake, SelectorStatus::kInputBrake};
   }
 
-  const bool ready = tmpcReady(inputs);
+  // The steering-disagreement bound is an ENTRY gate only: it blocks a
+  // takeover onto a wrong reference, but while TMPC is driving a one-cycle
+  // disagreement spike must not eject it (that flapped control back and forth
+  // every few seconds); mid-drive protection is the bridge's divergence
+  // reject and the freshness/validity chain below.
+  const bool ready = tmpcReady(inputs, /*entry=*/!tmpc_active_);
   if (tmpc_active_) {
     if (ready) {
       return {CommandSource::kTmpc, SelectorStatus::kGlobalTmpc};
@@ -158,12 +163,13 @@ bool SelectorPolicy::fresh(bool present, double age_sec, double timeout_sec) con
   return present && std::isfinite(age_sec) && age_sec >= 0.0 && age_sec <= timeout_sec;
 }
 
-bool SelectorPolicy::tmpcReady(const SelectorInputs & inputs) const
+bool SelectorPolicy::tmpcReady(const SelectorInputs & inputs, const bool entry) const
 {
   // With a fresh Pure Pursuit command as the independent reference, a large
   // steering disagreement means the TMPC chain is tracking the wrong thing
   // (wrong-branch path matching); refuse it before the yank reaches the plant.
-  if (config_.max_steering_disagreement_rad > 0.0 && inputs.has_steering_disagreement &&
+  if (entry && config_.max_steering_disagreement_rad > 0.0 &&
+    inputs.has_steering_disagreement &&
     inputs.steering_disagreement_rad > config_.max_steering_disagreement_rad)
   {
     return false;

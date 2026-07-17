@@ -36,6 +36,32 @@ SelectionDecision SelectionPolicy::decide(const SelectionInputs & inputs) const
       }
       return {requested_source, SelectedCandidate::Local, SelectionFailure::None};
     case RequestedSource::GlobalFull:
+      // Degraded fallback: with the global window stale/unavailable the old
+      // behaviour selected nothing, Pure Pursuit hard-braked, and once the car
+      // stood still the window never revalidated -- a permanent mid-lap park
+      // (observed as "global_unavailable (stale_path)" after a TMPC fault
+      // braked the car). The local planner rebuilds from the SLAM map anywhere
+      // on the track, so racing on the LOCAL candidate keeps the mission alive
+      // (and bridges the handoff blip at the LOCAL->GLOBAL flip) until the
+      // global window comes back. GLOBAL_FINAL_STOP deliberately keeps the
+      // fail-closed brake: there stopping IS the mission.
+      if (!inputs.global_candidate_ready) {
+        if (inputs.local_candidate_ready) {
+          return {
+            requested_source, SelectedCandidate::Local, SelectionFailure::None, true};
+        }
+        return {
+          requested_source, SelectedCandidate::None, SelectionFailure::GlobalUnavailable};
+      }
+      if (!inputs.global_entry_handoff_consumed && !inputs.global_handoff_ready) {
+        if (inputs.local_candidate_ready) {
+          return {
+            requested_source, SelectedCandidate::Local, SelectionFailure::None, true};
+        }
+        return {
+          requested_source, SelectedCandidate::None, SelectionFailure::HandoffNotReady};
+      }
+      return {requested_source, SelectedCandidate::Global, SelectionFailure::None};
     case RequestedSource::GlobalFinalStop:
       if (!inputs.global_candidate_ready) {
         return {

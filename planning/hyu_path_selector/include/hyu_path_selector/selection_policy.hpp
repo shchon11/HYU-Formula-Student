@@ -51,6 +51,10 @@ struct SelectionDecision
   RequestedSource requested_source{RequestedSource::Unknown};
   SelectedCandidate selected_candidate{SelectedCandidate::None};
   SelectionFailure failure{SelectionFailure::NotImplemented};
+  // GLOBAL_FULL degraded onto the LOCAL candidate because the global window
+  // was unavailable (stale) or the handoff was not ready; surfaced in the
+  // debug string so the HUD shows the degradation instead of a silent switch.
+  bool degraded_local_fallback{false};
 
   bool valid() const;
 };

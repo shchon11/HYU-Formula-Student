@@ -241,6 +241,7 @@ std::string PathSelectorNode::makeDiagnostic(
          << " selected_candidate=" << toString(decision.selected_candidate)
          << " selected_valid=" << (selected_valid ? "true" : "false")
          << " selection_failure=" << toString(decision.failure)
+         << " degraded_local_fallback=" << (decision.degraded_local_fallback ? "true" : "false")
          << " global_handoff_ready=" << (continuity.ready ? "true" : "false")
          << " continuity_failure=" << toString(continuity.failure)
          << " local_candidate_failure=" << toString(continuity.local_candidate_failure)

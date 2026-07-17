@@ -201,6 +201,39 @@ TEST(SelectorPolicy, ForwardsPurePursuitOnStopAndBrakesWhenItIsUnavailable)
     policy.update(inputs), CommandSource::kSafeBrake, SelectorStatus::kStopBrake);
 }
 
+TEST(SelectorPolicy, DisagreementGateBlocksEntryButNotActiveDriving)
+{
+  SelectorPolicy policy;
+
+  // Entry blocked while TMPC steering contradicts fresh Pure Pursuit.
+  auto inputs = FreshInputs("GLOBAL", 10.0);
+  inputs.has_steering_disagreement = true;
+  inputs.steering_disagreement_rad = 0.6;
+  ExpectDecision(
+    policy.update(inputs), CommandSource::kPurePursuit,
+    SelectorStatus::kGlobalWaitingTmpc);
+  inputs.now_sec = 11.5;
+  ExpectDecision(
+    policy.update(inputs), CommandSource::kPurePursuit,
+    SelectorStatus::kGlobalWaitingTmpc);
+  EXPECT_FALSE(policy.tmpcActive());
+
+  // Agreement restores the dwell; takeover proceeds.
+  inputs.steering_disagreement_rad = 0.1;
+  inputs.now_sec = 12.0;
+  policy.update(inputs);
+  inputs.now_sec = 12.2;
+  ExpectDecision(
+    policy.update(inputs), CommandSource::kTmpc, SelectorStatus::kGlobalTmpc);
+
+  // A mid-drive disagreement spike must NOT eject the active controller.
+  inputs.steering_disagreement_rad = 0.9;
+  inputs.now_sec = 12.3;
+  ExpectDecision(
+    policy.update(inputs), CommandSource::kTmpc, SelectorStatus::kGlobalTmpc);
+  EXPECT_TRUE(policy.tmpcActive());
+}
+
 TEST(SelectorPolicy, BrakesForUnknownAndStaleSafetyInputs)
 {
   SelectorPolicy policy;

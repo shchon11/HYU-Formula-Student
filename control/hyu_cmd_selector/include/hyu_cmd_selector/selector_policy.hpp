@@ -95,7 +95,7 @@ public:
 
 private:
   bool fresh(bool present, double age_sec, double timeout_sec) const;
-  bool tmpcReady(const SelectorInputs & inputs) const;
+  bool tmpcReady(const SelectorInputs & inputs, bool entry) const;
   void suspendTmpc();
 
   SelectorConfig config_;
