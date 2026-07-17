@@ -91,7 +91,7 @@ ARGUMENTS = (
 
 PARAMETER_FILES = (
     ("graph_slam_params_file", "hyu_localization", "graph_slam.yaml", "Graph SLAM parameter file."),
-    ("global_params_file", "global_planner", "global_planner.yaml", "Global planner and Frenet parameter file."),
+    ("global_params_file", "hyu_global_planner", "hyu_global_planner.yaml", "Global planner and Frenet parameter file."),
     ("local_params_file", "local_planner", "local_planner.yaml", "Local planner parameter file."),
     ("state_params_file", "state_machine", "planning_state_machine.yaml", "Planning state-machine parameter file."),
     ("selector_params_file", "path_selector", "path_selector.yaml", "Path selector parameter file."),
@@ -189,10 +189,10 @@ def generate_launch_description() -> LaunchDescription:
             "global_path_valid_topic": values["global_path_valid_topic"],
         }.items(),
     )
-    global_planner_launch = IncludeLaunchDescription(
+    hyu_global_planner_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution(
-                [FindPackageShare("global_planner"), "launch", "slam_global_planner.launch.py"]
+                [FindPackageShare("hyu_global_planner"), "launch", "slam_hyu_global_planner.launch.py"]
             )
         ),
         launch_arguments={
@@ -218,13 +218,13 @@ def generate_launch_description() -> LaunchDescription:
             "use_sim_time": values["use_sim_time"],
         }.items(),
     )
-    global_planner = GroupAction(
+    hyu_global_planner = GroupAction(
         actions=[
             SetRemap(
                 src="/graph_slam/map_converged",
                 dst=values["graph_slam_map_converged_topic"],
             ),
-            global_planner_launch,
+            hyu_global_planner_launch,
         ],
         # Local-only missions never hand off to a global path; the whole global
         # group (planner, frenet odometry, waypoint window) stays down.
@@ -430,7 +430,7 @@ def generate_launch_description() -> LaunchDescription:
     return LaunchDescription([
         *arguments,
         graph_slam,
-        global_planner,
+        hyu_global_planner,
         skidpad_director,
         local_planner,
         state_machine,

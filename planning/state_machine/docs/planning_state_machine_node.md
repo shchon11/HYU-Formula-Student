@@ -33,7 +33,7 @@ enum class PlanningState
 `planning_state_machine_node`는 global waypoint writer가 아니라 consumer이다.
 `/global_waypoints`와 `/planning/global_path_valid`는 launch 안에서 정확히
 하나의 writer만 가져야 한다. SLAM integration에서는
-`global_planner/slam_global_planner.launch.py planner_source:=slam`이
+`hyu_global_planner/slam_hyu_global_planner.launch.py planner_source:=slam`이
 `planner_node`를 writer로 선택하고, CSV replay/debug에서는
 `planner_source:=csv`가 기존 CSV publisher를 선택한다.
 

@@ -69,7 +69,7 @@ flowchart LR
         direction TB
         SKID["skidpad_director<br/>미션 phase 콘 게이트"]
         LP["local_planner<br/>즉석 경로"]
-        GP["global_planner<br/>레이스라인"]
+        GP["hyu_global_planner<br/>레이스라인"]
         SM["state_machine<br/>랩 · 전환 · 정지"]
         SEL["path_selector"]
         SKID -.->|"skidpad만: 게이트된 cone_map"| LP
@@ -119,7 +119,7 @@ flowchart LR
 | 단계 | path_source | 무슨 일이 |
 |---|---|---|
 | **랩 1 · 탐험** | `LOCAL` | SLAM이 누적한 **콘맵과 현재 pose로 local 경로** 생성, SLAM은 주행하며 콘맵 보강 |
-| **핸드오프** | — | 랩 완주 → SLAM `localization` 전환 → global_planner가 콘맵에서 **레이스라인** 생성 → selector가 안전 전환 |
+| **핸드오프** | — | 랩 완주 → SLAM `localization` 전환 → hyu_global_planner가 콘맵에서 **레이스라인** 생성 → selector가 안전 전환 |
 | **랩 2+ · 레이싱** | `GLOBAL_FULL` | 컨트롤러가 레이스라인 롤링 윈도우 추종. HUD `TRACKING` 줄이 추종 오차(d) 표시 |
 | **종료** | — | state_machine이 스톱존 감지 → `stop_request` → 제동 |
 
@@ -449,7 +449,7 @@ tools/gazebo-patches/     GPU LiDAR용 패치 Gazebo 11.10.2 빌드 킷 (SkyX �
 planning/
   ├─ hyu_planning_bringup/    ★ planning 전체 조립 launch (아래 전부 + graph_slam + controller)
   ├─ local_planner/       라이브 콘 → 즉석 로컬 경로 (랩 1)
-  ├─ global_planner/      SLAM 콘맵 → 전역 레이스라인
+  ├─ hyu_global_planner/      SLAM 콘맵 → 전역 레이스라인
   ├─ hyu_frenet_conversion/   전역경로 기준 Frenet (s,d) — CTE의 원천
   ├─ state_machine/       랩 카운트 · local↔global 전환 · 스톱존
   ├─ path_selector/       local/global 중 컨트롤러가 따를 경로 확정

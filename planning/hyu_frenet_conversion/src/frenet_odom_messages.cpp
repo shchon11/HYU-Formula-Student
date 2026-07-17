@@ -41,7 +41,7 @@ std::vector<ReferenceWaypoint> toReferenceWaypoints(
   waypoints.reserve(msg.waypoints.size());
   for (const auto & waypoint : msg.waypoints) {
     // eufs_msgs/Waypoint carries both the geometric pose (position) and the
-    // offline-CSV echo fields (x_m/y_m). The HYU global_planner fills both, so
+    // offline-CSV echo fields (x_m/y_m). The HYU hyu_global_planner fills both, so
     // x_m/y_m are the primary source. Fall back to position when the CSV fields
     // are left unset (both exactly zero) so any /global_waypoints producer that
     // only populates position still yields a usable reference path.

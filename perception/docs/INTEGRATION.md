@@ -29,7 +29,7 @@ project's own cone-pose detector.
        + /zed/{left,right}/camera_info
        + timestamped /tf
     -> /cones                   eufs_msgs/ConeArrayWithCovariance, base_footprint
-    -> hyu_localization -> /graph_slam/map -> global_planner -> pure_pursuit -> /cmd
+    -> hyu_localization -> /graph_slam/map -> hyu_global_planner -> pure_pursuit -> /cmd
 ```
 
 ### Tier routing

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate a lane_generator-compatible track map PNG/YAML from boundary CSVs.
 
-Ported from HYU-Formula-Student planning/global_planner
+Ported from HYU-Formula-Student planning/hyu_global_planner
 (boundary_track_mask_generator_node.py / boundary_centerline_utils.py) as a
 standalone script: no ROS 2, no trajectory_planning_helpers required.
 

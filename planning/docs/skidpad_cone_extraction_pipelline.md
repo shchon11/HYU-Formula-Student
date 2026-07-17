@@ -949,7 +949,7 @@ planning/skidpad_extract/
   LDLT/SVD. 고유문제는 centering 후 4×4.
 - LM은 `fits.hpp`의 공용 유틸 하나로 — Step 2a/3b가 동일 규정 공유.
 - 난수는 `std::mt19937` + 고정 seed 파라미터. `std::random_device` 금지.
-- CSV 파서는 `global_planner_debug_visualizer_node.cpp` 스타일을 따르고 공용화
+- CSV 파서는 `hyu_global_planner_debug_visualizer_node.cpp` 스타일을 따르고 공용화
   가능하면 재사용.
 - `skidpad_frame.json`은 수동 직렬화 (신규 의존성 금지).
 - 예외는 입력 계약 위반(파일 없음, 컬럼 불일치)에만. 알고리즘 실패는 전부

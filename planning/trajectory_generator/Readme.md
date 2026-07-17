@@ -113,7 +113,7 @@ Stepwise equivalents:
     python3 main_globaltraj.py --headless
 
 RViz debug boundaries (periodic-spline resample of the cone map, matching the
-track mask exactly) for the global_planner debug visualizer node:
+track mask exactly) for the hyu_global_planner debug visualizer node:
 
     python3 export_boundary_splines.py --map-name my_track
 
