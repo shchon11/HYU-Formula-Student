@@ -137,6 +137,9 @@ flowchart LR
 ```bash
 mkdir -p ~/fsk && cd ~/fsk
 git clone <repo-url> src        # 이 저장소가 워크스페이스의 src/가 됩니다
+vcs import src < src/external.repos   # 외부 드라이버(sbg 등) 소스 임포트
+# — sbg는 apt의 ros-humble-sbg-driver로도 충분하며, 소스 수정이 필요할 때만
+#   external.repos 임포트가 공식 경로입니다 (버전 핀 고정).
 # (선택) 시스템 g2o(ros-humble-libg2o) 대신 소스 g2o를 쓰려면:
 #   git clone https://github.com/RainerKuemmerle/g2o.git ~/fsk/g2o
 #   — hyu_localization이 시스템 g2o가 없으면 <워크스페이스>/g2o를 자동 탐지

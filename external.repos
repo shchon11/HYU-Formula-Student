@@ -1,0 +1,19 @@
+# External (upstream) driver packages — not tracked in this repo.
+# Import into src/ with:
+#   vcs import src < src/external.repos
+#
+# velodyne / zed-ros2-wrapper: 실차 브링업 개발 시 실제 사용 버전으로
+# 태그를 고정할 것 (ZED는 차량 컴퓨트의 ZED SDK 버전과 맞춰야 함).
+repositories:
+  sbg_ros2_driver:
+    type: git
+    url: https://github.com/SBG-Systems/sbg_ros2_driver.git
+    version: 3.3.2
+  velodyne:
+    type: git
+    url: https://github.com/ros-drivers/velodyne.git
+    version: ros2
+  zed-ros2-wrapper:
+    type: git
+    url: https://github.com/stereolabs/zed-ros2-wrapper.git
+    version: master
