@@ -175,7 +175,7 @@ if [ "$EVAL_MODE" -eq 1 ]; then
 
   P_SLAM=$(tmux split-window -h -t "$P_SIM" -P -F '#{pane_id}')
   tmux send-keys -t "$P_SLAM" \
-    "$SRC echo '[② INS + GRAPH SLAM] waiting for car…'; $WAIT_CAR; ros2 launch eufs_graph_slam ins_pipeline.launch.py" C-m
+    "$SRC echo '[② INS + GRAPH SLAM] waiting for car…'; $WAIT_CAR; ros2 launch eufs_graph_slam ins_pipeline.launch.py ${INS_MODE_SCHED:+mode_schedule:=$INS_MODE_SCHED} ${INS_CORR_SCHED:+correction_schedule:=$INS_CORR_SCHED}" C-m
 
   # teleop arms AMI_MANUAL itself, so no separate mission pane is needed.
   P_TELE=$(tmux split-window -v -t "$P_SIM" -P -F '#{pane_id}')

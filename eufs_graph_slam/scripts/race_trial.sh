@@ -51,6 +51,7 @@ STATE="?"
 GLOBAL_AT=""
 MAP_COUNT="?"
 LAPS="?"
+FROZE_AT=""
 while [ $(( $(date +%s) - START_WALL )) -lt "$TIMEOUT_SEC" ]; do
     sleep 10
     STATE=$(timeout 5 ros2 topic echo --once /planning/state 2>/dev/null \
@@ -59,6 +60,16 @@ while [ $(( $(date +%s) - START_WALL )) -lt "$TIMEOUT_SEC" ]; do
         | grep -oE "[0-9]+" | head -1)
     if [ "$STATE" = "GLOBAL" ]; then
         GLOBAL_AT=$(( $(date +%s) - START_WALL ))
+        break
+    fi
+    # Early verdict: once SLAM has frozen its map, the planner either
+    # accepts it within a minute or never will — waiting out the full
+    # timeout only slows the A/B down.
+    if [ -z "$FROZE_AT" ]; then
+        SLAM_MODE=$(timeout 5 ros2 topic echo --once /graph_slam/status 2>/dev/null \
+            | grep -oE "localization" | head -1)
+        [ -n "$SLAM_MODE" ] && FROZE_AT=$(( $(date +%s) - START_WALL ))
+    elif [ $(( $(date +%s) - START_WALL - FROZE_AT )) -gt 60 ]; then
         break
     fi
 done
@@ -84,10 +95,36 @@ print(got[-1] if got else "None")
 PYEOF
 )
 
+# SLAM frame-latency snapshot (~/timing JSON: frame_ms p50/p99) for the
+# backend A/B; taken before teardown while the node is still publishing.
+TIMING=$(timeout 6 ros2 topic echo --once /graph_slam/timing 2>/dev/null \
+    | grep -oE '\{.*\}' | head -1)
+
+# Preserve the stack's node output BEFORE teardown: with output="screen" it
+# lives only in the tmux panes (launch.log is a 4 KB skeleton on this
+# system), so snapshot every pane's joined scrollback.
+LOG_SNAP="${OUT_JSON%.json}.logs"
+mkdir -p "$LOG_SNAP"
+i=0
+for p in $(tmux list-panes -t race -F '#{pane_id}' 2>/dev/null); do
+    tmux capture-pane -t "$p" -p -J -S -20000 > "$LOG_SNAP/pane_$i.log" 2>/dev/null
+    i=$((i + 1))
+done
+
+# tmux kill-session does not reap the detached ros2 launch trees: the
+# perception pair (YOLO at >100% CPU each) survived it and contaminated
+# every later trial through GPU contention. Kill the whole stack by name.
 tmux kill-session -t race 2>/dev/null
 sleep 2
-pkill -9 -x gzserver 2>/dev/null
-pkill -9 -x robot_state_publisher 2>/dev/null
+for pat in gzserver gzclient graph_slam_node sim_ellipse_d sbg_odometry_bridge \
+    wheel_odometry lidar_realism yolov8_bbox_node perception_node \
+    planner_node wpnt_publisher_node frenet_odom_node local_planner_node \
+    pure_pursuit_controller_node ate_monitor planning_state_machine \
+    path_selector robot_state_publisher; do
+    pkill -9 -f "$pat" 2>/dev/null
+done
+pkill -9 -f "ros2 launch" 2>/dev/null
+sleep 1
 
 python3 - "$OUT_JSON" <<PYEOF
 import json, sys
@@ -98,6 +135,7 @@ json.dump({
     "final_state": "${STATE:-unknown}",
     "laps": ${LAPS:-None},
     "map_count": ${MAP_COUNT:-None},
+    "timing": ${TIMING:-None},
     "timeout_sec": $TIMEOUT_SEC,
 }, open(sys.argv[1], "w"), indent=1)
 PYEOF

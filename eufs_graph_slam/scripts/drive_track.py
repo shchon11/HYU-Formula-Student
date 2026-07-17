@@ -28,7 +28,7 @@ from eufs_msgs.srv import SetCanState
 
 
 def load_centerline(csv_path):
-    blues, yellows, start = [], [], (0.0, 0.0)
+    blues, yellows, start, start_dir = [], [], (0.0, 0.0), 0.0
     with open(csv_path) as f:
         for row in csv.DictReader(f):
             tag = row["tag"].strip()
@@ -39,6 +39,21 @@ def load_centerline(csv_path):
                 yellows.append((x, y))
             elif tag == "car_start":
                 start = (x, y)
+                start_dir = float(row.get("direction", 0.0) or 0.0)
+
+    # The CSV is track-absolute, but /ground_truth/state reports the car
+    # spawn-RELATIVE (0,0,0 at car_start). Following absolute waypoints with
+    # a relative pose drives a loop translated/rotated by the whole spawn
+    # offset — transform everything into the spawn frame instead.
+    cos_d, sin_d = math.cos(-start_dir), math.sin(-start_dir)
+
+    def to_spawn_frame(p):
+        dx, dy = p[0] - start[0], p[1] - start[1]
+        return (cos_d * dx - sin_d * dy, sin_d * dx + cos_d * dy)
+
+    blues = [to_spawn_frame(p) for p in blues]
+    yellows = [to_spawn_frame(p) for p in yellows]
+    start = (0.0, 0.0)
 
     if not blues or not yellows:
         raise RuntimeError("track csv has no blue/yellow cones")
@@ -72,6 +87,16 @@ def load_centerline(csv_path):
         for s in range(steps):
             t = s / steps
             pts.append((x0 + t * (x1 - x0), y0 + t * (y1 - y0)))
+
+    # The greedy chain picks an arbitrary loop direction. Race direction is
+    # defined by the spawn heading (+x in the spawn frame after the
+    # transform above): if the path tangent at the nearest point opposes it,
+    # the whole loop is reversed — driving backwards flips the blue/yellow
+    # context every consumer assumes.
+    nearest = min(range(len(pts)), key=lambda i: pts[i][0] ** 2 + pts[i][1] ** 2)
+    after = pts[(nearest + 1) % len(pts)]
+    if after[0] - pts[nearest][0] < 0.0:
+        pts.reverse()
     return pts
 
 
