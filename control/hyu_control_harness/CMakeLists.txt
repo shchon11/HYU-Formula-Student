@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(ament_cmake REQUIRED)
 find_package(eufs_models REQUIRED)
-find_package(pure_pursuit_controller REQUIRED)
+find_package(hyu_pure_pursuit REQUIRED)
 find_package(local_planner REQUIRED)
 
 add_library(hyu_control_harness_core
@@ -22,7 +22,7 @@ target_include_directories(hyu_control_harness_core PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(hyu_control_harness_core
-  pure_pursuit_controller::pure_pursuit_controller_core
+  hyu_pure_pursuit::hyu_pure_pursuit_core
 )
 ament_target_dependencies(hyu_control_harness_core
   eufs_models

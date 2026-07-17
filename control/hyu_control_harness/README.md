@@ -43,7 +43,7 @@ latency noiseless loop is too optimistic to tune against.
 Prints one JSON object (laps, lap times, CTE RMSE/max, cone-line violation
 fraction, steering-rate stats, planner-invalid fraction, DNF reason). Exit code
 1 on DNF. `map_harness --help` lists every key; defaults mirror the shipped
-trackdrive configs (`pure_pursuit_controller.yaml`, `local_planner.yaml`).
+trackdrive configs (`hyu_pure_pursuit.yaml`, `local_planner.yaml`).
 
 Grid sweeps (cartesian product, parallel, ranked summary + CSV):
 

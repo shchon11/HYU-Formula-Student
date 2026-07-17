@@ -11,12 +11,12 @@
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
 #include "eufs_msgs/msg/waypoint_array_stamped.hpp"
 #include "nav_msgs/msg/odometry.hpp"
-#include "pure_pursuit_controller/controller.hpp"
+#include "hyu_pure_pursuit/controller.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "visualization_msgs/msg/marker.hpp"
 
-namespace pure_pursuit_controller
+namespace hyu_pure_pursuit
 {
 namespace
 {
@@ -42,7 +42,7 @@ class PurePursuitControllerNode final : public rclcpp::Node
 {
 public:
   PurePursuitControllerNode()
-  : Node("pure_pursuit_controller_node")
+  : Node("hyu_pure_pursuit_node")
   {
     config_.wheelbase_m = declare_parameter("wheelbase_m", config_.wheelbase_m);
     config_.lookahead_m = declare_parameter("lookahead_m", config_.lookahead_m);
@@ -294,7 +294,7 @@ private:
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<pure_pursuit_controller::PurePursuitControllerNode>());
+  rclcpp::spin(std::make_shared<hyu_pure_pursuit::PurePursuitControllerNode>());
   rclcpp::shutdown();
   return 0;
 }

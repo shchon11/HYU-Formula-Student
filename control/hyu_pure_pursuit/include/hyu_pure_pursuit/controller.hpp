@@ -7,9 +7,9 @@
 #include <string_view>
 #include <vector>
 
-#include "pure_pursuit_controller/steering_lookup.hpp"
+#include "hyu_pure_pursuit/steering_lookup.hpp"
 
-namespace pure_pursuit_controller
+namespace hyu_pure_pursuit
 {
 
 // GEOMETRIC is the kinematic pure-pursuit steering law delta = atan2(2*L*y, d^2).

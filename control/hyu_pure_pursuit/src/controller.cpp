@@ -1,11 +1,11 @@
-#include "pure_pursuit_controller/controller.hpp"
+#include "hyu_pure_pursuit/controller.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
 
-namespace pure_pursuit_controller
+namespace hyu_pure_pursuit
 {
 namespace
 {

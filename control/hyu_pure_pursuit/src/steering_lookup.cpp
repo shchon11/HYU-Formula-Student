@@ -1,11 +1,11 @@
-#include "pure_pursuit_controller/steering_lookup.hpp"
+#include "hyu_pure_pursuit/steering_lookup.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 
-namespace pure_pursuit_controller
+namespace hyu_pure_pursuit
 {
 namespace
 {
@@ -259,4 +259,4 @@ SteeringLookup buildSteeringLookup(const VehicleModel & model, const LutGrid & g
   return SteeringLookup{std::move(steers), std::move(vels), std::move(table)};
 }
 
-}  // namespace pure_pursuit_controller
+}  // namespace hyu_pure_pursuit

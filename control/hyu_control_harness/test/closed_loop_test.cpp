@@ -55,7 +55,7 @@ TEST(ClosedLoop, MapModeLapsACircleInsideTheCones)
 TEST(ClosedLoop, GeometricModeAlsoCompletes)
 {
   auto config = baseConfig();
-  config.controller.steering_mode = pure_pursuit_controller::SteeringMode::GEOMETRIC;
+  config.controller.steering_mode = hyu_pure_pursuit::SteeringMode::GEOMETRIC;
   config.controller.lookahead_m = 3.5;
   const auto result = ch::runMapHarness(config, circularTrack());
   EXPECT_FALSE(result.dnf) << result.dnf_reason << " / " << result.last_planner_reason;

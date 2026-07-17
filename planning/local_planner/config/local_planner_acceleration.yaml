@@ -39,7 +39,7 @@ local_planner_node:
     fallback_horizon_m: 8.0
     fallback_offset_m: 1.5
     # Sprint speed. two_sided_speed_mps is the straight-line cap and sits at the
-    # controller ceiling (pure_pursuit_controller_acceleration.yaml max_speed);
+    # controller ceiling (hyu_pure_pursuit_acceleration.yaml max_speed);
     # raise both together for a faster run. The one-sided fallback stays slower
     # because it means a boundary side dropped out.
     # 12 m/s: a moderate bump that still stops inside the braking zone under

@@ -10,7 +10,7 @@
 #   at 3 m/s^2 is V^2/6, so V^2/6 must stay under ~29 m -> V <~ 13.2 m/s to stop
 #   inside the box. max_speed below is 12 m/s, which stops near x=+45 (~5 m of
 #   margin). Raising it past ~13 needs a stronger brake or a longer zone.
-pure_pursuit_controller_node:
+hyu_pure_pursuit_node:
   ros__parameters:
     steering_mode: geometric
     wheelbase_m: 1.58

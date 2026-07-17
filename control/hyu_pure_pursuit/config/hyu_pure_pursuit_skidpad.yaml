@@ -1,7 +1,7 @@
 # Skidpad-mission controller tuning. The mission runs r=9.1 m circles with a
 # 3 m corridor: the trackdrive 5 m lookahead cuts ~1.4 m inside the circle
 # (L^2/2R), so shorten it, and cap speed to match the slow skidpad path.
-pure_pursuit_controller_node:
+hyu_pure_pursuit_node:
   ros__parameters:
     steering_mode: geometric
     wheelbase_m: 1.58

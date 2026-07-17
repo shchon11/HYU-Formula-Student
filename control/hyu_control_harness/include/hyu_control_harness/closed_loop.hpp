@@ -5,8 +5,8 @@
 
 #include "hyu_control_harness/track.hpp"
 #include "local_planner/local_path_builder.hpp"
-#include "pure_pursuit_controller/controller.hpp"
-#include "pure_pursuit_controller/steering_lookup.hpp"
+#include "hyu_pure_pursuit/controller.hpp"
+#include "hyu_pure_pursuit/steering_lookup.hpp"
 
 namespace hyu_control_harness
 {
@@ -42,17 +42,17 @@ struct HarnessConfig
   // Optional 100 Hz trajectory dump (t,x,y,yaw,v,s,cte,delta_cmd,delta_act,...).
   std::string traj_csv;
 
-  pure_pursuit_controller::ControllerConfig controller;
-  pure_pursuit_controller::VehicleModel lut_model;
-  pure_pursuit_controller::LutGrid lut_grid;
+  hyu_pure_pursuit::ControllerConfig controller;
+  hyu_pure_pursuit::VehicleModel lut_model;
+  hyu_pure_pursuit::LutGrid lut_grid;
   local_planner::PlannerConfig planner;
 };
 
 // Defaults mirroring the shipped trackdrive configs
-// (pure_pursuit_controller.yaml / local_planner.yaml).
-pure_pursuit_controller::ControllerConfig trackdriveControllerConfig();
-pure_pursuit_controller::VehicleModel trackdriveLutModel();
-pure_pursuit_controller::LutGrid trackdriveLutGrid();
+// (hyu_pure_pursuit.yaml / local_planner.yaml).
+hyu_pure_pursuit::ControllerConfig trackdriveControllerConfig();
+hyu_pure_pursuit::VehicleModel trackdriveLutModel();
+hyu_pure_pursuit::LutGrid trackdriveLutGrid();
 local_planner::PlannerConfig trackdrivePlannerConfig();
 
 struct HarnessResult

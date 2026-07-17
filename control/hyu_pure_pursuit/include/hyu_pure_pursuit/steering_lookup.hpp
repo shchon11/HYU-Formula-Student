@@ -5,7 +5,7 @@
 #include <optional>
 #include <vector>
 
-namespace pure_pursuit_controller
+namespace hyu_pure_pursuit
 {
 
 // Tyre force flavour used when the single-track model is integrated to build the
@@ -128,6 +128,6 @@ private:
 // the lookup. Returns an invalid table if the model or grid is degenerate.
 SteeringLookup buildSteeringLookup(const VehicleModel & model, const LutGrid & grid);
 
-}  // namespace pure_pursuit_controller
+}  // namespace hyu_pure_pursuit
 
 #endif  // PURE_PURSUIT_CONTROLLER__STEERING_LOOKUP_HPP_

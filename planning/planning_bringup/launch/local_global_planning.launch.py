@@ -95,7 +95,7 @@ PARAMETER_FILES = (
     ("local_params_file", "local_planner", "local_planner.yaml", "Local planner parameter file."),
     ("state_params_file", "state_machine", "planning_state_machine.yaml", "Planning state-machine parameter file."),
     ("selector_params_file", "path_selector", "path_selector.yaml", "Path selector parameter file."),
-    ("controller_params_file", "pure_pursuit_controller", "pure_pursuit_controller.yaml", "Pure Pursuit controller parameter file."),
+    ("controller_params_file", "hyu_pure_pursuit", "hyu_pure_pursuit.yaml", "Pure Pursuit controller parameter file."),
 )
 
 
@@ -269,11 +269,11 @@ def generate_launch_description() -> LaunchDescription:
     controller_params_selected = PythonExpression(
         [
             "'",
-            _params_file("pure_pursuit_controller", "pure_pursuit_controller_skidpad.yaml"),
+            _params_file("hyu_pure_pursuit", "hyu_pure_pursuit_skidpad.yaml"),
             "' if '",
             values["skidpad"],
             "' == 'true' else ('",
-            _params_file("pure_pursuit_controller", "pure_pursuit_controller_acceleration.yaml"),
+            _params_file("hyu_pure_pursuit", "hyu_pure_pursuit_acceleration.yaml"),
             "' if '",
             values["acceleration"],
             "' == 'true' else '",
@@ -383,9 +383,9 @@ def generate_launch_description() -> LaunchDescription:
         ("/cmd", values["controller_cmd_topic"]),
     ]
     controller = Node(
-        package="pure_pursuit_controller",
-        executable="pure_pursuit_controller_node",
-        name="pure_pursuit_controller_node",
+        package="hyu_pure_pursuit",
+        executable="hyu_pure_pursuit_node",
+        name="hyu_pure_pursuit_node",
         output="screen",
         condition=IfCondition(values["enable_controller"]),
         parameters=[

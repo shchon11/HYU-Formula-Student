@@ -1,13 +1,13 @@
 # Default trackdrive controller = MAP (Model- and Acceleration-based Pursuit,
 # ETH-PBL). This is what `race` (trackdrive) loads. For the previous kinematic
-# pure pursuit see pure_pursuit_controller_geometric.yaml.
+# pure pursuit see hyu_pure_pursuit_geometric.yaml.
 #
 # MAP keeps the geometric controller's fail-safe/longitudinal behaviour but
 # replaces the kinematic steering law with: adaptive lookahead -> L1-guidance
 # lateral acceleration -> a single-track + Pacejka-tyre lookup table integrated
 # once at startup from the vehicle/tyre block below, so it accounts for the
 # speed-dependent understeer the kinematic law ignores.
-pure_pursuit_controller_node:
+hyu_pure_pursuit_node:
   ros__parameters:
     steering_mode: map
 

@@ -55,7 +55,7 @@ stack already owns the graph-SLAM outputs.
 | `/planning/global_path_waypoints` | `wpnt_publisher` |
 | `/path_waypoints` | `path_selector_node` |
 | `/planning/selected_path_valid` | `path_selector_node` |
-| `/cmd` | Standard launch: `pure_pursuit_controller_node`; TMPC launch: `hyu_cmd_selector` |
+| `/cmd` | Standard launch: `hyu_pure_pursuit_node`; TMPC launch: `hyu_cmd_selector` |
 
 `planner_source` is either `slam` or `csv`, so the two global writers are never
 started together. The global rolling window is remapped to

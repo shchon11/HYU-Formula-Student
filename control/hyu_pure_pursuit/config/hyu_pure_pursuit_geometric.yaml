@@ -1,8 +1,8 @@
 # Kinematic pure pursuit (fixed lookahead) trackdrive tune. This was the default
 # before MAP; keep it as a fallback. To run trackdrive with geometric steering:
 #   ros2 launch planning_bringup local_global_planning.launch.py \
-#     controller_params_file:=<share>/pure_pursuit_controller/config/pure_pursuit_controller_geometric.yaml
-pure_pursuit_controller_node:
+#     controller_params_file:=<share>/hyu_pure_pursuit/config/hyu_pure_pursuit_geometric.yaml
+hyu_pure_pursuit_node:
   ros__parameters:
     steering_mode: geometric
     wheelbase_m: 1.58

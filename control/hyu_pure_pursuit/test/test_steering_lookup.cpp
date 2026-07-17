@@ -7,9 +7,9 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "pure_pursuit_controller/steering_lookup.hpp"
+#include "hyu_pure_pursuit/steering_lookup.hpp"
 
-namespace pure_pursuit_controller
+namespace hyu_pure_pursuit
 {
 namespace
 {
@@ -219,4 +219,4 @@ TEST(SteeringLookup, EufsModelProducesRacingGripEnvelope)
 }
 
 }  // namespace
-}  // namespace pure_pursuit_controller
+}  // namespace hyu_pure_pursuit

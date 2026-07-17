@@ -5,9 +5,9 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "pure_pursuit_controller/controller.hpp"
+#include "hyu_pure_pursuit/controller.hpp"
 
-namespace pure_pursuit_controller
+namespace hyu_pure_pursuit
 {
 namespace
 {

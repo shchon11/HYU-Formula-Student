@@ -18,7 +18,7 @@ namespace hyu_control_harness
 namespace
 {
 
-namespace ppc = pure_pursuit_controller;
+namespace ppc = hyu_pure_pursuit;
 
 // Half of the car's overall width plus a cone radius: closer than this to the
 // cone line and the body is clipping cones even though the centre is inside.

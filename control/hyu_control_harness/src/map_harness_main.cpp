@@ -58,17 +58,17 @@ bool parseArg(const std::string & key, const std::string & value,
       config.seed = static_cast<unsigned int>(std::stoul(value));
     } else if (key == "steering_mode") {
       if (value == "map") {
-        controller.steering_mode = pure_pursuit_controller::SteeringMode::MAP;
+        controller.steering_mode = hyu_pure_pursuit::SteeringMode::MAP;
       } else if (value == "geometric") {
-        controller.steering_mode = pure_pursuit_controller::SteeringMode::GEOMETRIC;
+        controller.steering_mode = hyu_pure_pursuit::SteeringMode::GEOMETRIC;
       } else {
         return false;
       }
     } else if (key == "map_speed_source") {
       if (value == "planned") {
-        controller.map_speed_source = pure_pursuit_controller::MapSpeedSource::PLANNED;
+        controller.map_speed_source = hyu_pure_pursuit::MapSpeedSource::PLANNED;
       } else if (value == "measured") {
-        controller.map_speed_source = pure_pursuit_controller::MapSpeedSource::MEASURED;
+        controller.map_speed_source = hyu_pure_pursuit::MapSpeedSource::MEASURED;
       } else {
         return false;
       }

@@ -56,10 +56,10 @@ ICRA 2023). Each cycle:
 the path speed — commands sensibly near standstill) or `measured` (odometry
 speed — exact when tracking lags). A null or invalid table fails safe to braking.
 
-MAP is the **default trackdrive controller** (`pure_pursuit_controller.yaml`, what
+MAP is the **default trackdrive controller** (`hyu_pure_pursuit.yaml`, what
 `race` loads). The previous kinematic tune is kept as
-`pure_pursuit_controller_geometric.yaml`; select it with
-`controller_params_file:=<share>/config/pure_pursuit_controller_geometric.yaml`.
+`hyu_pure_pursuit_geometric.yaml`; select it with
+`controller_params_file:=<share>/config/hyu_pure_pursuit_geometric.yaml`.
 The skidpad and acceleration missions still use their geometric configs.
 
 #### The steering lookup table
@@ -78,7 +78,7 @@ interval (>= ~8 keeps full-scale tyres stable at low speed). The build is
 validated against the reference F1TENTH `SIM_linear` table in
 `test/test_steering_lookup.cpp`.
 
-The `pure_pursuit_controller.yaml` values describe the EUFS `eufs` car
+The `hyu_pure_pursuit.yaml` values describe the EUFS `eufs` car
 (`eufs_racecar/robots/eufs/configDry.yaml`). Note `pacejka_c_*` takes the
 **magnitude** of the plant's shape factor (the plant ships `C = -1.38` under an
 inverted slip-sign convention; the table stores `|a_lat|`, so only the magnitude
