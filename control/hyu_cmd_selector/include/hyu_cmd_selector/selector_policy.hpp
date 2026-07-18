@@ -39,6 +39,16 @@ struct SelectorConfig
   double state_timeout_sec{0.25};
   double stop_timeout_sec{0.25};
   double local_command_timeout_sec{0.25};
+  // LOCAL forwarding hold: in LOCAL the selector must be a transparent pass of
+  // Pure Pursuit, exactly like the plain trackdrive stack where PP owns /cmd
+  // directly. The 0.25 s freshness gate above, applied to the LOCAL branch,
+  // injected a zero-steer safe brake whenever a PP command arrived late under
+  // the extra TMPC-chain scheduling load -- a momentary mid-corner steer-to-
+  // zero that, on the marginal lap-1 corners, tipped the car into a spin (the
+  // intermittent lap-1 failure that plain mode never shows). Hold the last PP
+  // command through such blips; a genuine PP loss (this much silence) still
+  // brakes, and PP owns its own along-path braking anyway.
+  double local_forward_hold_sec{1.0};
   double tmpc_command_timeout_sec{0.1};
   double tmpc_valid_timeout_sec{0.1};
   double tmpc_ready_dwell_sec{0.1};

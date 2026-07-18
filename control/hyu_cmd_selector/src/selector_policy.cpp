@@ -72,7 +72,13 @@ SelectorDecision SelectorPolicy::update(const SelectorInputs & inputs)
   }
 
   if (state == PlanningState::kLocal) {
-    if (local_ok) {
+    // Transparent pass-through: forward the last finite PP command through a
+    // generous hold so a scheduling blip cannot inject a mid-corner steer-to-
+    // zero. Only a real, sustained PP loss falls through to the safe brake.
+    const bool local_forward = inputs.local_command_valid && fresh(
+      inputs.has_local_command, inputs.local_command_age_sec,
+      config_.local_forward_hold_sec);
+    if (local_forward) {
       return {CommandSource::kPurePursuit, SelectorStatus::kLocalPurePursuit};
     }
     return {CommandSource::kSafeBrake, SelectorStatus::kInputBrake};

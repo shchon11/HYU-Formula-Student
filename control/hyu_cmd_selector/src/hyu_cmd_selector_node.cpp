@@ -21,6 +21,8 @@ SelectorConfig DeclareSelectorConfig(rclcpp::Node & node)
     "stop_timeout_sec", config.stop_timeout_sec);
   config.local_command_timeout_sec = node.declare_parameter<double>(
     "local_command_timeout_sec", config.local_command_timeout_sec);
+  config.local_forward_hold_sec = node.declare_parameter<double>(
+    "local_forward_hold_sec", config.local_forward_hold_sec);
   config.tmpc_command_timeout_sec = node.declare_parameter<double>(
     "tmpc_command_timeout_sec", config.tmpc_command_timeout_sec);
   config.tmpc_valid_timeout_sec = node.declare_parameter<double>(

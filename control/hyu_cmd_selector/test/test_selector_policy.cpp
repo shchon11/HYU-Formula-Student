@@ -252,8 +252,16 @@ TEST(SelectorPolicy, BrakesForUnknownAndStaleSafetyInputs)
   ExpectDecision(
     policy.update(inputs), CommandSource::kSafeBrake, SelectorStatus::kInputBrake);
 
+  // A brief PP-command staleness in LOCAL is HELD (transparent pass-through),
+  // not braked -- this is the blip tolerance that keeps a mid-corner steer
+  // from being zeroed. Only a stall past the forward hold brakes.
   inputs = FreshInputs("LOCAL");
   inputs.local_command_age_sec = 0.251;
+  ExpectDecision(
+    policy.update(inputs), CommandSource::kPurePursuit, SelectorStatus::kLocalPurePursuit);
+
+  inputs = FreshInputs("LOCAL");
+  inputs.local_command_age_sec = 1.01;
   ExpectDecision(
     policy.update(inputs), CommandSource::kSafeBrake, SelectorStatus::kInputBrake);
 }
