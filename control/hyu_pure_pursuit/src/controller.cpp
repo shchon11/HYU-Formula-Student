@@ -261,13 +261,25 @@ ControlDecision computeControl(
   double steering = 0.0;
   if (map_mode) {
     // L1 guidance: the lateral acceleration needed to reach the lookahead point,
-    // then the model+tyre table converts it to a steering angle. sin(eta) is the
-    // lateral (left-positive) offset of the target over the chord distance L1.
+    // then the model+tyre table converts it to a steering angle. The arc that is
+    // tangent to the heading at the rear axle and passes through the target has
+    // curvature kappa = 2*sin(eta)/L1, so a_lat = v^2*kappa = 2*v^2*sin(eta)/L1
+    // -- and L1 is the ACTUAL distance to the target (the chord), NOT the desired
+    // adaptive lookahead L_d that merely SELECTS the target. The two differ on
+    // every curve: the target is chosen by arc length >= L_d, whose straight-line
+    // chord is shorter, so dividing by L_d under-commanded the lateral
+    // acceleration by chord/L_d and the car understeered wide out of tight
+    // corners (measured riding full lock yet drifting off the corridor). Divide
+    // by the chord, as the L1/MAP law requires.
     const double reference_speed =
       config.map_speed_source == MapSpeedSource::MEASURED ? current_speed : planned_speed;
-    const double chord = std::sqrt(lookahead_squared);
-    const double sin_eta = target->y_body_m / chord;
-    const double lateral_accel = 2.0 * reference_speed * reference_speed * sin_eta / lookahead;
+    // L1 is the ACTUAL distance to the target (the chord), floored to the
+    // adaptive-lookahead minimum: a degenerate short-path target sitting a few
+    // centimetres away would otherwise divide the demand by ~0 and spike the
+    // steering. Within the floor the law is exact (a = 2 v^2 y / L1^2).
+    const double l1 = std::max(std::sqrt(lookahead_squared), config.map_lookahead_min_m);
+    const double sin_eta = target->y_body_m / l1;
+    const double lateral_accel = 2.0 * reference_speed * reference_speed * sin_eta / l1;
     const auto steer = lut->lookup(lateral_accel, reference_speed);
     if (!steer.has_value()) {
       return ControlDecision{brakeCommand(config), std::nullopt};

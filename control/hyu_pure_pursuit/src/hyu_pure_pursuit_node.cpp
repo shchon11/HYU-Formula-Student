@@ -60,7 +60,7 @@ public:
       declare_parameter("max_acceleration_mps2", config_.max_acceleration_mps2);
     config_.brake_acceleration_mps2 =
       declare_parameter("brake_acceleration_mps2", config_.brake_acceleration_mps2);
-    validity_hold_sec_ = declare_parameter("validity_hold_sec", 0.4);
+    validity_hold_sec_ = declare_parameter("validity_hold_sec", 0.6);
 
     // Lateral steering law and (MAP-only) adaptive lookahead / model+tyre table.
     const std::string steering_mode = declare_parameter<std::string>("steering_mode", "geometric");
@@ -188,6 +188,29 @@ private:
     input_.selected_path_valid = raw_selected_path_valid_ ||
       (had_valid_path_ &&
       ageSeconds(now, last_validity_true_time_) <= validity_hold_sec_);
+    // Holding the validity FLAG is not enough: onPath overwrites input_.path on
+    // every message, so an invalid planner cycle (empty or heading-jumped
+    // waypoints, seen when a mid-corner heading skew breaks the cone traversal)
+    // destroys the very geometry the hold exists to preserve. Pure Pursuit then
+    // has no path and steers to zero -- the measured lap-1 drop (steer 0.52 ->
+    // 0 the instant validity flickered) that let an already-loaded corner spin
+    // the car. Snapshot the last genuinely-valid path and restore it for the
+    // duration of the hold so the controller finishes the maneuver on the last
+    // good line; a sustained invalid past the hold still falls through to the
+    // brake below.
+    if (raw_selected_path_valid_ && !input_.path.empty()) {
+      last_valid_path_ = input_.path;
+    } else if (input_.selected_path_valid && !last_valid_path_.empty()) {
+      // Restore the last good line AND the input flags computeControl gates on:
+      // the invalid planner cycle that tripped the hold also cleared the frame
+      // flag (empty/framid-less path) and, if the selector stops publishing,
+      // ages the path out -- either alone still forces the brake the hold is
+      // meant to prevent. The snapshot is a real map-frame path, so within the
+      // bounded hold treat it as a fresh, framed path and keep tracking it.
+      input_.path = last_valid_path_;
+      input_.path_frame_valid = true;
+      input_.path_age_sec = 0.0;
+    }
     if (input_.stop_received) {
       input_.stop_age_sec = ageSeconds(now, stop_receive_time_);
     }
@@ -297,7 +320,11 @@ private:
   rclcpp::Time last_validity_true_time_{0, 0, RCL_ROS_TIME};
   bool raw_selected_path_valid_{false};
   bool had_valid_path_{false};
-  double validity_hold_sec_{0.4};
+  double validity_hold_sec_{0.6};
+  // Last path received while the raw validity was true; restored while the hold
+  // above bridges an invalid planner cycle so Pure Pursuit keeps a real line to
+  // track instead of the empty/heading-jumped path onPath would otherwise load.
+  std::vector<PathPoint> last_valid_path_;
   rclcpp::Time stop_receive_time_;
   rclcpp::Time odom_receive_time_;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr command_publisher_;
