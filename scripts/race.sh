@@ -22,7 +22,10 @@
 
 set -o pipefail
 
-SESSION="race"
+# Unique session name: a bare 'race' collides with any other tmux session of
+# the same name (e.g. a Claude remote-control CLI session), and 'race stop'
+# would kill it. Keep this specific so kill-session only ever hits our stack.
+SESSION="fsk_race"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEFAULT_EUFS_MASTER="$(cd "$SRC_DIR/.." && pwd)"
