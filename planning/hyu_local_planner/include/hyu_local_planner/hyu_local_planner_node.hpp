@@ -19,6 +19,9 @@ public:
 
 private:
   void processLivePair(const LiveInputPair & input);
+  hyu_local_planner::PlannerConfig configForOdom(
+    const nav_msgs::msg::Odometry & odom) const;
+
   void processSlamMap(const SlamMapInput & input);
 
   // Debug-only. When log_planner_diagnostics is set, emit a throttled line
@@ -29,6 +32,7 @@ private:
 
   SourceMode source_mode_;
   PlannerConfig planner_config_;
+  double standstill_recovery_speed_mps_{0.5};
   double max_stamp_skew_sec_{0.1};
   double max_input_age_sec_{0.5};
   double heartbeat_hz_{10.0};

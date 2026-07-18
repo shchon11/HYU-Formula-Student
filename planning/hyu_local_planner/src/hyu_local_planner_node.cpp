@@ -63,6 +63,8 @@ LocalPlannerNode::LocalPlannerNode(const rclcpp::NodeOptions & options)
   planner_config_.max_lateral_accel_mps2 =
     declare_parameter<double>("max_lateral_accel_mps2", 5.0);
   planner_config_.min_speed_mps = declare_parameter<double>("min_speed_mps", 1.0);
+  standstill_recovery_speed_mps_ =
+    declare_parameter<double>("standstill_recovery_speed_mps", 0.5);
   planner_config_.allow_partial_boundary = declare_parameter<bool>(
     "allow_partial_boundary", source_mode_ == SourceMode::kSlamMap);
   planner_config_.use_unknown_cones = declare_parameter<bool>("use_unknown_cones", true);
@@ -112,6 +114,25 @@ LocalPlannerNode::LocalPlannerNode(const rclcpp::NodeOptions & options)
     use_live_cone_extension_);
 }
 
+hyu_local_planner::PlannerConfig LocalPlannerNode::configForOdom(
+  const nav_msgs::msg::Odometry & odom) const
+{
+  // Standstill recovery: the chain-heading gate exists so the car never chases
+  // a sideways path at speed, but it also locked every askew stop forever --
+  // replaying a stuck frame showed the SAME cone map building fine once the
+  // ego heading was rotated 30 deg. Below a crawl the u-turn bound applies
+  // instead, so a wobble that ends slightly cross-corridor re-aligns and
+  // drives off; the next replan at speed re-tightens the gate.
+  auto config = planner_config_;
+  const double speed = std::hypot(
+    odom.twist.twist.linear.x, odom.twist.twist.linear.y);
+  if (speed < standstill_recovery_speed_mps_) {
+    config.max_heading_change_rad = std::max(
+      config.max_heading_change_rad, config.max_u_turn_heading_change_rad);
+  }
+  return config;
+}
+
 void LocalPlannerNode::processLivePair(const LiveInputPair & input)
 {
   const auto odom_metadata = odomMetadata(*input.odom, input.odom_receive_time);
@@ -124,7 +145,7 @@ void LocalPlannerNode::processLivePair(const LiveInputPair & input)
   }
 
   const auto cone_set = liveConeSet(*input.cones);
-  const auto result = buildLocalPath(cone_set, planner_config_);
+  const auto result = buildLocalPath(cone_set, configForOdom(*input.odom));
   logPlannerDiagnostics(cone_set, result);
   if (!result.valid) {
     output_->retainUntilStale(result.reason);
@@ -157,7 +178,7 @@ void LocalPlannerNode::processSlamMap(const SlamMapInput & input)
         live_extension_config_);
     }
   }
-  const auto result = buildLocalPath(cone_set, planner_config_);
+  const auto result = buildLocalPath(cone_set, configForOdom(*input.odom));
   logPlannerDiagnostics(cone_set, result);
   if (result.valid) {
     output_->publishPath(result, *input.odom, input.odom->header.stamp, input.odom_receive_time);
