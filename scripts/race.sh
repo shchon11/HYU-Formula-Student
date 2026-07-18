@@ -247,4 +247,10 @@ race: up.  attach → 'race attach'   |   stop everything → 'race stop'
   panes: ①sim+perception  ②planning(slam+global+local+SM+selector+controller)  ③mission  ④ins(ellipse-d+sbg bridge, gnss anchor+hud)  ⑤monitor
   the CONTROLLER drives the car — no teleop. $MISSION_NOTE
 EOF
-exec tmux attach -t "$SESSION"
+# Attaching needs a real terminal. Interactive launch attaches as before;
+# a headless launch (nohup/CI: stdout is not a TTY) leaves the session running
+# detached instead of dying on tmux's "open terminal failed: not a terminal".
+if [ -t 1 ]; then
+  exec tmux attach -t "$SESSION"
+fi
+echo "race: headless (no TTY) — session '$SESSION' is running detached; 'race attach' to view."
