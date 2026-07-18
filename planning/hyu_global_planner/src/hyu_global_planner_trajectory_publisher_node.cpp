@@ -169,12 +169,24 @@ void GlobalPlannerTrajectoryPublisherNode::publishValidityHeartbeat()
 {
   if (global_path_is_valid_ && !true_heartbeat_ready_) {
     true_heartbeat_ready_ = true;
-    return;
+  } else {
+    std_msgs::msg::Bool msg;
+    msg.data = global_path_is_valid_;
+    global_path_valid_pub_->publish(msg);
   }
 
-  std_msgs::msg::Bool msg;
-  msg.data = global_path_is_valid_;
-  global_path_valid_pub_->publish(msg);
+  // Re-latch the raceline alongside the heartbeat. global_waypoints is otherwise
+  // published only on a CSV file change, so a consumer that dropped its
+  // reference on a TRANSIENT validity blip (frenet_odom invalidates on a single
+  // false/stale heartbeat, then waits for a fresh snapshot "after the latest
+  // invalidation") would never get one again and stalls forever -- no
+  // frenet_odom means no current_d, which hard-blocks the GLOBAL entry gate and
+  // strands the car in LOCAL/Pure-Pursuit for the whole run (TMPC never drives).
+  // Consumers dedup by path content (and frenet clears its cache on
+  // invalidation), so this rebuilds nothing unless they actually need it.
+  if (global_path_is_valid_ && has_valid_trajectory_) {
+    publishTrajectory();
+  }
 }
 
 void GlobalPlannerTrajectoryPublisherNode::checkAndReloadTrajectory()
@@ -262,8 +274,10 @@ void GlobalPlannerTrajectoryPublisherNode::publishTrajectory()
   }
 
   global_waypoints_pub_->publish(buildWaypointMessage(trajectory_points_));
-  RCLCPP_INFO(
-    get_logger(),
+  // Throttled: this is now also called on every validity heartbeat to re-latch
+  // the raceline, so an unthrottled line would flood the log.
+  RCLCPP_INFO_THROTTLE(
+    get_logger(), *get_clock(), 5000,
     "Published %zu global waypoint(s) to %s",
     trajectory_points_.size(),
     global_waypoints_topic_.c_str());
