@@ -373,6 +373,8 @@ hyu_msgs::msg::WaypointArrayStamped PlannerNode::buildWaypointMessage(
     waypoint.kappa_radpm = point.kappa;
     waypoint.vx_mps = vx;
     waypoint.ax_mps2 = ax;
+    waypoint.d_left_m = point.d_left;
+    waypoint.d_right_m = point.d_right;
     msg.waypoints.push_back(waypoint);
   }
 

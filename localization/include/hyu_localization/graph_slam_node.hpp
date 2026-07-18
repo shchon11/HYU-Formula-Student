@@ -391,6 +391,13 @@ private:
   // corroborated pose with zero associations is a perception hiccup, not
   // "lost". 3 s = three missed 1 Hz anchor intervals before re-arming.
   double auto_relocalize_gnss_holdoff_sec_{3.0};
+  // Wrong-branch guard: a relocalization candidate is a scan match of as few
+  // as 3 cones, and autocross-style tracks repeat that pattern on parallel
+  // sections — accepting one 30-40 m off then SUPPRESSES the GNSS priors that
+  // could correct it (self-sealing mis-registration, observed on
+  // autocross_kase2026). Reject any candidate farther than this from a fresh,
+  // healthy GNSS fix. <= 0 disables.
+  double auto_relocalize_max_gnss_residual_m_{10.0};
   int lost_frames_{0};
   // Consecutive frames with >= 2 associations. A SINGLE match while lost is
   // routinely an aliased cone (on a 10 m kidnap some cone always falls in

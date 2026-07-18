@@ -45,6 +45,13 @@ public:
       "hyu_tmpc_output_bridge/steering_reject_factor", config_.steering_reject_factor);
     publish_rate_hz_ = declare_parameter<double>(
       "hyu_tmpc_output_bridge/publish_rate_hz", 100.0);
+    // First-order low-pass on the forwarded steering angle (0 disables). The
+    // LatAcc cascade dithers the raw request at ~5 Hz (measured 9.8 sign
+    // reversals/s from RTI jitter + INS acceleration noise); the old 0.2 s
+    // plant dead time masked this by accident. 0.05 s cuts the dither for a
+    // quarter of that lag, close to the 0.04 s actuator model the MPC assumes.
+    steering_lpf_tau_sec_ = declare_parameter<double>(
+      "hyu_tmpc_output_bridge/steering_lpf_tau_sec", 0.05);
 
     if (input_topic_.empty() || output_topic_.empty() || valid_topic_.empty()) {
       throw std::invalid_argument("input_topic, output_topic, and valid_topic must not be empty");
@@ -54,6 +61,9 @@ public:
     }
     if (!std::isfinite(publish_rate_hz_) || publish_rate_hz_ <= 0.0) {
       throw std::invalid_argument("publish_rate_hz must be finite and positive");
+    }
+    if (!std::isfinite(steering_lpf_tau_sec_) || steering_lpf_tau_sec_ < 0.0) {
+      throw std::invalid_argument("steering_lpf_tau_sec must be finite and non-negative");
     }
 
     const auto qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable().durability_volatile();
@@ -110,11 +120,29 @@ private:
     const double age_sec = has_input ? (now - input_time).seconds() : 0.0;
     const auto result = BuildCommand(input, has_input, age_sec, config_);
 
+    // Low-pass only a valid stream: on invalidity or the first valid sample the
+    // filter re-seeds from the raw command, so recovery never blends with a
+    // stale state and the safe-brake path stays untouched.
+    double steering_rad = result.command.steering_angle_rad;
+    if (result.valid() && steering_lpf_tau_sec_ > 0.0) {
+      const double dt = 1.0 / publish_rate_hz_;
+      if (lpf_seeded_) {
+        const double alpha = dt / (steering_lpf_tau_sec_ + dt);
+        lpf_steering_rad_ += alpha * (steering_rad - lpf_steering_rad_);
+      } else {
+        lpf_steering_rad_ = steering_rad;
+        lpf_seeded_ = true;
+      }
+      steering_rad = lpf_steering_rad_;
+    } else {
+      lpf_seeded_ = false;
+    }
+
     ackermann_msgs::msg::AckermannDriveStamped command;
     command.header.stamp = get_clock()->now();
     command.drive.speed = result.command.speed_mps;
     command.drive.acceleration = result.command.acceleration_mps2;
-    command.drive.steering_angle = result.command.steering_angle_rad;
+    command.drive.steering_angle = steering_rad;
     command_publisher_->publish(command);
 
     std_msgs::msg::Bool valid;
@@ -126,8 +154,8 @@ private:
         RCLCPP_INFO(get_logger(), "TMPC command state: valid");
       } else {
         RCLCPP_WARN(
-          get_logger(), "TMPC command state: %s; publishing safe brake",
-          CommandStateName(result.state));
+          get_logger(), "TMPC command state: %s (input age %.3fs); publishing safe brake",
+          CommandStateName(result.state), age_sec);
       }
       last_state_ = result.state;
       has_last_state_ = true;
@@ -139,6 +167,9 @@ private:
   std::string valid_topic_;
   ConversionConfig config_;
   double publish_rate_hz_{100.0};
+  double steering_lpf_tau_sec_{0.05};
+  double lpf_steering_rad_{0.0};
+  bool lpf_seeded_{false};
 
   std::mutex input_mutex_;
   MpcCommand latest_input_{};

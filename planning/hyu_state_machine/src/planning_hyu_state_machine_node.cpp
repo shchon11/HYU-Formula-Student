@@ -41,7 +41,10 @@ PlanningStateMachineNode::PlanningStateMachineNode()
   target_lap_count_ = declare_parameter<int>("target_lap_count", 4);
   initial_lap_count_ = declare_parameter<int>("initial_lap_count", 0);
   final_lap_start_count_ = declare_parameter<int>("final_lap_start_count", 3);
-  frenet_odom_timeout_sec_ = declare_parameter<double>("frenet_odom_timeout_sec", 0.5);
+  // 1.0 s (was 0.5): under sim load spikes the whole 100 Hz graph stalls
+  // 0.3-0.4 s at a time (measured 2026-07-19); 0.5 left the LOCAL->GLOBAL
+  // re-entry gate flapping on "frenet odom stale" after every demotion.
+  frenet_odom_timeout_sec_ = declare_parameter<double>("frenet_odom_timeout_sec", 1.0);
   global_path_valid_timeout_sec_ = declare_parameter<double>("global_path_valid_timeout_sec", 0.5);
   global_handoff_timeout_sec_ = declare_parameter<double>("global_handoff_timeout_sec", 0.5);
   global_entry_dwell_sec_ = declare_parameter<double>("global_entry_dwell_sec", 0.5);

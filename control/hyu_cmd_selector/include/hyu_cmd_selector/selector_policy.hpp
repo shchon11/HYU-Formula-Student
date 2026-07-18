@@ -52,6 +52,17 @@ struct SelectorConfig
   double tmpc_command_timeout_sec{0.1};
   double tmpc_valid_timeout_sec{0.1};
   double tmpc_ready_dwell_sec{0.1};
+  // Mid-drive freshness hold, the TMPC analog of local_forward_hold_sec: while
+  // TMPC is DRIVING, a pure freshness gap (both streams silent but the last
+  // valid payload was true) keeps the TMPC source selected for up to this long
+  // instead of ejecting. Under CPU load spikes the 100 Hz chain stalls for
+  // 0.30-0.36 s at a time, and every such blip forced a mid-corner handoff to
+  // Pure Pursuit — one of those inherited transients put the car off the
+  // track. The plant holds the last command anyway (and brakes itself after
+  // 1 s of silence); a real fault still ejects instantly because the valid
+  // PAYLOAD goes false on a fresh message. Must be >= the freshness timeouts
+  // to have any effect; <= 0 disables the hold.
+  double tmpc_forward_hold_sec{0.6};
   // Sanity envelope against a wrong-branch TMPC reference: with a fresh Pure
   // Pursuit command available, TMPC is only trusted while its steering agrees
   // with Pure Pursuit's to within this bound. A healthy tube MPC tracks the

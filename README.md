@@ -132,6 +132,23 @@ flowchart LR
 > 아래 전부 **새 컴퓨터 기준 처음부터**입니다. 워크스페이스 위치는 자유입니다
 > (예시는 `~/fsk`) — 스크립트·launch가 전부 자기 위치 기준으로 경로를 찾습니다.
 
+### ⚡ 한 방 부트스트랩 (권장)
+
+클론만 해두면 **이 스크립트 하나**가 아래 1~4단계(apt·rosdep·swap·python·opencv 스텁·
+commonroad-clcs·shellrc 소싱·빌드·패치 gazebo)를 전부, 멱등적으로 처리합니다. 이미 된 건
+건너뜁니다. 새 머신에서 흔히 밟는 함정(tmux 누락, ultralytics의 opencv-python 크래시, 저RAM
+빌드 프리즈, lo 멀티캐스트 없는 머신의 디스커버리 멈춤)을 자동으로 피합니다.
+
+```bash
+mkdir -p ~/fsk && cd ~/fsk
+git clone <repo-url> src
+bash src/scripts/setup.sh              # 전체 (패치 gazebo 소스 빌드 ~30분 포함)
+# bash src/scripts/setup.sh --skip-gazebo   # 패치 gazebo 생략(stock으로 실행)
+# FSK_JOBS=2 bash src/scripts/setup.sh       # 빌드 병렬성 더 낮추기(저사양)
+```
+
+끝나면 **새 터미널**을 열고 `race sim`. 수동으로 단계별로 하고 싶으면 아래를 그대로 따르세요.
+
 ### 0. 클론
 
 ```bash
@@ -152,10 +169,13 @@ sudo apt update && sudo apt install -y \
   python3-colcon-common-extensions python3-rosdep python3-vcstool \
   gazebo ros-humble-gazebo-dev ros-humble-gazebo-ros ros-humble-gazebo-plugins \
   ros-humble-sbg-driver ros-humble-libg2o ros-humble-rviz-2d-overlay-plugins \
-  python3-pandas python3-opencv \
+  python3-pandas python3-opencv tmux \
   libeigen3-dev libboost-dev libspdlog-dev libomp-dev
+#                                    ^^^^ tmux: race.sh의 5-pane 런처에 필수
 
 sudo rosdep init 2>/dev/null; rosdep update   # 최초 1회
+# 이후 rosdep이 ros-humble-ackermann-msgs · python3-sklearn도 끌어옵니다:
+#   rosdep install --from-paths src --ignore-src -r -y
 ```
 
 | 패키지 | 쓰는 곳 |
@@ -201,6 +221,14 @@ python3 -m pip install --user quadprog
 /usr/bin/python3 -m pip install --user torch torchvision --index-url https://download.pytorch.org/whl/cu124  # GPU
 /usr/bin/python3 -m pip install --user ultralytics "numpy<2"   # numpy<2 = ROS/cv_bridge ABI 호환
 /usr/bin/python3 -m pip uninstall -y opencv-python              # 시스템 cv2 사용
+
+# ⚠️ 위 uninstall 뒤엔 opencv-python이 ultralytics의 메타데이터 의존성으로 남아,
+#    hyu_perception 콘솔 스크립트(perception_node)가 시작 시 pkg_resources.require()에서
+#    DistributionNotFound로 즉사합니다 (bare `import ultralytics`는 검사를 안 해서 통과).
+#    perception은 cv2를 이미지 변환에 안 쓰므로(np.frombuffer) 실제 모듈 대신 빈 스텁으로
+#    메타데이터 검사만 만족시킵니다 — 시스템 cv2는 그대로 유지:
+DI=~/.local/lib/python3.10/site-packages/opencv_python-4.11.0.86.dist-info
+mkdir -p "$DI"; printf 'Metadata-Version: 2.1\nName: opencv-python\nVersion: 4.11.0.86\n' > "$DI/METADATA"; : > "$DI/RECORD"
 ```
 
 > 기본 `race`는 CUDA YOLO+LiDAR perception을 실행합니다. GraphSLAM이 `map` TF를 소유하므로 real perception의 cross-time 보정 프레임은 기본 `odom`입니다. Gazebo simulated `/perception/cones`만 쓰려면 `race sim` 또는 `perception_mode:=sim`을 명시합니다.
@@ -215,6 +243,13 @@ rosdep install --from-paths src --ignore-src -r -y
 colcon build --symlink-install --base-paths src
 ```
 
+> ⚠️ **RAM이 적고(≤16 GB) swap이 없는 머신은 빌드 중 프리즈**할 수 있습니다. g2o·CLCS/Eigen
+> 템플릿·패치 gazebo 소스가 코어 수만큼 병렬 컴파일되며 메모리를 고갈시키기 때문. 8 GB swap을
+> 미리 잡고(`sudo fallocate -l 8G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile
+> && sudo swapon /swapfile`, `/etc/fstab`에 `/swapfile none swap sw 0 0` 추가) 병렬성을 제한하세요:
+> `MAKEFLAGS="-j4" colcon build --symlink-install --base-paths src --parallel-workers 2`. 패치
+> gazebo도 `JOBS=4 MAKEFLAGS=-j4`로. 둘 다 크래시 후 재실행하면 증분 재개됩니다.
+
 ### 4. Shell aliases — 한 줄이면 끝
 
 `~/.bashrc` 또는 `~/.zshrc` 맨 아래에 **이 한 줄**만 추가하세요 (bash·zsh 공용):
@@ -226,7 +261,17 @@ source ~/fsk/src/scripts/fsk-shellrc
 이 파일이 자기 위치에서 워크스페이스를 찾아 `EUFS_MASTER`·`COMMONROAD_CLCS_DIR`·
 `ROS_LOCALHOST_ONLY`를 설정하고 ROS/워크스페이스를 소싱하고, **패치 Gazebo가 있으면
 자동 활성화**(`~/opt/gazebo11-fsk` + `GAZEBO_GPU_LASER_TEX_MIN=8192`)한 뒤, 아래
-함수들을 등록합니다:
+함수들을 등록합니다. 아울러 두 가지 **머신 튜닝**을 겁니다(전부 `${VAR:-default}`라
+소싱 전에 export하면 덮어쓸 수 있음):
+
+- **CPU 스레드 상한** — `OMP_NUM_THREADS=4`, `OMP_WAIT_POLICY=passive`,
+  `OPENBLAS/MKL/NUMEXPR_NUM_THREADS=4`. 이게 없으면 numpy/scipy/sklearn(perception
+  콘 클러스터링)과 g2o가 각자 OpenMP/BLAS 풀을 **코어 수만큼** 띄워, 코어 많은 머신에서
+  과다구독으로 스래싱합니다 (16코어 랩탑에서 `perception_node` 혼자 ~900% CPU를 먹고
+  gzserver를 굶겨 "차가 안 뜨는" 증상). 아래 Troubleshooting 참고.
+- **GPU 렌더 offload** — NVIDIA GLX가 있으면 `__NV_PRIME_RENDER_OFFLOAD=1` +
+  `__GLX_VENDOR_LIBRARY_NAME=nvidia`. iGPU+dGPU 랩탑에서 gzserver의 gpu_ray와 rviz가
+  기본으로 iGPU(Mesa)를 잡아 dGPU가 놀기 때문 — 이걸로 RTX에 태웁니다.
 
 | 명령 | 역할 |
 |---|---|
@@ -462,6 +507,53 @@ planning/
 ---
 
 ## 🩹 Troubleshooting
+
+<details>
+<summary><b>CPU가 폭주하고 차가 안 뜸 (load가 코어 수까지 치솟음)</b></summary>
+
+`perception_node`가 900%+ CPU(코어 여러 개)를 먹으며 gzserver를 굶기는 게 원인. YOLO 문제가
+**아니라**(YOLO는 GPU) numpy/scipy/**sklearn 콘 클러스터링**의 OpenMP/BLAS 풀이 기본으로
+**코어 수만큼** 스레드를 띄워 생긴 과다구독입니다 — 코어가 많을수록 팀이 커져 **오히려 더**
+스래싱합니다(스핀 낭비가 아니라 실제 병렬 연산의 오버서브스크립션). 확인:
+`ps -o pcpu,nlwp -p $(pgrep -f hyu_perception/lib/.*/perception_node)`.
+
+`fsk-shellrc`가 `OMP_NUM_THREADS=4`(+`OMP_WAIT_POLICY=passive`, `OPENBLAS/MKL/NUMEXPR_NUM_THREADS`)로
+캡을 겁니다 — shellrc를 소싱하고 `race`를 실행하면 적용됩니다(16코어 랩탑 실측: perception_node
+1182% → 214%, load 20 → 3). shellrc를 안 쓰면 `race` 전에 직접 export 하세요.
+</details>
+
+<details>
+<summary><b>Gazebo가 dGPU(RTX)를 안 쓰고 iGPU로 렌더 / nvidia-smi에 gzserver가 없음</b></summary>
+
+iGPU+dGPU 랩탑에서 gzserver가 기본으로 Mesa(iGPU) GLX를 잡습니다 — gpu_ray LiDAR 레이캐스트가
+약한 iGPU에서 돌아 느립니다. 확인:
+`grep -o libGLX_mesa /proc/$(pgrep -x gzserver)/maps` (mesa면 iGPU) · `nvidia-smi` 프로세스
+목록에 gzserver 없음. `fsk-shellrc`가 `__NV_PRIME_RENDER_OFFLOAD=1` +
+`__GLX_VENDOR_LIBRARY_NAME=nvidia`로 GL을 RTX에 태웁니다(실측: gzserver가 nvidia-smi에
+`G ... 1.7 GiB`로 등장, `/proc/.../maps`에 `libGLX_nvidia`). 되돌리려면 그 두 변수를 unset.
+</details>
+
+<details>
+<summary><b><code>perception_node</code>가 <code>DistributionNotFound: opencv-python ... required by ultralytics</code>로 즉사</b></summary>
+
+Setup 2c에서 `opencv-python`(pip)을 제거했는데 ultralytics가 이걸 메타데이터 의존성으로
+선언해서, 콘솔 스크립트가 시작 시 `pkg_resources.require()`에서 터집니다(bare `import
+ultralytics`는 검사를 안 해 통과). perception은 cv2를 안 쓰므로 빈 스텁 dist-info로 검사만
+만족시키면 됩니다 — Setup **2c**의 스텁 생성 블록 참고. 시스템 cv2는 그대로 유지됩니다.
+</details>
+
+<details>
+<summary><b>모든 pane이 "waiting for car…"에서 멈춤 / <code>ros2 topic list</code>에 /rosout만 보임</b></summary>
+
+DDS 디스커버리 실패입니다. 이 stack은 `ROS_LOCALHOST_ONLY=1`(loopback 전용)로 도는데,
+**`lo`에 MULTICAST 플래그가 없는 머신**에선 별도 프로세스(=각 race pane)끼리 서로를 못 찾아
+`ros2 node list`가 영원히 race_car를 못 봅니다. 확인: `ip link show lo` (MULTICAST 없으면 이 문제).
+근본 fix는 이미 들어가 있습니다 — launch 파일들이 `ROS_LOCALHOST_ONLY`를 환경변수(`fsk-shellrc`/
+`race.sh`가 lo 멀티캐스트로 자동 감지)로 존중하도록 바뀌어, 그런 머신에선 자동으로 `=0`으로 뜹니다.
+그래도 안 되면: ① `sudo ip link set lo multicast on`으로 loopback 멀티캐스트를 켜거나(=1 유지),
+② 예전 `=1` 실행이 남긴 stale 데몬 캐시일 수 있으니 `ros2 daemon stop`. `race`는 실제 터미널에서
+실행하세요(tmux 세션은 attach로 유지됩니다).
+</details>
 
 <details>
 <summary><b>차가 안 움직임</b></summary>

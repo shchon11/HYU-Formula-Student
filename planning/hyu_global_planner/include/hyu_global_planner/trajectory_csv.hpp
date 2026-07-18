@@ -18,6 +18,10 @@ struct TrajectoryPoint
   double kappa{0.0};
   double velocity{0.0};
   double acceleration{0.0};
+  // Optional CSV columns 8/9 (d_left_m; d_right_m): distance to the track
+  // boundary on each side of the travel direction. 0 = unknown.
+  double d_left{0.0};
+  double d_right{0.0};
 };
 
 struct TrajectoryValidationOptions

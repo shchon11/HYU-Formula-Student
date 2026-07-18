@@ -273,4 +273,4 @@ graph_slam:
     # loop_gap_distance of travel apart (a stale twin from failed association
     # under drift). Distance alone cannot do this — real same-color cones
     # stand as close as ~1.0 m in tight corners.
-    freeze_merge_stale_distance_m: 2.0
+    freeze_merge_stale_distance_m: 4.5

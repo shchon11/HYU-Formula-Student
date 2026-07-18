@@ -7,7 +7,7 @@ from launch.actions import OpaqueFunction
 from launch.actions import SetEnvironmentVariable
 from launch.actions import SetLaunchConfiguration
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration
 from launch.substitutions import PathJoinSubstitution
 from launch.substitutions import PythonExpression
 from launch.launch_description_sources import FrontendLaunchDescriptionSource
@@ -264,7 +264,11 @@ def generate_launch_description():
 
         DeclareLaunchArgument(
             name='ros_localhost_only',
-            default_value='1',
+            # Respect the ambient env (fsk-shellrc / race.sh set it by whether
+            # `lo` has MULTICAST — =1 loopback discovery breaks on hosts without
+            # it). Falls back to '1' only when nothing set it.
+            default_value=EnvironmentVariable(
+                'ROS_LOCALHOST_ONLY', default_value='1'),
             description="Limit ROS discovery to localhost"),
 
         DeclareLaunchArgument(
@@ -372,6 +376,22 @@ def generate_launch_description():
                 ('publish_gt_tf', LaunchConfiguration('publish_gt_tf')),
                 ('pub_ground_truth', LaunchConfiguration('pub_ground_truth')),
                 ('launch_group', LaunchConfiguration('launch_group')),
+                # /clock rate. gazebo_ros_init defaults to publishing /clock at
+                # 10 Hz, so every use_sim_time node sees time advance in 100 ms
+                # jumps — the same size as the control chain's 0.1 s freshness
+                # gates, which then trip on ordinary callback interleaving
+                # (measured: TMPC ejected with age exactly 0.200 s while its
+                # valid heartbeat payload was still true). 250 Hz makes sim-time
+                # ages resolve at 4 ms. The configuration propagates through the
+                # track .launch include down to gazebo_ros's gzserver.launch.py,
+                # whose params_file arg expands to a properly tokenized
+                # `--ros-args --params-file <file> --`. Do NOT pass this via
+                # extra_gazebo_args: that arrives as ONE argv token (cmd list,
+                # shell=False), rclcpp never sees a literal --ros-args, and the
+                # override is silently ignored (measured: param stayed 10.0).
+                ('params_file', PathJoinSubstitution([
+                    get_package_share_directory('eufs_launcher'),
+                    'config', 'gazebo_ros_clock.yaml'])),
                 *perception_launch_arguments,
             ]
         ),

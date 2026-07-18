@@ -236,6 +236,59 @@ TEST(TmpcTrajectoryBuilderTest, EmergencyCopiesGeometryAndEndsBelowHalfMeterPerS
   }
 }
 
+TEST(TmpcTrajectoryBuilderTest, DerivesPerPointTubeFromBoundaryDistances)
+{
+  static wpnt_publisher::PathSnapshot path;
+  path = makeCircle(100U, 20.0, 5.0);
+  for (auto & waypoint : path.waypoints) {
+    waypoint.d_left_m = 2.5;   // 2.5 - 0.8 = 1.7 -> capped at tube_max_m
+    waypoint.d_right_m = 1.0;  // 1.0 - 0.8 = 0.2 -> floored at tube_r_m
+  }
+
+  BuilderConfig config;
+  config.tube_l_m = 0.6;
+  config.tube_r_m = 0.6;
+  config.tube_margin_m = 0.8;
+  config.tube_max_m = 1.5;
+  TmpcTrajectoryBuilder builder(config, makeGgv());
+  BuildInput input;
+  input.path = &path;
+  input.current_s_m = 5.0;
+  input.current_speed_mps = 5.0;
+  input.lap_cnt = 3U;
+  input.traj_cnt = 7U;
+  const BuildResult result = builder.build(input);
+  ASSERT_TRUE(result.success) << result.error;
+  for (std::size_t i = 0U; i < kTrajectoryPointCount; ++i) {
+    EXPECT_DOUBLE_EQ(result.performance.tube_l_m[i], 1.5);
+    EXPECT_DOUBLE_EQ(result.performance.tube_r_m[i], 0.6);
+  }
+
+  // In-range distance maps linearly: 1.7 - 0.8 = 0.9.
+  for (auto & waypoint : path.waypoints) {
+    waypoint.d_left_m = 1.7;
+  }
+  const BuildResult in_range = builder.build(input);
+  ASSERT_TRUE(in_range.success) << in_range.error;
+  for (std::size_t i = 0U; i < kTrajectoryPointCount; ++i) {
+    EXPECT_NEAR(in_range.performance.tube_l_m[i], 0.9, 1.0e-12);
+  }
+}
+
+TEST(TmpcTrajectoryBuilderTest, FallsBackToConstantTubeWhenBoundaryDistanceUnknown)
+{
+  // makeCircle leaves d_left_m/d_right_m at 0 (= unknown).
+  BuilderConfig config;
+  config.tube_l_m = 0.6;
+  config.tube_r_m = 0.7;
+  const BuildResult result = buildCircle(100U, 5.0, 5.0, 5.0, config);
+  ASSERT_TRUE(result.success) << result.error;
+  for (std::size_t i = 0U; i < kTrajectoryPointCount; ++i) {
+    EXPECT_DOUBLE_EQ(result.performance.tube_l_m[i], 0.6);
+    EXPECT_DOUBLE_EQ(result.performance.tube_r_m[i], 0.7);
+  }
+}
+
 TEST(TmpcTrajectoryBuilderTest, RecomputesAccelerationFromFinalVelocityAndLocalS)
 {
   const BuildResult result = buildCircle(100U);

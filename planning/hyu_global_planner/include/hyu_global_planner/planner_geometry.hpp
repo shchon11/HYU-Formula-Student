@@ -22,6 +22,10 @@ struct PlannerWaypoint
   double s{0.0};
   double psi{0.0};
   double kappa{0.0};
+  // Distance to the track boundary on each side of the travel direction
+  // (left = +90 deg from psi). 0 = unknown.
+  double d_left{0.0};
+  double d_right{0.0};
 };
 
 double distance(const PlannerPoint & a, const PlannerPoint & b);

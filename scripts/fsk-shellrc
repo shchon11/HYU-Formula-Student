@@ -20,7 +20,43 @@ export EUFS_MASTER="${EUFS_MASTER:-$(cd "$_fsk_src_dir/.." && pwd)}" # workspace
 
 # --- environment -------------------------------------------------------------
 export COMMONROAD_CLCS_DIR="${COMMONROAD_CLCS_DIR:-$HOME/commonroad-clcs}"
-export ROS_LOCALHOST_ONLY="${ROS_LOCALHOST_ONLY:-1}"
+# ROS_LOCALHOST_ONLY=1 (loopback-only) DDS discovery needs the MULTICAST flag on
+# `lo`. Some hosts ship lo without it, and then =1 silently kills cross-process
+# discovery — `ros2 topic list` shows only /rosout and every `race` pane hangs
+# on "waiting for car". Detect it: keep =1 (isolated) when lo has MULTICAST,
+# else fall back to =0 (real interfaces, which do carry multicast).
+if ip link show lo 2>/dev/null | grep -q "MULTICAST"; then
+  export ROS_LOCALHOST_ONLY="${ROS_LOCALHOST_ONLY:-1}"
+else
+  export ROS_LOCALHOST_ONLY="${ROS_LOCALHOST_ONLY:-0}"
+fi
+
+# --- CPU thread caps ---------------------------------------------------------
+# This stack runs many ROS nodes at once, and numpy/scipy/sklearn (perception
+# cone clustering) plus g2o each default their OpenMP/BLAS pools to the FULL
+# core count. On a many-core box those pools oversubscribe and thrash: on a
+# 16-core laptop perception_node alone hit ~900% CPU (real parallel work, not
+# spin — a bigger core count just spawns a bigger team), starving gzserver so
+# the car "won't spawn" and the sim stalls. A single frame's DBSCAN/plane-fit
+# needs only a few threads. Override before sourcing if you really want more.
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
+export OMP_WAIT_POLICY="${OMP_WAIT_POLICY:-passive}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-4}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-4}"
+export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-4}"
+
+# --- GPU render offload (hybrid laptops) -------------------------------------
+# On an iGPU+dGPU laptop (this box is AMD iGPU + NVIDIA RTX) gzserver's gpu_ray
+# and rviz pick the Mesa/iGPU GLX by default, leaving the RTX idle — the LiDAR
+# raycast then runs on the weak iGPU. Verify with:
+#   grep -o libGLX_mesa /proc/$(pgrep -x gzserver)/maps   # mesa = iGPU (bad)
+#   nvidia-smi          # gzserver absent from the process list = not on dGPU
+# Route GL to the NVIDIA card. No-op when there is no NVIDIA GLX vendor.
+if [ -e /usr/lib/x86_64-linux-gnu/libGLX_nvidia.so.0 ] && command -v nvidia-smi >/dev/null 2>&1; then
+  export __NV_PRIME_RENDER_OFFLOAD="${__NV_PRIME_RENDER_OFFLOAD:-1}"
+  export __GLX_VENDOR_LIBRARY_NAME="${__GLX_VENDOR_LIBRARY_NAME:-nvidia}"
+  export __VK_LAYER_NV_optimus="${__VK_LAYER_NV_optimus:-NVIDIA_only}"
+fi
 
 [ -f "/opt/ros/humble/setup.$_fsk_ext" ] && source "/opt/ros/humble/setup.$_fsk_ext"
 [ -f "$EUFS_MASTER/install/setup.$_fsk_ext" ] && source "$EUFS_MASTER/install/setup.$_fsk_ext"

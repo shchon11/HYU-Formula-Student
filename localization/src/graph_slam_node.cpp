@@ -587,6 +587,8 @@ void GraphSlamNode::declareRecoveryParameters()
     "auto_relocalize_cooldown_sec", auto_relocalize_cooldown_sec_);
   auto_relocalize_gnss_holdoff_sec_ = declare_parameter<double>(
     "auto_relocalize_gnss_holdoff_sec", auto_relocalize_gnss_holdoff_sec_);
+  auto_relocalize_max_gnss_residual_m_ = declare_parameter<double>(
+    "auto_relocalize_max_gnss_residual_m", auto_relocalize_max_gnss_residual_m_);
 
   gate_anchor_enable_ =
     declare_parameter<bool>("gate_anchor_enable", gate_anchor_enable_);
@@ -1121,6 +1123,42 @@ void GraphSlamNode::maybeAutoRelocalize(
     auto_relocalize_current_radius_ = std::min(
       auto_relocalize_max_search_radius_, auto_relocalize_current_radius_ * 2.0);
     return;
+  }
+
+  // Wrong-branch guard: a 3-5 cone scan match can fit a PARALLEL track
+  // section, and acceptance below suppresses the GNSS priors that could pull
+  // it back — a wrong candidate self-seals (observed on autocross_kase2026:
+  // relocalized ~40 m off, GNSS rejected forever at believed sigma 0.01 m).
+  // Cross-check the candidate against a fresh, healthy GNSS fix; the INS'
+  // correlated excursions are metre-scale, so a candidate this far out is the
+  // match being wrong, not the GNSS.
+  if (auto_relocalize_max_gnss_residual_m_ > 0.0) {
+    GnssFix fix;
+    {
+      std::lock_guard<std::mutex> lock(gnss_mutex_);
+      fix = latest_gnss_fix_;
+    }
+    const bool fix_fresh = fix.valid &&
+      (gnss_prior_max_age_ <= 0.0 ||
+      std::abs(now - fix.stamp_sec) <= gnss_prior_max_age_) &&
+      fix.sigma_x > 0.0 && fix.sigma_y > 0.0 &&
+      fix.sigma_x <= gnss_prior_max_position_sigma_ &&
+      fix.sigma_y <= gnss_prior_max_position_sigma_;
+    if (fix_fresh) {
+      const double gnss_residual = (refined.translation() - fix.position).norm();
+      if (gnss_residual > auto_relocalize_max_gnss_residual_m_) {
+        RCLCPP_WARN(
+          get_logger(),
+          "Auto relocalization candidate rejected: %d/%zu inliers but %.1f m "
+          "from the GNSS fix (> %.1f m) — wrong-branch scan match; escalating",
+          inliers, last_observations_.size(), gnss_residual,
+          auto_relocalize_max_gnss_residual_m_);
+        auto_relocalize_current_radius_ = std::min(
+          auto_relocalize_max_search_radius_,
+          auto_relocalize_current_radius_ * 2.0);
+        return;
+      }
+    }
   }
 
   // A recovered pose is a competing absolute reference, exactly like a

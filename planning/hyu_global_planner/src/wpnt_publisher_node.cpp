@@ -53,6 +53,8 @@ WpntPublisher::WpntPublisher(const rclcpp::NodeOptions & options)
   const double tmpc_banking_rad = declare_parameter<double>("tmpc_banking_rad", 0.0);
   const double tmpc_tube_l_m = declare_parameter<double>("tmpc_tube_l_m", 0.1);
   const double tmpc_tube_r_m = declare_parameter<double>("tmpc_tube_r_m", 0.1);
+  const double tmpc_tube_margin_m = declare_parameter<double>("tmpc_tube_margin_m", 0.8);
+  const double tmpc_tube_max_m = declare_parameter<double>("tmpc_tube_max_m", 1.5);
   const double tmpc_emergency_decel_scale =
     declare_parameter<double>("tmpc_emergency_decel_scale", 0.95);
   const double tmpc_emergency_final_speed_mps =
@@ -113,6 +115,8 @@ WpntPublisher::WpntPublisher(const rclcpp::NodeOptions & options)
   builder_config.banking_rad = tmpc_banking_rad;
   builder_config.tube_l_m = tmpc_tube_l_m;
   builder_config.tube_r_m = tmpc_tube_r_m;
+  builder_config.tube_margin_m = tmpc_tube_margin_m;
+  builder_config.tube_max_m = tmpc_tube_max_m;
   builder_config.emergency_decel_scale = tmpc_emergency_decel_scale;
   builder_config.emergency_final_speed_mps = tmpc_emergency_final_speed_mps;
   builder_config.minimum_adjacent_distance_m = tmpc_min_sample_distance_m;

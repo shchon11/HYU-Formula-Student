@@ -9,7 +9,7 @@ import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration
 from launch.substitutions import PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
@@ -156,7 +156,8 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "ros_localhost_only",
-                default_value="1",
+                default_value=EnvironmentVariable(
+                    'ROS_LOCALHOST_ONLY', default_value='1'),
                 description="Limit ROS discovery to localhost.",
             ),
             DeclareLaunchArgument(

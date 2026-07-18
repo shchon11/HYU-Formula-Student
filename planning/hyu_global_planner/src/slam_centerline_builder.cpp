@@ -640,9 +640,44 @@ static bool buildCenterlineFromSeed(
   waypoints.clear();
   waypoints.reserve(resampled.size());
   for (const auto & point : resampled) {
-    waypoints.push_back(PlannerWaypoint{point.x, point.y, 0.0, 0.0, 0.0});
+    waypoints.push_back(PlannerWaypoint{point.x, point.y, 0.0, 0.0, 0.0, 0.0, 0.0});
   }
   computeWaypointGeometry(waypoints);
+
+  // Boundary distances per waypoint, decided by which SIDE of the travel
+  // direction the nearest boundary point falls on rather than by cone colour:
+  // the ordering walk fixes the lap direction from the seed, so blue may end up
+  // on either side. A boundary projecting onto the wrong side (degenerate
+  // geometry near the seam) simply does not cap that side and it stays 0
+  // (= unknown), which downstream consumers treat as "use the configured
+  // constant".
+  // Close each boundary ring for the distance query: the ordering walk stores
+  // the ring without repeating its first cone, so the seam segment
+  // back()->front() would otherwise be missing and waypoints near the
+  // start/finish would measure to the nearest VERTEX instead — overestimating
+  // the clearance exactly where the gate sits.
+  std::vector<PlannerPoint> closed_blue = ordered_blue;
+  std::vector<PlannerPoint> closed_yellow = ordered_yellow;
+  for (auto * ring : {&closed_blue, &closed_yellow}) {
+    if (ring->size() >= 2U &&
+      distance(ring->front(), ring->back()) > config.duplicate_point_tolerance)
+    {
+      ring->push_back(ring->front());
+    }
+  }
+  for (auto & waypoint : waypoints) {
+    const PlannerPoint at{waypoint.x, waypoint.y};
+    const PlannerPoint left_normal{-std::sin(waypoint.psi), std::cos(waypoint.psi)};
+    for (const auto * boundary : {&closed_blue, &closed_yellow}) {
+      const PlannerPoint closest = closestPointOnPolyline(at, *boundary);
+      const double clearance = distance(at, closest);
+      const double side =
+        (closest.x - at.x) * left_normal.x + (closest.y - at.y) * left_normal.y;
+      double & d_side = side >= 0.0 ? waypoint.d_left : waypoint.d_right;
+      d_side = d_side > 0.0 ? std::min(d_side, clearance) : clearance;
+    }
+  }
+
   return validateWaypoints(waypoints, config.duplicate_point_tolerance, reason);
 }
 

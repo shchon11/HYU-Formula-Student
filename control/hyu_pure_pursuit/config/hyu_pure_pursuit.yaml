@@ -16,7 +16,7 @@ hyu_pure_pursuit_node:
     max_steering_rad: 0.52
     command_rate_hz: 20.0
     input_timeout_sec: 0.5
-    max_speed_mps: 10.0
+    max_speed_mps: 15.0
     longitudinal_kp: 1.2
     min_acceleration_mps2: -8.0
     max_acceleration_mps2: 2.5
@@ -28,8 +28,8 @@ hyu_pure_pursuit_node:
     # tightest corner. max binds at speed by design (0.8 + 0.55*10 = 6.3 -> 5.0);
     # min keeps L_d long enough to not oscillate. TUNE ON TRACK against
     # /planning/cte_rmse.
-    map_lookahead_slope_s: 0.55
-    map_lookahead_intercept_m: 0.8
+    map_lookahead_slope_s: 0.4
+    map_lookahead_intercept_m: 0.6
     map_lookahead_min_m: 1.5
     map_lookahead_max_m: 5.0
     # planned = feed-forward off the path speed (robust near standstill);

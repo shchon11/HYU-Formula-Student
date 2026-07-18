@@ -78,8 +78,17 @@ struct BuilderConfig
   double start_behind_m{0.5};
 
   double banking_rad{0.0};
+  // Corridor half-widths handed to the tube MPC. When a waypoint carries
+  // per-point boundary distances (Waypoint d_left_m/d_right_m > 0) the tube is
+  // derived from them as clamp(d - tube_margin_m, tube_*_m, tube_max_m):
+  // tube_margin_m covers car half-width + safety, tube_*_m stays the floor
+  // (the tube must exceed the tracking-error envelope or the QP rides the
+  // constraint into infeasibility) and doubles as the fallback where the
+  // distances are unknown (0).
   double tube_l_m{0.1};
   double tube_r_m{0.1};
+  double tube_margin_m{0.8};
+  double tube_max_m{1.5};
 
   // Cap on the performance-trajectory reference speed (<= 0 disables). The
   // raceline speeds are what the plant can hold under the MAP steering law;

@@ -1,3 +1,12 @@
 # v_mps,ax_max_mps2,ay_max_mps2,ax_decel_max_mps2
-0.0,11.772,20.6428571429,9.81
-8.5,11.772,20.6428571429,9.81
+# Matched to the eufs_sim plant 2026-07-18 (was the TUM car's 11.772/20.64/9.81):
+# ay_max 12.0 = ~76% of the sim tire limit (Pacejka D=1.6 -> 15.7 m/s^2); it
+#   also sizes the LatAcc integrator anti-windup budget in the TMPC, so the
+#   inflated 20.64 directly fed the steering oscillation.
+# ax_max stays 9.81: the trajectory builder's L1 utilization check divides
+#   |ax| by ax_max REGARDLESS OF SIGN, so this column must cover the corner
+#   BRAKING demand (planner decel 5 + drag) - 3.0 here rejected every
+#   trajectory ("performance=0" starvation). The plant's +3 m/s^2 accel cap is
+#   enforced by the planner's max_accel and the output-bridge clamp instead.
+0.0,9.81,12.0,9.81
+8.5,9.81,12.0,9.81

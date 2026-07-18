@@ -58,7 +58,7 @@ ARGUMENTS = (
     ("enable_controller", "true", "Start the Pure Pursuit controller."),
     (
         "controller_max_speed_mps",
-        "10.0",
+        "15.0",
         "Pure Pursuit speed cap override (trackdrive yaml default 10.0). The TMPC "
         "hybrid launch lowers it to the TMPC reference cap so takeover/fallback "
         "hand the tube MPC a state inside its feasible envelope.",

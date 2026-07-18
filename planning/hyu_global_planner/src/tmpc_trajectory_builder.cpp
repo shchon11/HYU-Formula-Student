@@ -112,6 +112,8 @@ struct InterpolatedPoint
   double psi_rad{0.0};
   double kappa_radpm{0.0};
   double v_mps{0.0};
+  double d_left_m{0.0};
+  double d_right_m{0.0};
 };
 
 bool validatePathSnapshot(
@@ -220,6 +222,14 @@ bool interpolatePeriodic(
   output->kappa_radpm = lerp(
     lower_waypoint.kappa_radpm, upper_waypoint.kappa_radpm);
   output->v_mps = lerp(lower_waypoint.vx_mps, upper_waypoint.vx_mps);
+  // Boundary distances only interpolate between two KNOWN samples; a segment
+  // touching an unknown (0) endpoint stays unknown rather than lerping toward
+  // a fictitious zero-width track.
+  const auto lerp_distance = [&lerp](double lower, double upper_value) {
+      return lower > 0.0 && upper_value > 0.0 ? lerp(lower, upper_value) : 0.0;
+    };
+  output->d_left_m = lerp_distance(lower_waypoint.d_left_m, upper_waypoint.d_left_m);
+  output->d_right_m = lerp_distance(lower_waypoint.d_right_m, upper_waypoint.d_right_m);
 
   if (!std::isfinite(output->x_m) || !std::isfinite(output->y_m) ||
     !std::isfinite(output->psi_rad) || !std::isfinite(output->kappa_radpm) ||
@@ -254,6 +264,17 @@ void fillLimits(
     trajectory->ax_lim_mps2[i] = limits.ax_mps2;
     trajectory->ay_lim_mps2[i] = limits.ay_mps2;
   }
+}
+
+double tubeFromBoundaryDistance(
+  double distance_m, double fallback_tube_m, const BuilderConfig & config)
+{
+  if (!std::isfinite(distance_m) || !(distance_m > 0.0)) {
+    return fallback_tube_m;
+  }
+  return std::clamp(
+    distance_m - config.tube_margin_m,
+    fallback_tube_m, std::max(fallback_tube_m, config.tube_max_m));
 }
 
 bool buildPerformance(
@@ -296,8 +317,8 @@ bool buildPerformance(
     output.v_mps[i] = config.performance_speed_cap_mps > 0.0 ?
       std::min(point.v_mps, config.performance_speed_cap_mps) : point.v_mps;
     output.banking_rad[i] = config.banking_rad;
-    output.tube_l_m[i] = config.tube_l_m;
-    output.tube_r_m[i] = config.tube_r_m;
+    output.tube_l_m[i] = tubeFromBoundaryDistance(point.d_left_m, config.tube_l_m, config);
+    output.tube_r_m[i] = tubeFromBoundaryDistance(point.d_right_m, config.tube_r_m, config);
 
     if (i == 0U) {
       output.s_loc_m[i] = 0.0;
@@ -558,7 +579,9 @@ bool TmpcTrajectoryBuilder::valid(std::string * error) const
   }
   if (!std::isfinite(config_.banking_rad) ||
     !std::isfinite(config_.tube_l_m) || config_.tube_l_m < 0.0 ||
-    !std::isfinite(config_.tube_r_m) || config_.tube_r_m < 0.0)
+    !std::isfinite(config_.tube_r_m) || config_.tube_r_m < 0.0 ||
+    !std::isfinite(config_.tube_margin_m) || config_.tube_margin_m < 0.0 ||
+    !std::isfinite(config_.tube_max_m) || config_.tube_max_m < 0.0)
   {
     setError(error, "TMPC banking and tube parameters must be finite and tubes non-negative.");
     return false;

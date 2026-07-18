@@ -142,6 +142,8 @@ hyu_msgs::msg::WaypointArrayStamped GlobalPlannerTrajectoryPublisherNode::buildW
     waypoint.kappa_radpm = point.kappa;
     waypoint.vx_mps = point.velocity;
     waypoint.ax_mps2 = point.acceleration;
+    waypoint.d_left_m = point.d_left;
+    waypoint.d_right_m = point.d_right;
     msg.waypoints.push_back(waypoint);
   }
 

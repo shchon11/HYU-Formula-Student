@@ -1,0 +1,14 @@
+# /clock publisher rate for gazebo_ros_init (node "gazebo" inside gzserver).
+#
+# The gazebo_ros default is 10 Hz, which makes every use_sim_time node see time
+# advance in 100 ms jumps. The 100 Hz control chain (TMPC -> output bridge ->
+# command selector) polices freshness with 0.1-0.3 s budgets, so a couple of
+# delayed /clock deliveries read as a 0.2-0.3 s age spike on EVERY input at
+# once and eject a healthy TMPC mid-corner (measured signature: all ages exact
+# clock-quantum multiples with valid_payload=1). 250 Hz resolves ages at 4 ms.
+#
+# Passed to gzserver via extra_gazebo_args in simulation.launch.py:
+#   --ros-args --params-file <this file>
+gazebo:
+  ros__parameters:
+    publish_rate: 250.0

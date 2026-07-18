@@ -20,3 +20,10 @@ float64 psi_rad       # heading [rad]
 float64 kappa_radpm   # curvature [rad/m]
 float64 vx_mps        # target longitudinal velocity [m/s]
 float64 ax_mps2       # target longitudinal acceleration [m/s^2]
+
+# Lateral distance from this waypoint to the track boundary on each side of the
+# direction of travel (left = +90 deg from psi_rad). 0 means unknown; consumers
+# must fall back to their configured constants (wpnt_publisher derives the TMPC
+# tube_l_m/tube_r_m corridor from these when present).
+float64 d_left_m      # distance to the left track boundary [m], 0 = unknown
+float64 d_right_m     # distance to the right track boundary [m], 0 = unknown

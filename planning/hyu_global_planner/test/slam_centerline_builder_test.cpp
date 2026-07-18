@@ -32,6 +32,16 @@ TEST_P(SlamCenterlineFixtureTest, ShippedTrackBuildsClosedNonIntersectingCenterl
     EXPECT_GE(width, fixtureConfig().min_track_width_m) << relative_path;
     EXPECT_LE(width, fixtureConfig().max_track_width_m) << relative_path;
   }
+
+  // Every waypoint carries usable boundary distances: a pure centerline sits
+  // near mid-track, so both sides must clear a good fraction of the minimum
+  // half-width and stay under the maximum track width.
+  for (const auto & waypoint : waypoints) {
+    EXPECT_GT(waypoint.d_left, 0.5) << relative_path;
+    EXPECT_GT(waypoint.d_right, 0.5) << relative_path;
+    EXPECT_LT(waypoint.d_left, fixtureConfig().max_track_width_m) << relative_path;
+    EXPECT_LT(waypoint.d_right, fixtureConfig().max_track_width_m) << relative_path;
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(

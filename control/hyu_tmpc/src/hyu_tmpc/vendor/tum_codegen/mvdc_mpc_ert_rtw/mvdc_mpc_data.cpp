@@ -428,6 +428,11 @@ P_mvdc_mpc_T mvdc_mpc_P = {
   //    '<S10>/Constant1'
   //    '<S10>/Constant5'
 
+  // FSK 2026-07-19: tried true to fix the measured 0.37 m per-corner offset
+  // (integrator cannot converge within a short corner). REVERTED: with the
+  // preview on, the FF gain mismatch against the sim tyre saturated steering
+  // 21.5% of the time (was 2.9%) and max CTE grew 0.99 -> 1.18 m. Re-enable
+  // only together with a properly tuned ay FF model (ayFFModelLearning).
   false,
 
   // Variable: P_VDC_LongAcc_EnableForesightFF

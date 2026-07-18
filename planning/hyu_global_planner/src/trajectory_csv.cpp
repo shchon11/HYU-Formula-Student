@@ -14,8 +14,11 @@ namespace
 {
 
 constexpr std::size_t kExpectedColumnCount = 7;
-constexpr std::array<const char *, kExpectedColumnCount> kExpectedHeader = {
-  "s_m", "x_m", "y_m", "psi_rad", "kappa_radpm", "vx_mps", "ax_mps2"};
+// Optional trailing columns extend the 7-column trajectory_generator layout.
+constexpr std::size_t kMaxColumnCount = 9;
+constexpr std::array<const char *, kMaxColumnCount> kExpectedHeader = {
+  "s_m", "x_m", "y_m", "psi_rad", "kappa_radpm", "vx_mps", "ax_mps2",
+  "d_left_m", "d_right_m"};
 
 std::string trim(const std::string & value)
 {
@@ -67,10 +70,10 @@ bool parseFiniteDouble(const std::string & token, double & output)
 
 bool isExpectedHeader(const std::vector<std::string> & tokens)
 {
-  if (tokens.size() != kExpectedColumnCount) {
+  if (tokens.size() != kExpectedColumnCount && tokens.size() != kMaxColumnCount) {
     return false;
   }
-  for (std::size_t i = 0; i < kExpectedColumnCount; ++i) {
+  for (std::size_t i = 0; i < tokens.size(); ++i) {
     if (tokens[i] != kExpectedHeader[i]) {
       return false;
     }
@@ -85,13 +88,21 @@ double pointDistance(const TrajectoryPoint & a, const TrajectoryPoint & b)
 
 bool parseTrajectoryRow(const std::vector<std::string> & tokens, TrajectoryPoint & point)
 {
-  return parseFiniteDouble(tokens[0], point.s) &&
+  if (!(parseFiniteDouble(tokens[0], point.s) &&
     parseFiniteDouble(tokens[1], point.x) &&
     parseFiniteDouble(tokens[2], point.y) &&
     parseFiniteDouble(tokens[3], point.psi) &&
     parseFiniteDouble(tokens[4], point.kappa) &&
     parseFiniteDouble(tokens[5], point.velocity) &&
-    parseFiniteDouble(tokens[6], point.acceleration);
+    parseFiniteDouble(tokens[6], point.acceleration)))
+  {
+    return false;
+  }
+  if (tokens.size() == kMaxColumnCount) {
+    return parseFiniteDouble(tokens[7], point.d_left) &&
+           parseFiniteDouble(tokens[8], point.d_right);
+  }
+  return true;
 }
 
 }  // namespace
@@ -139,11 +150,11 @@ bool loadTrajectoryCsv(
       continue;
     }
 
-    if (tokens.size() != kExpectedColumnCount) {
+    if (tokens.size() != kExpectedColumnCount && tokens.size() != kMaxColumnCount) {
       ++malformed_rows;
       RCLCPP_WARN(
-        logger, "Skipping malformed trajectory row %zu: expected %zu columns, got %zu",
-        line_number, kExpectedColumnCount, tokens.size());
+        logger, "Skipping malformed trajectory row %zu: expected %zu or %zu columns, got %zu",
+        line_number, kExpectedColumnCount, kMaxColumnCount, tokens.size());
       continue;
     }
 

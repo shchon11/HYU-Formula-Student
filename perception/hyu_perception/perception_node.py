@@ -290,6 +290,11 @@ class PerceptionNode(Node):
         self.declare_parameter("cluster_min_height", 0.02)
         self.declare_parameter("cluster_max_height", 0.80)
         self.declare_parameter("cluster_max_width", 0.90)
+        # Gate-pair splitter (see _split_pair_cluster): big-orange gate pairs
+        # stand 0.4 m apart and chain into one DBSCAN cluster at eps 0.35.
+        self.declare_parameter("pair_split_enabled", True)
+        self.declare_parameter("pair_split_min_width", 0.45)
+        self.declare_parameter("pair_split_min_separation", 0.30)
 
         # --- colouring ------------------------------------------------------
         self.declare_parameter("bbox_match_margin_px", 4.0)
@@ -385,6 +390,7 @@ class PerceptionNode(Node):
         self.bbox_coordinates = str(g("bbox_coordinates")).upper()
         for name in ("deskew_enabled",
                      "publish_debug", "ground_ransac_enabled", "self_mask_enabled",
+                     "pair_split_enabled",
                      "sparse_enabled", "monocular_enabled", "zncc_enabled"):
             setattr(self, name, bool(g(name)))
         for name in ("sync_queue_size", "ground_ransac_max_iterations",
@@ -402,7 +408,8 @@ class PerceptionNode(Node):
             "ground_ransac_max_tilt_degrees", "self_mask_min_x",
             "self_mask_max_x", "self_mask_abs_y", "self_mask_min_z",
             "self_mask_max_z", "cluster_eps", "cluster_min_height",
-            "cluster_max_height", "cluster_max_width", "bbox_match_margin_px",
+            "cluster_max_height", "cluster_max_width", "pair_split_min_width",
+            "pair_split_min_separation", "bbox_match_margin_px",
             "bbox_match_margin_ratio", "sparse_max_range_m",
             "sparse_near_range_m",
             "sparse_far_range_m", "sparse_max_width_m",
@@ -842,8 +849,55 @@ class PerceptionNode(Node):
             span = member[:, :2].max(axis=0) - member[:, :2].min(axis=0)
             if float(np.hypot(*span)) > self.cluster_max_width:
                 continue
-            clusters.append(indices)
+            clusters.extend(self._split_pair_cluster(points_base, indices))
         return clusters
+
+    def _split_pair_cluster(
+        self, points_base: np.ndarray, indices: np.ndarray
+    ) -> List[np.ndarray]:
+        """Split a cluster that is really TWO cones standing in a pair.
+
+        The start/finish gate places big cones 0.4 m apart per side; with a
+        ~0.28 m base that leaves ~0.1 m of clear air — under cluster_eps
+        (0.35), so DBSCAN chains BOTH cones into one cluster that still passes
+        cluster_max_width (0.90). Downstream that lopsided single observation
+        collapsed a gate pair into one SLAM landmark and biased every
+        gate-anchor correction (autocross_kase2026 ghost-map, 2026-07-19).
+
+        Only clusters wider than one cone (pair_split_min_width) are touched:
+        split at the midpoint of the principal axis, accept the split only if
+        BOTH halves look like individual cones (enough points, each narrower
+        than pair_split_min_width, centers at least pair_split_min_separation
+        apart). Anything else returns the original cluster unchanged, so
+        ordinary cones keep the exact partition the perception covariances
+        were fitted on.
+        """
+        if not self.pair_split_enabled:
+            return [indices]
+        member_xy = points_base[indices, :2]
+        span = member_xy.max(axis=0) - member_xy.min(axis=0)
+        if float(np.hypot(*span)) <= self.pair_split_min_width:
+            return [indices]
+        centered = member_xy - member_xy.mean(axis=0)
+        # Principal axis via 2x2 SVD: the pair's separation direction.
+        _, _, vt = np.linalg.svd(centered, full_matrices=False)
+        projection = centered @ vt[0]
+        left = indices[projection < 0.0]
+        right = indices[projection >= 0.0]
+        if left.size < self.cluster_min_points or right.size < self.cluster_min_points:
+            return [indices]
+        halves = []
+        centers = []
+        for half in (left, right):
+            half_xy = points_base[half, :2]
+            half_span = half_xy.max(axis=0) - half_xy.min(axis=0)
+            if float(np.hypot(*half_span)) > self.pair_split_min_width:
+                return [indices]
+            halves.append(half)
+            centers.append(half_xy.mean(axis=0))
+        if float(np.hypot(*(centers[0] - centers[1]))) < self.pair_split_min_separation:
+            return [indices]
+        return halves
 
     def _dbscan_xy(self, xy: np.ndarray) -> np.ndarray:
         """DBSCAN in the ground plane, in C rather than in Python.

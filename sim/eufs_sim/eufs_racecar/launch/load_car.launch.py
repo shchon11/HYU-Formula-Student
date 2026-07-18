@@ -9,7 +9,7 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.actions import RegisterEventHandler, SetEnvironmentVariable, TimerAction
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration
 from launch_ros.actions import Node
 
 from ament_index_python.packages import get_package_share_directory
@@ -319,7 +319,8 @@ def generate_launch_description():
                               description='Use the simulator clock'),
 
         DeclareLaunchArgument('ros_localhost_only',
-                              default_value='1',
+                              default_value=EnvironmentVariable(
+                                  'ROS_LOCALHOST_ONLY', default_value='1'),
                               description='Limit ROS discovery to localhost'),
 
         DeclareLaunchArgument('show_rqt_gui', default_value='true',

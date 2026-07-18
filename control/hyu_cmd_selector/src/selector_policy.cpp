@@ -24,9 +24,10 @@ SelectorPolicy::SelectorPolicy(const SelectorConfig & config)
     !IsPositiveFinite(config_.local_command_timeout_sec) ||
     !IsPositiveFinite(config_.tmpc_command_timeout_sec) ||
     !IsPositiveFinite(config_.tmpc_valid_timeout_sec) ||
-    !std::isfinite(config_.tmpc_ready_dwell_sec) || config_.tmpc_ready_dwell_sec < 0.0)
+    !std::isfinite(config_.tmpc_ready_dwell_sec) || config_.tmpc_ready_dwell_sec < 0.0 ||
+    !std::isfinite(config_.tmpc_forward_hold_sec) || config_.tmpc_forward_hold_sec < 0.0)
   {
-    throw std::invalid_argument("selector timeouts must be positive and dwell non-negative");
+    throw std::invalid_argument("selector timeouts must be positive and holds non-negative");
   }
 }
 
@@ -92,6 +93,21 @@ SelectorDecision SelectorPolicy::update(const SelectorInputs & inputs)
   const bool ready = tmpcReady(inputs, /*entry=*/!tmpc_active_);
   if (tmpc_active_) {
     if (ready) {
+      return {CommandSource::kTmpc, SelectorStatus::kGlobalTmpc};
+    }
+    // Freshness-only blip while driving: both TMPC streams went silent but the
+    // last valid heartbeat payload was true. Ride it out on the held command
+    // instead of forcing a mid-corner handoff; a fresh valid=false (real
+    // fault) fails this test and ejects below.
+    const bool freshness_blip = config_.tmpc_forward_hold_sec > 0.0 &&
+      inputs.tmpc_valid && inputs.tmpc_command_valid &&
+      fresh(
+      inputs.has_tmpc_valid, inputs.tmpc_valid_age_sec,
+      config_.tmpc_forward_hold_sec) &&
+      fresh(
+      inputs.has_tmpc_command, inputs.tmpc_command_age_sec,
+      config_.tmpc_forward_hold_sec);
+    if (freshness_blip) {
       return {CommandSource::kTmpc, SelectorStatus::kGlobalTmpc};
     }
     // TMPC dropped out mid-drive. Fall back to Pure Pursuit instead of

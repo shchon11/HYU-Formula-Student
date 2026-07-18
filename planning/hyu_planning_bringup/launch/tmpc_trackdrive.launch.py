@@ -49,11 +49,25 @@ ARGUMENTS = (
     ("vehicle_state_car_state_topic", "/localization/wheel_odom", "Vehicle-state bridge dynamics input."),
     ("wheel_speeds_topic", "/vehicle/wheel_speeds", "Vehicle-state wheel-speed input."),
     ("publish_rate_hz", "100.0", "Bridge and selector command rate."),
-    ("state_timeout_sec", "0.25", "Planning state freshness limit."),
-    ("stop_timeout_sec", "0.25", "Stop-request freshness limit."),
-    ("local_command_timeout_sec", "0.25", "Pure Pursuit command freshness limit."),
-    ("tmpc_command_timeout_sec", "0.1", "TMPC command freshness limit."),
-    ("tmpc_valid_timeout_sec", "0.1", "TMPC valid heartbeat freshness limit."),
+    # 0.5 s (not 0.25): under sim load spikes (gzserver+rviz+perception, load
+    # >12 on 16 cores) the selector process itself gets descheduled for
+    # 0.25-0.32 s, and ALL input ages cross a 0.25 s gate at once — a one-tick
+    # safe-brake pulse plus a 1 s TMPC dwell penalty for a stall that healed by
+    # the next evaluation (measured in the 2026-07-18 instrumented runs). A
+    # genuinely lost planning state still brakes within half a second.
+    ("state_timeout_sec", "0.5", "Planning state freshness limit."),
+    ("stop_timeout_sec", "0.5", "Stop-request freshness limit."),
+    ("local_command_timeout_sec", "0.5", "Pure Pursuit command freshness limit."),
+    # 0.3 s (not 0.1): the 100 Hz TMPC chain is timed by /clock, and freshness
+    # ages quantize to whole clock periods. A 0.1 s budget equals one quantum at
+    # the Gazebo default 10 Hz clock, so ordinary callback interleaving read as
+    # age 0.2 and ejected a healthy TMPC mid-corner (measured: every ejection in
+    # a full run was age=0.200 with valid_payload=1). Real controller faults are
+    # caught by the valid PAYLOAD within one message; this freshness limit only
+    # covers total silence, where holding the last command 0.3 s is safer than a
+    # forced mid-corner handoff.
+    ("tmpc_command_timeout_sec", "0.3", "TMPC command freshness limit."),
+    ("tmpc_valid_timeout_sec", "0.3", "TMPC valid heartbeat freshness limit."),
     # 1.0 s (not 0.1): GLOBAL flips while the car is still on the lap-1
     # centerline; Pure Pursuit needs about a second on the raceline before the
     # ego is inside the TMPC tube. A 0.1 s dwell handed over at peak deviation.
@@ -63,7 +77,7 @@ ARGUMENTS = (
     # (8-10 m/s) starts the tube MPC above its feasible envelope and it diverges
     # at the next corner, and a fault handed back at that speed throws Pure
     # Pursuit off the line. Matches tmpc_performance_speed_cap_mps.
-    ("controller_max_speed_mps", "5.5", "Pure Pursuit speed cap in the TMPC hybrid."),
+    ("controller_max_speed_mps", "7.5", "Pure Pursuit speed cap in the TMPC hybrid."),
     (
         "tmpc_max_steering_disagreement_rad",
         "0.4",

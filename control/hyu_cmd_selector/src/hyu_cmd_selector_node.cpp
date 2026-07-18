@@ -29,6 +29,8 @@ SelectorConfig DeclareSelectorConfig(rclcpp::Node & node)
     "tmpc_valid_timeout_sec", config.tmpc_valid_timeout_sec);
   config.tmpc_ready_dwell_sec = node.declare_parameter<double>(
     "tmpc_ready_dwell_sec", config.tmpc_ready_dwell_sec);
+  config.tmpc_forward_hold_sec = node.declare_parameter<double>(
+    "tmpc_forward_hold_sec", config.tmpc_forward_hold_sec);
   config.max_steering_disagreement_rad = node.declare_parameter<double>(
     "max_steering_disagreement_rad", config.max_steering_disagreement_rad);
   return config;
@@ -253,6 +255,18 @@ void TmpcCmdSelectorNode::EvaluateAndPublish()
       RCLCPP_INFO(
         get_logger(), "selector status: %s (output=%s)", ToString(decision.status),
         ToString(decision.source));
+    }
+    // Eject attribution: WHICH freshness/validity input failed is invisible in
+    // the status transition alone, and that is exactly what a fallback
+    // post-mortem needs.
+    if (has_last_status_ && last_status_ == SelectorStatus::kGlobalTmpc) {
+      RCLCPP_WARN(
+        get_logger(),
+        "TMPC ejected: tmpc_cmd_age=%.3fs tmpc_valid_age=%.3fs valid_payload=%d "
+        "cmd_finite=%d state_age=%.3fs stop_age=%.3fs local_age=%.3fs",
+        inputs.tmpc_command_age_sec, inputs.tmpc_valid_age_sec,
+        inputs.tmpc_valid ? 1 : 0, inputs.tmpc_command_valid ? 1 : 0,
+        inputs.state_age_sec, inputs.stop_age_sec, inputs.local_command_age_sec);
     }
     last_status_ = decision.status;
     has_last_status_ = true;
