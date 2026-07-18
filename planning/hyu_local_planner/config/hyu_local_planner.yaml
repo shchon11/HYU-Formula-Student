@@ -34,6 +34,16 @@ hyu_local_planner_node:
     fallback_offset_m: 1.5
     two_sided_speed_mps: 4.5
     fallback_speed_mps: 3.0
+    # Corner speed = min(per-path speed, sqrt(max_lateral_accel / |kappa|)).
+    # This bounds GRIP; it does not bound the STEERING range. On the tightest
+    # small_track corners the car was riding a_lat ~= 5 AND full lock at once --
+    # zero steering margin, so any line perturbation pushed the required angle
+    # past the 0.52 rad limit and the car understeered wide out of the corridor
+    # (the cone traversal then broke and the controller braked, the intermittent
+    # lap-1 loss). Lower the lateral-accel budget so tight corners are taken
+    # slower, keeping the understeer component off the steering limit; laps are a
+    # touch slower but complete. Was the 5.0 code default.
+    max_lateral_accel_mps2: 3.0
     # Unknown-colour cone handling. Absorb perception/SLAM colour drop-outs
     # (unknown_color_cones) onto the nearest boundary. Conservative: a cone is
     # taken only within unknown_absorb_lateral_m of one boundary's local line;
