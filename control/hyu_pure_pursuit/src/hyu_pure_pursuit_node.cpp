@@ -60,6 +60,7 @@ public:
       declare_parameter("max_acceleration_mps2", config_.max_acceleration_mps2);
     config_.brake_acceleration_mps2 =
       declare_parameter("brake_acceleration_mps2", config_.brake_acceleration_mps2);
+    validity_hold_sec_ = declare_parameter("validity_hold_sec", 0.4);
 
     // Lateral steering law and (MAP-only) adaptive lookahead / model+tyre table.
     const std::string steering_mode = declare_parameter<std::string>("steering_mode", "geometric");
@@ -134,8 +135,12 @@ private:
   void onValidity(const std_msgs::msg::Bool::SharedPtr message)
   {
     input_.validity_received = true;
-    input_.selected_path_valid = message->data;
+    raw_selected_path_valid_ = message->data;
     validity_receive_time_ = get_clock()->now();
+    if (message->data) {
+      last_validity_true_time_ = validity_receive_time_;
+      had_valid_path_ = true;
+    }
   }
 
   void onStop(const std_msgs::msg::Bool::SharedPtr message)
@@ -172,6 +177,17 @@ private:
     if (input_.validity_received) {
       input_.validity_age_sec = ageSeconds(now, validity_receive_time_);
     }
+    // Validity hold: the local path validity flickers false for 1-3 planner
+    // cycles at the lap-1 map frontier (measured 11% of moving samples at the
+    // corners, 36 of 37 hard-brake pulses coincided with such a blip). Hard
+    // braking mid-corner on every blip shifts load exactly when the tyres are
+    // loaded laterally and threw the car wide. Keep tracking the last valid
+    // path through a short blip; a SUSTAINED invalid (longer than the hold)
+    // still brakes, and a stop request is untouched (handled upstream of this
+    // flag in computeControl).
+    input_.selected_path_valid = raw_selected_path_valid_ ||
+      (had_valid_path_ &&
+      ageSeconds(now, last_validity_true_time_) <= validity_hold_sec_);
     if (input_.stop_received) {
       input_.stop_age_sec = ageSeconds(now, stop_receive_time_);
     }
@@ -278,6 +294,10 @@ private:
   // matching *_received flag is set, so the default clock type is never mixed in.
   rclcpp::Time path_receive_time_;
   rclcpp::Time validity_receive_time_;
+  rclcpp::Time last_validity_true_time_{0, 0, RCL_ROS_TIME};
+  bool raw_selected_path_valid_{false};
+  bool had_valid_path_{false};
+  double validity_hold_sec_{0.4};
   rclcpp::Time stop_receive_time_;
   rclcpp::Time odom_receive_time_;
   rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr command_publisher_;

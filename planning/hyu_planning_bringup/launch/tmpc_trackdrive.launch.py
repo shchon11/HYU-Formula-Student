@@ -63,7 +63,7 @@ ARGUMENTS = (
     # (8-10 m/s) starts the tube MPC above its feasible envelope and it diverges
     # at the next corner, and a fault handed back at that speed throws Pure
     # Pursuit off the line. Matches tmpc_performance_speed_cap_mps.
-    ("controller_max_speed_mps", "6.5", "Pure Pursuit speed cap in the TMPC hybrid."),
+    ("controller_max_speed_mps", "5.5", "Pure Pursuit speed cap in the TMPC hybrid."),
     (
         "tmpc_max_steering_disagreement_rad",
         "0.4",
