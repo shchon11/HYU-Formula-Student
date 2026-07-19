@@ -62,6 +62,8 @@ class MapDiagnostic:
     yellow_loop_gap_m: float | None
     centerline_loop_gap_m: float | None
     closed_loop_ok: bool
+    dropped_disconnected_blue: int
+    dropped_disconnected_yellow: int
     verdict: str
     reasons: list[str]
 
@@ -171,6 +173,40 @@ def nearest_neighbor_order(points: list[Point]) -> list[Point]:
     return ordered
 
 
+def drop_gap_disconnected(points: list[Point], thresholds: Thresholds) -> tuple[list[Point], int]:
+    """Mirror slam_centerline_builder's dropGapDisconnectedCones.
+
+    A cone disconnected from the rest of its boundary by more than
+    max_boundary_gap can never be chained by the ordering walk (ghost
+    landmark); keep the largest gap-connected component.
+    """
+    n = len(points)
+    if n < 2:
+        return points, 0
+    component = [-1] * n
+    count = 0
+    for i in range(n):
+        if component[i] >= 0:
+            continue
+        component[i] = count
+        stack = [i]
+        while stack:
+            current = stack.pop()
+            for j in range(n):
+                if component[j] < 0 and distance(points[current], points[j]) <= thresholds.max_boundary_gap_m:
+                    component[j] = count
+                    stack.append(j)
+        count += 1
+    if count <= 1:
+        return points, 0
+    sizes = [0] * count
+    for label in component:
+        sizes[label] += 1
+    largest = sizes.index(max(sizes))
+    kept = [point for point, label in zip(points, component) if label == largest]
+    return kept, n - len(kept)
+
+
 def turn_angle(previous: Point, current: Point, candidate: Point) -> float:
     incoming = subtract(current, previous)
     outgoing = subtract(candidate, current)
@@ -276,7 +312,16 @@ def continuity(blue: list[Point], yellow: list[Point], thresholds: Thresholds) -
 
 
 def diagnose_map(path: Path, thresholds: Thresholds) -> MapDiagnostic:
-    blue, yellow, rows = csv_points(path)
+    raw_blue, raw_yellow, rows = csv_points(path)
+    blue, blue_dropped = drop_gap_disconnected(raw_blue, thresholds)
+    yellow, yellow_dropped = drop_gap_disconnected(raw_yellow, thresholds)
+    # A stray ghost is dropped; shedding more than the 1/4 fraction the width
+    # gates use is a genuinely fragmented map — diagnose it whole, as before.
+    widespread_disconnect = (
+        blue_dropped > len(raw_blue) // 4 or yellow_dropped > len(raw_yellow) // 4
+    )
+    if widespread_disconnect:
+        blue, yellow = raw_blue, raw_yellow
     ordered_blue, blue_topology_reasons = topology_order(blue, thresholds)
     ordered_yellow, yellow_topology_reasons = topology_order(yellow, thresholds)
     same_color_min = min_same_color_distance(blue, yellow)
@@ -291,13 +336,18 @@ def diagnose_map(path: Path, thresholds: Thresholds) -> MapDiagnostic:
         reasons.append("duplicate_ghost")
     if invalid_width_count > 0:
         reasons.append("invalid_width")
-    if "branch_jump" in blue_topology_reasons or "branch_jump" in yellow_topology_reasons or jumps > 0:
+    if (
+        widespread_disconnect
+        or "branch_jump" in blue_topology_reasons
+        or "branch_jump" in yellow_topology_reasons
+        or jumps > 0
+    ):
         reasons.append("branch_jump")
     if "self_intersection" in blue_topology_reasons or "self_intersection" in yellow_topology_reasons or intersections > 0:
         reasons.append("self_intersection")
     return MapDiagnostic(
         filename=path.name, path=str(path), sha256=sha256_file(path), row_count=rows,
-        blue_count=len(blue), yellow_count=len(yellow),
+        blue_count=len(raw_blue), yellow_count=len(raw_yellow),
         min_same_color_distance=same_color_min, min_same_color_distance_m=same_color_min,
         same_color_duplicate_count=1 if (
             same_color_min is not None and same_color_min < thresholds.duplicate_distance_m
@@ -311,7 +361,9 @@ def diagnose_map(path: Path, thresholds: Thresholds) -> MapDiagnostic:
         branch_jump_count=jumps, branch_jumps=jumps,
         self_intersection_count=intersections, self_intersections=intersections,
         blue_loop_gap_m=loop[0], yellow_loop_gap_m=loop[1], centerline_loop_gap_m=loop[2],
-        closed_loop_ok=loop[3], verdict="invalid" if reasons else "valid", reasons=reasons,
+        closed_loop_ok=loop[3],
+        dropped_disconnected_blue=blue_dropped, dropped_disconnected_yellow=yellow_dropped,
+        verdict="invalid" if reasons else "valid", reasons=reasons,
     )
 
 

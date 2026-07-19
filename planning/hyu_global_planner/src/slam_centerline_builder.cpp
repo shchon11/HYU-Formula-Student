@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <sstream>
 
 #include "hyu_global_planner/slam_boundary_ordering.hpp"
@@ -140,6 +141,67 @@ void foldStartFinishMarkers(
   }
 }
 
+// A cone whose gap-connected component (same-colour linkage under
+// max_boundary_gap) is disconnected from the rest of its boundary can never be
+// chained by the ordering walk: every seed fails with branch_jump even though
+// the drivable track is fine. Observed live (map_20260720_003628): a single
+// ghost blue landmark 200 m off-track — created while the pose estimate was
+// transiently wrong, and out of reach of SLAM's own missed-observation
+// deletion, which only scans near the car. Keep the largest component (ties:
+// first discovered, so the result stays a pure function of the map) and
+// report how many cones were dropped; the caller fails closed when the
+// dropped share is widespread rather than a stray ghost.
+std::size_t dropGapDisconnectedCones(std::vector<PlannerPoint> & points, double max_gap)
+{
+  const std::size_t n = points.size();
+  if (n < 2U) {
+    return 0U;
+  }
+
+  std::vector<std::size_t> component(n, n);
+  std::size_t component_count = 0U;
+  std::vector<std::size_t> stack;
+  for (std::size_t i = 0; i < n; ++i) {
+    if (component[i] != n) {
+      continue;
+    }
+    component[i] = component_count;
+    stack.assign(1U, i);
+    while (!stack.empty()) {
+      const std::size_t current = stack.back();
+      stack.pop_back();
+      for (std::size_t j = 0; j < n; ++j) {
+        if (component[j] == n && distance(points[current], points[j]) <= max_gap) {
+          component[j] = component_count;
+          stack.push_back(j);
+        }
+      }
+    }
+    ++component_count;
+  }
+  if (component_count <= 1U) {
+    return 0U;
+  }
+
+  std::vector<std::size_t> sizes(component_count, 0U);
+  for (const std::size_t label : component) {
+    ++sizes[label];
+  }
+  const std::size_t largest = static_cast<std::size_t>(
+    std::max_element(sizes.begin(), sizes.end()) - sizes.begin());
+
+  std::vector<PlannerPoint> kept;
+  kept.reserve(sizes[largest]);
+  for (std::size_t i = 0; i < n; ++i) {
+    if (component[i] == largest) {
+      kept.push_back(points[i]);
+    }
+  }
+  const std::size_t dropped = n - kept.size();
+  points = std::move(kept);
+  return dropped;
+}
+
 constexpr double kPi = 3.14159265358979323846;
 // No drivable track turns 60 deg between successive samples (at the 0.5 m
 // default spacing that is a sub-0.5 m turn radius). A step this sharp is a
@@ -264,6 +326,146 @@ PlannerPoint closestPointOnPolyline(
     }
   }
   return best;
+}
+
+// Two downstream consumers treat the s=0/s_max seam of the published loop as
+// the start/finish line: the frenet seam-wrap lap fallback and the
+// final-path-end stop trigger both fire where s wraps. The seam itself is an
+// accident of whichever seed the boundary walk closed from, so left alone the
+// car counts laps and finishes the mission at an arbitrary point mid-track.
+// Anchor s=0 at the orange start/finish gate instead. Big and small orange
+// markers are deliberately pooled — classifying between the two is unreliable
+// and nothing here needs the distinction.
+std::optional<PlannerPoint> findStartFinishGateMidpoint(
+  const std::vector<PlannerPoint> & markers, const SlamCenterlineConfig & config)
+{
+  if (markers.empty()) {
+    return std::nullopt;
+  }
+
+  // Single-linkage clustering (the sets are tiny: a handful of gate cones).
+  constexpr double kClusterToleranceM = 2.0;
+  std::vector<std::vector<PlannerPoint>> clusters;
+  for (const auto & marker : markers) {
+    std::vector<std::size_t> touching;
+    for (std::size_t i = 0; i < clusters.size(); ++i) {
+      for (const auto & member : clusters[i]) {
+        if (distance(marker, member) <= kClusterToleranceM) {
+          touching.push_back(i);
+          break;
+        }
+      }
+    }
+    if (touching.empty()) {
+      clusters.push_back({marker});
+      continue;
+    }
+    clusters[touching.front()].push_back(marker);
+    for (std::size_t merge = touching.size(); merge > 1U; --merge) {
+      auto & source = clusters[touching[merge - 1U]];
+      auto & target = clusters[touching.front()];
+      target.insert(target.end(), source.begin(), source.end());
+      clusters.erase(clusters.begin() + static_cast<std::ptrdiff_t>(touching[merge - 1U]));
+    }
+  }
+
+  std::vector<PlannerPoint> centroids;
+  std::vector<std::size_t> counts;
+  centroids.reserve(clusters.size());
+  counts.reserve(clusters.size());
+  for (const auto & cluster : clusters) {
+    PlannerPoint centroid{0.0, 0.0};
+    for (const auto & member : cluster) {
+      centroid = add(centroid, member);
+    }
+    centroids.push_back(scale(centroid, 1.0 / static_cast<double>(cluster.size())));
+    counts.push_back(cluster.size());
+  }
+
+  // Gate = the pair of side clusters a track width apart. Prefer pairs with
+  // both sides populated by the paired timing cones, then the separation
+  // closest to a nominal 3.5 m track width (mirrors the state machine's
+  // OrangeGateLapTracker so both agree on where the gate is).
+  bool found = false;
+  double best_score = 0.0;
+  PlannerPoint best{0.0, 0.0};
+  for (std::size_t i = 0; i < centroids.size(); ++i) {
+    for (std::size_t j = i + 1U; j < centroids.size(); ++j) {
+      const double separation = distance(centroids[i], centroids[j]);
+      if (separation < config.min_track_width_m || separation > config.max_track_width_m) {
+        continue;
+      }
+      const bool both_pairs = counts[i] >= 2U && counts[j] >= 2U;
+      const double score = (both_pairs ? 0.0 : 10.0) + std::abs(separation - 3.5);
+      if (!found || score < best_score) {
+        found = true;
+        best_score = score;
+        best = scale(add(centroids[i], centroids[j]), 0.5);
+      }
+    }
+  }
+  if (found) {
+    return best;
+  }
+
+  // No pairable clusters (one side of the gate missing from the map): the
+  // markers still all flank the gate, so their centroid anchors it well enough.
+  PlannerPoint centroid{0.0, 0.0};
+  for (const auto & marker : markers) {
+    centroid = add(centroid, marker);
+  }
+  return scale(centroid, 1.0 / static_cast<double>(markers.size()));
+}
+
+void rebaseLoopAtStartFinishGate(
+  const std::vector<PlannerPoint> & markers,
+  const SlamCenterlineConfig & config,
+  std::vector<PlannerWaypoint> & waypoints)
+{
+  if (waypoints.size() < 4U) {
+    return;
+  }
+  const PlannerPoint front{waypoints.front().x, waypoints.front().y};
+  const PlannerPoint back{waypoints.back().x, waypoints.back().y};
+  if (distance(front, back) > config.duplicate_point_tolerance) {
+    return;  // open path: s=0 is a genuine start, not a seam to move
+  }
+  const auto gate = findStartFinishGateMidpoint(markers, config);
+  if (!gate.has_value()) {
+    return;
+  }
+
+  // The loop stores its first point again at the tail; rotate the unique ring.
+  const std::size_t ring_size = waypoints.size() - 1U;
+  std::size_t nearest = 0U;
+  double nearest_d2 = std::numeric_limits<double>::max();
+  for (std::size_t i = 0; i < ring_size; ++i) {
+    const double dx = waypoints[i].x - gate->x;
+    const double dy = waypoints[i].y - gate->y;
+    const double d2 = dx * dx + dy * dy;
+    if (d2 < nearest_d2) {
+      nearest_d2 = d2;
+      nearest = i;
+    }
+  }
+  if (nearest == 0U) {
+    return;
+  }
+
+  std::vector<PlannerWaypoint> rotated;
+  rotated.reserve(waypoints.size());
+  for (std::size_t k = 0; k < ring_size; ++k) {
+    rotated.push_back(waypoints[(nearest + k) % ring_size]);
+  }
+  rotated.push_back(rotated.front());
+  // x/y and the per-point boundary clearances rotate with the points; s/psi/
+  // kappa are recomputed from the new origin.
+  computeWaypointGeometry(rotated);
+
+  std::string reason;
+  if (validateWaypoints(rotated, config.duplicate_point_tolerance, reason)) {
+    waypoints = std::move(rotated);
+  }
 }
 
 }  // namespace
@@ -717,6 +919,21 @@ bool buildCenterlineFromSlamMap(
       blue_points, yellow_points);
   }
 
+  // Ghost landmarks disconnected from the boundary would fail EVERY ordering
+  // seed as branch_jump; drop a stray minority, but a map that sheds more than
+  // the same 1/4 fraction the width gates use is genuinely fragmented and
+  // keeps failing closed with the same reason the walk would have reported.
+  const std::size_t blue_total = blue_points.size();
+  const std::size_t yellow_total = yellow_points.size();
+  const std::size_t dropped_blue =
+    dropGapDisconnectedCones(blue_points, config.max_boundary_gap_m);
+  const std::size_t dropped_yellow =
+    dropGapDisconnectedCones(yellow_points, config.max_boundary_gap_m);
+  if (dropped_blue > blue_total / 4U || dropped_yellow > yellow_total / 4U) {
+    reason = "branch_jump";
+    return false;
+  }
+
   if (blue_points.size() < static_cast<std::size_t>(config.min_cones_per_side) ||
     yellow_points.size() < static_cast<std::size_t>(config.min_cones_per_side))
   {
@@ -754,17 +971,18 @@ bool buildCenterlineFromSlamMap(
   // under the controller on an essentially unchanged map -- which the car
   // answered with a visible shake.
   //
-  // The map origin is where SLAM started, i.e. the start/finish line: fixed for
-  // the whole run, on the track, and a sensible phase to begin a lap on. Its
-  // exact value does not matter to consumers anyway -- the path is a closed loop
-  // in the map frame and the wpnt_publisher wraps around it -- only that it is
-  // the SAME every rebuild. With this the path is finally what this file already
-  // claimed it was: a pure function of the cone map.
+  // The map origin is where SLAM started: fixed for the whole run and on the
+  // track, so the walk is deterministic per map. The seed only decides where
+  // the WALK starts, not where s=0 ends up — the loop is rebased below so s=0
+  // sits at the orange start/finish gate, which the seam-wrap lap fallback and
+  // the final-path-end stop trigger both rely on. With this the path is finally
+  // what this file already claimed it was: a pure function of the cone map.
   constexpr std::size_t kMaxCenterlineSeedAttempts = 12U;
   std::string first_reason;
   if (buildCenterlineFromSeed(
       blue_points, yellow_points, PlannerPoint{0.0, 0.0}, config, waypoints, first_reason))
   {
+    rebaseLoopAtStartFinishGate(markers, config, waypoints);
     return true;
   }
   const std::size_t attempts = std::min(kMaxCenterlineSeedAttempts, blue_points.size());
@@ -774,6 +992,7 @@ bool buildCenterlineFromSlamMap(
     if (buildCenterlineFromSeed(
         blue_points, yellow_points, seed, config, waypoints, retry_reason))
     {
+      rebaseLoopAtStartFinishGate(markers, config, waypoints);
       return true;
     }
   }

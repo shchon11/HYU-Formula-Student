@@ -38,6 +38,11 @@ graph_slam:
     # the seed with a drift-independent global fix.
     auto_relocalize_enable: true
     auto_relocalize_min_visible_cones: 3
+    # Lost detection is a WEIGHTED score, not a plain frame count: zero
+    # associations add 2, a weak frame (< 1/4 of the visible cones matched —
+    # the wrong-branch aliasing signature the zero-only detector never saw)
+    # adds 1, and the trigger threshold is 2x this value, so plain full-loss
+    # latency is unchanged while partial aliasing is caught at half rate.
     auto_relocalize_lost_frames: 10
     auto_relocalize_min_inliers: 4
     auto_relocalize_search_radius: 4.0
@@ -47,6 +52,77 @@ graph_slam:
     auto_relocalize_gnss_holdoff_sec: 3.0
     auto_relocalize_max_search_radius: 16.0
     auto_relocalize_cooldown_sec: 3.0
+    # Aliased-branch breaker: an aliased pose on a repetitive section keeps
+    # matching cones (never zero/weak-match "lost") while sub-sigma RTK
+    # fixes fail the innovation gate forever — the self-sealing autocross
+    # failure, reproduced live on comp_2021 (5 m offset, 33 matches, lost
+    # 0). This many consecutive rejected RTK-grade fixes force a
+    # relocalization seeded AT the fix. 0 disables.
+    gnss_reject_streak_relocalize: 8
+
+    # ---- Local submap (consecutive-observation constellation) ------------
+    # Every scan match (manual /initialpose, auto relocalization, seam
+    # anchor) fits the rolling ~20 m trail of cone observations — rigidly
+    # connected by short-horizon odometry, deduped per color — instead of a
+    # single 3-8 cone frame. A 3-cone frame aliases onto parallel sections
+    # (the autocross 40 m mis-registration); a 20 m color-aware constellation
+    # is close to unique on any FS track, which is what makes accepting a
+    # relocalization safe WITHOUT a GNSS cross-check. Acceptance requires
+    # half of the submap points to fit (vs 3/4 of one frame before).
+    submap_enable: true
+    submap_span_m: 20.0
+    submap_max_frames: 250
+    submap_dedup_radius_m: 0.6
+    # Below this many deduped points the matcher falls back to the latest
+    # single frame (startup, long perception dropouts).
+    submap_min_match_points: 6
+
+    # ---- GNSS-free lap-seam anchor ---------------------------------------
+    # The orange-gate anchor closes the mapping-lap seam only when the gate
+    # constellation is visible and correctly classified. This is the
+    # fallback that needs NO gate and NO GNSS: once the estimate re-enters
+    # seam_anchor_trigger_radius_m of the lap origin (after a real lap of
+    # travel), the submap is scan-matched against the START-AREA map only
+    # (landmarks near the lap origin, founded early in the lap before drift
+    # accumulated — never against cones the submap itself founded, and never
+    # against drift-displaced mid-lap cones) and, if enough points verify
+    # the pose and the implied correction is between the gate anchor's
+    # min/max correction bounds, the current keyframe is re-seeded exactly
+    # like the gate anchor — the optimizer then redistributes the drift
+    # along the odometry chain. A healthy fresh GNSS fix can veto the
+    # candidate (auto_relocalize_max_gnss_residual_m), so with RTK up this
+    # can never fight GNSS; without GNSS it is the loop closure.
+    seam_anchor_enable: true
+    # Must cover the worst credible end-of-lap odometry drift: the true pose
+    # sits up to that far from the drifted seed.
+    seam_anchor_search_radius_m: 15.0
+    # Tight on purpose: gyro-integrated yaw drifts only ~0.05 rad/lap, and a
+    # wide yaw window lets the matcher fit curved cone rows at rotated
+    # aliases (the 0.35-0.44 rad ghost-map corrections). Candidates beyond
+    # 60% of this span are rejected as rotation-aliased.
+    seam_anchor_search_yaw: 0.15
+    seam_anchor_trigger_radius_m: 30.0
+    # 8, not more: at the seam only the post-crossing half of the submap CAN
+    # match the start-area targets, so ~10 required inliers blocks the
+    # closure outright (verdict-matrix regression). Alias protection against
+    # healthy-GNSS runs comes from the GNSS disarm rule, not this count.
+    seam_anchor_min_inliers: 8
+    seam_anchor_cooldown_travel_m: 10.0
+    # Attempt throttle (the grid search is expensive; do not run it on every
+    # cone frame inside the trigger radius).
+    seam_anchor_attempt_interval_m: 1.0
+
+    # ---- Odometry blind-gap handling -------------------------------------
+    # When the motion stream resumes after a gap (INS free-inertial fault ->
+    # bridge stops publishing -> re-acquisition), the pull-in transient must
+    # not be MAPPED: founding landmarks from it mints an offset copy of
+    # everything in view (F2 fault injection: 82 false cones from one 20 s
+    # outage). On resume the submap history is dropped and track founding /
+    # promotion pause for the quarantine window; association, loop
+    # candidates and GNSS priors keep running so the anchors pull the pose
+    # back in cleanly.
+    odom_gap_reset_sec: 1.0
+    odom_gap_quarantine_sec: 6.0
 
     # Orange-gate global anchor: the big-orange start-gate cones exist
     # nowhere else on the track, so matching their observed constellation
@@ -97,13 +173,30 @@ graph_slam:
     track_gate_max_distance: 2.4
     track_promote_min_hits: 3
     track_promote_max_sigma: 0.35
+    # Far-promotion relief (missing-teeth fix): a cone only ever seen at
+    # range carries a lever-sigma floor above the cap and would NEVER
+    # promote — a permanent hole in the map. With this many hits it promotes
+    # anyway, carrying its honest wide covariance into the graph.
+    track_promote_far_min_hits: 6
+    track_promote_far_max_sigma: 0.7
     # A confirmable track sitting within this radius of a confirmed landmark
     # is a drift-offset re-sighting of that cone (the old "offset twin"):
     # promotion is HELD until loop closure resolves the drift.
     track_promote_hold_radius: 2.0
     # Hold only against a STALE neighbour (a fresh one = two real cones).
     track_promote_hold_stale_travel: 5.0
-    track_kill_consecutive_misses: 3
+    # Against a LAP-OLD stale neighbour (>= this much travel unseen) the hold
+    # radius additionally grows by the drift inflation (3*sqrt), so
+    # seam-crossing drift twins cannot promote 3-5 m from their originals.
+    # Scope is intentionally narrow (only near landmarks unseen for 60+ m of
+    # travel, i.e. the lap seam); general missing-teeth relief comes from
+    # the far-promotion path above, NOT from disabling this — disabling it
+    # let seam twins flood the map (extras 128 in the verdict matrix).
+    track_promote_hold_drift_stale: 60.0
+    # 6, not 3: real (YOLO) perception at ~8 Hz flickers on far cones, and a
+    # 3-miss budget killed tracks faster than they could bank 3 hits — the
+    # comp_2021 map froze at 63% coverage from promotion starvation alone.
+    track_kill_consecutive_misses: 6
     track_kill_unpromoted_travel: 25.0
 
     use_cone_covariance: true
@@ -130,6 +223,14 @@ graph_slam:
     # per odometry edge, clamped below by the sigmas above — a degraded
     # bridge/wheel-odometry mode then weakens its own constraints.
     use_odom_covariance: true
+    # Distance-proportional floor on the EDGE sigma: the reported covariance
+    # is per-sample, but a keyframe edge integrates ~10+ samples plus
+    # correlated error (slip, yaw leverage). Believing 2 cm for a 0.5-1 m
+    # edge made the chain so stiff that loop closures could not bend the
+    # first-lap drift out of the map (the residual global warp). ~8 %/m
+    # translation, 0.5 deg/m yaw.
+    odom_edge_sigma_per_meter: 0.08
+    odom_edge_yaw_sigma_per_meter: 0.008
 
     # GNSS global anchor (Level 2): consume the SBG bridge's /localization/gnss_odom absolute
     # ENU fix as a unary EdgeSE2XYPrior on each keyframe. gnss_prior_max_position_sigma
@@ -143,6 +244,11 @@ graph_slam:
     # excursion, which is what prevents the drifted second-copy overlay
     # (2026-07-18 F1: 57 ghosts with anchors gated off entirely).
     gnss_prior_max_position_sigma: 3.0
+    # Once the map is FROZEN it is the trusted reference: degraded
+    # (float/single) anchors only fight it — one sustained single-point
+    # window produced 26 lost/relocalize cycles (F1 fault injection). In
+    # localization mode only RTK-grade fixes may anchor the pose.
+    gnss_prior_loc_max_position_sigma: 0.5
     gnss_prior_max_age: 0.3
     gnss_prior_robust_delta: 1.0
     # Believed-not-realized INS (2026-07-16 fidelity pass): the reported sigma
@@ -203,10 +309,17 @@ graph_slam:
     map_trust_after_loop_closure: true
     map_trust_loop_closures_required: 1
     map_trust_info_scale: 3.0
-    max_landmarks: 400
+    # Must exceed the biggest track's cone count with duplicate headroom —
+    # at 400 the node silently stopped mapping hairpins (984 GT cones) at
+    # cap and the map simply ended mid-track.
+    max_landmarks: 1200
     update_existing_landmarks: true
-    landmark_update_gain: 1.0
-    landmark_update_process_variance: 0.04
+    # 0.3, not 1.0 (2026-07-20 field feedback): full-gain Kalman writes made
+    # every landmark chase its newest observation between optimizer runs —
+    # the visible map jitter during registration. The 10 Hz optimizer is the
+    # principled fuser; this update is only a gentle warm start now.
+    landmark_update_gain: 0.3
+    landmark_update_process_variance: 0.01
     # The ghost reaper: a landmark that should be visible (range/FOV checks)
     # but keeps missing gets deleted (6 misses unconfirmed / 60 confirmed).
     # perception.yaml's contract says existence doubt is SLAM's to hold — with
@@ -220,8 +333,12 @@ graph_slam:
     delete_stale_landmarks: false
     landmark_missed_observations_to_delete: 6
     landmark_delete_min_interval: 0.2
-    landmark_delete_fov: 3.141593
-    landmark_delete_max_range: 30.0
+    # CONSERVATIVE visibility envelope for miss-counting (2026-07-20 field
+    # feedback): a miss is only evidence of absence when the cone is WELL
+    # inside what the camera reliably sees. 180 deg / 30 m counted misses on
+    # cones the sensor could never confirm, and far cones got reaped.
+    landmark_delete_fov: 1.2
+    landmark_delete_max_range: 10.0
     landmark_delete_max_abs_x: 20.0
     landmark_delete_max_abs_y: 20.0
     path_max_poses_to_publish: 1000
@@ -236,6 +353,15 @@ graph_slam:
     # the package map/ directory when launched via graph_slam.launch.py.
     localization_mode: false
     load_map_path: ""
+    # Frozen-but-self-healing map: with a HEALTHY pose (nothing lost), a
+    # track that clears a much stricter bar (loc_repair_min_hits) may fill a
+    # hole in the frozen map, and a landmark repeatedly expected-visible yet
+    # never observed (loc_repair_missed_to_delete consecutive misses) is
+    # reaped — big-orange gate cones never are. A wrong reap re-adds itself
+    # through the same path, so the repair is self-correcting both ways.
+    loc_map_repair_enable: true
+    loc_repair_min_hits: 6
+    loc_repair_missed_to_delete: 40
 
     # Trackdrive lifecycle: once the map is converged and the car returns
     # within lap_return_radius / lap_return_yaw of the captured lap origin,

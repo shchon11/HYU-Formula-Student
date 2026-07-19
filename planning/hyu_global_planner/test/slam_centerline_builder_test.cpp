@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include "hyu_global_planner/slam_centerline_builder.hpp"
 #include "slam_test_fixtures.hpp"
 
@@ -373,6 +375,118 @@ TEST(SlamCenterlineBuilder, WideStartFinishGateFoldsToOppositeSides)
   for (const auto & waypoint : waypoints) {
     ASSERT_NEAR(std::hypot(waypoint.x, waypoint.y), 20.0, 1.5)
       << "centerline left the corridor: the gate folded to one side";
+  }
+}
+
+// The frenet seam-wrap lap fallback and the final-path-end stop trigger both
+// treat the s=0/s_max seam as the start/finish line, so the published loop must
+// put its seam at the orange gate — not wherever the boundary walk happened to
+// close. Big and small orange are pooled: the anchor must not depend on which
+// of the two labels perception/SLAM assigned to the gate cones.
+TEST(SlamCenterlineBuilder, LoopIsRebasedToStartFinishGate)
+{
+  const auto map = loadConeMapCsv("sim/eufs_sim/eufs_tracks/csv/small_track.csv");
+  ASSERT_FALSE(map.big_orange_cones.empty());
+
+  PlannerPoint gate{0.0, 0.0};
+  for (const auto & cone : map.big_orange_cones) {
+    gate.x += cone.point.x / static_cast<double>(map.big_orange_cones.size());
+    gate.y += cone.point.y / static_cast<double>(map.big_orange_cones.size());
+  }
+
+  std::vector<PlannerWaypoint> waypoints;
+  std::string reason;
+  ASSERT_TRUE(buildCenterlineFromSlamMap(map, egoAtOrigin(), fixtureConfig(), waypoints, reason))
+    << reason;
+  EXPECT_LE(distance({waypoints.front().x, waypoints.front().y}, gate), 2.0)
+    << "s=0 sits " << distance({waypoints.front().x, waypoints.front().y}, gate)
+    << " m from the start/finish gate";
+
+  // Translate the map so the frame origin is far from the gate: the walk then
+  // seeds at some arbitrary cone, and only the explicit rebase can put s=0
+  // back on the gate. This is the case that failed live (SLAM origin != gate).
+  auto translated = map;
+  const auto shift = [](auto & cones) {
+      for (auto & cone : cones) {
+        cone.point.x += 30.0;
+        cone.point.y += 40.0;
+      }
+    };
+  shift(translated.blue_cones);
+  shift(translated.yellow_cones);
+  shift(translated.orange_cones);
+  shift(translated.big_orange_cones);
+  std::vector<PlannerWaypoint> translated_waypoints;
+  ASSERT_TRUE(
+    buildCenterlineFromSlamMap(translated, egoAtOrigin(), fixtureConfig(),
+      translated_waypoints, reason)) << reason;
+  const PlannerPoint translated_gate{gate.x + 30.0, gate.y + 40.0};
+  EXPECT_LE(
+    distance({translated_waypoints.front().x, translated_waypoints.front().y}, translated_gate),
+    2.0) << "s=0 does not follow the gate when the map origin moves off it";
+
+  auto relabeled = map;
+  relabeled.orange_cones.insert(
+    relabeled.orange_cones.end(),
+    relabeled.big_orange_cones.begin(), relabeled.big_orange_cones.end());
+  relabeled.big_orange_cones.clear();
+  std::vector<PlannerWaypoint> relabeled_waypoints;
+  ASSERT_TRUE(
+    buildCenterlineFromSlamMap(relabeled, egoAtOrigin(), fixtureConfig(),
+      relabeled_waypoints, reason)) << reason;
+  ASSERT_EQ(relabeled_waypoints.size(), waypoints.size())
+    << "relabeling the gate cones small-orange changed the path";
+  for (std::size_t i = 0; i < waypoints.size(); ++i) {
+    ASSERT_EQ(relabeled_waypoints[i].x, waypoints[i].x) << "waypoint " << i;
+    ASSERT_EQ(relabeled_waypoints[i].y, waypoints[i].y) << "waypoint " << i;
+  }
+}
+
+// Live regression (map_20260720_003628): one ghost blue landmark ~200 m
+// off-track — created while the pose estimate was transiently wrong and out of
+// reach of SLAM's own near-car missed-observation deletion. The ordering walk
+// must chain EVERY cone, so this single ghost failed the whole map as
+// branch_jump from every seed. A gap-disconnected minority is dropped instead;
+// the resulting path must be exactly the path of the map without the ghost.
+// Widespread disconnection (> 1/4 of a colour) still fails closed —
+// covered by BranchJump.FailsClosedWithExactReasonAndNoStaleWaypoints.
+TEST(SlamCenterlineBuilder, GhostLandmarkFarOffTrackIsDroppedNotFatal)
+{
+  const auto map = loadConeMapCsv(
+    "planning/hyu_global_planner/test/fixtures/ghost_landmark_cone_map.csv");
+  const PlannerPoint ghost{-46.070533, 198.304288};
+
+  std::vector<PlannerWaypoint> waypoints;
+  std::string reason;
+  ASSERT_TRUE(buildCenterlineFromSlamMap(map, egoAtOrigin(), fixtureConfig(), waypoints, reason))
+    << "one ghost landmark took the whole map down: " << reason;
+  ASSERT_GE(waypoints.size(), 3U);
+  EXPECT_LE(
+    distance({waypoints.front().x, waypoints.front().y}, {waypoints.back().x, waypoints.back().y}),
+    fixtureConfig().close_loop_distance_m);
+  for (const auto & waypoint : waypoints) {
+    ASSERT_GT(distance({waypoint.x, waypoint.y}, ghost), 100.0)
+      << "path was dragged toward the ghost landmark";
+  }
+
+  auto cleaned = map;
+  cleaned.blue_cones.erase(
+    std::remove_if(
+      cleaned.blue_cones.begin(), cleaned.blue_cones.end(),
+      [&](const hyu_msgs::msg::ConeWithCovariance & cone) {
+        return distance({cone.point.x, cone.point.y}, ghost) < 1.0;
+      }),
+    cleaned.blue_cones.end());
+  ASSERT_EQ(cleaned.blue_cones.size() + 1U, map.blue_cones.size());
+  std::vector<PlannerWaypoint> cleaned_waypoints;
+  ASSERT_TRUE(
+    buildCenterlineFromSlamMap(cleaned, egoAtOrigin(), fixtureConfig(),
+      cleaned_waypoints, reason)) << reason;
+  ASSERT_EQ(cleaned_waypoints.size(), waypoints.size())
+    << "dropping the ghost did not reproduce the clean map's path";
+  for (std::size_t i = 0; i < waypoints.size(); ++i) {
+    ASSERT_EQ(cleaned_waypoints[i].x, waypoints[i].x) << "waypoint " << i;
+    ASSERT_EQ(cleaned_waypoints[i].y, waypoints[i].y) << "waypoint " << i;
   }
 }
 

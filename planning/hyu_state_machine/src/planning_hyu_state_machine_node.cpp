@@ -107,8 +107,9 @@ PlanningStateMachineNode::PlanningStateMachineNode()
     cone_map_topic_, rclcpp::SensorDataQoS(),
     std::bind(&PlanningStateMachineNode::onCones, this, _1));
 
-  // Start/finish gate: big-orange landmarks from the latched SLAM map plus
-  // the map-frame ego stream drive the orange-gate lap counter.
+  // Start/finish gate: orange landmarks (big and small are deliberately not
+  // distinguished — classification between the two is unreliable) from the
+  // latched SLAM map plus the map-frame ego stream drive the gate lap counter.
   slam_cone_map_sub_ = create_subscription<hyu_msgs::msg::ConeArrayWithCovariance>(
     slam_cone_map_topic_, latched_qos,
     std::bind(&PlanningStateMachineNode::onSlamConeMap, this, _1));
@@ -166,12 +167,14 @@ void PlanningStateMachineNode::onSlamConeMap(
   if (!gate_tracker_) {
     return;
   }
-  std::vector<std::array<double, 2>> big_orange;
-  big_orange.reserve(msg->big_orange_cones.size());
-  for (const auto & cone : msg->big_orange_cones) {
-    big_orange.push_back({cone.point.x, cone.point.y});
+  std::vector<std::array<double, 2>> gate_markers;
+  gate_markers.reserve(msg->big_orange_cones.size() + msg->orange_cones.size());
+  for (const auto * cones : {&msg->big_orange_cones, &msg->orange_cones}) {
+    for (const auto & cone : *cones) {
+      gate_markers.push_back({cone.point.x, cone.point.y});
+    }
   }
-  gate_tracker_->updateGate(big_orange);
+  gate_tracker_->updateGate(gate_markers);
 }
 
 void PlanningStateMachineNode::onEgoOdom(const nav_msgs::msg::Odometry::SharedPtr msg)

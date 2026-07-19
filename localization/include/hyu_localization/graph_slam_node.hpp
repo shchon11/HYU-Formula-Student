@@ -31,6 +31,7 @@
 #include "hyu_msgs/msg/cone_array_with_covariance.hpp"
 #include "hyu_msgs/msg/cone_with_covariance.hpp"
 #include "hyu_localization/gate_anchor.hpp"
+#include "hyu_localization/local_submap.hpp"
 #include "hyu_localization/slam_lifecycle_classifiers.hpp"
 #include "hyu_localization/tentative_track_frontend.hpp"
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
@@ -44,6 +45,11 @@
 #include "std_srvs/srv/trigger.hpp"
 #include "tf2_ros/transform_broadcaster.h"
 #include "visualization_msgs/msg/marker_array.hpp"
+
+namespace g2o
+{
+class EdgeSE2PointXY;
+}  // namespace g2o
 
 namespace hyu_localization
 {
@@ -83,6 +89,10 @@ private:
     // (and therefore the association gate inflation) grows with distance
     // driven, independent of keyframe density.
     double last_seen_traveled;
+    // traveled_distance_ at founding: the seam matcher restricts its targets
+    // to landmarks founded at least a loop_gap of travel ago, so the submap
+    // is never matched against the landmarks it just created.
+    double first_seen_traveled;
     std::array<std::uint16_t, 5> color_votes;
   };
 
@@ -115,18 +125,47 @@ private:
     const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
   void relocalizeTo(const g2o::SE2 & pose);
   // Re-anchor the trajectory at an already-verified pose (no scan-match).
-  void relocalizeAt(const g2o::SE2 & pose);
-  // Coarse-to-fine grid search of the latest cone observations against the
-  // map around seed; reports the fine pass's inlier count for acceptance
+  // raw_reference is the raw-odometry pose the estimate refers to (the
+  // newest submap frame's raw pose, NOT "now": at speed the difference is
+  // the perception latency times the velocity, and recording "now" bakes
+  // that offset permanently into the dead-reckoned trajectory).
+  void relocalizeAt(const g2o::SE2 & pose, const g2o::SE2 & raw_reference);
+  // Match points for scan matching: the deduped local submap (recent cone
+  // observations rigidly connected by short-horizon odometry) when it is
+  // populated, else the latest single frame.
+  struct MatchPointSet
+  {
+    std::vector<SubmapPoint> points;
+    bool from_submap{false};
+  };
+  MatchPointSet buildMatchPoints() const;
+  // Landmark targets for scan matching, pre-filtered to a box around
+  // `center` (radius <= 0 disables the box). max_first_seen_traveled >= 0
+  // keeps only landmarks founded no later than that travel — the seam
+  // matcher's "old map only" restriction.
+  std::vector<SubmapPoint> landmarkMatchTargets(
+    const Eigen::Vector2d & center, double radius,
+    double max_first_seen_traveled) const;
+  // Coarse-to-fine grid search of the match points against the targets
+  // around seed; reports the fine pass's inlier count for acceptance
   // gating (the manual /initialpose path applies the result regardless —
   // the operator asserted the neighbourhood — the automatic path must not).
   g2o::SE2 scanMatchNear(
     const g2o::SE2 & seed, double radius, double yaw_span,
+    const std::vector<SubmapPoint> & points,
+    const std::vector<SubmapPoint> & targets,
     int * inliers_out) const;
   g2o::SE2 gridSearchPose(
     const g2o::SE2 & seed, double radius, double xy_step,
     double yaw_span, double yaw_step, double inlier_distance,
+    const std::vector<SubmapPoint> & points,
+    const std::vector<SubmapPoint> & targets,
     int * best_inliers_out) const;
+  // Cross-check a candidate absolute pose against a fresh, healthy GNSS fix
+  // (when one exists): scan-match and seam corrections are the two paths
+  // that can teleport the pose, and both must lose to a healthy RTK fix.
+  bool gnssVetoesCandidate(
+    const Eigen::Vector2d & candidate, double now_sec, const char * context);
   // Lost detection + automatic recovery against the frozen map: cones are
   // visible but none associate for N consecutive frames -> re-localize via
   // (orange-gate seed, else escalating-radius grid search), gated on the
@@ -148,6 +187,16 @@ private:
   // the loop instead of duplicating the map. Returns true if applied.
   bool maybeApplyGateAnchor(
     const std::vector<ConeObservation> & observations,
+    const g2o::SE2 & observation_pose,
+    const g2o::SE2 & keyframe_to_observation,
+    const PoseRecord & pose);
+  // GNSS-free lap-seam closure without the orange gate: once the estimate
+  // re-enters the lap-origin neighbourhood, scan-match the local submap
+  // against FIRST-LAP landmarks only (founded >= loop_gap of travel ago) and
+  // re-seed the keyframe like the gate anchor does. This is the loop closure
+  // that survives an occluded/misclassified gate — the pure-odometry seam
+  // path the gate anchor cannot provide.
+  bool maybeApplySeamAnchor(
     const g2o::SE2 & observation_pose,
     const g2o::SE2 & keyframe_to_observation,
     const PoseRecord & pose);
@@ -183,18 +232,44 @@ private:
     const std::vector<bool> * claimed = nullptr) const;
   bool colorsCompatible(ConeColor observation_color, ConeColor landmark_color) const;
   static void voteLandmarkColor(LandmarkRecord & landmark, ConeColor observed_color);
+  // as_map_repair: admit into a FROZEN map (localization-mode repair) — the
+  // landmark is created fixed, like the loaded map.
   LandmarkRecord * addLandmark(
     const Eigen::Vector2d & map_point,
     const Eigen::Matrix2d & covariance,
-    ConeColor color);
+    ConeColor color,
+    bool as_map_repair = false);
+
+  // Localization-mode map repair (frozen-but-self-healing map): with a
+  // HEALTHY pose, a track that clears a much stricter bar may fill a hole
+  // in the frozen map, and a landmark that is repeatedly expected-visible
+  // yet never observed may be reaped (big-orange gate cones never are). A
+  // wrongly reaped cone re-adds itself through the same path — the repair
+  // is self-correcting in both directions.
+  bool loc_map_repair_enable_{true};
+  int loc_repair_min_hits_{8};
+  int loc_repair_missed_to_delete_{40};
   bool updateLandmarkEstimate(
     LandmarkRecord & landmark,
     const Eigen::Vector2d & map_point,
     const Eigen::Matrix2d & covariance);
+  // loop_edge marks a stale-loop-candidate re-association (the landmark was
+  // last seen >= loop_gap of travel ago). Such edges get HUBER even when the
+  // config says DCS: DCS is redescending, so discarding a true loop edge
+  // costs only ~2*phi — under meters of drift that is always cheaper than
+  // bending the odometry chain, and the optimizer would rationally switch
+  // the loop OFF and keep the drift (observed: a verified 9 m seam re-seed
+  // reverted in one optimize call). The one edge class whose job is to force
+  // the chain to bend must stay convex.
   void addObservationEdge(
     const ConeObservation & observation,
     g2o::VertexSE2 * pose_vertex,
-    LandmarkRecord & landmark);
+    LandmarkRecord & landmark,
+    bool loop_edge = false);
+  // Attach the configured robust kernel (dcs | huber | none) to a cone
+  // observation edge — one place, so merge-reanchored edges cannot drift out
+  // of sync with newly created ones.
+  void attachObservationKernel(g2o::EdgeSE2PointXY * edge, bool loop_edge) const;
   std::size_t deleteMissedVisibleLandmarks(
     const PoseRecord & pose,
     const std::vector<std::size_t> & observed_landmark_indices);
@@ -261,6 +336,15 @@ private:
   // Trackdrive lifecycle: detect lap completion, freeze the map, and switch
   // to localization with a bounded sliding window of pose vertices.
   void maybeFinishMappingLap(const g2o::SE2 & current_estimate);
+  // Latch the lap-return evidence (and the optional loop-confirmation
+  // relaxation). Called ONLY from the geometric return check (live-vertex
+  // origin window): an anchor is a scan match, and a mis-match near the
+  // startline must never certify "lap complete" and freeze a half-built
+  // map.
+  void markLapReturnObserved();
+  // Lap origin in CURRENT map coordinates (live vertex estimate when the
+  // origin keyframe still exists, else the capture-time snapshot).
+  g2o::SE2 lapOrigin() const;
   void enterLocalizationMode(const std::string & reason);
   void prunePoseWindow();
   std::string saveMapTimestamped();
@@ -333,6 +417,12 @@ private:
   std::string gnss_prior_topic_;
   bool gnss_prior_enable_;
   double gnss_prior_max_position_sigma_;
+  // Tighter sigma gate once the map is FROZEN: the map is then the trusted
+  // reference and a degraded (float/single, 0.3-1.2 m sigma) anchor stream
+  // only fights it — observed as 26 lost/relocalize cycles across one
+  // single-point window (F1 fault injection). Only RTK-grade anchors may
+  // pull a localization-mode pose.
+  double gnss_prior_loc_max_position_sigma_{0.5};
   double gnss_prior_max_age_;
   double gnss_prior_robust_delta_;
   double gnss_prior_min_sigma_;
@@ -398,6 +488,21 @@ private:
   // autocross_kase2026). Reject any candidate farther than this from a fresh,
   // healthy GNSS fix. <= 0 disables.
   double auto_relocalize_max_gnss_residual_m_{10.0};
+  // Aliased-localization breaker: a pose glued to the WRONG branch of a
+  // repetitive section keeps matching cones (never "lost") while RTK-grade
+  // fixes fail the innovation gate forever — the self-sealing autocross
+  // failure, reproduced live on comp_2021 (5 m offset, matched 33, lost 0).
+  // A streak of rejected sub-sigma fixes IS a lost signal: relocalize
+  // seeded at the fix. 0 disables.
+  int gnss_reject_streak_relocalize_{8};
+  int gnss_reject_streak_{0};
+  Eigen::Vector2d last_rejected_fix_{Eigen::Vector2d::Zero()};
+  bool last_rejected_fix_valid_{false};
+  // Weighted lost score, NOT a plain frame count: a zero-association frame
+  // adds 2, a weak frame (under a quarter of the visible cones matched —
+  // the wrong-branch aliasing signature, which the old zero-only detector
+  // never saw) adds 1, and the trigger threshold is
+  // 2 * auto_relocalize_lost_frames so full-loss latency is unchanged.
   int lost_frames_{0};
   // Consecutive frames with >= 2 associations. A SINGLE match while lost is
   // routinely an aliased cone (on a 10 m kidnap some cone always falls in
@@ -407,6 +512,50 @@ private:
   double auto_relocalize_current_radius_{4.0};
   double last_auto_relocalize_attempt_sec_{-1.0e18};
   std::size_t auto_relocalize_count_{0U};
+
+  // Local submap (see local_submap.hpp): the rolling constellation of recent
+  // cone observations every scan match fits instead of a single frame.
+  bool submap_enable_{true};
+  double submap_span_m_{20.0};
+  int submap_max_frames_{250};
+  double submap_dedup_radius_m_{0.6};
+  int submap_min_match_points_{6};
+  LocalConeSubmap submap_{};
+  // Raw-odometry pose of the newest submap frame: the body frame the match
+  // points are expressed in, and the reference relocalizeAt() must re-anchor
+  // at. Guarded by graph_mutex_ (cone thread only).
+  g2o::SE2 submap_reference_;
+  bool submap_reference_valid_{false};
+  // Set by the state thread when the impossible-motion gate fires: the raw
+  // odometry stream has a discontinuity, so the submap's frame-to-frame
+  // rigidity is broken and its history must be dropped before the next
+  // match. Consumed (cleared) on the cone thread.
+  std::atomic<bool> submap_reset_pending_{false};
+
+  // Post-resume mapping quarantine. A blind odometry gap (INS free-inertial
+  // fault -> bridge stops publishing -> stream resumes with the
+  // re-acquisition pull-in transient still decaying) must not seed new
+  // landmarks: mapping the pull-in error mints an offset copy of everything
+  // in view (F2 fault-injection autopsy: 82 false cones from one 20 s
+  // outage). While quarantined, association / loop candidates / GNSS priors
+  // all keep running — only track founding and promotion pause, so the map
+  // stays clean while the anchors pull the pose back in.
+  double odom_gap_reset_sec_{1.0};
+  double odom_gap_quarantine_sec_{6.0};
+  std::atomic<double> mapping_quarantine_until_sec_{0.0};
+
+  // GNSS-free seam anchor (mapping mode): submap-vs-first-lap-landmarks scan
+  // match near the lap origin, applied like the gate anchor.
+  bool seam_anchor_enable_{true};
+  double seam_anchor_search_radius_m_{15.0};
+  double seam_anchor_search_yaw_{0.35};
+  double seam_anchor_trigger_radius_m_{30.0};
+  int seam_anchor_min_inliers_{8};
+  double seam_anchor_cooldown_travel_m_{10.0};
+  double seam_anchor_attempt_interval_m_{1.0};
+  double last_seam_anchor_traveled_m_{-1.0e18};
+  double last_seam_anchor_attempt_traveled_m_{-1.0e18};
+  std::size_t seam_anchor_count_{0U};
 
   // Orange-gate global anchor (see gate_anchor.hpp).
   bool gate_anchor_enable_{true};
@@ -472,6 +621,10 @@ private:
   bool use_odom_covariance_;
   double latest_odom_sigma_trans_;
   double latest_odom_sigma_yaw_;
+  // Distance-proportional floor on the keyframe edge sigma: reported
+  // covariance is per-sample, not per-edge (see addKeyframe). 0 disables.
+  double odom_edge_sigma_per_meter_{0.0};
+  double odom_edge_yaw_sigma_per_meter_{0.0};
 
   // Latest body twist from the motion input, passed through on
   // /graph_slam/odom for downstream controllers. Atomics: written by the
@@ -480,12 +633,37 @@ private:
   std::atomic<double> latest_twist_vy_{0.0};
   std::atomic<double> latest_twist_wz_{0.0};
 
+  // Freeze-time map ADMISSION check: freezing certifies the map as the
+  // fixed reference for every remaining lap, so a polluted map must not
+  // freeze just because the lap geometry closed. Measurable without ground
+  // truth: (1) residual same-color duplicate pairs, (2) HOLES in the
+  // blue/yellow chains along the driven lap (a stretch of track with no
+  // cone on one side = a missing tooth that would break the planner's
+  // corridor). While the check fails the car keeps mapping — an extra lap
+  // fills holes and merges twins — up to a bounded number of extra returns.
+  bool mapQualityAcceptable(std::string * reason) const;
+  int freeze_max_duplicate_pairs_{2};
+  double freeze_hole_max_gap_m_{6.0};
+  double freeze_hole_corridor_m_{6.0};
+  int freeze_max_quality_gated_returns_{3};
+  int quality_gated_returns_{0};
+  double last_quality_gate_travel_{-1.0e18};
+  double last_admission_check_travel_{-1.0e18};
+  // Last admission result, published in the lifecycle diagnostics so a
+  // delayed freeze is attributable from the topic alone.
+  std::string last_admission_reason_{"unchecked"};
+
   // Lap origin is captured a few meters into the drive so it sits on the
   // racing line (the spawn pose can be offset from it); each lap then passes
   // within ~1 m of this pose.
   double lap_origin_capture_distance_;
   bool lap_origin_captured_;
   g2o::SE2 lap_origin_;
+  // The keyframe vertex captured as the lap origin. The snapshot above goes
+  // stale the moment a loop closure bends the graph (a seam correction moves
+  // the origin's map coordinates by the whole drift), so every origin
+  // comparison must read the vertex's CURRENT estimate via lapOrigin().
+  g2o::VertexSE2 * lap_origin_vertex_{nullptr};
 
   bool use_cone_covariance_;
   bool process_every_cone_message_;
@@ -556,6 +734,13 @@ private:
 
   g2o::SE2 latest_estimate_;
   bool has_latest_pose_;
+
+  // Translation the last optimizeGraph() call applied to the live pose.
+  // While this is large the graph is mid-transient (a loop closure is still
+  // being absorbed) and direct landmark writes must pause: the Kalman fusion
+  // in updateLandmarkEstimate would bake the half-settled pose into landmark
+  // positions the optimizer is about to move again.
+  double last_optimize_correction_m_{0.0};
 
   // Ring buffer of cone-frame processing times for the ~/timing publisher.
   std::vector<double> frame_times_ms_;

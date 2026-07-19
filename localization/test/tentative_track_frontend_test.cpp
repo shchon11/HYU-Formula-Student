@@ -261,7 +261,8 @@ TEST(TentativeTrackFrontend, OutOfViewTracksAreFrozenNotKilled)
 TEST(TentativeTrackFrontend, UnpromotedTrackAgesOutByTravel)
 {
   FrontendParams params;
-  params.promote_min_hits = 100;  // never promotable in this test
+  params.promote_min_hits = 100;      // never promotable in this test
+  params.promote_far_min_hits = 100;  // (nor via the far-promotion relief)
   TentativeTrackFrontend frontend{params};
   const std::vector<FrontendConfirmedLandmark> no_landmarks;
 

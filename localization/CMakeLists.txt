@@ -152,6 +152,11 @@ if(BUILD_TESTING)
   target_include_directories(gate_anchor_test PRIVATE
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
 
+  ament_add_gtest(local_submap_test
+    test/local_submap_test.cpp)
+  target_include_directories(local_submap_test PRIVATE
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>")
+
   ament_add_gtest(tentative_track_frontend_test
     test/tentative_track_frontend_test.cpp)
   target_include_directories(tentative_track_frontend_test PRIVATE

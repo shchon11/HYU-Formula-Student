@@ -62,6 +62,11 @@ struct FrontendParams
   double association_ambiguity_ratio{0.85};
   double association_inflation_per_meter{0.01};
   double association_max_inflation{4.0};
+  // Ceiling on the drift-widened duplicate-pair separation (see the
+  // ambiguity check): must stay below the minimum real same-color cone
+  // spacing (~3 m), or the widening would reclassify genuinely ambiguous
+  // neighbour pairs as duplicates.
+  double duplicate_pair_max_separation_m{2.5};
 
   // Tentative-track association: tracks are fresh (no drift inflation), so
   // the gate is a plain chi2 on track-plus-observation covariance with a
@@ -81,6 +86,13 @@ struct FrontendParams
   // therefore needs near passes before it can promote.
   int promote_min_hits{3};
   double promote_max_position_sigma_m{0.35};
+  // Far-promotion relief: a cone only ever seen at range (outside of a
+  // corner, occluded near pass) carries a lever-sigma floor above the cap
+  // and would NEVER promote — a permanent hole in the map. With enough
+  // corroborating hits it promotes anyway, carrying its honest (wide)
+  // covariance into the graph; the optimizer refines it like any landmark.
+  int promote_far_min_hits{6};
+  double promote_far_max_sigma_m{0.7};
   // Promotion is HELD (not killed) while a STALE confirmed landmark sits
   // within this radius: a drift-offset re-sighting of an existing cone whose
   // own association broke (its observations now feed the track, so it
@@ -92,6 +104,12 @@ struct FrontendParams
   // neighbour within 2.0 m).
   double promote_hold_radius_m{2.0};
   double promote_hold_stale_travel_m{5.0};
+  // The drift-scaled hold radius (base + 3*sqrt(gate inflation)) applies
+  // only to neighbours at least this stale. Seam-crossing twins have a
+  // nearly lap-old original (hundreds of meters); a serpentine's previous
+  // leg is merely FOV-stale (15-30 m), and inflating its hold would eat the
+  // real cones of the next leg.
+  double promote_hold_drift_stale_m{60.0};
 
   // Track death: consecutive expected-visible frames without a hit (cheap to
   // be aggressive — a killed track re-founds on the next sighting and never
@@ -137,6 +155,9 @@ struct FrontendPromotion
 {
   Eigen::Vector2d position{Eigen::Vector2d::Zero()};
   Eigen::Matrix2d covariance{Eigen::Matrix2d::Identity()};
+  // Total hits of the promoting track — consumers with a stricter admission
+  // bar (localization-mode map repair) gate on it.
+  int hits{0};
   std::uint8_t color{static_cast<std::uint8_t>(kFrontendColorCount - 1U)};
   std::array<std::uint16_t, kFrontendColorCount> color_votes{};
   std::vector<FrontendPendingObservation> observations;
@@ -233,6 +254,8 @@ public:
       double second_chi2 = std::numeric_limits<double>::max();
       int best_index = -1;
       int second_index = -1;
+      double best_inflation = 0.0;
+      double second_inflation = 0.0;
 
       for (std::size_t j = 0; j < confirmed.size(); ++j) {
         const FrontendConfirmedLandmark & landmark = confirmed[j];
@@ -269,11 +292,14 @@ public:
         if (chi2 < best_chi2) {
           second_chi2 = best_chi2;
           second_index = best_index;
+          second_inflation = best_inflation;
           best_chi2 = chi2;
           best_index = static_cast<int>(j);
+          best_inflation = inflation;
         } else if (chi2 < second_chi2) {
           second_chi2 = chi2;
           second_index = static_cast<int>(j);
+          second_inflation = inflation;
         }
 
         if (chi2_ok || euclidean_ok) {
@@ -285,7 +311,12 @@ public:
       // well. If the rivals are close to EACH OTHER they are a duplicate
       // pair of one physical cone (not a real ambiguity — refusing every
       // revisit near a duplicate starves loop confirmation); otherwise the
-      // observation is dropped for the frame.
+      // observation is dropped for the frame. The duplicate-pair separation
+      // scales with the drift inflation the gate itself admitted: a twin
+      // spawned under N meters of drift sits up to the inflated gate radius
+      // from its original, and judging it at the un-inflated radius turned
+      // every seam revisit into an "ambiguity" that reset loop confirmation
+      // (map never converged, mapping never ended).
       if (best_index >= 0 && second_index >= 0 &&
         second_chi2 <= params_.association_gate_chi2 &&
         std::sqrt(best_chi2) >
@@ -294,7 +325,11 @@ public:
         const double rival_separation =
           (confirmed[static_cast<std::size_t>(best_index)].position -
           confirmed[static_cast<std::size_t>(second_index)].position).norm();
-        if (rival_separation > params_.association_max_distance_m) {
+        const double duplicate_separation = std::min(
+          params_.duplicate_pair_max_separation_m,
+          params_.association_max_distance_m +
+          3.0 * std::sqrt(std::max(best_inflation, second_inflation)));
+        if (rival_separation > duplicate_separation) {
           ambiguous[i] = true;
           result.ambiguous_observations.push_back(i);
         }
@@ -406,16 +441,33 @@ public:
         0.0 : track.min_lever_sigma_m;
       const double promotion_sigma =
         std::sqrt(fused_sigma * fused_sigma + lever_floor * lever_floor);
-      if (track.hits >= params_.promote_min_hits &&
-        promotion_sigma <= params_.promote_max_position_sigma_m)
-      {
+      const bool promotable =
+        (track.hits >= params_.promote_min_hits &&
+        promotion_sigma <= params_.promote_max_position_sigma_m) ||
+        (track.hits >= params_.promote_far_min_hits &&
+        promotion_sigma <= params_.promote_far_max_sigma_m);
+      if (promotable) {
         bool held = false;
         for (const FrontendConfirmedLandmark & landmark : confirmed) {
-          if ((landmark.position - track.position).norm() <=
-            params_.promote_hold_radius_m &&
-            traveled_m - landmark.last_seen_traveled_m >
-            params_.promote_hold_stale_travel_m)
-          {
+          const double stale_travel = traveled_m - landmark.last_seen_traveled_m;
+          if (stale_travel <= params_.promote_hold_stale_travel_m) {
+            continue;
+          }
+          // The hold radius scales with the drift the association gate
+          // itself models for this landmark: a drift-offset re-sighting of a
+          // stale cone sits up to the inflated gate radius away, so holding
+          // at the base radius let seam-crossing twins promote 3-5 m from
+          // their originals and freeze into the map. Only LAP-OLD stale
+          // neighbours inflate (see promote_hold_drift_stale_m) — a fresh or
+          // merely FOV-stale neighbour still means two real cones.
+          double hold_radius = params_.promote_hold_radius_m;
+          if (stale_travel >= params_.promote_hold_drift_stale_m) {
+            const double inflation = std::min(
+              params_.association_max_inflation,
+              params_.association_inflation_per_meter * stale_travel);
+            hold_radius += 3.0 * std::sqrt(inflation);
+          }
+          if ((landmark.position - track.position).norm() <= hold_radius) {
             held = true;
             break;
           }
@@ -426,6 +478,7 @@ public:
           FrontendPromotion promotion;
           promotion.position = track.position;
           promotion.covariance = track.covariance;
+          promotion.hits = track.hits;
           promotion.color_votes = track.color_votes;
           promotion.color = majorityColor(track.color_votes);
           promotion.observations = std::move(track.pending);
