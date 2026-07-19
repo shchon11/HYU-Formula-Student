@@ -65,7 +65,7 @@ class YoloV8BBoxNode(Node):
         self._load_parameters()
         self._validate_parameters()
 
-        self.model_path = self._validated_model_path(self.model_path)
+        self.model_path = self._validated_model_path(self.model_path, self.prefer_engine)
         self._warn_if_coco_smoke_test_model()
         self.model = self._load_model()
         self._validate_model_classes()
@@ -191,6 +191,13 @@ class YoloV8BBoxNode(Node):
         # detect-only weight leaves this off and the stereo tier stays disabled.
         self.declare_parameter("publish_keypoints", False)
         self.declare_parameter("keypoints_topic", "/perception/debug/cone_keypoints")
+        # Prefer a sibling TensorRT .engine (same stem next to the configured
+        # .pt) when one has been exported on this machine
+        # (``yolo export format=engine``). The tracked config stays on the
+        # portable .pt, but any machine that built the engine runs it
+        # automatically -- same weights, ~20x faster. Set false to force the
+        # .pt (e.g. an FP16-vs-FP32 accuracy comparison).
+        self.declare_parameter("prefer_engine", True)
 
     def _load_parameters(self) -> None:
         self.image_topic = self.get_parameter("image_topic").value
@@ -202,6 +209,7 @@ class YoloV8BBoxNode(Node):
         self.lock_tolerance_sec = float(
             self.get_parameter("lock_tolerance_sec").value)
         self.model_path = self.get_parameter("model_path").value
+        self.prefer_engine = bool(self.get_parameter("prefer_engine").value)
         self.confidence_threshold = float(
             self.get_parameter("confidence_threshold").value
         )
@@ -340,7 +348,7 @@ class YoloV8BBoxNode(Node):
         return str(task) if task else None
 
     @staticmethod
-    def _validated_model_path(model_path: str) -> str:
+    def _validated_model_path(model_path: str, prefer_engine: bool = True) -> str:
         """
         Return a canonical, readable local ``.pt``/``.engine`` model path.
 
@@ -386,6 +394,19 @@ class YoloV8BBoxNode(Node):
             raise RuntimeError(
                 f"YOLO model_path is not readable: {resolved}"
             ) from exc
+
+        # A .pt was configured but its exported TensorRT sibling exists: use the
+        # engine (same weights, far faster). Only swap when the engine is a
+        # readable regular file, else fall back to the .pt.
+        if prefer_engine and resolved.suffix.lower() == ".pt":
+            engine = resolved.with_suffix(".engine")
+            try:
+                if engine.is_file():
+                    with engine.open("rb") as engine_file:
+                        engine_file.read(1)
+                    return str(engine)
+            except OSError:
+                pass
         return str(resolved)
 
     def _validate_model_classes(self) -> None:
