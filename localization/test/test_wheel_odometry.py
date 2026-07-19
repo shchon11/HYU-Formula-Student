@@ -30,7 +30,7 @@ pytest.importorskip("sbg_driver.msg")
 
 from builtin_interfaces.msg import Time as TimeMsg  # noqa: E402
 from hyu_msgs.msg import WheelSpeedsStamped  # noqa: E402
-from sbg_driver.msg import SbgEkfRotAccel  # noqa: E402
+from sbg_driver.msg import SbgEkfNav, SbgEkfRotAccel  # noqa: E402
 
 _MODULE_PATH = os.path.join(
     os.path.dirname(__file__), "..", "scripts", "wheel_odometry.py"
@@ -78,12 +78,20 @@ def _rot_accel(t, yaw_rate_flu, a_x, frame_id="imu_link_ned"):
     return msg
 
 
+def _nav_mode(mode):
+    """SbgEkfNav carrying only what wheel_odometry reads: solution_mode."""
+    msg = SbgEkfNav()
+    msg.status.solution_mode = mode
+    return msg
+
+
 def _reset(node):
     node.rear_axle_to_base = 0.0
     node.x = node.y = node.yaw = 0.0
     node.last_t = None
     node.ins_yaw_rate = None
     node.ins_stamp = None
+    node.nav_mode = None
     node.used_ins_fallback = False
     node.accel_x_lp = 0.0
     node.accel_lp_stamp = None
@@ -231,3 +239,49 @@ def test_differential_yaw_fallback_before_bicycle(node):
     assert out
     assert abs(out[-1].twist.twist.angular.z - w_true) < 1e-3
     assert node.yaw > 0.5  # integrated a left turn from encoders alone
+
+
+def test_mode2_gates_rot_accel_consumption(node):
+    """Free-inertial EKF (mode < 3): the gravity-leaking rot_accel log is
+    treated exactly like a stale one — encoder yaw, slip paused, accel
+    zeroed — so the leak cannot reach TMPC's LongAcc feedback."""
+    _reset(node)
+    node.on_ekf_nav(_nav_mode(2))
+    v, w, a_x = 5.0, 0.5, 3.0
+    for i in range(50):
+        t = 100.0 + i / 100.0
+        node.on_rot_accel(_rot_accel(t, w, a_x))
+        node.on_wheel_speeds(_speeds(t, v))
+    out = node.pub.msgs
+    assert out
+    last = out[-1]
+    # The leaked acceleration must NOT pass through to consumers.
+    assert last.linear_acceleration.x == 0.0
+    # Yaw comes from the (zero-split) encoders, not the INS rate.
+    assert abs(last.twist.twist.angular.z) < 1e-9
+    # Slip compensation paused: raw encoder speed goes out unmodified.
+    assert abs(last.twist.twist.linear.x - v) < 1e-6
+    assert node.used_ins_fallback
+
+
+def test_mode_recovery_restores_rot_accel(node):
+    """Back at mode >= 3 the same fresh log is consumed again."""
+    _reset(node)
+    node.on_ekf_nav(_nav_mode(2))
+    v, w, a_x = 5.0, 0.5, 3.0
+    for i in range(20):
+        t = 100.0 + i / 100.0
+        node.on_rot_accel(_rot_accel(t, w, a_x))
+        node.on_wheel_speeds(_speeds(t, v))
+    node.on_ekf_nav(_nav_mode(4))
+    for i in range(20, 70):
+        t = 100.0 + i / 100.0
+        node.on_rot_accel(_rot_accel(t, w, a_x))
+        node.on_wheel_speeds(_speeds(t, v))
+    last = node.pub.msgs[-1]
+    assert abs(last.twist.twist.angular.z - w) < 1e-9
+    assert abs(last.linear_acceleration.x - a_x) < 1e-9
+    # Positive a_x -> traction slip: the reported speed under-reads the
+    # encoders again, proving the slip estimate resumed.
+    assert last.twist.twist.linear.x < v - 1e-4
+    assert not node.used_ins_fallback

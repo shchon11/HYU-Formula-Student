@@ -176,6 +176,28 @@ class SbgOdometryBridge(Node):
         # Reject integration steps with a non-positive or too-large dt [s].
         self.max_dt = self.declare_parameter("max_dt", 0.5).value
 
+        # Refix holdoff. When the solution recovers (mode returns to 4, or the
+        # correction tier improves e.g. single -> RTK), the INS's *believed*
+        # sigma snaps to the new tier instantly while its *realized* position
+        # error pulls in over seconds — a window of confident-but-wrong
+        # absolute fixes. Fed to the graph at the tier sigma, those priors
+        # yank the whole pose chain toward the not-yet-converged fix and the
+        # car localizes off the track (2026-07-19 fault-injection runs). For
+        # gnss_refix_holdoff_sec after any tier improvement, the published
+        # anchor sigma is floored at gnss_refix_holdoff_sigma so graph_slam's
+        # covariance gate (gnss_prior_max_position_sigma, 3.0 m) drops the
+        # priors naturally — no extra protocol between the nodes. The floor
+        # must stay above that gate or the "held" priors get admitted anyway,
+        # merely downweighted. The very first anchor after georeferencing is
+        # exempt: the datum is taken from that fix, so its error is absorbed
+        # into the map frame and there is no graph to yank yet.
+        self.refix_holdoff_sec = self.declare_parameter(
+            "gnss_refix_holdoff_sec", 3.0
+        ).value
+        self.refix_holdoff_sigma = self.declare_parameter(
+            "gnss_refix_holdoff_sigma", 5.0
+        ).value
+
         # 1-sigma fallbacks / tier inflation [m], [rad].
         self.default_position_sigma = self.declare_parameter(
             "default_position_sigma", 0.05
@@ -255,6 +277,13 @@ class SbgOdometryBridge(Node):
         # dead-reckoning fallback.
         self._wheel_speed = None
         self._wheel_stamp = None
+
+        # Refix-holdoff state: correction tier of the last anchored message
+        # (None while unanchored), whether an anchor was ever published (the
+        # first-anchor exemption), and the holdoff expiry stamp.
+        self._anchor_tier = None
+        self._anchor_ever = False
+        self._holdoff_until = None
 
         sensor_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.car_state_pub = self.create_publisher(CarState, self.car_state_topic, 10)
@@ -545,8 +574,15 @@ class SbgOdometryBridge(Node):
         if vel_acc > 0.0:
             odom_sigma = max(odom_sigma, vel_acc * self.vel_accuracy_horizon_sec)
         self._last_pub_nav_t = t
+        # Dead reckoning has no ENU velocity, but the twist must NOT read as
+        # v=0: ego_odom passes this twist through to the controllers, and a
+        # zero there makes the speed loop wind full throttle for the whole
+        # outage (2026-07-19 injection run: cmd saturated +2.5, 8 -> 14.5 m/s
+        # in 10 s). The wheel speed that drives the integrator IS the body
+        # forward velocity — publish it.
         self._publish_car_state(
-            stamp, self._odom_xy, self._odom_yaw, odom_sigma, yaw_sigma
+            stamp, self._odom_xy, self._odom_yaw, odom_sigma, yaw_sigma,
+            body_vx=self._wheel_speed if dead_reckoning else None,
         )
 
         # --- global anchor: raw absolute ENU + mode-tiered covariance ----
@@ -558,6 +594,7 @@ class SbgOdometryBridge(Node):
             and msg.status.position_valid
             and mode >= self.absolute_min_solution_mode
         )
+        holdoff = False
         if anchored:
             # The driver reports 0.0 accuracy for "not computed"; that must
             # not map to the tightest tier.
@@ -566,8 +603,37 @@ class SbgOdometryBridge(Node):
             pos_sigma_n = acc_n if acc_n > 0.0 else _HUGE_SIGMA
             if self.convention == "ned":
                 pos_sigma_e, pos_sigma_n = pos_sigma_n, pos_sigma_e
+
+            # Refix holdoff (see the parameter block): a tier improvement —
+            # re-anchoring after a mode dip, or single/float -> RTK while
+            # anchored — starts the window. The tier is tracked on the RAW
+            # accuracies so an expiring holdoff cannot retrigger itself.
+            tier = self._correction_tier(max(pos_sigma_e, pos_sigma_n))
+            prev_tier = self._anchor_tier
+            improved = (
+                tier > prev_tier
+                if prev_tier is not None
+                else self._anchor_ever
+            )
+            if improved:
+                self._holdoff_until = t + self.refix_holdoff_sec
+                self.get_logger().info(
+                    f"GNSS refix (tier {prev_tier} -> {tier}): anchor sigma "
+                    f"held at >= {self.refix_holdoff_sigma:.1f} m for "
+                    f"{self.refix_holdoff_sec:.1f} s while the fix pulls in"
+                )
+            self._anchor_tier = tier
+            self._anchor_ever = True
+            if self._holdoff_until is not None:
+                if t < self._holdoff_until:
+                    holdoff = True
+                    pos_sigma_e = max(pos_sigma_e, self.refix_holdoff_sigma)
+                    pos_sigma_n = max(pos_sigma_n, self.refix_holdoff_sigma)
+                else:
+                    self._holdoff_until = None
         else:
             pos_sigma_e = pos_sigma_n = _HUGE_SIGMA
+            self._anchor_tier = None
         # Before georeferencing (DR-only start) the ENU position is a
         # provisional (0,0), not a real fix — suppress the anchor entirely
         # rather than publish a meaningless huge-sigma point.
@@ -586,10 +652,19 @@ class SbgOdometryBridge(Node):
         self._publish_status_board(
             t, mode, max(pos_sigma_e, pos_sigma_n),
             anchored=anchored, fault=False, started=True,
-            dead_reckoning=dead_reckoning,
+            dead_reckoning=dead_reckoning, holdoff=holdoff,
         )
 
     # --- publishing ------------------------------------------------------
+
+    @staticmethod
+    def _correction_tier(sigma):
+        """Reported-accuracy tier: 2 RTK fixed / 1 float / 0 single-point."""
+        if sigma <= 0.05:
+            return 2
+        if sigma <= 0.5:
+            return 1
+        return 0
 
     def _odom_sigma_for_mode(self, mode):
         if mode >= 4:
@@ -598,7 +673,8 @@ class SbgOdometryBridge(Node):
             return self.odom_sigma_mode3
         return self.odom_sigma_mode2
 
-    def _publish_car_state(self, header, xy, yaw, trans_sigma, yaw_sigma):
+    def _publish_car_state(self, header, xy, yaw, trans_sigma, yaw_sigma,
+                           body_vx=None):
         state = CarState()
         state.header = header
         state.header.frame_id = self.world_frame
@@ -614,11 +690,17 @@ class SbgOdometryBridge(Node):
         # speed loops, frenet odom) read velocity from this message. An
         # empty twist reads as v=0 — the controller's speed loop runs open
         # and launches the car off track (2026-07-18 full-pipeline autopsy).
-        cos_y = math.cos(-yaw)
-        sin_y = math.sin(-yaw)
-        ve, vn = self._last_vel_enu or (0.0, 0.0)
-        state.twist.twist.linear.x = cos_y * ve - sin_y * vn
-        state.twist.twist.linear.y = sin_y * ve + cos_y * vn
+        # body_vx overrides the ENU-derived twist for the dead-reckoning
+        # tier, where the ENU velocity is exactly what is unavailable.
+        if body_vx is not None:
+            state.twist.twist.linear.x = body_vx
+            state.twist.twist.linear.y = 0.0
+        else:
+            cos_y = math.cos(-yaw)
+            sin_y = math.sin(-yaw)
+            ve, vn = self._last_vel_enu or (0.0, 0.0)
+            state.twist.twist.linear.x = cos_y * ve - sin_y * vn
+            state.twist.twist.linear.y = sin_y * ve + cos_y * vn
         state.twist.twist.angular.z = self._yaw_rate_estimate
         self.car_state_pub.publish(state)
 
@@ -656,7 +738,8 @@ class SbgOdometryBridge(Node):
         return (0.95, 0.5, 0.1), "SINGLE POINT"
 
     def _publish_status_board(
-        self, t, mode, sigma, anchored, fault, started, dead_reckoning=False
+        self, t, mode, sigma, anchored, fault, started, dead_reckoning=False,
+        holdoff=False,
     ):
         """Render a fixed HUD below the ATE overlay via rviz_2d_overlay."""
         if self.overlay_pub is None:
@@ -669,7 +752,9 @@ class SbgOdometryBridge(Node):
             mode, sigma, anchored, fault, started, dead_reckoning)
         mode_names = {0: "UNINITIALIZED", 1: "VERT_GYRO", 2: "AHRS",
                       3: "NAV_VELOCITY", 4: "NAV_POSITION"}
-        if anchored and sigma is not None:
+        if holdoff:
+            prior = "HOLDOFF (refix)"
+        elif anchored and sigma is not None:
             prior = "ACTIVE" if sigma <= 0.5 else "DROPPED (sigma gate)"
         else:
             prior = "-"

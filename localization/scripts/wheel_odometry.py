@@ -20,6 +20,16 @@ Wiring — identical in the sim and on the car, which is the point:
     yaw rate + longitudinal acceleration, free of gravity and of the sensor
     biases the EKF has estimated. If it times out the node falls back to
     bicycle-model yaw from the steering angle (and slip compensation pauses).
+  - ``/sbg/ekf_nav``              sbg_driver/SbgEkfNav, read ONLY for
+    status.solution_mode. Below NAV_VELOCITY (mode 3) the EKF is free
+    inertial: its attitude error ramps and g*sin(theta) leaks into the
+    "gravity-free" acceleration. Consumed as truth, that leak reaches the
+    CarState linear_acceleration, TMPC's LongAcc feedback integrates it, and
+    the throttle winds up (2026-07-19 mode-2 runaway). So while
+    solution_mode < min_rot_accel_solution_mode the rot_accel log is treated
+    exactly like a stale one: encoder-differential yaw, slip compensation
+    paused, acceleration zeroed. Unknown mode (nav never seen) gates nothing
+    — a car whose nav log is off must not silently lose slip compensation.
 
 This node used to read sensor_msgs/Imu on ``/imu/data``, which was a sim-only
 fiction. The driver publishes the ROS standard messages only when
@@ -81,7 +91,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy
 from hyu_msgs.msg import CarState, WheelSpeedsStamped
 
 try:
-    from sbg_driver.msg import SbgEkfRotAccel
+    from sbg_driver.msg import SbgEkfNav, SbgEkfRotAccel
 except ImportError as exc:  # pragma: no cover - depends on runtime environment
     raise SystemExit(
         "sbg_driver messages not found. Build/source the workspace that "
@@ -97,6 +107,11 @@ class WheelOdometry(Node):
 
         self.declare_parameter("wheel_speeds_topic", "/vehicle/wheel_speeds")
         self.declare_parameter("rot_accel_topic", "/sbg/ekf_rot_accel_body")
+        self.declare_parameter("ekf_nav_topic", "/sbg/ekf_nav")
+        # Below this solution_mode the EKF is free inertial and the rot_accel
+        # log carries the gravity leak (module docstring); its consumption is
+        # gated exactly like a stale log. 3 = NAV_VELOCITY.
+        self.declare_parameter("min_rot_accel_solution_mode", 3)
         self.declare_parameter("output_topic", "/localization/wheel_odom")
         self.declare_parameter("wheel_radius", 0.2525)   # m (eufs configDry)
         self.declare_parameter("wheelbase", 1.58)        # m
@@ -144,6 +159,8 @@ class WheelOdometry(Node):
         self.wheel_radius = float(self.get_parameter("wheel_radius").value)
         self.wheelbase = float(self.get_parameter("wheelbase").value)
         self.use_ins = bool(self.get_parameter("use_ins_yaw_rate").value)
+        self.min_rot_accel_mode = int(
+            self.get_parameter("min_rot_accel_solution_mode").value)
         self.ins_timeout = float(self.get_parameter("ins_timeout").value)
         self.max_dt = float(self.get_parameter("max_dt").value)
         self.sigma_v = float(self.get_parameter("sigma_v").value)
@@ -173,6 +190,11 @@ class WheelOdometry(Node):
         self.ins_yaw_rate = None
         self.ins_accel_flu = None
         self.ins_stamp = None
+        # Last reported solution_mode; None until ekf_nav is seen. Held (not
+        # aged out) between nav messages: if the whole driver dies, rot_accel
+        # staleness gates everything anyway, and if only the nav log is off
+        # the mode was never going to update — fail open in both cases.
+        self.nav_mode = None
         self.used_ins_fallback = False
         self.accel_x_lp = 0.0
         self.accel_lp_stamp = None
@@ -194,6 +216,12 @@ class WheelOdometry(Node):
                 self.on_rot_accel,
                 sensor_qos,
             )
+            self.create_subscription(
+                SbgEkfNav,
+                str(self.get_parameter("ekf_nav_topic").value),
+                self.on_ekf_nav,
+                sensor_qos,
+            )
 
         self.get_logger().info(
             "wheel odometry: %s + %s -> %s (r=%.4f m, L=%.2f m)" % (
@@ -203,6 +231,32 @@ class WheelOdometry(Node):
                 self.get_parameter("output_topic").value,
                 self.wheel_radius,
                 self.wheelbase,
+            )
+        )
+
+    def on_ekf_nav(self, msg):
+        mode = int(msg.status.solution_mode)
+        if self.nav_mode is not None and self.nav_mode != mode:
+            if mode < self.min_rot_accel_mode <= self.nav_mode:
+                self.get_logger().warn(
+                    "solution_mode %d < %d: EKF is free inertial, gating "
+                    "rot_accel consumption (encoder yaw, slip compensation "
+                    "paused, acceleration zeroed)" % (
+                        mode, self.min_rot_accel_mode)
+                )
+            elif self.nav_mode < self.min_rot_accel_mode <= mode:
+                self.get_logger().info(
+                    "solution_mode %d: rot_accel consumption restored" % mode)
+        self.nav_mode = mode
+
+    def _ins_ok(self, t):
+        """rot_accel is consumable: fresh AND not free-inertial (if known)."""
+        return (
+            self.ins_stamp is not None
+            and abs(t - self.ins_stamp) <= self.ins_timeout
+            and not (
+                self.nav_mode is not None
+                and self.nav_mode < self.min_rot_accel_mode
             )
         )
 
@@ -257,28 +311,30 @@ class WheelOdometry(Node):
 
     def yaw_rate(self, t, v, steering, diff_w=None):
         """INS yaw rate when fresh, else rear-encoder differential, else bicycle."""
-        if (
-            self.use_ins
-            and self.ins_yaw_rate is not None
-            and self.ins_stamp is not None
-            and abs(t - self.ins_stamp) <= self.ins_timeout
-        ):
+        if self.use_ins and self.ins_yaw_rate is not None and self._ins_ok(t):
             if self.used_ins_fallback:
                 self.get_logger().info("INS yaw rate restored")
                 self.used_ins_fallback = False
             return self.ins_yaw_rate
 
         if self.use_ins and not self.used_ins_fallback:
-            # On the car, "never arrived" is as likely as "stopped arriving":
-            # the log needs sbgECom >= 4.0 firmware and log_ekf_rot_accel_body
-            # switched on in the driver config.
-            self.get_logger().warn(
-                "%s yaw rate unavailable; falling back to rear-encoder "
-                "differential yaw (slip compensation paused). If it never "
-                "arrives, check the driver's log_ekf_rot_accel_body and the "
-                "ELLIPSE firmware." % (
-                    self.get_parameter("rot_accel_topic").value)
+            mode_gated = (
+                self.nav_mode is not None
+                and self.nav_mode < self.min_rot_accel_mode
             )
+            if not mode_gated:
+                # On the car, "never arrived" is as likely as "stopped
+                # arriving": the log needs sbgECom >= 4.0 firmware and
+                # log_ekf_rot_accel_body switched on in the driver config.
+                # (The mode-gated case already announced itself in
+                # on_ekf_nav; repeating a firmware hint there would mislead.)
+                self.get_logger().warn(
+                    "%s yaw rate unavailable; falling back to rear-encoder "
+                    "differential yaw (slip compensation paused). If it never "
+                    "arrives, check the driver's log_ekf_rot_accel_body and "
+                    "the ELLIPSE firmware." % (
+                        self.get_parameter("rot_accel_topic").value)
+                )
             self.used_ins_fallback = True
         # Every wheel has its own AMK encoder, so the rear pair's speed
         # difference observes yaw directly — unlike the bicycle model it needs
@@ -318,11 +374,7 @@ class WheelOdometry(Node):
         )
 
         slip_correction = 0.0
-        if (
-            self.slip_compensation
-            and self.ins_stamp is not None
-            and abs(t - self.ins_stamp) <= self.ins_timeout
-        ):
+        if self.slip_compensation and self._ins_ok(t):
             v_sq = v * v
             drive_accel = self.accel_x_lp + self.slip_c_drag * v_sq / self.slip_mass
             grip_accel = self.slip_mu * (
@@ -378,13 +430,12 @@ class WheelOdometry(Node):
         out.twist.twist.linear.x = v
         out.twist.twist.linear.y = vy
         out.twist.twist.angular.z = w
-        # Body acceleration from the INS log when fresh; zeros in fallback,
-        # matching the "sensor absent" semantics of the yaw-rate fallback.
-        if (
-            self.ins_accel_flu is not None
-            and self.ins_stamp is not None
-            and abs(t - self.ins_stamp) <= self.ins_timeout
-        ):
+        # Body acceleration from the INS log when fresh AND trustworthy;
+        # zeros in fallback, matching the "sensor absent" semantics of the
+        # yaw-rate fallback. The mode gate matters most right here: this
+        # field feeds TMPC's LongAcc feedback, and a free-inertial gravity
+        # leak passed through it winds the throttle up (mode-2 runaway).
+        if self.ins_accel_flu is not None and self._ins_ok(t):
             out.linear_acceleration.x = self.ins_accel_flu[0]
             out.linear_acceleration.y = self.ins_accel_flu[1]
         self.pub.publish(out)

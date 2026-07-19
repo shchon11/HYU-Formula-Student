@@ -72,7 +72,7 @@ def _euler(t, yaw_enu=0.0, valid=True):
     return msg
 
 
-def _nav(t, mode, ve=0.0, vn=0.0, lat=_LAT0, lon=_LON0):
+def _nav(t, mode, ve=0.0, vn=0.0, lat=_LAT0, lon=_LON0, acc=0.02):
     """Build an SbgEkfNav with the validity flags the EKF ties to the mode."""
     msg = SbgEkfNav()
     msg.header.stamp = _stamp(t)
@@ -84,8 +84,8 @@ def _nav(t, mode, ve=0.0, vn=0.0, lat=_LAT0, lon=_LON0):
     # NED wire order: velocity.x = north, velocity.y = east.
     msg.velocity.x = vn
     msg.velocity.y = ve
-    msg.position_accuracy.x = 0.02
-    msg.position_accuracy.y = 0.02
+    msg.position_accuracy.x = acc
+    msg.position_accuracy.y = acc
     return msg
 
 
@@ -114,6 +114,9 @@ def _reset(node):
     node._heading_valid = False
     node._wheel_speed = None
     node._wheel_stamp = None
+    node._anchor_tier = None
+    node._anchor_ever = False
+    node._holdoff_until = None
     node._last_marker_t = None
     node._last_board_t = None
     node.car_state_pub = _StubPub()
@@ -271,6 +274,63 @@ def test_dr_only_start_feeds_motion_but_holds_anchor(node):
     assert node.gnss_odom_pub.msgs
 
 
+def test_refix_holdoff_inflates_anchor_sigma(node):
+    """Re-anchoring after a mode dip floors the anchor sigma above the
+    graph gate for gnss_refix_holdoff_sec, then returns to the tier."""
+    _reset(node)
+    rate, v = 20.0, 5.0
+    t = _drive(node, 100.0, 1.0, rate, mode=4, v=v)
+    # The very first anchor is exempt: the datum comes from that fix, so its
+    # error is absorbed into the map frame — sigma is the raw tier.
+    assert math.sqrt(
+        node.gnss_odom_pub.msgs[-1].pose.covariance[0]
+    ) == pytest.approx(0.02)
+
+    t = _drive(node, t, 1.0, rate, mode=2, v=v)
+    n_anchor = len(node.gnss_odom_pub.msgs)
+    t = _drive(node, t, 2.0, rate, mode=4, v=v)
+    # Every fix inside the holdoff window rides above the graph's
+    # gnss_prior_max_position_sigma (3.0) so the priors drop naturally.
+    held = node.gnss_odom_pub.msgs[n_anchor:]
+    assert held
+    assert all(
+        math.sqrt(m.pose.covariance[0]) >= node.refix_holdoff_sigma - 1e-6
+        for m in held
+    )
+    # After expiry (3.0 s) the tier sigma comes back — no sticky penalty.
+    _drive(node, t, 1.5, rate, mode=4, v=v)
+    tail = node.gnss_odom_pub.msgs[-5:]
+    assert all(
+        math.sqrt(m.pose.covariance[0]) == pytest.approx(0.02) for m in tail
+    )
+
+
+def test_correction_tier_improvement_triggers_holdoff(node):
+    """single -> RTK with the mode pinned at 4 also opens the window (the
+    believed sigma snaps to the tier while the realized error pulls in)."""
+    _reset(node)
+    rate, v = 20.0, 5.0
+    t = _drive(node, 100.0, 1.0, rate, mode=4, v=v)
+    # Degrading to single-point must NOT trigger anything: the raw (honest)
+    # accuracy goes out as-is.
+    for i in range(int(rate)):
+        ti = t + i / rate
+        node.on_euler(_euler(ti))
+        node.on_wheel_speeds(_speeds(ti, v))
+        node.on_nav(_nav(ti, 4, ve=v, acc=1.5))
+    assert math.sqrt(
+        node.gnss_odom_pub.msgs[-1].pose.covariance[0]
+    ) == pytest.approx(1.5)
+    # Tier improves back to RTK: the first "fixed" message is already held.
+    t += 1.0
+    node.on_euler(_euler(t))
+    node.on_wheel_speeds(_speeds(t, v))
+    node.on_nav(_nav(t, 4, ve=v))
+    assert math.sqrt(
+        node.gnss_odom_pub.msgs[-1].pose.covariance[0]
+    ) == pytest.approx(node.refix_holdoff_sigma)
+
+
 def test_velocity_dropout_at_mode3_uses_wheels(node):
     """A momentary velocity_valid=false gap is bridged by the same fallback."""
     _reset(node)
@@ -287,3 +347,15 @@ def test_velocity_dropout_at_mode3_uses_wheels(node):
         node.on_nav(nav)
     x1 = node.car_state_pub.msgs[-1].pose.pose.position.x
     assert x1 - x0 == pytest.approx(v * 1.0, abs=0.5)
+
+
+def test_dr_twist_reports_wheel_speed_not_zero(node):
+    """Dead reckoning must NOT publish a zero twist: ego_odom passes the
+    twist through to the speed loops, and v=0 there winds the throttle up
+    for the whole outage (2026-07-19 injection: 8 -> 14.5 m/s)."""
+    _reset(node)
+    rate, v = 20.0, 5.0
+    t = _drive(node, 100.0, 1.0, rate, mode=4, v=v)
+    _drive(node, t, 1.0, rate, mode=2, v=v)
+    out = node.car_state_pub.msgs[-1]
+    assert out.twist.twist.linear.x == pytest.approx(v, abs=1e-6)

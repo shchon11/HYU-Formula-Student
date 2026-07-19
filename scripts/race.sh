@@ -166,8 +166,11 @@ SANE_PATH='export PATH="$(echo "$PATH" | tr ":" "\n" | grep -vE "conda|/\.venv" 
 # drop — so the value baked into every pane's SRC is always right for this box.
 if ip link show lo 2>/dev/null | grep -q "MULTICAST"; then RLO=1; else RLO=0; fi
 SRC="$SANE_PATH source $ROS_SETUP; source $WS_SETUP; export EUFS_MASTER=$EUFS_MASTER ROS_LOCALHOST_ONLY=$RLO;"
-WAIT_CAR="until ros2 node list 2>/dev/null | grep -q race_car; do sleep 2; done"
-WAIT_GT="until ros2 topic list 2>/dev/null | grep -q /ground_truth/state; do sleep 2; done"
+# --no-daemon: the ros2 daemon can serve a stale (pre-sim) graph cache in
+# which race_car never appears, wedging every pane at "waiting for car…"
+# forever. Direct discovery is slower per poll but immune to that.
+WAIT_CAR="until ros2 node list --no-daemon 2>/dev/null | grep -q race_car; do sleep 2; done"
+WAIT_GT="until ros2 topic list --no-daemon 2>/dev/null | grep -q /ground_truth/state; do sleep 2; done"
 WAIT_STATE="until ros2 topic list 2>/dev/null | grep -q /planning/state; do sleep 2; done"
 
 # Perception evaluation: sim + real perception + SLAM + teleop. No planner, no
