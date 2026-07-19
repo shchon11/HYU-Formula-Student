@@ -78,6 +78,7 @@ class YoloV8BBoxNodeTest(unittest.TestCase):
         node.class_map = {"blue_cone": "blue"}
         node.unknown_color_policy = "unknown"
         node.output_commit_settle_sec = 0.1
+        node.inference_mode = "all"
         node._clock_generation = 0
         node._shutting_down = False
         node._worker = self._InlineWorker(node)
@@ -308,6 +309,75 @@ class YoloV8BBoxNodeTest(unittest.TestCase):
 
         self.assertEqual(len(node.bbox_pub.messages), 1)
         self.assertIsNone(node._deferred_completion)
+
+
+class _SubmissionRecorder:
+    def __init__(self):
+        self.jobs = []
+
+    def submit(self, job):
+        self.jobs.append(job)
+
+
+class LidarLockedElectionTest(unittest.TestCase):
+    """The lock's invariant: one submission per LiDAR period whenever ANY
+    frame exists in it -- under drops, boundary-straddling drops, and clock
+    resets. The phase-wrap detector this replaced failed the straddle case:
+    two dropped frames around the scan boundary produced no phase decrease,
+    and the whole period silently went unsubmitted."""
+
+    def _node(self):
+        node = object.__new__(YoloV8BBoxNode)
+        node.inference_mode = "lidar_locked"
+        node.lidar_period_sec = 0.1
+        node.lock_tolerance_sec = 0.0167
+        node.timestamp_reset_threshold_sec = 0.1
+        node._last_cloud_stamp = 0.0
+        node._lidar_period_est = 0.1
+        node._last_taken_stamp = None
+        node._clock_generation = 0
+        node._worker = _SubmissionRecorder()
+        return node
+
+    @staticmethod
+    def _image(stamp_sec):
+        message = Image()
+        message.header.stamp.sec = int(stamp_sec)
+        message.header.stamp.nanosec = int(round((stamp_sec % 1.0) * 1e9))
+        return message
+
+    def _feed(self, node, stamps):
+        for stamp in stamps:
+            node._image_callback(self._image(stamp))
+        return [j.image_msg.header.stamp.sec
+                + j.image_msg.header.stamp.nanosec * 1e-9
+                for j in node._worker.jobs]
+
+    def test_clean_30hz_stream_elects_one_frame_per_period(self):
+        stamps = [round(n / 30.0, 3) for n in range(30)]   # 1 s of 30 Hz
+        taken = self._feed(self._node(), stamps)
+        self.assertEqual(len(taken), 10)
+        deltas = [round(b - a, 3) for a, b in zip(taken, taken[1:])]
+        self.assertTrue(all(0.084 <= d <= 0.134 for d in deltas), deltas)
+
+    def test_boundary_straddling_double_drop_does_not_skip_the_period(self):
+        # Frames at 0, .033, .067 then BOTH frames around the boundary
+        # (.100, .133) drop; the period containing .167 must still submit.
+        taken = self._feed(self._node(),
+                           [0.0, 0.033, 0.067, 0.167, 0.200, 0.233])
+        self.assertIn(0.167, [round(t, 3) for t in taken])
+
+    def test_a_frameless_period_skips_and_the_next_recovers_immediately(self):
+        # Nothing arrives in [0.084, 0.184]; the first frame after the outage
+        # is submitted at once rather than waiting out another period.
+        taken = self._feed(self._node(), [0.0, 0.033, 0.067, 0.300, 0.333])
+        self.assertEqual([round(t, 3) for t in taken], [0.0, 0.3])
+
+    def test_clock_jump_backwards_resets_the_lock(self):
+        # A sim reset rewinds stamps; the lock must not wait for the old
+        # timeline's next period.
+        taken = self._feed(self._node(), [5.0, 0.5])
+        self.assertEqual([round(t, 3) for t in taken], [5.0, 0.5])
 
 
 if __name__ == "__main__":

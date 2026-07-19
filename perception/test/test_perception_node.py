@@ -43,6 +43,14 @@ def _node(**overrides):
     node.lidar_only_variance_x = node.lidar_only_variance_y = 0.20
     node.sparse_sigma_lat_m, node.sparse_sigma_lon_m = 0.10, 0.25
     node.vision_lateral_floor_m = 0.25
+    # No deskew twist cached: the speed-proportional timing variance term
+    # contributes zero, keeping the covariance assertions exact.
+    node._twist = None
+    node.lidar_timing_sigma_per_mps = 0.02
+    node.cluster_range_bias_m = 0.0
+    # 0.0 = uncapped, the declare_parameter default; the shipped config caps
+    # at 12 m, but these gates are asserted range-by-range without it.
+    node.sparse_max_range_m = 0.0
     for name, value in overrides.items():
         setattr(node, name, value)
     return node

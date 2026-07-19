@@ -42,6 +42,7 @@ def _node():
     node._pending_left = __import__("collections").OrderedDict()
     node._pending_right = __import__("collections").OrderedDict()
     node._pair = None
+    node._pairs = {}
     node._pair_buffer_size = 8
     return node
 

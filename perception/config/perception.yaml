@@ -30,7 +30,14 @@ perception_node:
 
     # The cloud is stale by up to this much when a bbox frame uses it; past it
     # the clusters are dropped rather than compensated forward on faith.
-    max_cluster_age_sec: 0.20
+    # 0.25, not 0.20: the lidar-locked detector emits one bbox per 0.1s LiDAR
+    # period, so a single missed period (one camera drop burst -- routine in
+    # sim under render load and on a USB ZED) leaves the newest bbox exactly
+    # 0.200-0.235s old at the next cloud. At 0.20 that tripped the gate by
+    # ~1ms and uncoloured the whole frame; 0.25 grants exactly one period of
+    # grace while still refusing a double skip (0.30+). Colour does not move,
+    # so a bbox one period older describes the same cones.
+    max_cluster_age_sec: 0.25
     # Stereo images this far from the bbox stamp are not worth cross-checking
     # against; the check is skipped and the monocular estimate stands.
     max_image_age_sec: 0.10

@@ -611,6 +611,20 @@ class PerceptionNode(Node):
         t("detections")
 
         scene = self._scene_at(frame, image_stamp, camera_matrix)
+        if (scene is None and frame.points_lidar.shape[0]
+                and self._stamp_ns(image_stamp) != self._stamp_ns(stamp)):
+            # A failed cloud->image-stamp TF must degrade exactly like a
+            # stale bbox: keep the LiDAR backbone and drop only the colours.
+            # At the cloud's own stamp the projection needs no
+            # motion-compensation frame (equal stamps take the plain
+            # lookup), so this succeeds whenever the cloud could be placed
+            # at all -- which the callback already required. Without this,
+            # any frame whose bbox stamp missed the LiDAR tick lost every
+            # cluster and published vision-only cones: gate pairs merged
+            # 4->2 and per-landmark covariance flapped 27x at 14% of frames
+            # (measured 2026-07-20, odom frame absent).
+            detections, image_stamp = [], stamp
+            scene = self._scene_at(frame, image_stamp, camera_matrix)
         t("scene(tf+project)")
         cones = self._build_cones(detections, scene, camera_info, camera_matrix,
                                   image_stamp, left, right)
@@ -978,8 +992,8 @@ class PerceptionNode(Node):
             self.camera_frame, image_stamp, frame.frame_id, frame.stamp)
         if to_base is None or to_camera is None:
             self._warn_throttled(
-                "cluster_tf", "No TF to place the LiDAR points and project them "
-                "into the image stamp; publishing uncoloured cones")
+                "cluster_tf", "No TF to project the LiDAR points into the "
+                "image stamp; keeping the LiDAR backbone uncoloured")
             return None
         return Scene(
             points_base=self._transform_points(frame.points_lidar, to_base),

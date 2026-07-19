@@ -1,7 +1,9 @@
+import json
 import math
+import struct
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 import rclpy
 from hyu_msgs.msg import (
@@ -85,8 +87,7 @@ class YoloV8BBoxNode(Node):
         )
         self._last_cloud_stamp = None
         self._lidar_period_est = self.lidar_period_sec
-        self._prev_image_phase = None
-        self._picked_this_period = False
+        self._last_taken_stamp = None
         if self.inference_mode == "lidar_locked":
             from sensor_msgs.msg import PointCloud2
             self.create_subscription(
@@ -308,18 +309,51 @@ class YoloV8BBoxNode(Node):
                 "`pip install 'ultralytics>=8,<9'`, "
                 "or run inside the project Docker image that provides it."
             ) from exc
+        task = self._engine_task(self.model_path)
+        if task is not None:
+            return YOLO(self.model_path, task=task)
         return YOLO(self.model_path)
+
+    @staticmethod
+    def _engine_task(model_path: str) -> Optional[str]:
+        """Task recorded in a TensorRT engine's embedded Ultralytics metadata.
+
+        ``YOLO()`` infers the task from a ``.pt`` checkpoint but cannot from
+        an ``.engine``; it guesses ``detect``, and a pose engine then decodes
+        without its keypoints — which silently starves the stereo tier. The
+        exporter embeds the task in the engine's length-prefixed JSON header,
+        so read it back and pass it explicitly. ``None`` (let ``YOLO()``
+        decide) for ``.pt`` files or an engine without readable metadata.
+        """
+        if not str(model_path).lower().endswith(".engine"):
+            return None
+        try:
+            with open(model_path, "rb") as engine_file:
+                (meta_len,) = struct.unpack("<i", engine_file.read(4))
+                if not 0 < meta_len < 1_000_000:
+                    return None
+                metadata = json.loads(
+                    engine_file.read(meta_len).decode("utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError, struct.error):
+            return None
+        task = metadata.get("task") if isinstance(metadata, dict) else None
+        return str(task) if task else None
 
     @staticmethod
     def _validated_model_path(model_path: str) -> str:
         """
-        Return a canonical, readable local ``.pt`` model path.
+        Return a canonical, readable local ``.pt``/``.engine`` model path.
 
         Ultralytics interprets well-known missing weight names as download
         requests.  Resolving and opening the file before constructing
         ``YOLO`` keeps this runtime strictly offline and makes a bad model
         configuration fail at node startup instead of silently fetching a
         different artifact.
+
+        ``.engine`` is a TensorRT plan exported from the ``.pt`` on THIS
+        machine (``yolo export format=engine``); it is GPU- and
+        TensorRT-version-specific, which is why only the ``.pt`` is tracked
+        and the engine lives next to it untracked.
         """
         configured_path = str(model_path).strip()
         if not configured_path:
@@ -330,14 +364,14 @@ class YoloV8BBoxNode(Node):
             resolved = candidate.resolve(strict=True)
         except (OSError, RuntimeError) as exc:
             raise RuntimeError(
-                "YOLO model_path must reference an existing local .pt file: "
-                f"{configured_path}"
+                "YOLO model_path must reference an existing local .pt or "
+                f".engine file: {configured_path}"
             ) from exc
 
-        if resolved.suffix.lower() != ".pt":
+        if resolved.suffix.lower() not in (".pt", ".engine"):
             raise RuntimeError(
-                "YOLO model_path must reference a local .pt weight file: "
-                f"{resolved}"
+                "YOLO model_path must reference a local .pt or .engine "
+                f"weight file: {resolved}"
             )
         if not resolved.is_file():
             raise RuntimeError(
@@ -401,28 +435,36 @@ class YoloV8BBoxNode(Node):
     def _image_callback(self, msg: Image) -> None:
         if self.inference_mode == "lidar_locked" and \
                 self._last_cloud_stamp is not None:
-            # One inference per LiDAR period, jitter-proof:
-            # - preferred: the frame landing within lock_tolerance BEFORE the
-            #   next predicted scan end (inference completes as it arrives);
-            # - fallback: if jitter made every frame miss that window, the
-            #   phase WRAP frame is submitted instead, so no period is ever
-            #   skipped (gap <= one camera period).
-            # The anchor refreshes every scan, so spin-period drift does not
-            # accumulate; the period itself is estimated from the stream.
+            # One inference per LiDAR period, from a single invariant: take a
+            # frame once at least (period - lock_tolerance) has elapsed since
+            # the taken one before it. Pure stamp arithmetic.
+            #
+            # This replaced a phase-wrap detector ("did the phase decrease
+            # between consecutive frames?"). That state machine silently
+            # skipped an entire period whenever the two frames straddling the
+            # scan boundary BOTH dropped -- the phases then went 33 -> 67
+            # with no decrease, no wrap, no submission -- and consecutive
+            # camera drops are routine: measured 40% of inter-frame deltas
+            # under GUI render load in sim, and a USB ZED bursts drops the
+            # same way. 460 of 462 bbox period-skips in a 3-min chain
+            # recording sat on exactly this (2026-07-20).
+            #
+            # On the sim's aligned stamp grid the elapsed rule still elects
+            # the scan-end frame (threshold 83.3ms elects every 3rd 33.3ms
+            # frame); on free-running real-sensor clocks it degrades to "the
+            # earliest frame once the period is due", which is the freshest
+            # submission that exists. A period with no frames at all still
+            # skips -- nothing can be submitted -- which is what
+            # max_cluster_age_sec's one-period grace downstream absorbs.
             stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-            period = self._lidar_period_est
-            phase = (stamp - self._last_cloud_stamp) % period
-            wrapped = (self._prev_image_phase is not None
-                       and phase < self._prev_image_phase)
-            in_window = (period - phase) <= self.lock_tolerance_sec
-            take = in_window or (wrapped and not self._picked_this_period)
-            if wrapped:
-                self._picked_this_period = False
-            if not take:
-                self._prev_image_phase = phase
+            last = self._last_taken_stamp
+            if last is not None and \
+                    stamp < last - self.timestamp_reset_threshold_sec:
+                last = None    # clock jumped backwards: sim reset or bag loop
+            if last is not None and (stamp - last
+                    < self._lidar_period_est - self.lock_tolerance_sec):
                 return
-            self._picked_this_period = True
-            self._prev_image_phase = phase
+            self._last_taken_stamp = stamp
         self._worker.submit(YoloJob(self._clock_generation, msg))
 
     def _compute_yolo_job(self, job: YoloJob) -> YoloComputation:
