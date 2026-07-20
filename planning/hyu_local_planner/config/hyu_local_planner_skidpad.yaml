@@ -18,7 +18,11 @@ hyu_local_planner_node:
     heartbeat_hz: 10.0
     roi_min_x: -1.0
     roi_max_x: 20.0
-    roi_abs_y: 8.0
+    # Wider lateral ROI than the road course: the r=9.1 m circle curves out of a
+    # narrow band fast, cutting the path short. 10 m follows more of the arc so
+    # the centreline stays long and stable (map+observation), like the base
+    # planner on a straight track.
+    roi_abs_y: 10.0
     endpoint_match_tolerance_m: 0.05
     min_track_width_m: 2.0
     max_track_width_m: 6.0
@@ -27,7 +31,12 @@ hyu_local_planner_node:
     max_traversal_gap_m: 8.0
     centerline_max_link_gap_m: 8.0
     max_heading_change_rad: 1.047
-    max_u_turn_heading_change_rad: 2.618
+    # No hairpins on a skidpad -- only two smooth circles. Disable u-turn
+    # continuation (== max_heading_change) so that when the smooth circle
+    # corridor ends at the mapped frontier the path STOPS cleanly instead of
+    # folding back across the circle to the far-side cones (the 60-100 deg kinks
+    # that made the centreline zig-zag near the junction).
+    max_u_turn_heading_change_rad: 1.047
     waypoint_spacing_m: 0.5
     max_start_distance_m: 4.0
     two_sided_horizon_m: 20.0

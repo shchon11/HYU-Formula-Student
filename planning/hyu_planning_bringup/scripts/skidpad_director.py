@@ -74,12 +74,6 @@ class SkidpadDirector(Node):
         # Shared junction cones fit both circles; keep them for the active
         # circle unless the other circle fits better by more than this margin.
         self.ring_share_margin_m = self.declare_parameter("ring_share_margin_m", 0.75).value
-        # Radially displace the fed circle cones outward from the active
-        # centre. Both rings shift equally, so the corridor width and the
-        # planner's width gates are untouched, but the midline (and the car)
-        # moves outward by the same amount — extra clearance to the inner
-        # ring, which the pursuit's corner-cut otherwise shaves toward.
-        self.circle_outward_bias_m = self.declare_parameter("circle_outward_bias_m", 0.5).value
         # Switch ENTRY->RIGHT this far before the junction so the circle
         # corridor is already in the planner ROI when the lane cones end.
         self.switch_lead_m = self.declare_parameter("switch_lead_m", 8.0).value
@@ -212,13 +206,15 @@ class SkidpadDirector(Node):
                     continue
                 if fit > self._ring_fit(x, y, other) + self.ring_share_margin_m:
                     continue  # clearly the other circle's cone
-                shifted = ConeWithCovariance()
-                radius = math.hypot(x - centre[0], y - centre[1])
-                scale = (radius + self.circle_outward_bias_m) / radius
-                shifted.point.x = centre[0] + (x - centre[0]) * scale
-                shifted.point.y = centre[1] + (y - centre[1]) * scale
-                shifted.covariance = list(cone.covariance)
-                sink.append(shifted)
+                # Feed the cone at its true SLAM position: the planner's
+                # blue/yellow midpoints then trace the true circle centreline
+                # (no radial bias). Any inner-ring corner-cut is a controller
+                # concern (lookahead), not something to bake into the path.
+                kept = ConeWithCovariance()
+                kept.point.x = x
+                kept.point.y = y
+                kept.covariance = list(cone.covariance)
+                sink.append(kept)
 
     def on_cone_map(self, msg):
         out = ConeArrayWithCovariance()
