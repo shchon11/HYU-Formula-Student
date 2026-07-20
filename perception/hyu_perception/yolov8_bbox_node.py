@@ -165,9 +165,13 @@ class YoloV8BBoxNode(Node):
         self.declare_parameter("lidar_period_sec", 0.1)
         # Half the camera period: exactly one 30 Hz frame per LiDAR tick.
         self.declare_parameter("lock_tolerance_sec", 0.0167)
+        # Overridden by the launch (resolved install-share path) and the config;
+        # this bare default just lets a direct `ros2 run` from a sourced
+        # workspace find the shipped cone model. prefer_engine still swaps in a
+        # sibling .engine when one exists.
         self.declare_parameter(
             "model_path",
-            "/home/dohyun/FS/artifacts/yolov8/fsoco_yolov8n/weights/best.pt",
+            "models/cone_pose_8kpt/weights/best.pt",
         )
         self.declare_parameter("confidence_threshold", 0.25)
         self.declare_parameter("iou_threshold", 0.45)

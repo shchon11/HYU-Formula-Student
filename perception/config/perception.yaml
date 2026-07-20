@@ -473,6 +473,11 @@ yolov8_bbox_node:
     # with the resolved install-share path; this default serves direct
     # `ros2 run` from a sourced workspace.
     model_path: models/cone_pose_8kpt/weights/best.pt
+    # TensorRT if available, else the portable .pt. When a .engine exported from
+    # this .pt sits next to it (scripts/export_tensorrt_engine.py, ~20x faster),
+    # the node loads the engine; with no engine it runs the .pt unchanged. Set
+    # false to force the .pt (e.g. an FP16-vs-FP32 accuracy comparison).
+    prefer_engine: true
     confidence_threshold: 0.25
     iou_threshold: 0.45
     imgsz: 640
