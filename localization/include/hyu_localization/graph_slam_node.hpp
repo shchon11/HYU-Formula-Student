@@ -633,6 +633,22 @@ private:
   std::atomic<double> latest_twist_vy_{0.0};
   std::atomic<double> latest_twist_wz_{0.0};
 
+  // Output pose-jump gate. On a symmetric layout (skidpad's two circles) the
+  // graph optimiser can momentarily converge to the mirror solution, flipping
+  // the published pose ~180 deg / several metres in a single ~4 ms frame --
+  // physically impossible, and it whipsaws the downstream local planner. Veto a
+  // frame-to-frame step past physical limits and dead-reckon the last good pose
+  // by the motion twist instead; a genuine step (real motion, converged
+  // relocalisation across keyframes) stays under the limit and passes.
+  bool pose_gate_enable_{true};
+  double pose_gate_max_speed_mps_{40.0};
+  double pose_gate_max_yaw_rate_radps_{10.0};
+  bool have_last_pub_pose_{false};
+  double last_pub_x_{0.0};
+  double last_pub_y_{0.0};
+  double last_pub_yaw_{0.0};
+  double last_pub_sec_{0.0};
+
   // Freeze-time map ADMISSION check: freezing certifies the map as the
   // fixed reference for every remaining lap, so a polluted map must not
   // freeze just because the lap geometry closed. Measurable without ground

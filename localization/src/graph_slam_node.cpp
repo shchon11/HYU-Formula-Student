@@ -128,6 +128,11 @@ GraphSlamNode::GraphSlamNode()
   map_topic_ = declare_parameter<std::string>("map_topic", "/localization/cone_map");
   slam_odom_topic_ =
     declare_parameter<std::string>("slam_odom_topic", "/localization/ego_odom");
+  pose_gate_enable_ = declare_parameter<bool>("pose_gate_enable", pose_gate_enable_);
+  pose_gate_max_speed_mps_ =
+    declare_parameter<double>("pose_gate_max_speed_mps", pose_gate_max_speed_mps_);
+  pose_gate_max_yaw_rate_radps_ =
+    declare_parameter<double>("pose_gate_max_yaw_rate_radps", pose_gate_max_yaw_rate_radps_);
   status_topic_ = declare_parameter<std::string>("status_topic", "~/status");
   lifecycle_diagnostics_topic_ =
     declare_parameter<std::string>(
@@ -3579,14 +3584,48 @@ void GraphSlamNode::publishPath(const rclcpp::Time & stamp)
 
 void GraphSlamNode::publishOdometry(const rclcpp::Time & stamp, const g2o::SE2 & estimate)
 {
+  double px = estimate.translation().x();
+  double py = estimate.translation().y();
+  double pyaw = estimate.rotation().angle();
+
+  // Physical-plausibility gate (see member comment): veto a non-physical
+  // single-frame pose step -- the mirror-solution flip on symmetric layouts --
+  // and dead-reckon the last good pose by the body twist instead, so the
+  // downstream local planner never sees the 180 deg / multi-metre glitch.
+  if (pose_gate_enable_ && have_last_pub_pose_) {
+    const double dt = stamp.seconds() - last_pub_sec_;
+    if (dt > 1.0e-4 && dt < 1.0) {
+      const double dpos = std::hypot(px - last_pub_x_, py - last_pub_y_);
+      const double dyaw =
+        std::abs(std::atan2(std::sin(pyaw - last_pub_yaw_), std::cos(pyaw - last_pub_yaw_)));
+      if (dpos > pose_gate_max_speed_mps_ * dt || dyaw > pose_gate_max_yaw_rate_radps_ * dt) {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 1000,
+          "Pose-jump gate: vetoed non-physical ego_odom step (%.1f m, %.0f deg in %.0f ms); "
+          "dead-reckoning from the last good pose", dpos, dyaw * 180.0 / M_PI, dt * 1000.0);
+        const double vx = latest_twist_vx_.load();
+        const double vy = latest_twist_vy_.load();
+        const double wz = latest_twist_wz_.load();
+        px = last_pub_x_ + (vx * std::cos(last_pub_yaw_) - vy * std::sin(last_pub_yaw_)) * dt;
+        py = last_pub_y_ + (vx * std::sin(last_pub_yaw_) + vy * std::cos(last_pub_yaw_)) * dt;
+        pyaw = last_pub_yaw_ + wz * dt;
+      }
+    }
+  }
+  last_pub_x_ = px;
+  last_pub_y_ = py;
+  last_pub_yaw_ = pyaw;
+  last_pub_sec_ = stamp.seconds();
+  have_last_pub_pose_ = true;
+
   nav_msgs::msg::Odometry odom;
   odom.header.frame_id = map_frame_;
   odom.header.stamp = stamp;
   odom.child_frame_id = slam_base_frame_;
-  odom.pose.pose.position.x = estimate.translation().x();
-  odom.pose.pose.position.y = estimate.translation().y();
+  odom.pose.pose.position.x = px;
+  odom.pose.pose.position.y = py;
   odom.pose.pose.position.z = 0.0;
-  odom.pose.pose.orientation = quaternionFromYaw(estimate.rotation().angle());
+  odom.pose.pose.orientation = quaternionFromYaw(pyaw);
 
   // Honest, state-tiered pose covariance: tight once the pose is anchored to
   // a converged/loaded map, loose while mapping is still unconverged.
