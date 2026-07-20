@@ -133,6 +133,14 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<double>("pose_gate_max_speed_mps", pose_gate_max_speed_mps_);
   pose_gate_max_yaw_rate_radps_ =
     declare_parameter<double>("pose_gate_max_yaw_rate_radps", pose_gate_max_yaw_rate_radps_);
+  pose_gate_heading_enable_ =
+    declare_parameter<bool>("pose_gate_heading_enable", pose_gate_heading_enable_);
+  pose_gate_max_heading_vs_gnss_rad_ = declare_parameter<double>(
+    "pose_gate_max_heading_vs_gnss_rad", pose_gate_max_heading_vs_gnss_rad_);
+  pose_gate_gnss_heading_max_age_ = declare_parameter<double>(
+    "pose_gate_gnss_heading_max_age", pose_gate_gnss_heading_max_age_);
+  pose_gate_gnss_heading_max_sigma_ = declare_parameter<double>(
+    "pose_gate_gnss_heading_max_sigma", pose_gate_gnss_heading_max_sigma_);
   status_topic_ = declare_parameter<std::string>("status_topic", "~/status");
   lifecycle_diagnostics_topic_ =
     declare_parameter<std::string>(
@@ -1971,6 +1979,15 @@ void GraphSlamNode::gnssOdomCallback(const nav_msgs::msg::Odometry::SharedPtr ms
   // Bridge fills the (x, y) diagonal of the row-major 6x6 pose covariance.
   latest_gnss_fix_.sigma_x = std::sqrt(std::max(0.0, msg->pose.covariance[0]));
   latest_gnss_fix_.sigma_y = std::sqrt(std::max(0.0, msg->pose.covariance[7]));
+  // Absolute heading (map/ENU frame) + its sigma, for the mirror-flip guard in
+  // publishOdometry. The SBG bridge fills orientation from the dual-antenna/AHRS
+  // heading and covariance[35] with its variance.
+  const auto & q = msg->pose.pose.orientation;
+  latest_gnss_fix_.yaw = std::atan2(2.0 * (q.w * q.z + q.x * q.y),
+                                    1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+  latest_gnss_fix_.yaw_sigma = std::sqrt(std::max(0.0, msg->pose.covariance[35]));
+  latest_gnss_fix_.yaw_valid = std::isfinite(latest_gnss_fix_.yaw) &&
+                               latest_gnss_fix_.yaw_sigma > 0.0;
   latest_gnss_fix_.valid = true;
 }
 
@@ -3609,6 +3626,43 @@ void GraphSlamNode::publishOdometry(const rclcpp::Time & stamp, const g2o::SE2 &
         px = last_pub_x_ + (vx * std::cos(last_pub_yaw_) - vy * std::sin(last_pub_yaw_)) * dt;
         py = last_pub_y_ + (vx * std::sin(last_pub_yaw_) + vy * std::cos(last_pub_yaw_)) * dt;
         pyaw = last_pub_yaw_ + wz * dt;
+      }
+    }
+  }
+
+  // Absolute-heading guard (see members): a GRADUAL convergence to the mirror
+  // solution on a symmetric layout (skidpad) slips past the per-frame rate gate
+  // above -- each small step is physical, but the flipped end-state sits ~180
+  // deg from the INS/GNSS absolute heading. When a fresh, trusted absolute fix
+  // disagrees that grossly, the cone-anchored estimate is on the aliased branch;
+  // snap the OUTPUT to the trusted GNSS pose (an independent absolute sensor
+  // that cannot itself be mirrored) so the planner never sees the flip. The
+  // graph recovers through the GNSS-XY prior / auto-relocalization.
+  if (pose_gate_heading_enable_) {
+    GnssFix fix;
+    {
+      std::lock_guard<std::mutex> lock(gnss_mutex_);
+      fix = latest_gnss_fix_;
+    }
+    const double age = stamp.seconds() - fix.stamp_sec;
+    if (fix.valid && fix.yaw_valid && age >= 0.0 &&
+      age <= pose_gate_gnss_heading_max_age_ &&
+      fix.yaw_sigma <= pose_gate_gnss_heading_max_sigma_ &&
+      fix.sigma_x > 0.0 && fix.sigma_y > 0.0 &&
+      fix.sigma_x <= gnss_prior_max_position_sigma_ &&
+      fix.sigma_y <= gnss_prior_max_position_sigma_)
+    {
+      const double dyaw_gnss =
+        std::abs(std::atan2(std::sin(pyaw - fix.yaw), std::cos(pyaw - fix.yaw)));
+      if (dyaw_gnss > pose_gate_max_heading_vs_gnss_rad_) {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 1000,
+          "Pose-heading guard: ego_odom heading %.0f deg from the INS/GNSS absolute "
+          "heading -- mirror-solution branch; snapping to the GNSS pose",
+          dyaw_gnss * 180.0 / M_PI);
+        px = fix.position.x();
+        py = fix.position.y();
+        pyaw = fix.yaw;
       }
     }
   }

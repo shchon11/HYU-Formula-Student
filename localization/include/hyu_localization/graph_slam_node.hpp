@@ -643,6 +643,16 @@ private:
   bool pose_gate_enable_{true};
   double pose_gate_max_speed_mps_{40.0};
   double pose_gate_max_yaw_rate_radps_{10.0};
+  // Absolute-heading guard: veto the published pose when its heading disagrees
+  // with the trusted INS/GNSS absolute heading by more than this, then
+  // dead-reckon. Catches the mirror-solution flip on a symmetric layout even
+  // when it converges GRADUALLY (each small step passes the per-frame rate gate
+  // above, but the flipped end-state is ~180 deg from the INS heading). Large
+  // by design so only a gross flip trips it, never normal heading refinement.
+  bool pose_gate_heading_enable_{true};
+  double pose_gate_max_heading_vs_gnss_rad_{2.094};   // 120 deg
+  double pose_gate_gnss_heading_max_age_{0.5};
+  double pose_gate_gnss_heading_max_sigma_{0.2};
   bool have_last_pub_pose_{false};
   double last_pub_x_{0.0};
   double last_pub_y_{0.0};
@@ -792,6 +802,12 @@ private:
     Eigen::Vector2d position{Eigen::Vector2d::Zero()};
     double sigma_x{0.0};
     double sigma_y{0.0};
+    // Absolute heading (map/ENU frame) from the SBG dual-antenna/AHRS solution,
+    // valid whenever the INS is (mode >= 2), even when RTK position drifts.
+    // Used only as a mirror-flip guard on symmetric layouts, never as a pull.
+    double yaw{0.0};
+    double yaw_sigma{0.0};
+    bool yaw_valid{false};
     bool valid{false};
   };
   GnssFix latest_gnss_fix_;
