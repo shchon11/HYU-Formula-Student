@@ -173,6 +173,7 @@ Visualization Manager:
           Namespaces:
             big_orange_landmarks: true
             blue_landmarks: true
+            orange_landmarks: true
             pose_graph: false
             unknown_landmarks: true
             yellow_landmarks: true
@@ -313,7 +314,7 @@ Visualization Manager:
         - Alpha: 1
           Buffer Length: 1
           Class: rviz_default_plugins/Path
-          Color: 255; 25; 0
+          Color: 246; 97; 81
           Enabled: true
           Head Diameter: 0.30000001192092896
           Head Length: 0.20000000298023224
@@ -558,16 +559,16 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/ThirdPersonFollower
-      Distance: 75.50595092773438
+      Distance: 133.71044921875
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 4.30661678314209
-        Y: -21.36736488342285
-        Z: -7.328630090341903e-06
+        X: 13.73309326171875
+        Y: -54.16575622558594
+        Z: -9.328164196631406e-06
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
