@@ -1050,6 +1050,16 @@ bool GraphSlamNode::maybeCsmRegister(
     loop_mode = static_cast<int>(targets.size()) >= csm_params_.min_query_points;
   }
   if (!loop_mode) {
+    // Tracking runs ONLY against a FROZEN map: while mapping, a tracking
+    // re-seed is an un-gated correction — the optimizer drags landmarks
+    // after the re-seeded pose and the map is reshaped with zero orange
+    // evidence (watched live on speedway: constant-curvature arcs alias
+    // INSIDE the +-2 m window, where the second-peak check is blind, and
+    // the map bent before the gate ever got its shot). Mapping is pure
+    // odometry + founding; the gate seam is the one correction.
+    if (!localization_mode_) {
+      return false;
+    }
     targets = landmarkMatchTargets(
       reference_estimate.translation(), csm_track_window_m_, -1.0);
     if (static_cast<int>(targets.size()) < csm_params_.min_query_points) {
