@@ -14,8 +14,11 @@
 #include <g2o/solvers/eigen/linear_solver_eigen.h>
 #include <g2o/types/slam2d/edge_se2.h>
 #include <g2o/types/slam2d/edge_se2_pointxy.h>
+#include <g2o/types/slam2d/edge_se2_prior.h>
 #include <g2o/types/slam2d/edge_se2_xyprior.h>
 #include <g2o/types/slam2d/types_slam2d.h>
+
+#include "hyu_localization/edge_se2_gauge_xy.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -383,6 +386,19 @@ GraphSlamNode::GraphSlamNode()
     declare_parameter<double>("gnss_prior_innovation_max_residual", 2.0);
   gnss_prior_min_interval_ =
     declare_parameter<double>("gnss_prior_min_interval", 1.0);
+  gnss_prior_degraded_max_sigma_ = declare_parameter<double>(
+    "gnss_prior_degraded_max_sigma", gnss_prior_degraded_max_sigma_);
+  gnss_prior_degraded_sigma_scale_ = declare_parameter<double>(
+    "gnss_prior_degraded_sigma_scale", gnss_prior_degraded_sigma_scale_);
+  gnss_prior_degraded_interval_scale_ = declare_parameter<double>(
+    "gnss_prior_degraded_interval_scale", gnss_prior_degraded_interval_scale_);
+  gnss_prior_kernel_ = declare_parameter<std::string>(
+    "gnss_prior_kernel", gnss_prior_kernel_);
+  gauge_enable_ = declare_parameter<bool>("gauge_enable", gauge_enable_);
+  gauge_prior_sigma_pos_ = declare_parameter<double>(
+    "gauge_prior_sigma_pos", gauge_prior_sigma_pos_);
+  gauge_prior_sigma_yaw_ = declare_parameter<double>(
+    "gauge_prior_sigma_yaw", gauge_prior_sigma_yaw_);
   gnss_prior_loc_max_position_sigma_ = declare_parameter<double>(
     "gnss_prior_loc_max_position_sigma", gnss_prior_loc_max_position_sigma_);
   odom_gap_reset_sec_ = declare_parameter<double>(
@@ -391,6 +407,56 @@ GraphSlamNode::GraphSlamNode()
     "odom_gap_quarantine_sec", odom_gap_quarantine_sec_);
   odom_gap_reset_sec_ = std::max(0.0, odom_gap_reset_sec_);
   odom_gap_quarantine_sec_ = std::max(0.0, odom_gap_quarantine_sec_);
+  gnss_transition_quarantine_sec_ = declare_parameter<double>(
+    "gnss_transition_quarantine_sec", gnss_transition_quarantine_sec_);
+  founding_assoc_min_ratio_ = declare_parameter<double>(
+    "founding_assoc_min_ratio", founding_assoc_min_ratio_);
+  founding_assoc_min_visible_ = declare_parameter<int>(
+    "founding_assoc_min_visible", founding_assoc_min_visible_);
+  gnss_transition_quarantine_sec_ = std::max(0.0, gnss_transition_quarantine_sec_);
+  founding_assoc_min_ratio_ = std::clamp(founding_assoc_min_ratio_, 0.0, 1.0);
+  founding_assoc_min_visible_ = std::max(1, founding_assoc_min_visible_);
+  recovery_enable_ = declare_parameter<bool>("recovery_enable", recovery_enable_);
+  recovery_min_correction_m_ = declare_parameter<double>(
+    "recovery_min_correction_m", recovery_min_correction_m_);
+  recovery_min_correction_yaw_ = declare_parameter<double>(
+    "recovery_min_correction_yaw", recovery_min_correction_yaw_);
+  recovery_window_ = std::max(
+    2, static_cast<int>(declare_parameter<int>("recovery_window", recovery_window_)));
+  recovery_agreement_m_ = declare_parameter<double>(
+    "recovery_agreement_m", recovery_agreement_m_);
+  recovery_agreement_yaw_ = declare_parameter<double>(
+    "recovery_agreement_yaw", recovery_agreement_yaw_);
+  recovery_min_inliers_ = declare_parameter<int>(
+    "recovery_min_inliers", recovery_min_inliers_);
+  recovery_min_inlier_gain_ = declare_parameter<int>(
+    "recovery_min_inlier_gain", recovery_min_inlier_gain_);
+  recovery_cooldown_sec_ = declare_parameter<double>(
+    "recovery_cooldown_sec", recovery_cooldown_sec_);
+  recovery_pending_max_sec_ = declare_parameter<double>(
+    "recovery_pending_max_sec", recovery_pending_max_sec_);
+  recovery_max_correction_m_ = declare_parameter<double>(
+    "recovery_max_correction_m", recovery_max_correction_m_);
+  cone_reacquire_enable_ = declare_parameter<bool>(
+    "cone_reacquire_enable", cone_reacquire_enable_);
+  cone_reacquire_min_weak_frames_ = declare_parameter<int>(
+    "cone_reacquire_min_weak_frames", cone_reacquire_min_weak_frames_);
+  cone_reacquire_search_radius_m_ = declare_parameter<double>(
+    "cone_reacquire_search_radius_m", cone_reacquire_search_radius_m_);
+  cone_reacquire_search_yaw_ = declare_parameter<double>(
+    "cone_reacquire_search_yaw", cone_reacquire_search_yaw_);
+  cone_reacquire_min_inliers_ = declare_parameter<int>(
+    "cone_reacquire_min_inliers", cone_reacquire_min_inliers_);
+  cone_reacquire_cooldown_sec_ = declare_parameter<double>(
+    "cone_reacquire_cooldown_sec", cone_reacquire_cooldown_sec_);
+  cone_reacquire_trigger_ratio_ = declare_parameter<double>(
+    "cone_reacquire_trigger_ratio", cone_reacquire_trigger_ratio_);
+  cone_reacquire_partial_radius_m_ = declare_parameter<double>(
+    "cone_reacquire_partial_radius_m", cone_reacquire_partial_radius_m_);
+  cone_reacquire_partial_yaw_ = declare_parameter<double>(
+    "cone_reacquire_partial_yaw", cone_reacquire_partial_yaw_);
+  cone_reacquire_min_inlier_gain_ = declare_parameter<int>(
+    "cone_reacquire_min_inlier_gain", cone_reacquire_min_inlier_gain_);
   gnss_prior_loc_max_position_sigma_ =
     std::max(1e-3, gnss_prior_loc_max_position_sigma_);
   gnss_prior_max_position_sigma_ = std::max(1e-3, gnss_prior_max_position_sigma_);
@@ -672,6 +738,10 @@ void GraphSlamNode::declareRecoveryParameters()
   submap_min_match_points_ = declare_parameter<int>(
     "submap_min_match_points", submap_min_match_points_);
 
+  gnss_drift_budget_base_m_ = declare_parameter<double>(
+    "gnss_drift_budget_base_m", gnss_drift_budget_base_m_);
+  gnss_drift_budget_per_m_ = declare_parameter<double>(
+    "gnss_drift_budget_per_m", gnss_drift_budget_per_m_);
   seam_anchor_enable_ = declare_parameter<bool>("seam_anchor_enable", seam_anchor_enable_);
   seam_anchor_search_radius_m_ = declare_parameter<double>(
     "seam_anchor_search_radius_m", seam_anchor_search_radius_m_);
@@ -741,6 +811,7 @@ void GraphSlamNode::configureOptimizer()
 void GraphSlamNode::resetGraph()
 {
   optimizer_.clear();
+  gauge_vertex_ = nullptr;  // owned by the optimizer; recreated lazily
   poses_.clear();
   landmarks_.clear();
   last_observations_.clear();
@@ -811,6 +882,57 @@ void GraphSlamNode::resetGraph()
   last_seam_anchor_attempt_traveled_m_ = -1.0e18;
   submap_.reset();
   submap_reference_valid_ = false;
+  recovery_samples_.clear();
+  last_recovery_stamp_sec_ = -1.0e18;
+  last_pinned_graph_id_ = -1;
+  recovery_pending_since_sec_ = -1.0;
+  last_gnss_agree_traveled_m_ = 0.0;
+  weak_assoc_streak_ = 0;
+  last_healthy_assoc_graph_id_ = -1;
+  last_cone_reacquire_sec_ = -1.0e18;
+}
+
+g2o::VertexSE2 * GraphSlamNode::ensureGaugeVertex()
+{
+  if (!gauge_enable_) {
+    return nullptr;
+  }
+  if (gauge_vertex_ != nullptr) {
+    return gauge_vertex_;
+  }
+  auto * vertex = new g2o::VertexSE2();
+  vertex->setId(next_vertex_id_++);
+  vertex->setEstimate(g2o::SE2());  // map frame is born ENU-aligned
+  if (!optimizer_.addVertex(vertex)) {
+    RCLCPP_ERROR(get_logger(), "Failed to add gauge vertex");
+    delete vertex;
+    return nullptr;
+  }
+  // Weak identity prior: keeps g observable through a GNSS outage (no gauge
+  // edges arriving) and bounds how far a colored-single bias can carry it,
+  // while staying far too soft to fight healthy RTK edges.
+  auto * prior = new g2o::EdgeSE2Prior();
+  prior->setId(next_edge_id_++);
+  prior->setVertex(0, vertex);
+  prior->setMeasurement(g2o::SE2());
+  Eigen::Matrix3d info = Eigen::Matrix3d::Zero();
+  const double sp = std::max(1.0e-3, gauge_prior_sigma_pos_);
+  const double sy = std::max(1.0e-3, gauge_prior_sigma_yaw_);
+  info(0, 0) = 1.0 / (sp * sp);
+  info(1, 1) = 1.0 / (sp * sp);
+  info(2, 2) = 1.0 / (sy * sy);
+  prior->setInformation(info);
+  if (!optimizer_.addEdge(prior)) {
+    RCLCPP_ERROR(get_logger(), "Failed to add gauge prior edge");
+    delete prior;
+  }
+  gauge_vertex_ = vertex;
+  return gauge_vertex_;
+}
+
+g2o::SE2 GraphSlamNode::gaugeEstimate() const
+{
+  return gauge_vertex_ != nullptr ? gauge_vertex_->estimate() : g2o::SE2();
 }
 
 void GraphSlamNode::stateCallback(const hyu_msgs::msg::CarState::SharedPtr msg)
@@ -1270,6 +1392,24 @@ bool GraphSlamNode::maybeApplySeamAnchor(
       correction_norm, gate_anchor_max_correction_m_);
     return false;
   }
+  // Plausible-drift budget: 2 s after AHRS entry the pose cannot honestly be
+  // 14 m off, yet that is exactly what the symmetric small_track offered the
+  // grid search (six 5-19 m "closures" at 17-23% inlier support shredded the
+  // 2026-07-21 mode-transition runs). Real seam closure after a long outage
+  // clears this easily -- the budget grows with distance driven unanchored.
+  const double drift_budget_m = gnss_drift_budget_base_m_ +
+    gnss_drift_budget_per_m_ *
+    std::max(0.0, traveled_distance_ - last_healthy_gnss_traveled_m_);
+  if (correction_norm > drift_budget_m) {
+    RCLCPP_WARN(
+      get_logger(),
+      "Seam anchor rejected: implied correction %.1f m exceeds the %.1f m "
+      "plausible-drift budget (%.0f m driven since the last healthy GNSS "
+      "prior) -- aliased match",
+      correction_norm, drift_budget_m,
+      traveled_distance_ - last_healthy_gnss_traveled_m_);
+    return false;
+  }
   // Yaw plausibility: gyro-integrated heading drifts ~0.05 rad per lap, so
   // a candidate demanding a 0.3+ rad rotation is the constellation fitting
   // a CURVED cone row at the wrong orientation (bisect autopsy: every bad
@@ -1564,7 +1704,9 @@ bool GraphSlamNode::gnssVetoesCandidate(
   if (!fix_fresh) {
     return false;
   }
-  const double gnss_residual = (candidate - fix.position).norm();
+  // candidate is map-frame; the fix is ENU -- compare through the gauge.
+  const double gnss_residual =
+    ((gaugeEstimate() * candidate) - fix.position).norm();
   if (gnss_residual <= auto_relocalize_max_gnss_residual_m_) {
     return false;
   }
@@ -1890,6 +2032,495 @@ void GraphSlamNode::addInitialPose(const g2o::SE2 & raw_odom, const rclcpp::Time
     raw_odom.rotation().angle());
 }
 
+void GraphSlamNode::maybeConeReacquire(const rclcpp::Time & stamp, bool collapse)
+{
+  if (!cone_reacquire_enable_ || localization_mode_ || poses_.empty()) {
+    return;
+  }
+  if (weak_assoc_streak_ < cone_reacquire_min_weak_frames_) {
+    return;
+  }
+  if (stamp.seconds() - last_cone_reacquire_sec_ < cone_reacquire_cooldown_sec_) {
+    return;
+  }
+  last_cone_reacquire_sec_ = stamp.seconds();  // throttle attempts either way
+
+  PoseRecord & pose = poses_.back();
+  const MatchPointSet match = buildMatchPoints();
+  if (match.points.size() <
+    static_cast<std::size_t>(submap_min_match_points_))
+  {
+    return;
+  }
+  // Search envelope by failure mode: a COLLAPSE means the pose may be far
+  // off (up to the full drift); a PARTIAL slide is by definition around the
+  // association gate, so a tight window suffices -- and a tight window is
+  // what keeps a repetitive section from offering aliased matches.
+  const double search_radius = collapse ?
+    cone_reacquire_search_radius_m_ : cone_reacquire_partial_radius_m_;
+  const double search_yaw = collapse ?
+    cone_reacquire_search_yaw_ : cone_reacquire_partial_yaw_;
+  // The match points live in the frame of the newest submap reference; the
+  // mapping pose of that reference is the latest keyframe estimate carried
+  // forward by the raw-odometry delta between them (at speed the difference
+  // is real -- baking it in would leave a velocity-proportional bias).
+  g2o::SE2 reference_estimate = pose.vertex->estimate();
+  if (match.from_submap && submap_reference_valid_) {
+    reference_estimate = pose.vertex->estimate() *
+      (pose.raw_odom.inverse() * submap_reference_);
+  }
+  const std::vector<SubmapPoint> targets = landmarkMatchTargets(
+    reference_estimate.translation(), search_radius + 25.0, -1.0);
+  if (static_cast<int>(targets.size()) < cone_reacquire_min_inliers_) {
+    return;  // not enough map here to prove anything
+  }
+
+  // Baseline: how well the CURRENT pose explains the view. In a partial
+  // slide this is nonzero by definition; the candidate must clearly beat
+  // it, or a slid branch self-supported by mis-associations would thrash.
+  int inliers_current = 0;
+  gridSearchPose(
+    reference_estimate, 0.0, 0.0, 0.0, 0.0, relocalize_inlier_distance_,
+    match.points, targets, &inliers_current);
+
+  int inliers = 0;
+  const g2o::SE2 candidate = scanMatchNear(
+    reference_estimate, search_radius, search_yaw,
+    match.points, targets, &inliers);
+  if (inliers < cone_reacquire_min_inliers_ ||
+    inliers < inliers_current + cone_reacquire_min_inlier_gain_)
+  {
+    RCLCPP_INFO_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "Cone re-acquisition: no decisive match (candidate %d vs current %d "
+      "inliers, need >= %d and +%d)",
+      inliers, inliers_current, cone_reacquire_min_inliers_,
+      cone_reacquire_min_inlier_gain_);
+    return;
+  }
+  const g2o::SE2 delta = candidate * reference_estimate.inverse();
+  const double delta_m = delta.translation().norm();
+  const double delta_yaw = std::abs(delta.rotation().angle());
+  if (delta_m < 0.3 && delta_yaw < 0.05) {
+    return;  // already where the map says; association will recover on its own
+  }
+  // Veto 1: a fresh healthy GNSS fix out-ranks any scan match (aliased
+  // branches on repetitive sections).
+  if (gnssVetoesCandidate(
+      candidate.translation(), stamp.seconds(), "cone re-acquisition"))
+  {
+    return;
+  }
+  // Veto 2: INS absolute heading (valid down to AHRS mode) blocks the
+  // mirror branch on symmetric layouts even during a full GNSS outage.
+  {
+    GnssFix fix;
+    {
+      std::lock_guard<std::mutex> lock(gnss_mutex_);
+      fix = latest_gnss_fix_;
+    }
+    const double age = stamp.seconds() - fix.stamp_sec;
+    if (fix.valid && fix.yaw_valid && age >= 0.0 &&
+      age <= pose_gate_gnss_heading_max_age_ &&
+      fix.yaw_sigma <= pose_gate_gnss_heading_max_sigma_)
+    {
+      const double dyaw = std::abs(
+        std::atan2(
+          std::sin(candidate.rotation().angle() - fix.yaw),
+          std::cos(candidate.rotation().angle() - fix.yaw)));
+      if (dyaw > pose_gate_max_heading_vs_gnss_rad_) {
+        RCLCPP_WARN(
+          get_logger(),
+          "Cone re-acquisition rejected: candidate heading %.0f deg from the "
+          "INS absolute heading -- mirror branch",
+          dyaw * 180.0 / M_PI);
+        return;
+      }
+    }
+  }
+
+  // Apply: re-linearize the chain since the last healthy-association
+  // keyframe (the slide is younger than that), interpolating the delta
+  // 0 -> 100% -- initial-guess update only, every edge preserved.
+  std::size_t hinge_index = 0U;
+  if (last_healthy_assoc_graph_id_ >= 0) {
+    for (std::size_t i = poses_.size(); i > 0U; --i) {
+      if (poses_[i - 1U].graph_id == last_healthy_assoc_graph_id_) {
+        hinge_index = i - 1U;
+        break;
+      }
+    }
+  }
+  // Interpolate along the SE2 screw (rotation by alpha*theta about the
+  // delta's own rotation centre): linear scaling instead rotates about the
+  // world origin and shears mid-chain poses sideways (recovery lesson).
+  const double theta = delta.rotation().angle();
+  Eigen::Vector2d screw_centre = Eigen::Vector2d::Zero();
+  bool has_centre = false;
+  if (std::abs(theta) > 1.0e-4) {
+    const Eigen::Matrix2d eye_minus_r = Eigen::Matrix2d::Identity() -
+      Eigen::Rotation2Dd(theta).toRotationMatrix();
+    screw_centre = eye_minus_r.inverse() * delta.translation();
+    has_centre = true;
+  }
+  const auto partial_delta = [&](double alpha) {
+      if (!has_centre) {
+        return g2o::SE2(
+          alpha * delta.translation().x(),
+          alpha * delta.translation().y(), 0.0);
+      }
+      const double a_theta = alpha * theta;
+      const Eigen::Matrix2d rot = Eigen::Rotation2Dd(a_theta).toRotationMatrix();
+      const Eigen::Vector2d trans = screw_centre - rot * screw_centre;
+      return g2o::SE2(trans.x(), trans.y(), a_theta);
+    };
+  const std::size_t chain = poses_.size() - hinge_index;
+  std::size_t moved = 0U;
+  for (std::size_t i = hinge_index; i < poses_.size(); ++i) {
+    g2o::VertexSE2 * v = poses_[i].vertex;
+    if (v == nullptr || v->fixed()) {
+      continue;
+    }
+    const double alpha = chain > 1U ?
+      static_cast<double>(i - hinge_index + 1U) / static_cast<double>(chain) :
+      1.0;
+    v->setEstimate(partial_delta(alpha) * v->estimate());
+    ++moved;
+  }
+  RCLCPP_WARN(
+    get_logger(),
+    "Cone re-acquisition APPLIED: constellation matched the map %d/%zu at "
+    "%.2f m / %.1f deg away; re-linearized %zu keyframes since hinge %d",
+    inliers, match.points.size(), delta_m, delta_yaw * 180.0 / M_PI, moved,
+    last_healthy_assoc_graph_id_);
+  frontend_->reset();  // tentative tracks accumulated on the slid pose
+  mapping_quarantine_until_sec_.store(
+    std::max(
+      mapping_quarantine_until_sec_.load(),
+      stamp.seconds() + 1.0));
+  have_last_pub_pose_ = false;  // the published pose legitimately jumps
+  weak_assoc_streak_ = 0;
+  last_healthy_assoc_graph_id_ = pose.graph_id;
+}
+
+bool GraphSlamNode::maybeRecoverFromGnss(
+  g2o::VertexSE2 * vertex, const rclcpp::Time & stamp)
+{
+  if (!recovery_enable_ || localization_mode_ || poses_.empty()) {
+    return false;
+  }
+  if (stamp.seconds() - last_recovery_stamp_sec_ < recovery_cooldown_sec_) {
+    return false;
+  }
+  // Pending give-up: verification refusing for too long means the truth is
+  // not provable from here (all nearby landmarks are drift-era). Resume the
+  // old anchoring rather than starving the graph of absolutes entirely.
+  if (recovery_pending_since_sec_ > 0.0 &&
+    stamp.seconds() - recovery_pending_since_sec_ > recovery_pending_max_sec_)
+  {
+    RCLCPP_WARN(
+      get_logger(),
+      "GNSS recovery gave up after %.0f s (verification never passed); "
+      "resuming direct anchoring",
+      stamp.seconds() - recovery_pending_since_sec_);
+    recovery_samples_.clear();
+    recovery_pending_since_sec_ = -1.0;
+    last_recovery_stamp_sec_ = stamp.seconds();  // cooldown before retry
+    return false;
+  }
+  GnssFix fix;
+  {
+    std::lock_guard<std::mutex> lock(gnss_mutex_);
+    fix = latest_gnss_fix_;
+  }
+  const double age = stamp.seconds() - fix.stamp_sec;
+  const bool rtk_grade = fix.valid && fix.yaw_valid &&
+    fix.sigma_x > 0.0 && fix.sigma_y > 0.0 &&
+    fix.sigma_x <= gnss_prior_max_position_sigma_ &&
+    fix.sigma_y <= gnss_prior_max_position_sigma_ &&
+    fix.yaw_sigma <= rtk_map_max_yaw_sigma_ &&
+    age >= 0.0 && (gnss_prior_max_age_ <= 0.0 || age <= gnss_prior_max_age_);
+  if (!rtk_grade) {
+    // No trustworthy absolute reference: nothing to recover TOWARD.
+    recovery_samples_.clear();
+    recovery_pending_since_sec_ = -1.0;
+    return false;
+  }
+
+  // Implied correction T: the rigid transform that would move the current
+  // pose estimate onto the fix (both map frame; gauge handles ENU).
+  const g2o::SE2 fix_map =
+    gaugeEstimate().inverse() *
+    g2o::SE2(fix.position.x(), fix.position.y(), fix.yaw);
+  g2o::SE2 correction = fix_map * vertex->estimate().inverse();
+  // TRANSLATION-ONLY by default: outage drift is position-dominated (the
+  // gyro holds yaw to ~2 deg over a fault window) while the INS absolute
+  // yaw during re-acquisition is only gated to ~0.1 rad -- and a 5 deg
+  // rotation screw-applied across a 250-keyframe chain displaces far poses
+  // by metres (measured: -14 deg / 8.3 m map shred). Keep the rotation only
+  // when the INS claims it TIGHTLY and the implied twist is small.
+  if (fix.yaw_sigma > 0.02 ||
+    std::abs(correction.rotation().angle()) > 0.05)
+  {
+    const Eigen::Vector2d t =
+      fix_map.translation() - vertex->estimate().translation();
+    correction = g2o::SE2(t.x(), t.y(), 0.0);
+  }
+  const double correction_m = correction.translation().norm();
+  const double correction_yaw = std::abs(correction.rotation().angle());
+  if (correction_m < recovery_min_correction_m_ &&
+    correction_yaw < recovery_min_correction_yaw_)
+  {
+    // Pose and RTK agree: healthy. Anchors may resume.
+    recovery_samples_.clear();
+    recovery_pending_since_sec_ = -1.0;
+    last_gnss_agree_traveled_m_ = traveled_distance_;
+    return false;
+  }
+
+  // Detect: collect the correction; require recovery_window_ consecutive
+  // keyframes whose corrections agree (a coherent accumulated drift, not a
+  // transient or a settling INS).
+  if (recovery_samples_.empty()) {
+    recovery_pending_since_sec_ = stamp.seconds();
+  }
+  recovery_samples_.push_back(
+    RecoverySample{correction, stamp.seconds(), traveled_distance_});
+  while (static_cast<int>(recovery_samples_.size()) > recovery_window_) {
+    recovery_samples_.pop_front();
+  }
+  if (static_cast<int>(recovery_samples_.size()) < recovery_window_) {
+    return true;  // pending: anchors stand down while evidence accumulates
+  }
+  for (const RecoverySample & sample : recovery_samples_) {
+    const g2o::SE2 delta = sample.correction.inverse() * correction;
+    if (delta.translation().norm() > recovery_agreement_m_ ||
+      std::abs(delta.rotation().angle()) > recovery_agreement_yaw_)
+    {
+      return true;  // corrections still moving: INS transient, keep waiting
+    }
+  }
+
+  // Verify: the current cone constellation must fit the landmark map at
+  // least as well at the corrected pose -- an RTK multipath excursion or an
+  // aliased branch fails this and is refused. CRITICAL: match only against
+  // landmarks founded BEFORE the disagreement began -- the drift window
+  // founded ghost copies AT the drifted positions, so including them lets
+  // the wrong (current) pose out-score the truth and the recovery starve
+  // (measured: 78-82% ghost when targets included the drift era).
+  const g2o::SE2 corrected_pose = correction * vertex->estimate();
+  const MatchPointSet match = buildMatchPoints();
+  const double pre_drift_traveled =
+    std::max(0.0, last_gnss_agree_traveled_m_ - 5.0);
+  const std::vector<SubmapPoint> targets = landmarkMatchTargets(
+    corrected_pose.translation(),
+    std::max(30.0, 2.0 * correction_m), pre_drift_traveled);
+  // Visibility, not search-radius membership, decides whether cone silence is
+  // evidence. The drift-era exclusion eats most of a multi-lap map, so 5-8
+  // pre-drift targets routinely sat inside the (30 m+) search radius while
+  // NONE were in actual view -- "corrected 0 vs current 0 inliers" then took
+  // the frontier bypass and re-seated 82-190 landmarks on GNSS coherence
+  // alone (measured: every small_track mode_transition APPLIED of 2026-07-21
+  // scored 0 vs 0; best-fit map offsets 7-10 m followed). A target the
+  // constellation should see and does not is negative evidence.
+  int visible_targets = 0;
+  for (const SubmapPoint & target : targets) {
+    const double dx = target.x - corrected_pose.translation().x();
+    const double dy = target.y - corrected_pose.translation().y();
+    if (std::hypot(dx, dy) <= 0.8 * max_observation_range_) {
+      ++visible_targets;
+    }
+  }
+  bool cone_corroborated = false;
+  bool strongly_corroborated = false;
+  if (!match.points.empty() &&
+    visible_targets >= founding_assoc_min_visible_)
+  {
+    int inliers_current = 0;
+    gridSearchPose(
+      vertex->estimate(), 0.0, 0.0, 0.0, 0.0, relocalize_inlier_distance_,
+      match.points, targets, &inliers_current);
+    int inliers_corrected = 0;
+    gridSearchPose(
+      corrected_pose, 0.0, 0.0, 0.0, 0.0, relocalize_inlier_distance_,
+      match.points, targets, &inliers_corrected);
+    // Refuse ONLY on real negative evidence: the pre-drift map genuinely
+    // explains the CURRENT pose and the corrected pose fails to beat it --
+    // then the "drift" is more likely GNSS multipath / an aliased branch.
+    // When neither pose overlaps the pre-drift map (frontier mapping during
+    // the outage), the cones are silent and the coherent GNSS window is the
+    // only -- and sufficient -- evidence: apply.
+    if (inliers_current >= recovery_min_inliers_ &&
+      inliers_corrected < inliers_current + recovery_min_inlier_gain_)
+    {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "GNSS recovery NOT verified: pre-drift map fits the CURRENT pose "
+        "(%d cones) better than the corrected one (%d) -- multipath/aliased "
+        "fix more likely (correction %.1f m %.0f deg); refusing",
+        inliers_current, inliers_corrected, correction_m,
+        correction_yaw * 180.0 / M_PI);
+      return true;  // keep anchors down; do not seal the disagreement in
+    }
+    // Silence is not consent: with pre-drift landmarks IN VIEW the corrected
+    // pose must positively explain them, or the "recovery" is unproven and
+    // moving the map on it is exactly the blind re-seat that shredded
+    // small_track. The genuine frontier (no pre-drift map in view) never
+    // enters this block and keeps the GNSS-coherence apply below.
+    if (inliers_corrected < recovery_min_inliers_) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "GNSS recovery NOT verified: %d pre-drift landmarks in view but the "
+        "corrected pose explains only %d (need %d) -- refusing to move the "
+        "map without positive cone evidence (correction %.1f m %.0f deg)",
+        visible_targets, inliers_corrected, recovery_min_inliers_,
+        correction_m, correction_yaw * 180.0 / M_PI);
+      return true;  // keep anchors down; evidence may still arrive
+    }
+    RCLCPP_INFO(
+      get_logger(),
+      "GNSS recovery verification: corrected %d vs current %d inliers "
+      "(%zu pre-drift targets, %d in view)",
+      inliers_corrected, inliers_current, targets.size(), visible_targets);
+    cone_corroborated = true;
+    // Bare-minimum corroboration must not authorize an implausibly large
+    // move: 5/44 in-view inliers once "verified" a 17.7 m re-seat seconds
+    // after aliased seam teleports. Beyond the drift budget the corrected
+    // pose has to explain at least half its own constellation.
+    strongly_corroborated =
+      2 * inliers_corrected >= static_cast<int>(match.points.size());
+  }
+  // A LARGE correction without positive cone proof is not credible: honest
+  // dead-reckoning drift over an outage window is bounded, so beyond this
+  // the "fix" is the suspect. MUST sit outside the verification block -- a
+  // frame with too few targets skips verification entirely, and the bound
+  // slipped with it once (a 31 m / 84 deg jump applied 0.5 s after being
+  // refused, shredding the run).
+  if (correction_m > recovery_max_correction_m_ && !cone_corroborated) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "GNSS recovery refused: %.1f m correction exceeds the credible drift "
+      "bound (%.0f m) with no cone corroboration",
+      correction_m, recovery_max_correction_m_);
+    return true;
+  }
+  // Plausible-drift budget (same physics as the seam anchor's): honest DR
+  // drift is bounded by the distance driven since the last accepted healthy
+  // GNSS prior. A correction beyond that is an INS re-acquisition transient
+  // or an aliased branch unless the cones STRONGLY vouch for the new pose.
+  const double drift_budget_m = gnss_drift_budget_base_m_ +
+    gnss_drift_budget_per_m_ *
+    std::max(0.0, traveled_distance_ - last_healthy_gnss_traveled_m_);
+  if (correction_m > drift_budget_m && !strongly_corroborated) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "GNSS recovery refused: %.1f m correction exceeds the %.1f m "
+      "plausible-drift budget (%.0f m driven unanchored) without strong "
+      "cone corroboration",
+      correction_m, drift_budget_m,
+      traveled_distance_ - last_healthy_gnss_traveled_m_);
+    return true;
+  }
+
+  // Apply: re-linearization. Interpolate the correction 0 -> 100% along the
+  // free pose chain after the hinge (last RTK-pinned keyframe): the drift
+  // accumulated gradually, so the correction is distributed the same way.
+  // This is an initial-guess update -- every edge is preserved -- so the
+  // optimizer converges instantly instead of bending the map through the
+  // disagreement basin.
+  //
+  // Interpolation is the SE2 SCREW motion exp(alpha * log(C)): rotation by
+  // alpha*theta about the correction's own rotation centre
+  // c = (I - R(theta))^-1 * t. Linearly scaling (alpha*theta, alpha*t)
+  // instead rotates about the ORIGIN and smears mid-chain poses sideways by
+  // |pose| * alpha*theta -- metres of error at track scale (measured: a
+  // 28 deg application shredded the map).
+  std::size_t hinge_index = 0U;
+  for (std::size_t i = poses_.size(); i > 0U; --i) {
+    if (poses_[i - 1U].graph_id == last_pinned_graph_id_) {
+      hinge_index = i - 1U;
+      break;
+    }
+  }
+  const double theta = correction.rotation().angle();
+  Eigen::Vector2d centre = Eigen::Vector2d::Zero();
+  bool has_centre = false;
+  if (std::abs(theta) > 1.0e-4) {
+    Eigen::Matrix2d eye_minus_r = Eigen::Matrix2d::Identity() -
+      Eigen::Rotation2Dd(theta).toRotationMatrix();
+    centre = eye_minus_r.inverse() * correction.translation();
+    has_centre = true;
+  }
+  const auto partial_correction = [&](double alpha) {
+      if (!has_centre) {
+        return g2o::SE2(
+          alpha * correction.translation().x(),
+          alpha * correction.translation().y(), 0.0);
+      }
+      const double a_theta = alpha * theta;
+      const Eigen::Matrix2d rot =
+        Eigen::Rotation2Dd(a_theta).toRotationMatrix();
+      const Eigen::Vector2d trans =
+        centre - rot * centre;  // rotation by a_theta about `centre`
+      return g2o::SE2(trans.x(), trans.y(), a_theta);
+    };
+  const std::size_t chain = poses_.size() - hinge_index;
+  std::size_t moved = 0U;
+  for (std::size_t i = hinge_index; i < poses_.size(); ++i) {
+    g2o::VertexSE2 * v = poses_[i].vertex;
+    if (v == nullptr || v->fixed()) {
+      continue;
+    }
+    const double alpha =
+      chain > 1U ? static_cast<double>(i - hinge_index + 1U) /
+      static_cast<double>(chain) : 1.0;
+    v->setEstimate(partial_correction(alpha) * v->estimate());
+    ++moved;
+  }
+  vertex->setEstimate(correction * vertex->estimate());
+  // Drift-era LANDMARKS must move with their founding keyframes: left at the
+  // drifted positions they no longer associate with fresh observations from
+  // the corrected pose (offset > association gate) and get REFOUNDED as
+  // ghosts faster than the optimizer can pull them in. Interpolate by
+  // founding travel, same alpha convention as the pose chain.
+  const double drift_span =
+    std::max(1.0e-3, traveled_distance_ - last_gnss_agree_traveled_m_);
+  std::size_t moved_landmarks = 0U;
+  for (LandmarkRecord & landmark : landmarks_) {
+    if (landmark.vertex == nullptr ||
+      landmark.first_seen_traveled <= last_gnss_agree_traveled_m_)
+    {
+      continue;
+    }
+    const double alpha = std::clamp(
+      (landmark.first_seen_traveled - last_gnss_agree_traveled_m_) /
+      drift_span, 0.0, 1.0);
+    landmark.vertex->setEstimate(
+      partial_correction(alpha) * landmark.vertex->estimate());
+    ++moved_landmarks;
+  }
+  RCLCPP_WARN(
+    get_logger(),
+    "GNSS recovery APPLIED: verified correction %.1f m / %.0f deg "
+    "re-linearized %zu keyframes + %zu drift-era landmarks after hinge %d",
+    correction_m, correction_yaw * 180.0 / M_PI, moved, moved_landmarks,
+    last_pinned_graph_id_);
+  last_recovery_stamp_sec_ = stamp.seconds();
+  recovery_samples_.clear();
+  recovery_pending_since_sec_ = -1.0;
+  last_gnss_agree_traveled_m_ = traveled_distance_;
+  // The published pose will legitimately jump: let the physical-plausibility
+  // gate re-seed from the corrected pose instead of vetoing it.
+  have_last_pub_pose_ = false;
+  // Founding stays quarantined through the settle (frontend tracks were
+  // accumulated at the drifted poses).
+  mapping_quarantine_until_sec_.store(
+    std::max(
+      mapping_quarantine_until_sec_.load(),
+      stamp.seconds() + gnss_transition_quarantine_sec_));
+  return false;  // recovered: anchors resume on this corrected keyframe
+}
+
 void GraphSlamNode::addKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & stamp)
 {
   if (poses_.empty()) {
@@ -1911,12 +2542,25 @@ void GraphSlamNode::addKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & 
     return;
   }
 
-  // RTK-primary MAP (see members): pin this keyframe to a fresh RTK-grade fix
-  // and freeze it, so landmarks triangulate at the correct RTK poses instead of
-  // the cone-aliased estimate -- the map cannot warp onto the mirror branch.
-  // Movable cone-SLAM vertex otherwise (GNSS fault -> anchors recover).
+  // RTK-primary MAP pin: freeze this keyframe at a fresh RTK-grade fix so
+  // landmarks triangulate at the correct absolute poses (mapping-with-known-
+  // poses; the map cannot warp onto the mirror branch). A soft floored prior
+  // was tried instead (professor-review L3a) and lost EMPIRICALLY: pin
+  // removed pushed autocross/mode_transition from 11% to ~30% ghost across
+  // three kernel/tier variants. The pin's transient-poisoning risk is
+  // covered by the L0 founding gates (tier-transition quarantine pauses
+  // founding exactly when a pinned pose could briefly disagree with the
+  // settling INS). Movable cone-SLAM vertex otherwise.
+  // Verified recovery must run BEFORE any anchoring: while RTK coherently
+  // disagrees with the pose chain (post-fault drift), pinning or prior-ing
+  // this keyframe would kink the graph through the disagreement. The call
+  // collects evidence, verifies against the cone map, and re-linearizes the
+  // post-hinge chain when the correction is proven; anchors stand down until
+  // it returns false (agreement restored or recovery applied).
+  const bool recovery_pending = maybeRecoverFromGnss(vertex, stamp);
+
   rtk_map_pinning_ = false;
-  if (rtk_map_enable_) {
+  if (rtk_map_enable_ && !recovery_pending) {
     GnssFix fix;
     {
       std::lock_guard<std::mutex> lock(gnss_mutex_);
@@ -1930,9 +2574,14 @@ void GraphSlamNode::addKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & 
       fix.yaw_sigma <= rtk_map_max_yaw_sigma_ &&
       age >= 0.0 && (gnss_prior_max_age_ <= 0.0 || age <= gnss_prior_max_age_))
     {
-      vertex->setEstimate(g2o::SE2(fix.position.x(), fix.position.y(), fix.yaw));
+      // The fix is ENU; the vertex lives in the map frame (g^-1 o fix; the
+      // gauge is identity when disabled, i.e. map frame == ENU).
+      vertex->setEstimate(
+        gaugeEstimate().inverse() *
+        g2o::SE2(fix.position.x(), fix.position.y(), fix.yaw));
       vertex->setFixed(true);
       rtk_map_pinning_ = true;
+      last_pinned_graph_id_ = vertex->id();
     }
   }
 
@@ -1978,7 +2627,9 @@ void GraphSlamNode::addKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & 
     return;
   }
 
-  maybeAddGnssPrior(vertex, stamp);
+  if (!recovery_pending) {
+    maybeAddGnssPrior(vertex, stamp);
+  }
 
   poses_.push_back(PoseRecord{vertex->id(), vertex, raw_odom, stamp});
   updateKeyframeSnapshot();
@@ -2051,11 +2702,24 @@ void GraphSlamNode::maybeAddGnssPrior(
   const double max_position_sigma = localization_mode_ ?
     std::min(gnss_prior_loc_max_position_sigma_, gnss_prior_max_position_sigma_) :
     gnss_prior_max_position_sigma_;
-  if (fix.sigma_x <= 0.0 || fix.sigma_y <= 0.0 ||
-    fix.sigma_x > max_position_sigma ||
-    fix.sigma_y > max_position_sigma)
-  {
+  if (fix.sigma_x <= 0.0 || fix.sigma_y <= 0.0) {
     return;
+  }
+  const double fix_sigma = std::max(fix.sigma_x, fix.sigma_y);
+  // L3 tiered acceptance. A single-grade fix is still an ABSOLUTE
+  // measurement -- the only long-horizon gauge bound once RTK is gone.
+  // Rejecting it outright let the whole map slide off ENU under continuous
+  // single (autocross baseline: per-cone err 0.58 m); accept it instead as a
+  // heavily de-weighted, extra-decimated prior. DCS below keeps any colored
+  // excursion from bending the graph.
+  bool degraded_prior = false;
+  if (fix_sigma > max_position_sigma) {
+    if (localization_mode_ || gnss_prior_degraded_max_sigma_ <= 0.0 ||
+      fix_sigma > gnss_prior_degraded_max_sigma_)
+    {
+      return;
+    }
+    degraded_prior = true;
   }
 
   // The INS reports a BELIEVED accuracy that never reflects the realized
@@ -2063,8 +2727,12 @@ void GraphSlamNode::maybeAddGnssPrior(
   // Three defenses, tuned for that failure mode:
   // 1) De-correlate: consecutive fixes share the same GM error draw, so a
   //    prior on every 0.5 m keyframe multiplies one wrong measurement.
-  if (gnss_prior_min_interval_ > 0.0 &&
-    stamp.seconds() - last_gnss_prior_stamp_sec_ < gnss_prior_min_interval_)
+  //    Single-grade error wanders over tens of seconds, so degraded priors
+  //    are decimated harder still.
+  const double min_interval = gnss_prior_min_interval_ *
+    (degraded_prior ? std::max(1.0, gnss_prior_degraded_interval_scale_) : 1.0);
+  if (min_interval > 0.0 &&
+    stamp.seconds() - last_gnss_prior_stamp_sec_ < min_interval)
   {
     return;
   }
@@ -2074,7 +2742,7 @@ void GraphSlamNode::maybeAddGnssPrior(
   //    is still elastic and the Huber kernel is the only sane defense.
   if (map_converged_) {
     const double innovation =
-      (vertex->estimate().translation() - fix.position).norm();
+      ((gaugeEstimate() * vertex->estimate()).translation() - fix.position).norm();
     if (innovation > gnss_prior_innovation_max_residual_) {
       // RTK-grade fixes disagreeing repeatedly = the POSE is wrong (aliased
       // branch), not the GNSS: feed the aliasing breaker.
@@ -2104,7 +2772,8 @@ void GraphSlamNode::maybeAddGnssPrior(
     // Re-arm only when GNSS is consistent with the cone-anchored pose again.
     // A persistent disagreement means the map frame and the GNSS ENU frame
     // differ (e.g. an old local-frame map): keep the priors off and say so.
-    const double residual = (vertex->estimate().translation() - fix.position).norm();
+    const double residual =
+      ((gaugeEstimate() * vertex->estimate()).translation() - fix.position).norm();
     if (residual > gnss_prior_rearm_max_residual_) {
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 10000,
@@ -2119,10 +2788,7 @@ void GraphSlamNode::maybeAddGnssPrior(
       get_logger(), "GNSS prior re-armed (residual %.2f m)", residual);
   }
 
-  auto * prior = new g2o::EdgeSE2XYPrior();
-  prior->setId(next_edge_id_++);
-  prior->setVertex(0, vertex);
-  prior->setMeasurement(fix.position);
+  g2o::OptimizableGraph::Edge * prior = nullptr;
   // 3) Sigma floor: an rtk_fixed report of 0.01 m would carry information
   //    1e4 and let one anchor out-vote the cone map; the floor keeps any
   //    single prior's pull bounded regardless of what the INS believes.
@@ -2137,20 +2803,66 @@ void GraphSlamNode::maybeAddGnssPrior(
   //    which a weak pull does fine; full anchor strength returns with the
   //    frozen map, where the innovation gate stands guard.
   double mapping_scale = 1.0;
-  if (!map_converged_) {
+  if (!map_converged_ && fix_sigma > 0.05) {
+    // L3: the mapping de-weight exists for time-correlated (colored) error;
+    // a true rtk_fixed fix (sigma <= 0.05) is cm-accurate and effectively
+    // white, so it keeps full (floored) strength. This is the SOFT
+    // replacement for the removed setFixed keyframe pin: landmarks still
+    // triangulate against RTK-held poses, but through a DCS prior the
+    // optimizer may overrule during a transient instead of a frozen vertex.
     mapping_scale = std::max(1.0, gnss_prior_mapping_sigma_scale_);
   }
-  const double sigma_x = std::max(fix.sigma_x, gnss_prior_min_sigma_) * mapping_scale;
-  const double sigma_y = std::max(fix.sigma_y, gnss_prior_min_sigma_) * mapping_scale;
+  // Degraded (single-grade) fixes: inflate further -- their realized error is
+  // a slowly wandering bias, so each prior carries far less independent
+  // information than the believed sigma claims.
+  const double tier_scale = degraded_prior ?
+    std::max(1.0, gnss_prior_degraded_sigma_scale_) : 1.0;
+  const double sigma_x =
+    std::max(fix.sigma_x, gnss_prior_min_sigma_) * mapping_scale * tier_scale;
+  const double sigma_y =
+    std::max(fix.sigma_y, gnss_prior_min_sigma_) * mapping_scale * tier_scale;
   Eigen::Matrix2d information = Eigen::Matrix2d::Zero();
   information(0, 0) = 1.0 / (sigma_x * sigma_x);
   information(1, 1) = 1.0 / (sigma_y * sigma_y);
-  prior->setInformation(information);
+  // L3b: route the fix through the gauge vertex when enabled -- the edge
+  // constrains (g o x) so the map->ENU registration is an explicit variable
+  // (colored bias lands in g; localization-mode fixes move g instead of
+  // tearing the pose against the frozen map). Direct XY prior otherwise.
+  if (g2o::VertexSE2 * gauge = ensureGaugeVertex()) {
+    auto * gauge_edge = new EdgeSE2GaugeXY();
+    gauge_edge->setVertex(0, vertex);
+    gauge_edge->setVertex(1, gauge);
+    gauge_edge->setMeasurement(fix.position);
+    gauge_edge->setInformation(information);
+    prior = gauge_edge;
+  } else {
+    auto * xy_prior = new g2o::EdgeSE2XYPrior();
+    xy_prior->setVertex(0, vertex);
+    xy_prior->setMeasurement(fix.position);
+    xy_prior->setInformation(information);
+    prior = xy_prior;
+  }
+  prior->setId(next_edge_id_++);
   last_gnss_prior_stamp_sec_ = stamp.seconds();
+  // Anchor of the plausible-drift budget: distance driven since this point
+  // bounds how much honest DR drift any later "correction" may claim.
+  last_healthy_gnss_traveled_m_ = traveled_distance_;
   if (gnss_prior_robust_delta_ > 0.0) {
-    auto * kernel = new g2o::RobustKernelHuber();
-    kernel->setDelta(gnss_prior_robust_delta_);
-    prior->setRobustKernel(kernel);
+    // L3: DCS (Agarwal ICRA'13) instead of Huber. Huber only softens a bad
+    // prior's pull linearly; DCS scales the edge information by
+    // s^2 = min(1, 2*Phi/(Phi + chi^2))^2, driving an inconsistent prior's
+    // influence toward ZERO -- the closed-form generalization of switchable
+    // constraints, which is what lets a confidently-wrong colored fix be
+    // rejected by the optimizer instead of bending the map.
+    if (gnss_prior_kernel_ == "huber") {
+      auto * kernel = new g2o::RobustKernelHuber();
+      kernel->setDelta(gnss_prior_robust_delta_);
+      prior->setRobustKernel(kernel);
+    } else {
+      auto * kernel = new g2o::RobustKernelDCS();
+      kernel->setDelta(gnss_prior_robust_delta_);
+      prior->setRobustKernel(kernel);
+    }
   }
 
   if (!optimizer_.addEdge(prior)) {
@@ -2320,6 +3032,44 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
       return true;
     };
 
+  // L0 trigger (1) -- GNSS trust-tier transition. Tier from the freshest fix
+  // sigma: 0 rtk_fixed, 1 rtk_float, 2 single, 3 none/huge (mode<=3, refix
+  // holdoff, outage). EVERY tier change quarantines founding for the INS
+  // re-alignment transient (believed sigma snaps instantly, realized error
+  // decays with reacquire_tau); landmarks founded from the transient are
+  // drift-era ghost duplicates.
+  if (!localization_mode_ && gnss_transition_quarantine_sec_ > 0.0) {
+    GnssFix fix;
+    {
+      std::lock_guard<std::mutex> lock(gnss_mutex_);
+      fix = latest_gnss_fix_;
+    }
+    const double age = stamp.seconds() - fix.stamp_sec;
+    int tier = 3;
+    if (fix.valid && age >= 0.0 && age <= 1.0) {
+      const double sigma = std::max(fix.sigma_x, fix.sigma_y);
+      if (sigma <= 0.05) {
+        tier = 0;
+      } else if (sigma <= 0.6) {
+        tier = 1;
+      } else if (sigma <= 3.0) {
+        tier = 2;
+      }
+    }
+    if (gnss_tier_prev_ != -999 && tier != gnss_tier_prev_) {
+      RCLCPP_WARN(
+        get_logger(),
+        "GNSS trust tier %d -> %d: landmark founding quarantined for %.1f s "
+        "(re-alignment transient)",
+        gnss_tier_prev_, tier, gnss_transition_quarantine_sec_);
+      mapping_quarantine_until_sec_.store(
+        std::max(
+          mapping_quarantine_until_sec_.load(),
+          stamp.seconds() + gnss_transition_quarantine_sec_));
+    }
+    gnss_tier_prev_ = tier;
+  }
+
   // Mapping quarantine (see the member comment): resetting the frontend
   // every frame keeps any track from reaching its promotion hit count, so
   // no landmark can be founded from the pull-in transient; everything else
@@ -2334,6 +3084,66 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
     frontend_observations, confirmed_view, traveled_distance_,
     track_expected_visible);
   const std::size_t matched_landmarks = frame.confirmed_matches.size();
+
+  // L0 trigger (2) -- association-health founding gate. Cones observed in a
+  // region the map says is populated, yet almost none associating, is the
+  // slid-pose signature (colored single-fix wander, aliasing): founding now
+  // would mint drift-offset duplicates of the very cones we failed to match.
+  // Armed only where confirmed landmarks are expected visible, so frontier
+  // mapping (nothing confirmed ahead yet) is untouched. The frontend is
+  // reset too: its tentative tracks accumulated through the same slide.
+  bool weak_association_frame = false;
+  bool degraded_association_frame = false;
+  if (!localization_mode_ && observations.size() >= 4U) {
+    std::size_t expected_visible_confirmed = 0U;
+    for (const FrontendConfirmedLandmark & lm : confirmed_view) {
+      if (track_expected_visible(lm.position)) {
+        ++expected_visible_confirmed;
+      }
+    }
+    if (expected_visible_confirmed >=
+      static_cast<std::size_t>(founding_assoc_min_visible_))
+    {
+      const double reference = static_cast<double>(
+        std::min(observations.size(), expected_visible_confirmed));
+      const double ratio =
+        static_cast<double>(matched_landmarks) / std::max(reference, 1.0);
+      if (ratio < founding_assoc_min_ratio_) {
+        weak_association_frame = true;
+        frontend_->reset();
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 5000,
+          "Weak association (%zu/%zu obs matched, %zu confirmed expected "
+          "visible): founding suspended this frame (slid-pose guard)",
+          matched_landmarks, observations.size(), expected_visible_confirmed);
+      } else if (ratio < cone_reacquire_trigger_ratio_) {
+        // Partial slide suspect: a real fraction of the mapped view stopped
+        // matching. The min() reference keeps mixed frontier frames (new
+        // cones ahead, known cones matched behind) from tripping this.
+        // NOTE (2026-07-21): suspending founding here was tried as
+        // prevention ("a hole is recoverable, a ghost is not") and REVERTED:
+        // with founding dead through a slide the drifting pose has nothing
+        // to match OR found, the relocalizer starves (3/25 fits), and the
+        // run degenerates into a LOST thrash — observed live twice. The
+        // limping drift-branch map, ghosts and all, is what keeps
+        // association alive until a budget-passed seam/gate closure pulls
+        // it back.
+        degraded_association_frame = true;
+      }
+    }
+  }
+  // Cone re-acquisition bookkeeping (see maybeConeReacquire): a sustained
+  // degraded/weak streak is the slid-pose signal; a healthy frame stamps
+  // the hinge the re-linearization will pivot from.
+  if (weak_association_frame || degraded_association_frame) {
+    ++weak_assoc_streak_;
+    maybeConeReacquire(stamp, weak_association_frame);
+  } else {
+    weak_assoc_streak_ = 0;
+    if (matched_landmarks >= 2U) {
+      last_healthy_assoc_graph_id_ = pose.graph_id;
+    }
+  }
 
   for (std::size_t i = 0U; i < frame.ambiguous_observations.size(); ++i) {
     // Two landmarks explain a cone almost equally well; fusing or spawning
@@ -2442,6 +3252,12 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
   }
 
   for (const FrontendPromotion & promotion : frame.promotions) {
+    if (weak_association_frame || weak_assoc_streak_ >= 2) {
+      // L0: no founding from a slid-pose frame. The streak term also holds
+      // promotions through a PARTIAL slide, so no ghost can outrun the
+      // pending re-acquisition snap.
+      break;
+    }
     // Geometric-impossibility veto: a cone we are supposedly observing
     // cannot be farther than the sensor range from the current pose. Such a
     // track was born from corrupted geometry; drop it instead of freezing
@@ -2531,7 +3347,7 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
       frame.ambiguous_observations.size());
   }
 
-  const std::size_t deleted_landmarks = update_deletions ?
+const std::size_t deleted_landmarks = update_deletions ?
     deleteMissedVisibleLandmarks(pose, observed_landmark_indices) :
     0U;
 
@@ -3669,9 +4485,17 @@ void GraphSlamNode::publishOdometry(const rclcpp::Time & stamp, const g2o::SE2 &
       const double vx = latest_twist_vx_.load();
       const double vy = latest_twist_vy_.load();
       const double wz = latest_twist_wz_.load();
-      pyaw = fix.yaw + wz * dt;
-      px = fix.position.x() + (vx * std::cos(fix.yaw) - vy * std::sin(fix.yaw)) * dt;
-      py = fix.position.y() + (vx * std::sin(fix.yaw) + vy * std::cos(fix.yaw)) * dt;
+      // The fix is ENU; ego_odom is published in the MAP frame: g^-1 o fix
+      // (identity gauge -> unchanged behaviour).
+      const g2o::SE2 fix_map =
+        gaugeEstimate().inverse() *
+        g2o::SE2(fix.position.x(), fix.position.y(), fix.yaw);
+      const double fyaw = fix_map.rotation().angle();
+      pyaw = fyaw + wz * dt;
+      px = fix_map.translation().x() +
+        (vx * std::cos(fyaw) - vy * std::sin(fyaw)) * dt;
+      py = fix_map.translation().y() +
+        (vx * std::sin(fyaw) + vy * std::cos(fyaw)) * dt;
       rtk_primary_used = true;
     }
   }
@@ -3725,17 +4549,22 @@ void GraphSlamNode::publishOdometry(const rclcpp::Time & stamp, const g2o::SE2 &
       fix.sigma_x <= gnss_prior_max_position_sigma_ &&
       fix.sigma_y <= gnss_prior_max_position_sigma_)
     {
+      // ego_odom is map-frame; the fix is ENU -- compare/snap through the gauge.
+      const g2o::SE2 fix_map =
+        gaugeEstimate().inverse() *
+        g2o::SE2(fix.position.x(), fix.position.y(), fix.yaw);
+      const double fyaw = fix_map.rotation().angle();
       const double dyaw_gnss =
-        std::abs(std::atan2(std::sin(pyaw - fix.yaw), std::cos(pyaw - fix.yaw)));
+        std::abs(std::atan2(std::sin(pyaw - fyaw), std::cos(pyaw - fyaw)));
       if (dyaw_gnss > pose_gate_max_heading_vs_gnss_rad_) {
         RCLCPP_WARN_THROTTLE(
           get_logger(), *get_clock(), 1000,
           "Pose-heading guard: ego_odom heading %.0f deg from the INS/GNSS absolute "
           "heading -- mirror-solution branch; snapping to the GNSS pose",
           dyaw_gnss * 180.0 / M_PI);
-        px = fix.position.x();
-        py = fix.position.y();
-        pyaw = fix.yaw;
+        px = fix_map.translation().x();
+        py = fix_map.translation().y();
+        pyaw = fyaw;
       }
     }
   }

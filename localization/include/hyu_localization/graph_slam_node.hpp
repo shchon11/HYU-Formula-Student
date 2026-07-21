@@ -23,6 +23,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -433,6 +434,43 @@ private:
   double gnss_prior_mapping_sigma_scale_{4.0};
   double gnss_prior_innovation_max_residual_;
   double gnss_prior_min_interval_;
+  // ---- L3: tiered GNSS priors ------------------------------------------
+  // A single-grade fix (sigma above the normal gate) is still an absolute
+  // measurement -- but feeding it to the POSE directly is EMPIRICALLY poison
+  // (autocross/single: 11% -> 70% ghost even at 14 m effective sigma +
+  // huber): its colored bias fights cone-SLAM coherently and shreds
+  // association. It only becomes safe routed through the GAUGE VERTEX
+  // (map->ENU variable), where the bias lands in g instead of the pose-vs-map
+  // fight. Disabled (0) until the gauge vertex lands; then re-enable.
+  double gnss_prior_degraded_max_sigma_{0.0};
+  double gnss_prior_degraded_sigma_scale_{3.0};
+  double gnss_prior_degraded_interval_scale_{5.0};
+  // "huber" (default) or "dcs". DCS drives an inconsistent prior's influence
+  // to zero (information x s^2) -- which VERIFIED EMPIRICALLY self-seals a
+  // drifted gauge: after an AHRS window every returning RTK prior has a huge
+  // chi^2 at the drifted linearization, DCS kills them all, and the recovery
+  // never happens (autocross/mode_transition: 11% -> 75% ghost). Huber's
+  // linear tail keeps pulling. DCS becomes safe once the gauge vertex
+  // absorbs the coherent offset (planned L3b); until then default huber.
+  std::string gnss_prior_kernel_{"huber"};
+  // ---- L3b: gauge vertex -----------------------------------------------
+  // Single SE2 variable g modelling the map->ENU registration; GNSS fixes
+  // constrain (g o x_i) instead of x_i directly (edge_se2_gauge_xy.hpp).
+  // DEFAULT OFF -- verified empirically HARMFUL as a single static variable:
+  // the colored GNSS bias is time-VARYING, so a static g absorbs only its
+  // mean while its 3-DOF freedom lets the whole map twist slowly (measured
+  // -2.8..+4.6 deg map rotation, ghost 11%->67% on autocross/single). The
+  // principled form is a g_t random-walk SEQUENCE (slowly-varying bias
+  // state); until that exists, direct XY priors + the founding trust gates
+  // are strictly better. Kept behind this flag for future work.
+  bool gauge_enable_{false};
+  double gauge_prior_sigma_pos_{15.0};
+  double gauge_prior_sigma_yaw_{0.3};
+  g2o::VertexSE2 * gauge_vertex_{nullptr};
+  // Lazily creates the gauge vertex (+ weak identity prior); nullptr when
+  // gauge_enable_ is false. gaugeEstimate() is identity in that case.
+  g2o::VertexSE2 * ensureGaugeVertex();
+  g2o::SE2 gaugeEstimate() const;
   double last_gnss_prior_stamp_sec_;
   // Manual relocalization (/initialpose) suppresses GNSS priors: the click is
   // a competing absolute reference, and an RTK prior would otherwise yank the
@@ -543,8 +581,148 @@ private:
   double odom_gap_reset_sec_{1.0};
   double odom_gap_quarantine_sec_{6.0};
   std::atomic<double> mapping_quarantine_until_sec_{0.0};
+  // ---- L0 founding trust gate ------------------------------------------
+  // Landmark founding is only safe while the pose is corroborated. Two
+  // triggers quarantine/skip founding (association, edges, GNSS priors all
+  // keep running):
+  //  (1) GNSS trust-TIER transition (rtk_fixed/float/single/none, from the
+  //      fix sigma): every mode or correction change drags an INS
+  //      re-alignment transient where the believed sigma snaps instantly
+  //      but the realized error decays slowly -- landmarks founded from the
+  //      transient are drift-era ghosts (mode_transition: 65% ghost).
+  //  (2) association-health: revisiting a mapped region with cones in view
+  //      but NOT associating is the slid-pose signature (colored single-fix
+  //      wander, aliasing) -- founding then mints offset duplicates of the
+  //      very cones we failed to match (autocross/single: 73% ghost). Armed
+  //      only where confirmed landmarks SHOULD be visible, so frontier
+  //      mapping is unaffected.
+  double gnss_transition_quarantine_sec_{4.0};
+  int gnss_tier_prev_{-999};
+  double founding_assoc_min_ratio_{0.25};
+  int founding_assoc_min_visible_{3};
+  // ---- Verified GNSS recovery (re-linearization) -----------------------
+  // When RTK-grade fixes RESUME after a fault and coherently disagree with
+  // the pose chain (dead-reckoning drift), the graph must not re-anchor
+  // through the disagreement (that kinks the chain and mints ghost cones).
+  // Instead: Detect (recovery_window_ consecutive keyframes whose implied
+  // correction T = fix (-) pose agrees within the agreement bounds),
+  // Verify (current cone constellation must fit the landmark map BETTER at
+  // the corrected pose -- vetoes multipath/aliased fixes; skipped when too
+  // few landmarks are in range), Apply (interpolate T 0 -> 100% along the
+  // post-hinge pose chain as an INITIAL-GUESS update -- re-linearization,
+  // no information destroyed -- where the hinge is the last RTK-pinned
+  // keyframe). GNSS pins/priors are suppressed while a recovery is pending.
+  // DEFAULT OFF -- seven iterations (verification polarity, pre-drift-only
+  // targets, screw interpolation, landmark co-move, escaped sanity bound,
+  // translation-only) never beat the no-recovery baseline over N=4 stats
+  // (mode_transition ghost stayed 30-80% either way), while bad applies
+  // (31 m/84 deg, -14 deg twists) actively shredded runs. The DESIGN
+  // (detect/verify/re-linearize) still looks right; the failure is that
+  // ghosts form continuously during the outage, not only at the recovery
+  // moment, so fixing the return-jump alone cannot clear the metric.
+  // Revisit as part of full L2 loop closure with a ghost-merge pass.
+  // Re-enable attempt (combined with re-acquisition, translation-only)
+  // FAILED again: the apply misfired on small_track (pose rmse 6.2 m,
+  // 9.6 m map offset). The frontier half needs a different treatment.
+  bool recovery_enable_{false};
+  // Fire BELOW the association gate (1.5 m): ghosts start forming the
+  // moment pose error exceeds what association can absorb, so waiting for
+  // 1.5 m detects the disease only after infection.
+  double recovery_min_correction_m_{0.8};
+  // Corrections beyond this need positive cone corroboration (an honest
+  // dead-reckoning drift is bounded; bigger = suspect fix).
+  double recovery_max_correction_m_{15.0};
+  double recovery_min_correction_yaw_{0.17};
+  int recovery_window_{5};
+  double recovery_agreement_m_{0.8};
+  double recovery_agreement_yaw_{0.10};
+  int recovery_min_inliers_{5};
+  int recovery_min_inlier_gain_{3};
+  double recovery_cooldown_sec_{10.0};
+  struct RecoverySample
+  {
+    g2o::SE2 correction;
+    double stamp_sec;
+    double traveled_m;
+  };
+  std::deque<RecoverySample> recovery_samples_;
+  double last_recovery_stamp_sec_{-1.0e18};
+  int last_pinned_graph_id_{-1};
+  // Give-up bound: if verification keeps refusing (e.g. the map near the
+  // pose is ALL drift-era ghosts and no pre-drift truth is in range), stop
+  // suppressing the anchors after this long and fall back to the old
+  // crude re-anchoring -- never worse than the pre-recovery behaviour.
+  double recovery_pending_max_sec_{8.0};
+  double recovery_pending_since_sec_{-1.0};
+  // Travel at the last moment the pose AGREED with an RTK-grade fix: the
+  // boundary of the drift era. Landmarks founded after it are ghost
+  // suspects and are excluded from recovery verification targets.
+  double last_gnss_agree_traveled_m_{0.0};
+  // Returns true while a recovery is PENDING (anchors must stand down).
+  bool maybeRecoverFromGnss(g2o::VertexSE2 * vertex, const rclcpp::Time & stamp);
+  // ---- Mapping-mode cone re-acquisition --------------------------------
+  // THE duplicate-prevention mechanism. Mapping-mode association is per-cone
+  // NN inside a ~1.5 m gate, so once the pose slides past the gate (GNSS
+  // fault + odometry drift) every visible cone stops matching and the
+  // frontend -- which cannot tell "unmapped frontier" from "known cones the
+  // pose slid off of" -- founds drift-offset DUPLICATES. But the local cone
+  // CONSTELLATION still matches the existing map at the true pose: when
+  // association collapses while the map says cones should be visible (the
+  // L0 weak-association signal, sustained), scan-match the submap
+  // constellation against the landmark map and re-linearize the recent
+  // chain onto the match. "If the observed cones can be matched to nearby
+  // map cones, THAT match is the correct pose" -- so duplicates never form.
+  // Acceptance is triple-gated: inlier count, healthy-GNSS veto
+  // (gnssVetoesCandidate), and the INS absolute-yaw mirror guard (valid
+  // even in AHRS mode), so a symmetric layout cannot snap to its mirror.
+  bool cone_reacquire_enable_{true};
+  int cone_reacquire_min_weak_frames_{3};
+  double cone_reacquire_search_radius_m_{8.0};
+  double cone_reacquire_search_yaw_{0.4};
+  int cone_reacquire_min_inliers_{8};
+  double cone_reacquire_cooldown_sec_{5.0};
+  // PARTIAL-slide trigger (the measured ghost-formation path): ghosts are
+  // minted while association is only DEGRADED -- the pose slides 1-2 m, the
+  // near half of the view keeps matching (some cones even MIS-associate to
+  // neighbours and self-support the slid branch), and the far half founds
+  // duplicates. Total-collapse detection (<0.25) never fires there (0-2
+  // weak frames per run measured vs 56-63% ghost). A sustained ratio below
+  // this threshold triggers a SMALL-radius constellation snap; promotions
+  // pause while the streak stands so no ghost outruns the snap.
+  double cone_reacquire_trigger_ratio_{0.6};
+  double cone_reacquire_partial_radius_m_{3.0};
+  double cone_reacquire_partial_yaw_{0.2};
+  // The candidate must BEAT the current pose by this many inliers -- in a
+  // partial slide the current pose still explains part of the view, and
+  // snapping to a tie would just thrash.
+  int cone_reacquire_min_inlier_gain_{3};
+  int weak_assoc_streak_{0};
+  int last_healthy_assoc_graph_id_{-1};
+  double last_cone_reacquire_sec_{-1.0e18};
+  void maybeConeReacquire(const rclcpp::Time & stamp, bool collapse);
 
   // GNSS-free seam anchor (mapping mode): submap-vs-first-lap-landmarks scan
+  // Plausible-drift budget: honest dead-reckoning drift since the last
+  // ACCEPTED healthy GNSS prior is bounded, so any implied correction far
+  // beyond base + rate * distance is an aliased match, not drift. Measured
+  // motivation (2026-07-21 small_track mode_transition): seam anchors
+  // "closed" 14-19 m of drift 2 s after AHRS entry on 17-23% inlier fits,
+  // and a recovery moved the map 17.7 m on a 5/44 corroboration -- every one
+  // an alias on the symmetric layout. Rate is calibrated from the same
+  // harness, not theory: genuine unanchored drift measured ~3.5% of distance
+  // (rejected-correction ladder 4.2->6.8 m over 123->208 m grew smoothly
+  // with travel; a 2% budget starved those real closures and the pose went
+  // LOST), so 5% passes genuine closures with margin while the 14-19 m
+  // aliases still need 250 m+ of unanchored travel to sneak under it.
+  // 2026-07-21 verdict: the 2% rate + the round-2 stack measured
+  // {0,5,37,37,40,0}% ghost on mode_transition with no pose blowups (user:
+  // "round 2 was the perfect one"); the 5% recalibration was reasoned from a
+  // run confounded by the (since-reverted) founding-suspension spiral and is
+  // NOT validated -- keep 2% unless a clean A/B says otherwise.
+  double gnss_drift_budget_base_m_{1.0};
+  double gnss_drift_budget_per_m_{0.02};
+  double last_healthy_gnss_traveled_m_{0.0};
+
   // match near the lap origin, applied like the gate anchor.
   bool seam_anchor_enable_{true};
   double seam_anchor_search_radius_m_{15.0};

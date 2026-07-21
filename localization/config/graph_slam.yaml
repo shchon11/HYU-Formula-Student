@@ -23,7 +23,7 @@ graph_slam:
     keyframe_yaw: 0.2
     keyframe_max_dt: 0.5
 
-    association_max_distance: 1.2
+    association_max_distance: 1.5
     association_gate_chi2: 5.991
     association_ambiguity_ratio: 0.85
 
@@ -123,6 +123,16 @@ graph_slam:
     # back in cleanly.
     odom_gap_reset_sec: 1.0
     odom_gap_quarantine_sec: 6.0
+
+    # GNSS-return recovery (verified re-linearization + drift-era landmark
+    # re-seat). Re-enabled 2026-07-21 with visibility-gated verification:
+    # with pre-drift landmarks IN VIEW the corrected pose must positively
+    # explain them -- cone silence refuses the move (the old "refuse only on
+    # negative evidence" rule let every small_track mode-transition apply
+    # blind at 0-vs-0 inliers and re-seat the whole map). Only the genuine
+    # frontier (no pre-drift map in view) may apply on GNSS coherence alone,
+    # which is the pioneering-drift case this exists to treat.
+    recovery_enable: true
 
     # Orange-gate global anchor: the big-orange start-gate cones exist
     # nowhere else on the track, so matching their observed constellation
@@ -330,14 +340,14 @@ graph_slam:
     # Re-try with landmark_missed_observations_to_delete ~20 once the lidar
     # realism pipeline settles; until then the creation range gate alone is
     # the pollution defense.
-    delete_stale_landmarks: false
+    delete_stale_landmarks: true
     landmark_missed_observations_to_delete: 6
     landmark_delete_min_interval: 0.2
     # CONSERVATIVE visibility envelope for miss-counting (2026-07-20 field
     # feedback): a miss is only evidence of absence when the cone is WELL
     # inside what the camera reliably sees. 180 deg / 30 m counted misses on
     # cones the sensor could never confirm, and far cones got reaped.
-    landmark_delete_fov: 1.2
+    landmark_delete_fov: 1.5
     landmark_delete_max_range: 10.0
     landmark_delete_max_abs_x: 20.0
     landmark_delete_max_abs_y: 20.0
@@ -361,7 +371,7 @@ graph_slam:
     # through the same path, so the repair is self-correcting both ways.
     loc_map_repair_enable: true
     loc_repair_min_hits: 6
-    loc_repair_missed_to_delete: 40
+    loc_repair_missed_to_delete: 6
 
     # Trackdrive lifecycle: once the map is converged and the car returns
     # within lap_return_radius / lap_return_yaw of the captured lap origin,
