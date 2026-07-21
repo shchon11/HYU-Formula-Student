@@ -12,6 +12,11 @@
     <!-- WORLD SETINGS -->
     <scene>
       <ambient>1.0 1.0 1.0 1.0</ambient>
+      <!-- Shadows stay OFF deliberately: with <shadows>true</shadows> the
+           camera rate drops ~19% and NO shadow renders on sensor cameras
+           anyway (RTSS shadow pass binds to the gzclient camera only, same
+           family as the SkyX-clouds gap; shader media verified present in
+           the patched prefix). See tools/gazebo-patches backlog. -->
       <shadows>false</shadows>
       <sky>
         <clouds>
