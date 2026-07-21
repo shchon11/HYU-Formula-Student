@@ -132,12 +132,23 @@ graph_slam:
     landmark_update_process_variance: 0.01
     # Registered-but-unobserved reaper: a landmark WELL inside the
     # conservative envelope below that keeps missing (counted once per
-    # keyframe) is a ghost. Big-orange gate cones are never reaped. A 6-miss
-    # budget once ate occluded real cones — keep this generous.
+    # keyframe) is a ghost. Orange-class gate cones are never reaped. A
+    # 6-miss budget once ate occluded real cones — keep this generous.
+    # Scale intuition: keyframes are ~0.5 m apart, so N misses ~= N/2 m of
+    # continuous blindness while the cone sits inside the envelope
+    # (5 misses ~= 2.5 m ~= 0.25 s at race pace).
     landmark_delete_enable: true
     landmark_delete_misses: 5
     landmark_delete_max_range: 10.0
     landmark_delete_fov: 1.5
+    # Frozen-map repair: after the freeze the map stays writable, but only
+    # under much stricter admission — it is the trusted reference. A track
+    # needs this many hits to join (joins FIXED, like the loaded map;
+    # mapping needs only promote_min_hits=3), and deletion needs this many
+    # consecutive expected-visible misses (~20 m of continuous blindness vs
+    # the mapping reaper's 2.5 m). 0 disables the respective path.
+    loc_map_repair_min_hits: 5
+    loc_map_repair_delete_misses: 5
 
     # ==== Lap lifecycle (freeze -> localization) ==========================
     # Freeze requires: lap-return geometry (radius+yaw after min travel from

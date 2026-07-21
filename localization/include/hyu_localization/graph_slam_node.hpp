@@ -209,6 +209,18 @@ private:
     ConeColor color,
     bool as_map_repair = false);
 
+  // Register a confirmed frontend promotion: twin-suppress, create the
+  // landmark, replay its observation history against the keyframes.
+  // recompute_position re-derives the position from the earliest surviving
+  // keyframe (used when flushing promotions deferred across a seam
+  // correction — the stored map position predates the correction).
+  bool registerPromotion(
+    const FrontendPromotion & promotion, bool recompute_position);
+  // Promotions held while the seam was pending (registration near the
+  // start-area map is deferred, not dropped: dropping them permanently
+  // ate cones when the map froze on the first lap return).
+  void flushDeferredPromotions(const char * reason);
+
   bool updateLandmarkEstimate(
     LandmarkRecord & landmark,
     const Eigen::Vector2d & map_point,
@@ -368,6 +380,7 @@ private:
   // near/far split rule, crowd radius, soft founding covariance).
   FrontendParams frontend_params_{};
   std::unique_ptr<TentativeTrackFrontend> frontend_;
+  std::vector<FrontendPromotion> deferred_promotions_;
   // Robust kernel on cone observation edges: "huber" tolerates a wrong
   // association without letting it distort the map; "none" disables.
   // Odometry edges are NEVER robustified (they are the gradient backbone).
@@ -398,6 +411,12 @@ private:
   int landmark_delete_misses_{20};
   double landmark_delete_max_range_{10.0};
   double landmark_delete_fov_{1.5};
+  // Frozen-map repair: the map stays writable in localization mode, but
+  // under far stricter admission than mapping — the frozen map is the
+  // trusted reference, so changing it needs overwhelming evidence.
+  // 0 disables the respective path.
+  int loc_map_repair_min_hits_{8};
+  int loc_map_repair_delete_misses_{40};
   // The orange gate's own response at the matched pose (loop mode): the
   // seam certificate. Corridors may alias; the gate may not.
   double csm_loop_min_orange_response_{0.5};

@@ -240,6 +240,10 @@ GraphSlamNode::GraphSlamNode()
     "landmark_delete_max_range", landmark_delete_max_range_);
   landmark_delete_fov_ = declare_parameter<double>(
     "landmark_delete_fov", landmark_delete_fov_);
+  loc_map_repair_min_hits_ = declare_parameter<int>(
+    "loc_map_repair_min_hits", loc_map_repair_min_hits_);
+  loc_map_repair_delete_misses_ = declare_parameter<int>(
+    "loc_map_repair_delete_misses", loc_map_repair_delete_misses_);
   default_observation_sigma_ =
     declare_parameter<double>("default_observation_sigma", default_observation_sigma_);
   min_observation_variance_ =
@@ -512,6 +516,7 @@ void GraphSlamNode::resetGraph()
   poses_.clear();
   landmarks_.clear();
   last_observations_.clear();
+  deferred_promotions_.clear();
   if (frontend_) {
     frontend_->reset();
   }
@@ -1198,6 +1203,17 @@ bool GraphSlamNode::maybeCsmRegister(
   }
 
   pose.vertex->setEstimate(delta * pose.vertex->estimate());
+  // A LARGE apply moved the pose by the full drift, so every tentative
+  // track's map-frame state (accumulated from pre-correction poses) is
+  // offset by exactly that drift. Left alive they confirm into a ghost row
+  // of cones beside the corrected map — drop them; re-observation rebuilds
+  // the tracks from the corrected pose within a few frames. Routine
+  // tracking applies (~0.15-0.2 m, sub-gate) don't reset: constant resets
+  // would starve every track of the hits the frozen-map repair admission
+  // requires.
+  if (frontend_ && delta_m >= 0.5) {
+    frontend_->reset();
+  }
   // An apply re-linearizes the neighbourhood; give the optimizer room to
   // absorb it before the next correction can fire (rejections stay free).
   last_csm_travel_ = traveled_distance_ + csm_apply_cooldown_m_;
@@ -1250,6 +1266,11 @@ std::size_t GraphSlamNode::reapUnobservedLandmarks(
     }
   }
   std::vector<std::size_t> doomed;
+  // Localization mode reaps too, but far more conservatively: the frozen
+  // map is the trusted reference, so deleting from it takes a much longer
+  // run of contradicting evidence than sweeping mapping-phase ghosts.
+  const int miss_budget = localization_mode_ ?
+    loc_map_repair_delete_misses_ : landmark_delete_misses_;
   for (std::size_t i = 0; i < landmarks_.size(); ++i) {
     LandmarkRecord & landmark = landmarks_[i];
     if (seen[i]) {
@@ -1257,8 +1278,11 @@ std::size_t GraphSlamNode::reapUnobservedLandmarks(
       continue;
     }
     // Gate cones are the CSM seam anchor; a wrongly reaped gate would cost
-    // far more than any ghost it could ever be.
-    if (landmark.color == ConeColor::BigOrange) {
+    // far more than any ghost it could ever be. Orange classes are pooled —
+    // never key on one label.
+    if (landmark.color == ConeColor::BigOrange ||
+      landmark.color == ConeColor::Orange)
+    {
       continue;
     }
     // A miss is only evidence of absence when the cone sits WELL inside
@@ -1277,7 +1301,7 @@ std::size_t GraphSlamNode::reapUnobservedLandmarks(
     {
       continue;
     }
-    if (++landmark.consecutive_misses >= landmark_delete_misses_) {
+    if (++landmark.consecutive_misses >= miss_budget) {
       doomed.push_back(i);
     }
   }
@@ -1615,6 +1639,31 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
     }
   }
 
+  // Registration near the start-area map is DEFERRED while the seam is
+  // armed but not yet applied: the pose is offset from that map by the
+  // full accumulated drift, so a promotion landing inside the seam-search
+  // window around it is usually the OLD map re-observed at the drifted
+  // pose, not a new cone (measured: gate pairs doubled ~2 m off). The
+  // frontend's promote-hold covers the inflated association radius but
+  // not the full CSM search window. Deferred, not dropped: the map can
+  // freeze on the first lap return moments after the seam registers, and
+  // dropped promotions became permanently missing cones. The flush
+  // re-derives each position from its keyframes (the optimizer has
+  // absorbed the seam by then) and twin-suppression eats the ghosts.
+  const bool seam_pending = csm_enable_ && !localization_mode_ &&
+    lap_origin_captured_ && csm_loop_applied_ == 0U &&
+    loop_gap_distance_ > 0.0 &&
+    traveled_distance_ - lap_origin_capture_traveled_m_ >=
+    lap_return_min_travel_m_;
+  // Not in the frame that applied the seam: the flush needs the optimizer
+  // to have dragged the approach keyframes first, and the apply only
+  // schedules that optimization.
+  if (!seam_pending && !localization_mode_ && !deferred_promotions_.empty() &&
+    keyframes_since_last_optimization_ == 0)
+  {
+    flushDeferredPromotions("seam registered");
+  }
+
   for (const FrontendPromotion & promotion : frame.promotions) {
     // Geometric-impossibility veto: a cone we are supposedly observing
     // cannot be farther than the sensor range from the current pose. Such a
@@ -1629,65 +1678,45 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
         (promotion.position - observation_pose.translation()).norm());
       continue;
     }
-    if (localization_mode_) {
-      continue;  // the frozen map does not grow
-    }
-    // Twin suppression: two tentative tracks of the SAME physical cone can
-    // race to confirmation a frame apart (measured twins at 0.04-0.15 m).
-    // A promotion landing on an existing same-color landmark is that race,
-    // not a new cone. Big-orange gates are REAL pairs at ~0.35-0.40 m, so
-    // orange classes use a radius below the physical pair spacing.
+    if (localization_mode_ &&
+      (loc_map_repair_min_hits_ <= 0 ||
+      promotion.hits < loc_map_repair_min_hits_))
     {
-      const ConeColor promo_color = static_cast<ConeColor>(promotion.color);
-      const bool orange_class = promo_color == ConeColor::Orange ||
-        promo_color == ConeColor::BigOrange;
-      const double twin_radius = orange_class ? 0.25 : 0.6;
-      bool twin = false;
+      // Frozen-map repair admission: the frozen map is the trusted
+      // reference, so joining it takes far more corroboration than a
+      // mapping-phase promotion (which needs only promote_min_hits).
+      // Admitted repairs join FIXED, like the loaded map.
+      continue;
+    }
+    if (seam_pending) {
+      bool near_start_map = false;
       for (const LandmarkRecord & existing : landmarks_) {
-        if (!colorsCompatible(promo_color, existing.color)) {
+        if (existing.first_seen_traveled >
+          lap_origin_capture_traveled_m_ + 30.0)
+        {
           continue;
         }
-        if ((existing.vertex->estimate() - promotion.position).norm() <
-          twin_radius)
+        if ((existing.vertex->estimate() - promotion.position).norm() <=
+          csm_loop_window_m_)
         {
-          twin = true;
+          near_start_map = true;
           break;
         }
       }
-      if (twin) {
+      if (near_start_map) {
+        deferred_promotions_.push_back(promotion);
+        RCLCPP_INFO_THROTTLE(
+          get_logger(), *get_clock(), 5000,
+          "Deferring landmark registration near the start-area map until "
+          "the seam registers (%zu deferred)",
+          deferred_promotions_.size());
         continue;
       }
     }
-    LandmarkRecord * landmark = addLandmark(
-      promotion.position, promotion.covariance,
-      static_cast<ConeColor>(promotion.color), false);
-    if (landmark == nullptr) {
-      continue;  // landmark cap
-    }
-    // Replay the confirmed track's observation history into the graph
-    // against the keyframes that actually saw it.
-    for (const FrontendPendingObservation & pending : promotion.observations) {
-      g2o::VertexSE2 * pending_vertex = nullptr;
-      for (auto it = poses_.rbegin(); it != poses_.rend(); ++it) {
-        if (it->graph_id == pending.pose_graph_id) {
-          pending_vertex = it->vertex;
-          break;
-        }
-        if (it->graph_id < pending.pose_graph_id) {
-          break;
-        }
-      }
-      if (pending_vertex == nullptr) {
-        continue;  // keyframe pruned from the localization window
-      }
-      ConeObservation replay;
-      replay.measurement = pending.keyframe_measurement;
-      replay.covariance = pending.keyframe_covariance;
-      replay.color = static_cast<ConeColor>(promotion.color);
-      addObservationEdge(replay, pending_vertex, *landmark);
+    if (registerPromotion(promotion, false)) {
+      observed_landmark_indices.push_back(landmarks_.size() - 1U);
       ++added_edges;
     }
-    observed_landmark_indices.push_back(landmarks_.size() - 1U);
   }
 
   if (loop_closure_edge) {
@@ -1705,7 +1734,8 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
   }
 
 const std::size_t deleted_landmarks =
-    (!localization_mode_ && landmark_delete_enable_ && add_edges) ?
+    (landmark_delete_enable_ && add_edges &&
+    (!localization_mode_ || loc_map_repair_delete_misses_ > 0)) ?
     reapUnobservedLandmarks(observation_pose, observed_landmark_indices) : 0U;
 
   RCLCPP_DEBUG(
@@ -1957,6 +1987,105 @@ void GraphSlamNode::voteLandmarkColor(LandmarkRecord & landmark, ConeColor obser
   if (landmark.color_votes[best] > 0U) {
     landmark.color = static_cast<ConeColor>(best);
   }
+}
+
+bool GraphSlamNode::registerPromotion(
+  const FrontendPromotion & promotion, bool recompute_position)
+{
+  Eigen::Vector2d position = promotion.position;
+  if (recompute_position) {
+    // The stored map position was accumulated from pre-correction poses;
+    // the keyframe-relative history survives the correction, so re-derive
+    // the position from the earliest keyframe that still exists.
+    for (const FrontendPendingObservation & pending : promotion.observations) {
+      g2o::VertexSE2 * vertex = nullptr;
+      for (auto it = poses_.rbegin(); it != poses_.rend(); ++it) {
+        if (it->graph_id == pending.pose_graph_id) {
+          vertex = it->vertex;
+          break;
+        }
+        if (it->graph_id < pending.pose_graph_id) {
+          break;
+        }
+      }
+      if (vertex != nullptr) {
+        position = vertex->estimate() * pending.keyframe_measurement;
+        break;
+      }
+    }
+  }
+  // Twin suppression: two tentative tracks of the SAME physical cone can
+  // race to confirmation a frame apart (measured twins at 0.04-0.15 m).
+  // A promotion landing on an existing same-color landmark is that race,
+  // not a new cone. Big-orange gates are REAL pairs at ~0.35-0.40 m, so
+  // orange classes use a radius below the physical pair spacing.
+  const ConeColor promo_color = static_cast<ConeColor>(promotion.color);
+  const bool orange_class = promo_color == ConeColor::Orange ||
+    promo_color == ConeColor::BigOrange;
+  const double twin_radius = orange_class ? 0.25 : 0.6;
+  for (const LandmarkRecord & existing : landmarks_) {
+    if (!colorsCompatible(promo_color, existing.color)) {
+      continue;
+    }
+    if ((existing.vertex->estimate() - position).norm() < twin_radius) {
+      return false;
+    }
+  }
+  LandmarkRecord * landmark = addLandmark(
+    position, promotion.covariance, promo_color, localization_mode_);
+  if (landmark == nullptr) {
+    return false;  // landmark cap
+  }
+  if (localization_mode_) {
+    RCLCPP_INFO(
+      get_logger(),
+      "Frozen-map repair: admitted a cone (color %d) at (%.1f, %.1f) "
+      "after %d hits",
+      static_cast<int>(promo_color), position.x(), position.y(),
+      promotion.hits);
+  }
+  // Replay the confirmed track's observation history into the graph
+  // against the keyframes that actually saw it.
+  for (const FrontendPendingObservation & pending : promotion.observations) {
+    g2o::VertexSE2 * pending_vertex = nullptr;
+    for (auto it = poses_.rbegin(); it != poses_.rend(); ++it) {
+      if (it->graph_id == pending.pose_graph_id) {
+        pending_vertex = it->vertex;
+        break;
+      }
+      if (it->graph_id < pending.pose_graph_id) {
+        break;
+      }
+    }
+    if (pending_vertex == nullptr) {
+      continue;  // keyframe pruned from the localization window
+    }
+    ConeObservation replay;
+    replay.measurement = pending.keyframe_measurement;
+    replay.covariance = pending.keyframe_covariance;
+    replay.color = promo_color;
+    addObservationEdge(replay, pending_vertex, *landmark);
+  }
+  return true;
+}
+
+void GraphSlamNode::flushDeferredPromotions(const char * reason)
+{
+  if (deferred_promotions_.empty()) {
+    return;
+  }
+  std::size_t registered = 0U;
+  for (const FrontendPromotion & promotion : deferred_promotions_) {
+    if (registerPromotion(promotion, true)) {
+      ++registered;
+    }
+  }
+  RCLCPP_INFO(
+    get_logger(),
+    "Flushed deferred promotions (%s): %zu/%zu registered as new cones, "
+    "the rest were the already-registered map re-observed",
+    reason, registered, deferred_promotions_.size());
+  deferred_promotions_.clear();
 }
 
 GraphSlamNode::LandmarkRecord * GraphSlamNode::addLandmark(
@@ -2292,6 +2421,14 @@ bool GraphSlamNode::optimizeGraph()
   const double correction_m =
     (poses_.back().vertex->estimate().translation() - pose_before.translation()).norm();
   last_optimize_correction_m_ = correction_m;
+  // Same staleness as a CSM re-seed: a large step means the optimizer
+  // dragged the keyframes, and pending tracks still reference the
+  // pre-correction geometry — promoting them would register duplicates
+  // offset by the correction. 0.5 m matches the direct-update gate in
+  // processCones.
+  if (frontend_ && correction_m >= 0.5) {
+    frontend_->reset();
+  }
   if (correction_m > 0.05) {
     RCLCPP_WARN(
       get_logger(),
@@ -2805,6 +2942,10 @@ void GraphSlamNode::maybeFinishMappingLap(const g2o::SE2 & current_estimate)
 
 void GraphSlamNode::enterLocalizationMode(const std::string & reason)
 {
+  // Promotions deferred across the seam must land before the freeze — the
+  // frozen map accepts no new landmarks, so anything still parked here
+  // would become a permanently missing cone.
+  flushDeferredPromotions("entering localization mode");
   // Unpromoted tracks die with the mapping phase: the frozen map accepts no
   // new landmarks, so keeping them would only absorb observations that the
   // localization matcher needs.
@@ -2812,13 +2953,17 @@ void GraphSlamNode::enterLocalizationMode(const std::string & reason)
     frontend_->reset();
   }
 
-  // Freeze the map: landmarks become the fixed reference, mapping paths
-  // (addLandmark / deletion / merge / Kalman updates) are disabled by the
-  // localization_mode_ guards, and the pose window is bounded so the graph
-  // no longer grows with laps.
+  // Freeze the map: landmarks become the fixed reference, direct Kalman
+  // updates are disabled by the localization_mode_ guards, and the pose
+  // window is bounded so the graph no longer grows with laps. Repair stays
+  // possible under the much stricter loc_map_repair_* admission (heavily
+  // corroborated additions join fixed; deletion needs a far longer run of
+  // contradicting evidence).
   localization_mode_ = true;
   for (LandmarkRecord & landmark : landmarks_) {
     landmark.vertex->setFixed(true);
+    // Mapping-phase misses don't carry into the localization budget.
+    landmark.consecutive_misses = 0;
   }
 
   const std::string saved_path = saveMapTimestamped();
