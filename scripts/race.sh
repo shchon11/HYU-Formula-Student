@@ -232,7 +232,7 @@ tmux send-keys -t "$P_SIM" \
 # 1 · Full planning graph (starts its OWN graph_slam) ────────────────────────
 P_PLAN=$(tmux split-window -h -t "$P_SIM" -P -F '#{pane_id}')
 tmux send-keys -t "$P_PLAN" \
-  "$SRC echo '[② PLANNING: slam+global+local+SM+selector+controller] waiting for car…'; $WAIT_CAR; ros2 launch hyu_planning_bringup $PLAN_LAUNCH use_sim_time:=$USE_SIM_TIME graph_slam_ate_monitor:=true local_max_stamp_skew_sec:=2.0 local_max_input_age_sec:=3.0 local_max_start_distance_m:=8.0 ${SLAM_MOTION_TOPIC:+car_state_topic:=$SLAM_MOTION_TOPIC}$PLAN_EXTRA" C-m
+  "$SRC echo '[② PLANNING: slam+global+local+SM+selector+controller] waiting for car…'; $WAIT_CAR; ros2 launch hyu_planning_bringup $PLAN_LAUNCH use_sim_time:=$USE_SIM_TIME graph_slam_ate_monitor:=true local_max_stamp_skew_sec:=2.0 local_max_input_age_sec:=3.0 local_max_start_distance_m:=8.0 ${SLAM_MOTION_TOPIC:+car_state_topic:=$SLAM_MOTION_TOPIC} ${GRAPH_SLAM_PARAMS_FILE:+graph_slam_params_file:=$GRAPH_SLAM_PARAMS_FILE}$PLAN_EXTRA" C-m
 
 # 2 · Arm the mission — then the controller drives autonomously ──────────────
 P_DRIVE=$(tmux split-window -v -t "$P_SIM" -P -F '#{pane_id}')

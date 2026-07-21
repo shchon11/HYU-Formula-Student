@@ -5,6 +5,7 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /Global Options1
+        - /SLAM1/Ego Odometry1
         - /SLAM1/Ego Odometry1/Shape1
       Splitter Ratio: 0.6499999761581421
     Tree Height: 326
@@ -172,8 +173,7 @@ Visualization Manager:
           Namespaces:
             big_orange_landmarks: true
             blue_landmarks: true
-            orange_landmarks: true
-            pose_graph: true
+            pose_graph: false
             unknown_landmarks: true
             yellow_landmarks: true
           Topic:
@@ -187,7 +187,7 @@ Visualization Manager:
           Buffer Length: 1
           Class: rviz_default_plugins/Path
           Color: 25; 255; 240
-          Enabled: true
+          Enabled: false
           Head Diameter: 0.30000001192092896
           Head Length: 0.20000000298023224
           Length: 0.30000001192092896
@@ -210,7 +210,7 @@ Visualization Manager:
             History Policy: Keep Last
             Reliability Policy: Best Effort
             Value: /localization/debug/path
-          Value: true
+          Value: false
         - Angle Tolerance: 0.10000000149011612
           Class: rviz_default_plugins/Odometry
           Covariance:
@@ -229,18 +229,18 @@ Visualization Manager:
               Value: false
             Value: false
           Enabled: true
-          Keep: 60
+          Keep: 1
           Name: Ego Odometry
           Position Tolerance: 0.10000000149011612
           Shape:
             Alpha: 1
             Axes Length: 1
             Axes Radius: 0.10000000149011612
-            Color: 28; 113; 216
-            Head Length: 0.15000000596046448
-            Head Radius: 0.07999999821186066
-            Shaft Length: 0.5
-            Shaft Radius: 0.03999999910593033
+            Color: 249; 240; 107
+            Head Length: 0.6000000238418579
+            Head Radius: 0.6000000238418579
+            Shaft Length: 1.2999999523162842
+            Shaft Radius: 0.30000001192092896
             Value: Arrow
           Topic:
             Depth: 5
@@ -286,7 +286,7 @@ Visualization Manager:
           Buffer Length: 1
           Class: rviz_default_plugins/Path
           Color: 255; 170; 0
-          Enabled: true
+          Enabled: false
           Head Diameter: 0.30000001192092896
           Head Length: 0.20000000298023224
           Length: 0.30000001192092896
@@ -309,17 +309,17 @@ Visualization Manager:
             History Policy: Keep Last
             Reliability Policy: Reliable
             Value: /planning/local_waypoints/path
-          Value: true
+          Value: false
         - Alpha: 1
           Buffer Length: 1
           Class: rviz_default_plugins/Path
-          Color: 255; 255; 255
+          Color: 255; 25; 0
           Enabled: true
           Head Diameter: 0.30000001192092896
           Head Length: 0.20000000298023224
           Length: 0.30000001192092896
           Line Style: Billboards
-          Line Width: 0.07999999821186066
+          Line Width: 0.15000000596046448
           Name: Local Window
           Offset:
             X: 0
@@ -415,7 +415,7 @@ Visualization Manager:
           Background Alpha: 0.800000011920929
           Background Color: 0; 0; 0
           Class: rviz_2d_overlay_plugins/TextOverlay
-          Enabled: true
+          Enabled: false
           Foreground Alpha: 0.800000011920929
           Foreground Color: 25; 255; 240
           Invert Shadow: false
@@ -429,7 +429,7 @@ Visualization Manager:
             History Policy: Keep Last
             Reliability Policy: Reliable
             Value: /localization/debug/gnss_overlay
-          Value: true
+          Value: false
           font: DejaVu Sans Mono
           height: 128
           hor_alignment: left
@@ -458,7 +458,7 @@ Visualization Manager:
           Scale: 1
           Value: true
         Value: false
-      Enabled: true
+      Enabled: false
       Keep: 100
       Name: Odometry
       Position Tolerance: 0.10000000149011612
@@ -479,7 +479,7 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /localization/gnss_odom
-      Value: true
+      Value: false
     - Angle Tolerance: 0.10000000149011612
       Class: rviz_default_plugins/Odometry
       Covariance:
@@ -497,9 +497,9 @@ Visualization Manager:
           Scale: 1
           Value: true
         Value: true
-      Enabled: true
+      Enabled: false
       Keep: 100
-      Name: Odometry
+      Name: GT Odom
       Position Tolerance: 0.10000000149011612
       Shape:
         Alpha: 1
@@ -518,7 +518,7 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /ground_truth/odom
-      Value: true
+      Value: false
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -558,25 +558,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/ThirdPersonFollower
-      Distance: 15.883642196655273
+      Distance: 75.50595092773438
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 1.3505330085754395
-        Y: -0.16689082980155945
-        Z: 1.9073486328125e-06
+        X: 4.30661678314209
+        Y: -21.36736488342285
+        Z: -7.328630090341903e-06
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.16979645192623138
-      Target Frame: base_footprint
+      Pitch: 1.5697963237762451
+      Target Frame: map
       Value: ThirdPersonFollower (rviz_default_plugins)
-      Yaw: 3.1266071796417236
+      Yaw: 4.721607208251953
     Saved:
       - Class: rviz_default_plugins/Orbit
         Distance: 8.5
