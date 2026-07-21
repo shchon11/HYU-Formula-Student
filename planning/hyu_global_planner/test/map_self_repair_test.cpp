@@ -111,6 +111,98 @@ TEST(MapSelfRepair, LiveMapWithGhostAndStrandedConesBuildsFullLap)
   }
 }
 
+// A lap-seam re-registration: one cone per boundary re-observed ~1.2 m off
+// its original under the closed drift. Too far apart to merge as a split
+// landmark, and the two ghosts mutually read as a plausible track width, so
+// the corridor filter kept both — the walk folded the centerline and every
+// seed failed with a heading reversal. The laterally misfitting copy must be
+// dropped and the lap must build.
+TEST(MapSelfRepair, DriftShiftedSeamDuplicatesAreDroppedNotFatal)
+{
+  auto map = ringMap();
+  // Radial shifts: crowding the twin (under half the ring spacing) while
+  // sitting clearly off the line through the neighbouring boundary cones.
+  map.blue_cones.push_back(coneAt(19.2, 0.0));
+  map.yellow_cones.push_back(coneAt(20.8, 0.0));
+  expectFullRingCenterline(map, "drift-shifted seam duplicates");
+}
+
+// The live map that motivated the drift-duplicate repair: restored from
+// map_20260722_030333, its final two rows are a blue/yellow pair re-registered
+// ~2 m off their boundaries at the lap seam. The full 439 m lap must build.
+TEST(MapSelfRepair, LiveMapWithDriftShiftedSeamDuplicatesBuildsFullLap)
+{
+  const auto map = loadConeMapCsv(
+    "planning/hyu_global_planner/test/fixtures/drift_duplicate_cone_map.csv");
+  std::vector<PlannerWaypoint> waypoints;
+  std::string reason;
+
+  ASSERT_TRUE(buildCenterlineFromSlamMap(map, egoAtOrigin(), fixtureConfig(), waypoints, reason))
+    << reason;
+
+  ASSERT_GE(waypoints.size(), 800U);
+  double length = 0.0;
+  for (std::size_t i = 1; i < waypoints.size(); ++i) {
+    length += std::hypot(
+      waypoints[i].x - waypoints[i - 1].x, waypoints[i].y - waypoints[i - 1].y);
+  }
+  EXPECT_GT(length, 420.0);
+  EXPECT_LT(length, 460.0);
+  for (const auto & waypoint : waypoints) {
+    EXPECT_GT(waypoint.d_left, 0.5);
+    EXPECT_GT(waypoint.d_right, 0.5);
+    EXPECT_LT(waypoint.d_left, fixtureConfig().max_track_width_m);
+    EXPECT_LT(waypoint.d_right, fixtureConfig().max_track_width_m);
+  }
+}
+
+// its_a_mess: the blue boundary is a dumbbell outline whose waist is two
+// parallel rows 0.75 m apart with 1.0-1.5 m along-row spacing, so the greedy
+// walk's nearest-cone choice zigzags between the rows. The ground truth only
+// squeaked through the rescue tier; this live SLAM map (median 0.12 m noise,
+// one unmapped bridge cone) failed every seed as branch_jump. The 2-opt ring
+// repair phase must recover the full ~103 m lap.
+TEST(MapSelfRepair, DumbbellWaistBoundaryIsRepairedNotFatal)
+{
+  const auto map = loadConeMapCsv(
+    "planning/hyu_global_planner/test/fixtures/dumbbell_waist_cone_map.csv");
+  std::vector<PlannerWaypoint> waypoints;
+  std::string reason;
+
+  ASSERT_TRUE(buildCenterlineFromSlamMap(map, egoAtOrigin(), fixtureConfig(), waypoints, reason))
+    << reason;
+
+  ASSERT_GE(waypoints.size(), 180U);
+  double length = 0.0;
+  for (std::size_t i = 1; i < waypoints.size(); ++i) {
+    length += std::hypot(
+      waypoints[i].x - waypoints[i - 1].x, waypoints[i].y - waypoints[i - 1].y);
+  }
+  EXPECT_GT(length, 90.0);
+  EXPECT_LT(length, 115.0);
+  for (const auto & waypoint : waypoints) {
+    EXPECT_GT(waypoint.d_left, 0.5);
+    EXPECT_GT(waypoint.d_right, 0.5);
+    EXPECT_LT(waypoint.d_left, fixtureConfig().max_track_width_m);
+    EXPECT_LT(waypoint.d_right, fixtureConfig().max_track_width_m);
+  }
+}
+
+// The ground-truth its_a_mess track built BEFORE the 2-opt repair existed (via
+// the plain rescue tier), so it must keep building through the plain phase —
+// the repair phase is ordered strictly after every plain attempt precisely so
+// maps like this keep their pre-repair path.
+TEST(MapSelfRepair, DumbbellWaistGroundTruthStillBuilds)
+{
+  const auto map = loadConeMapCsv("sim/eufs_sim/eufs_tracks/csv/its_a_mess.csv");
+  std::vector<PlannerWaypoint> waypoints;
+  std::string reason;
+
+  ASSERT_TRUE(buildCenterlineFromSlamMap(map, egoAtOrigin(), fixtureConfig(), waypoints, reason))
+    << reason;
+  ASSERT_GE(waypoints.size(), 180U);
+}
+
 // The repairs must not soften the fail-closed contract for maps that are
 // broken at their core: a boundary fragmented far beyond any stray minority
 // still refuses to publish.

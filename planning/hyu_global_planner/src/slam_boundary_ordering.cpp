@@ -241,9 +241,61 @@ void trimOpenSeamSpurs(std::vector<PlannerPoint> & ordered, double max_gap, std:
   }
 }
 
+// Length-minimising 2-opt over the CLOSED ring (the loop edge back->front
+// counts as an edge). Where a boundary runs beside itself closer than its own
+// cone spacing — its_a_mess's dumbbell waist is two parallel blue rows 0.75 m
+// apart with 1.0-1.5 m along-row spacing — the greedy walk's nearest-cone
+// choice zigzags between the rows instead of running one row out and the
+// other back, and every seed dies on the self-intersection or stranding
+// gates. Even the ground-truth track only squeaked through the rescue tier;
+// ordinary 10-17 cm SLAM noise killed every seed (map_20260722_043237).
+// Flipping the span between two edges whenever the swap shortens the ring is
+// the classical TSP repair. Length, not crossings, is the acceptance test:
+// a crossing always shortens when flipped (triangle inequality), but the walk
+// also leaves non-crossing switchback folds (observed beside a 0.86 m
+// displaced cone on the same map) that a pure uncrossing pass cannot see,
+// while both fold shapes waste length. Each accepted flip strictly shortens
+// the ring, so the pass terminates; the budget is a backstop, not the
+// expected exit. The repair only REORDERS points — it never invents or drops
+// geometry — and the score and downstream width/heading/loop gates still
+// judge the result, so a genuinely broken map is rejected exactly as before.
+void twoOptRepairRing(std::vector<PlannerPoint> & ordered)
+{
+  const std::size_t n = ordered.size();
+  if (n < 4U) {
+    return;
+  }
+  constexpr double kMinImprovement = 1.0e-6;
+  std::size_t budget = 16U * n;
+  bool changed = true;
+  while (changed && budget > 0U) {
+    changed = false;
+    for (std::size_t i = 0; i + 1U < n && !changed; ++i) {
+      for (std::size_t j = i + 2U; j < n; ++j) {
+        const std::size_t j_next = (j + 1U) % n;
+        if (i == 0U && j_next == 0U) {
+          continue;  // adjacent through the loop edge's shared vertex
+        }
+        const double current_length =
+          distance(ordered[i], ordered[i + 1U]) + distance(ordered[j], ordered[j_next]);
+        const double flipped_length =
+          distance(ordered[i], ordered[j]) + distance(ordered[i + 1U], ordered[j_next]);
+        if (flipped_length < current_length - kMinImprovement) {
+          std::reverse(
+            ordered.begin() + static_cast<std::ptrdiff_t>(i + 1U),
+            ordered.begin() + static_cast<std::ptrdiff_t>(j + 1U));
+          changed = true;
+          --budget;
+          break;
+        }
+      }
+    }
+  }
+}
+
 bool orderAttempt(
   const std::vector<PlannerPoint> & input, std::size_t seed_index, double max_gap,
-  bool consider_input_order, std::size_t rescue_drops,
+  bool consider_input_order, std::size_t rescue_drops, bool uncross,
   std::vector<PlannerPoint> & ordered, std::string & reason)
 {
   if (!headingAwareGraphOrder(input, seed_index, max_gap, rescue_drops, ordered, reason)) {
@@ -259,6 +311,9 @@ bool orderAttempt(
   reinsertTailStragglers(ordered, max_gap);
   if (rescue_drops > 0U) {
     trimOpenSeamSpurs(ordered, max_gap, rescue_drops);
+  }
+  if (uncross) {
+    twoOptRepairRing(ordered);
   }
   const auto final_score = scoreBoundaryOrder(ordered);
 
@@ -285,7 +340,8 @@ constexpr std::size_t kMaxOrderingSeedAttempts = 24U;
 
 bool orderBoundary(
   const std::vector<PlannerPoint> & input, const PlannerPoint & ego,
-  double max_gap, std::vector<PlannerPoint> & ordered, std::string & reason)
+  double max_gap, bool allow_two_opt_repair,
+  std::vector<PlannerPoint> & ordered, std::string & reason)
 {
   if (input.empty()) {
     reason = "no boundary points";
@@ -303,7 +359,7 @@ bool orderBoundary(
   }
 
   std::string first_reason;
-  if (orderAttempt(input, ego_seed, max_gap, true, 0U, ordered, first_reason)) {
+  if (orderAttempt(input, ego_seed, max_gap, true, 0U, false, ordered, first_reason)) {
     return true;
   }
 
@@ -314,7 +370,7 @@ bool orderBoundary(
       continue;
     }
     std::string retry_reason;
-    if (orderAttempt(input, seed, max_gap, false, 0U, ordered, retry_reason)) {
+    if (orderAttempt(input, seed, max_gap, false, 0U, false, ordered, retry_reason)) {
       return true;
     }
   }
@@ -331,8 +387,23 @@ bool orderBoundary(
     for (std::size_t i = 0; i < attempts; ++i) {
       const std::size_t seed = (i * input.size()) / attempts;
       std::string retry_reason;
-      if (orderAttempt(input, seed, max_gap, false, rescue_drops, ordered, retry_reason)) {
+      if (orderAttempt(input, seed, max_gap, false, rescue_drops, false, ordered, retry_reason)) {
         return true;
+      }
+    }
+    // Final tier: rescue plus 2-opt ring repair, and only when the caller
+    // opted in. The centerline builder enables it strictly AFTER every plain
+    // attempt across all of ITS seeds failed, so any map the plain pipeline
+    // already handled takes exactly the code path (and publishes exactly the
+    // path) it did before this repair existed; only a map that would
+    // otherwise publish nothing ever reaches it.
+    if (allow_two_opt_repair) {
+      for (std::size_t i = 0; i < attempts; ++i) {
+        const std::size_t seed = (i * input.size()) / attempts;
+        std::string retry_reason;
+        if (orderAttempt(input, seed, max_gap, false, rescue_drops, true, ordered, retry_reason)) {
+          return true;
+        }
       }
     }
   }
@@ -475,10 +546,11 @@ bool orderSlamBoundaries(
   double max_gap,
   std::vector<PlannerPoint> & ordered_blue,
   std::vector<PlannerPoint> & ordered_yellow,
-  std::string & reason)
+  std::string & reason,
+  bool allow_two_opt_repair)
 {
-  if (!orderBoundary(blue_points, ego, max_gap, ordered_blue, reason) ||
-    !orderBoundary(yellow_points, ego, max_gap, ordered_yellow, reason))
+  if (!orderBoundary(blue_points, ego, max_gap, allow_two_opt_repair, ordered_blue, reason) ||
+    !orderBoundary(yellow_points, ego, max_gap, allow_two_opt_repair, ordered_yellow, reason))
   {
     return false;
   }

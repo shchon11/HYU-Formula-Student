@@ -272,6 +272,111 @@ std::size_t mergeSameColorDuplicates(std::vector<PlannerPoint> & points, double 
   return merged;
 }
 
+// A seam re-registration ghost is a duplicate of a REAL boundary cone shifted
+// laterally by the closed drift (map_20260722_030333: a blue and a yellow cone
+// re-observed ~2 m off their originals at the lap seam). Neither existing
+// repair can see it: it is too far from its twin for the duplicate merge
+// (1.9 m vs the 0.5 m threshold), and its nearest opposite-colour distance
+// still reads as a plausible track width — the two ghosts validated each
+// other — so the corridor filter kept both. The walk then chained
+// boundary -> ghost -> boundary, folded the centerline, and every seed died
+// with a heading reversal.
+//
+// The signature that survives all of that is crowding plus LATERAL misfit:
+// boundary cones are laid at roughly even spacing, so two same-colour cones
+// under half the typical spacing apart are one physical cone seen twice — and
+// of the two, the real one sits on the line through the surrounding boundary
+// cones while the drift copy sits beside it. Drop the worse-fitting member
+// only on a clear asymmetry (worse residual beyond twice the better plus half
+// a metre), so legitimately tight corner clusters — where both members fit
+// the local line equally — are never thinned. Candidates are collected first
+// and abandoned wholesale beyond the same 1/4 stray-minority budget every
+// other repair honours.
+std::size_t dropDriftDuplicateGhosts(std::vector<PlannerPoint> & points)
+{
+  const std::size_t n = points.size();
+  if (n < 4U) {
+    return 0U;
+  }
+
+  std::vector<double> nearest(n, std::numeric_limits<double>::max());
+  for (std::size_t i = 0; i < n; ++i) {
+    for (std::size_t j = i + 1U; j < n; ++j) {
+      const double d = distance(points[i], points[j]);
+      nearest[i] = std::min(nearest[i], d);
+      nearest[j] = std::min(nearest[j], d);
+    }
+  }
+  std::vector<double> sorted_nearest = nearest;
+  std::nth_element(
+    sorted_nearest.begin(), sorted_nearest.begin() + static_cast<std::ptrdiff_t>(n / 2U),
+    sorted_nearest.end());
+  const double crowd_limit = 0.5 * sorted_nearest[n / 2U];
+
+  const auto line_residual = [&points](
+    std::size_t index, const PlannerPoint & a, const PlannerPoint & b) {
+      const double vx = b.x - a.x;
+      const double vy = b.y - a.y;
+      const double length = std::hypot(vx, vy);
+      if (length <= 0.0) {
+        return 0.0;
+      }
+      const PlannerPoint & p = points[index];
+      return std::abs(vx * (p.y - a.y) - vy * (p.x - a.x)) / length;
+    };
+
+  std::vector<bool> drop(n, false);
+  std::size_t drop_count = 0U;
+  for (std::size_t i = 0; i < n; ++i) {
+    for (std::size_t j = i + 1U; j < n; ++j) {
+      if (drop[i] || drop[j] || distance(points[i], points[j]) >= crowd_limit) {
+        continue;
+      }
+      // The local boundary line is fitted through the two cones nearest the
+      // pair that belong to neither it nor an already-identified ghost.
+      const PlannerPoint midpoint = scale(add(points[i], points[j]), 0.5);
+      std::size_t first = n;
+      std::size_t second = n;
+      for (std::size_t k = 0; k < n; ++k) {
+        if (k == i || k == j || drop[k]) {
+          continue;
+        }
+        const double d = distance(points[k], midpoint);
+        if (first == n || d < distance(points[first], midpoint)) {
+          second = first;
+          first = k;
+        } else if (second == n || d < distance(points[second], midpoint)) {
+          second = k;
+        }
+      }
+      if (second == n) {
+        continue;
+      }
+      const double residual_i = line_residual(i, points[first], points[second]);
+      const double residual_j = line_residual(j, points[first], points[second]);
+      const double better = std::min(residual_i, residual_j);
+      const double worse = std::max(residual_i, residual_j);
+      if (worse > 2.0 * better + 0.5) {
+        drop[residual_i > residual_j ? i : j] = true;
+        ++drop_count;
+      }
+    }
+  }
+
+  if (drop_count == 0U || drop_count > n / 4U) {
+    return 0U;
+  }
+  std::vector<PlannerPoint> kept;
+  kept.reserve(n - drop_count);
+  for (std::size_t i = 0; i < n; ++i) {
+    if (!drop[i]) {
+      kept.push_back(points[i]);
+    }
+  }
+  points = std::move(kept);
+  return drop_count;
+}
+
 // A landmark whose nearest opposite-colour cone is far beyond any track width
 // cannot flank drivable track, and one within the car's own footprint of an
 // opposite cone implies a corridor nothing could ever drive — a ghost or a
@@ -872,6 +977,7 @@ static bool buildCenterlineFromSeed(
   const std::vector<PlannerPoint> & yellow_points,
   const PlannerPoint & seed,
   const SlamCenterlineConfig & config,
+  bool allow_two_opt_repair,
   std::vector<PlannerWaypoint> & waypoints,
   std::string & reason)
 {
@@ -881,7 +987,7 @@ static bool buildCenterlineFromSeed(
   std::vector<PlannerPoint> ordered_yellow;
   if (!orderSlamBoundaries(
       blue_points, yellow_points, seed, config.max_boundary_gap_m,
-      ordered_blue, ordered_yellow, reason))
+      ordered_blue, ordered_yellow, reason, allow_two_opt_repair))
   {
     return false;
   }
@@ -1109,6 +1215,8 @@ bool buildCenterlineFromSlamMap(
     config.duplicate_point_tolerance, config.min_track_width_m * 0.25);
   mergeSameColorDuplicates(blue_points, duplicate_ghost_threshold);
   mergeSameColorDuplicates(yellow_points, duplicate_ghost_threshold);
+  dropDriftDuplicateGhosts(blue_points);
+  dropDriftDuplicateGhosts(yellow_points);
   // Half the minimum width, not the minimum itself: at a hairpin pinch a REAL
   // boundary cone can sit just under min_track_width from the OTHER section's
   // opposite boundary (map_20260720_233754 measured 1.8 m there), and dropping
@@ -1192,20 +1300,28 @@ bool buildCenterlineFromSlamMap(
   constexpr std::size_t kMaxCenterlineSeedAttempts = 12U;
   std::string first_reason;
   if (buildCenterlineFromSeed(
-      blue_points, yellow_points, PlannerPoint{0.0, 0.0}, config, waypoints, first_reason))
+      blue_points, yellow_points, PlannerPoint{0.0, 0.0}, config, false, waypoints, first_reason))
   {
     rebaseLoopAtStartFinishGate(markers, config, waypoints);
     return true;
   }
   const std::size_t attempts = std::min(kMaxCenterlineSeedAttempts, blue_points.size());
-  for (std::size_t i = 0; i < attempts; ++i) {
-    const PlannerPoint & seed = blue_points[(i * blue_points.size()) / attempts];
-    std::string retry_reason;
-    if (buildCenterlineFromSeed(
-        blue_points, yellow_points, seed, config, waypoints, retry_reason))
-    {
-      rebaseLoopAtStartFinishGate(markers, config, waypoints);
-      return true;
+  // Two phases over the same seeds: plain first, then with the 2-opt ring
+  // repair enabled. The repair phase must not start until EVERY plain seed has
+  // failed — a repaired ordering succeeding at an early seed would otherwise
+  // preempt the later seed a map used to succeed from, silently moving the
+  // published line on maps that never needed repair (observed on the
+  // its_a_mess ground truth while this was a per-ordering retry tier).
+  for (const bool allow_two_opt_repair : {false, true}) {
+    for (std::size_t i = 0; i < attempts; ++i) {
+      const PlannerPoint & seed = blue_points[(i * blue_points.size()) / attempts];
+      std::string retry_reason;
+      if (buildCenterlineFromSeed(
+          blue_points, yellow_points, seed, config, allow_two_opt_repair, waypoints, retry_reason))
+      {
+        rebaseLoopAtStartFinishGate(markers, config, waypoints);
+        return true;
+      }
     }
   }
 
