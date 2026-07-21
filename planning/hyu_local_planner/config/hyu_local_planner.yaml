@@ -32,8 +32,8 @@ hyu_local_planner_node:
     two_sided_horizon_m: 20.0
     fallback_horizon_m: 8.0
     fallback_offset_m: 1.5
-    two_sided_speed_mps: 4.5
-    fallback_speed_mps: 3.0
+    two_sided_speed_mps: 6.0
+    fallback_speed_mps: 4.5
     # Corner speed = min(per-path speed, sqrt(max_lateral_accel / |kappa|)).
     # This bounds GRIP; it does not bound the STEERING range. On the tightest
     # small_track corners the car was riding a_lat ~= 5 AND full lock at once --
