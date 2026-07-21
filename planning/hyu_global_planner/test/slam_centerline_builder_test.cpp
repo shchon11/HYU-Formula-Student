@@ -185,20 +185,23 @@ TEST(SlamCenterlineBuilder, LiveSlamMapDoesNotFoldBackAtSeam)
   EXPECT_FALSE(hasSelfIntersection(waypoints));
 }
 
-TEST(SlamCenterlineBuilder, WidthFixtureFailsClosedWithExplicitReason)
+TEST(SlamCenterlineBuilder, NoisyLiveFixtureBuildsAClosedLoop)
 {
   const auto map = loadConeMapCsv("localization/map/map_20260713_002645.csv");
-  std::vector<PlannerWaypoint> waypoints{{1.0, 2.0, 3.0, 4.0, 5.0}};
+  std::vector<PlannerWaypoint> waypoints;
   std::string reason;
 
-  EXPECT_FALSE(buildCenterlineFromSlamMap(map, egoAtOrigin(), fixtureConfig(), waypoints, reason));
+  ASSERT_TRUE(buildCenterlineFromSlamMap(map, egoAtOrigin(), fixtureConfig(), waypoints, reason))
+    << reason;
 
-  EXPECT_TRUE(waypoints.empty());
-  // Fails closed on its real defect (loop closure). The per-cone width gate
-  // used to mask this: a couple of off-width cones no longer nuke the map,
-  // so the true reason surfaces. See invalid_width_test for the widespread
-  // width case that still fails as invalid_width.
-  EXPECT_NE(reason, "invalid_width");
+  // This map used to fail "loop_not_closed" — not for missing cones, but
+  // because its two rings closed from different retry seeds and the seams sat
+  // half a lap apart. With both seams re-anchored at the map origin the lap
+  // closes for real; pin that, not just "it built".
+  ASSERT_GE(waypoints.size(), 3U);
+  EXPECT_LE(
+    distance({waypoints.front().x, waypoints.front().y}, {waypoints.back().x, waypoints.back().y}),
+    fixtureConfig().close_loop_distance_m);
 }
 
 // FS marks the start/finish line with big orange cones, and the blue/yellow

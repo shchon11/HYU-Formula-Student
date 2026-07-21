@@ -141,6 +141,16 @@ GraphSlamNode::GraphSlamNode()
     "pose_gate_gnss_heading_max_age", pose_gate_gnss_heading_max_age_);
   pose_gate_gnss_heading_max_sigma_ = declare_parameter<double>(
     "pose_gate_gnss_heading_max_sigma", pose_gate_gnss_heading_max_sigma_);
+  rtk_primary_enable_ = declare_parameter<bool>("rtk_primary_enable", rtk_primary_enable_);
+  rtk_primary_max_position_sigma_ = declare_parameter<double>(
+    "rtk_primary_max_position_sigma", rtk_primary_max_position_sigma_);
+  rtk_primary_max_yaw_sigma_ = declare_parameter<double>(
+    "rtk_primary_max_yaw_sigma", rtk_primary_max_yaw_sigma_);
+  rtk_primary_max_age_ = declare_parameter<double>(
+    "rtk_primary_max_age", rtk_primary_max_age_);
+  rtk_map_enable_ = declare_parameter<bool>("rtk_map_enable", rtk_map_enable_);
+  rtk_map_max_yaw_sigma_ = declare_parameter<double>(
+    "rtk_map_max_yaw_sigma", rtk_map_max_yaw_sigma_);
   status_topic_ = declare_parameter<std::string>("status_topic", "~/status");
   lifecycle_diagnostics_topic_ =
     declare_parameter<std::string>(
@@ -1901,6 +1911,31 @@ void GraphSlamNode::addKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & 
     return;
   }
 
+  // RTK-primary MAP (see members): pin this keyframe to a fresh RTK-grade fix
+  // and freeze it, so landmarks triangulate at the correct RTK poses instead of
+  // the cone-aliased estimate -- the map cannot warp onto the mirror branch.
+  // Movable cone-SLAM vertex otherwise (GNSS fault -> anchors recover).
+  rtk_map_pinning_ = false;
+  if (rtk_map_enable_) {
+    GnssFix fix;
+    {
+      std::lock_guard<std::mutex> lock(gnss_mutex_);
+      fix = latest_gnss_fix_;
+    }
+    const double age = stamp.seconds() - fix.stamp_sec;
+    if (fix.valid && fix.yaw_valid &&
+      fix.sigma_x > 0.0 && fix.sigma_y > 0.0 &&
+      fix.sigma_x <= gnss_prior_loc_max_position_sigma_ &&
+      fix.sigma_y <= gnss_prior_loc_max_position_sigma_ &&
+      fix.yaw_sigma <= rtk_map_max_yaw_sigma_ &&
+      age >= 0.0 && (gnss_prior_max_age_ <= 0.0 || age <= gnss_prior_max_age_))
+    {
+      vertex->setEstimate(g2o::SE2(fix.position.x(), fix.position.y(), fix.yaw));
+      vertex->setFixed(true);
+      rtk_map_pinning_ = true;
+    }
+  }
+
   auto * edge = new g2o::EdgeSE2();
   edge->setId(next_edge_id_++);
   edge->setVertex(0, previous.vertex);
@@ -2210,8 +2245,11 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
   // the first-lap landmarks instead of founding another round of duplicates.
   // The orange gate is exact and drift-independent, so it goes first; the
   // submap seam anchor is the GNSS-free fallback when no gate is visible.
+  // The GNSS-free drift-recovery anchors re-seed the keyframe pose; skip them
+  // while RTK is pinning it (the pose is already the authoritative RTK fix, and
+  // re-seeding a frozen vertex would only fight it). They resume on a GNSS fault.
   bool anchor_applied = false;
-  if (add_edges &&
+  if (add_edges && !rtk_map_pinning_ &&
     (maybeApplyGateAnchor(observations, observation_pose, keyframe_to_observation, pose) ||
     maybeApplySeamAnchor(observation_pose, keyframe_to_observation, pose)))
   {
@@ -3605,11 +3643,45 @@ void GraphSlamNode::publishOdometry(const rclcpp::Time & stamp, const g2o::SE2 &
   double py = estimate.translation().y();
   double pyaw = estimate.rotation().angle();
 
+  // RTK-primary output (see members): on a track where GNSS is trusted, a fresh
+  // RTK-grade fix is the authoritative pose and the cone graph is demoted to a
+  // map builder. Publish the fix directly (propagated to `stamp` by the body
+  // twist over the sub-frame age) so the symmetric-layout mirror drift never
+  // reaches the planner -- an absolute fix cannot be mirrored. The graph keeps
+  // running untouched (it still builds the cone map); only the published pose
+  // changes. Falls through to the estimate + gates below during a GNSS outage.
+  bool rtk_primary_used = false;
+  if (rtk_primary_enable_) {
+    GnssFix fix;
+    {
+      std::lock_guard<std::mutex> lock(gnss_mutex_);
+      fix = latest_gnss_fix_;
+    }
+    const double age = stamp.seconds() - fix.stamp_sec;
+    if (fix.valid && fix.yaw_valid &&
+      fix.sigma_x > 0.0 && fix.sigma_y > 0.0 &&
+      fix.sigma_x <= rtk_primary_max_position_sigma_ &&
+      fix.sigma_y <= rtk_primary_max_position_sigma_ &&
+      fix.yaw_sigma <= rtk_primary_max_yaw_sigma_ &&
+      age >= 0.0 && age <= rtk_primary_max_age_)
+    {
+      const double dt = std::min(age, 0.1);
+      const double vx = latest_twist_vx_.load();
+      const double vy = latest_twist_vy_.load();
+      const double wz = latest_twist_wz_.load();
+      pyaw = fix.yaw + wz * dt;
+      px = fix.position.x() + (vx * std::cos(fix.yaw) - vy * std::sin(fix.yaw)) * dt;
+      py = fix.position.y() + (vx * std::sin(fix.yaw) + vy * std::cos(fix.yaw)) * dt;
+      rtk_primary_used = true;
+    }
+  }
+
   // Physical-plausibility gate (see member comment): veto a non-physical
   // single-frame pose step -- the mirror-solution flip on symmetric layouts --
   // and dead-reckon the last good pose by the body twist instead, so the
-  // downstream local planner never sees the 180 deg / multi-metre glitch.
-  if (pose_gate_enable_ && have_last_pub_pose_) {
+  // downstream local planner never sees the 180 deg / multi-metre glitch. Moot
+  // (and skipped) while RTK-primary is authoritative.
+  if (!rtk_primary_used && pose_gate_enable_ && have_last_pub_pose_) {
     const double dt = stamp.seconds() - last_pub_sec_;
     if (dt > 1.0e-4 && dt < 1.0) {
       const double dpos = std::hypot(px - last_pub_x_, py - last_pub_y_);
@@ -3637,8 +3709,9 @@ void GraphSlamNode::publishOdometry(const rclcpp::Time & stamp, const g2o::SE2 &
   // disagrees that grossly, the cone-anchored estimate is on the aliased branch;
   // snap the OUTPUT to the trusted GNSS pose (an independent absolute sensor
   // that cannot itself be mirrored) so the planner never sees the flip. The
-  // graph recovers through the GNSS-XY prior / auto-relocalization.
-  if (pose_gate_heading_enable_) {
+  // graph recovers through the GNSS-XY prior / auto-relocalization. Moot (and
+  // skipped) while RTK-primary is authoritative -- the output already IS the fix.
+  if (!rtk_primary_used && pose_gate_heading_enable_) {
     GnssFix fix;
     {
       std::lock_guard<std::mutex> lock(gnss_mutex_);

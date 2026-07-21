@@ -99,7 +99,8 @@ double turnAngle(
 
 bool headingAwareGraphOrder(
   const std::vector<PlannerPoint> & input, std::size_t seed_index,
-  double max_gap, std::vector<PlannerPoint> & ordered, std::string & reason)
+  double max_gap, std::size_t max_stranded_drops,
+  std::vector<PlannerPoint> & ordered, std::string & reason)
 {
   ordered.clear();
   if (input.empty()) {
@@ -131,6 +132,18 @@ bool headingAwareGraphOrder(
       }
     }
     if (next == input.size()) {
+      // Stranded: every unvisited cone is beyond max_gap from the chain head.
+      // Observed live (map_20260720_233754): the heading penalty bypasses a
+      // ghost landmark sitting between boundary lines, and once the walk has
+      // consumed the rest of the ring the bypassed stray is unreachable — so a
+      // whole valid lap was rejected for a couple of cones. A small unreachable
+      // remainder is exactly that (ghosts or bypassed strays whose own gap the
+      // ring already bridges); drop it and let the score gates judge the ring
+      // that remains. A large remainder is a genuinely fragmented boundary and
+      // still fails closed.
+      if (input.size() - ordered.size() <= max_stranded_drops) {
+        return true;
+      }
       reason = "branch_jump";
       return false;
     }
@@ -203,11 +216,37 @@ void reinsertTailStragglers(std::vector<PlannerPoint> & ordered, double max_gap)
   }
 }
 
+// A ghost landmark consumed at the walk's very first or last step hangs off
+// the ring as a spur: the loop gap it leaves is far above max_gap even though
+// every interior step is fine, so the whole ring is rejected for one stray
+// point. Pop whichever end actually shrinks the closing gap, only while the
+// ring is open, so a genuinely open boundary (both ends real cones, trimming
+// does not help) is left for the loop-gap gate to reject as before.
+void trimOpenSeamSpurs(std::vector<PlannerPoint> & ordered, double max_gap, std::size_t budget)
+{
+  while (budget > 0U && ordered.size() > 4U &&
+    distance(ordered.front(), ordered.back()) > max_gap)
+  {
+    const double open_gap = distance(ordered.front(), ordered.back());
+    const double without_tail = distance(ordered.front(), ordered[ordered.size() - 2U]);
+    const double without_head = distance(ordered[1], ordered.back());
+    if (without_tail < open_gap && without_tail <= without_head) {
+      ordered.pop_back();
+    } else if (without_head < open_gap) {
+      ordered.erase(ordered.begin());
+    } else {
+      return;
+    }
+    --budget;
+  }
+}
+
 bool orderAttempt(
   const std::vector<PlannerPoint> & input, std::size_t seed_index, double max_gap,
-  bool consider_input_order, std::vector<PlannerPoint> & ordered, std::string & reason)
+  bool consider_input_order, std::size_t rescue_drops,
+  std::vector<PlannerPoint> & ordered, std::string & reason)
 {
-  if (!headingAwareGraphOrder(input, seed_index, max_gap, ordered, reason)) {
+  if (!headingAwareGraphOrder(input, seed_index, max_gap, rescue_drops, ordered, reason)) {
     return false;
   }
   const auto greedy_score = scoreBoundaryOrder(ordered);
@@ -218,6 +257,9 @@ bool orderAttempt(
     }
   }
   reinsertTailStragglers(ordered, max_gap);
+  if (rescue_drops > 0U) {
+    trimOpenSeamSpurs(ordered, max_gap, rescue_drops);
+  }
   const auto final_score = scoreBoundaryOrder(ordered);
 
   if (final_score.self_intersections > 0U) {
@@ -261,7 +303,7 @@ bool orderBoundary(
   }
 
   std::string first_reason;
-  if (orderAttempt(input, ego_seed, max_gap, true, ordered, first_reason)) {
+  if (orderAttempt(input, ego_seed, max_gap, true, 0U, ordered, first_reason)) {
     return true;
   }
 
@@ -272,8 +314,26 @@ bool orderBoundary(
       continue;
     }
     std::string retry_reason;
-    if (orderAttempt(input, seed, max_gap, false, ordered, retry_reason)) {
+    if (orderAttempt(input, seed, max_gap, false, 0U, ordered, retry_reason)) {
       return true;
+    }
+  }
+
+  // Every strict seed failed. Retry allowing a small unreachable remainder to
+  // be dropped (and end spurs trimmed): a handful of ghost/bypassed cones must
+  // not cost the mission its global path. 1/8 of a side keeps this a stray-
+  // minority repair — well under the 1/4 fractions the map gates treat as
+  // widespread — and leaves tiny fixture-sized boundaries (size < 8) fully
+  // strict, so a genuinely broken map still fails from every seed with the
+  // ego-seeded diagnosis below.
+  const std::size_t rescue_drops = input.size() / 8U;
+  if (rescue_drops > 0U) {
+    for (std::size_t i = 0; i < attempts; ++i) {
+      const std::size_t seed = (i * input.size()) / attempts;
+      std::string retry_reason;
+      if (orderAttempt(input, seed, max_gap, false, rescue_drops, ordered, retry_reason)) {
+        return true;
+      }
     }
   }
 
@@ -364,6 +424,34 @@ std::optional<double> medianTrackSideSign(
   return median(signs);
 }
 
+// The pairing sweep downstream projects each blue sample onto the yellow ring
+// through a short forward arc window, so it assumes both ring seams sit at the
+// SAME track phase. The walk's seed retries break that: each colour keeps the
+// first seed whose walk closes, and those seeds are independent — observed on
+// map_20260720_233754, blue closed from the start line while yellow closed at
+// a far hairpin, so every projection searched the wrong end of the arc and 40%
+// of the pairs blew the width band. A rotation only relabels a closed ring's
+// seam (the polygon and every interior step are unchanged, and the old seam
+// gap becomes an interior step that already passed the same max_gap bound), so
+// re-seam both rings at the cone nearest the caller's reference point.
+void rotateRingSeamToReference(
+  std::vector<PlannerPoint> & ring, const PlannerPoint & reference, double max_gap)
+{
+  if (ring.size() < 3U || distance(ring.front(), ring.back()) > max_gap) {
+    return;  // an open chain's seam is real geometry, not a walk artefact
+  }
+  std::size_t nearest = 0U;
+  double best_distance = std::numeric_limits<double>::infinity();
+  for (std::size_t i = 0; i < ring.size(); ++i) {
+    const double candidate = distance(ring[i], reference);
+    if (candidate < best_distance) {
+      best_distance = candidate;
+      nearest = i;
+    }
+  }
+  std::rotate(ring.begin(), ring.begin() + static_cast<std::ptrdiff_t>(nearest), ring.end());
+}
+
 bool orientTravelDirection(std::vector<PlannerPoint> & blue, std::vector<PlannerPoint> & yellow)
 {
   auto sign = medianTrackSideSign(blue, yellow);
@@ -402,6 +490,8 @@ bool orderSlamBoundaries(
     reason = "inconsistent blue/yellow travel direction";
     return false;
   }
+  rotateRingSeamToReference(ordered_blue, ego, max_gap);
+  rotateRingSeamToReference(ordered_yellow, ego, max_gap);
   return true;
 }
 

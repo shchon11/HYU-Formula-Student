@@ -47,21 +47,29 @@ TEST(InvalidWidth, WidespreadWidthFailureFailsClosed)
 }
 
 // A map with only a FEW off-width cones must NOT be rejected by the width
-// pre-gate — it flows to the centerline builder and fails (or succeeds) on
-// its real geometry. This fixture's true defect is loop closure, which the
-// brittle per-cone width gate used to mask as "invalid_width".
-TEST(InvalidWidth, LocalOutliersDoNotMaskTheRealReason)
+// pre-gate. This fixture used to fail "loop_not_closed" only because its two
+// rings closed from different retry seeds, leaving the seams half a lap apart
+// for the pairing sweep; with the seams re-anchored at the map origin it
+// builds — the handful of outliers costs nothing.
+TEST(InvalidWidth, LocalOutliersDoNotCostThePath)
 {
   const auto map = loadConeMapCsv("localization/map/map_20260713_002645.csv");
-  std::vector<PlannerWaypoint> waypoints{{1.0, 2.0, 3.0, 4.0, 5.0}};
+  std::vector<PlannerWaypoint> waypoints;
   std::string reason;
 
-  EXPECT_FALSE(
-    buildCenterlineFromSlamMap(map, egoAtOrigin(), fixtureConfig(), waypoints, reason));
-  EXPECT_TRUE(waypoints.empty());
-  // Fails closed for its real reason, no longer masked by a couple of
-  // off-width cones.
-  EXPECT_NE(reason, "invalid_width");
+  ASSERT_TRUE(
+    buildCenterlineFromSlamMap(map, egoAtOrigin(), fixtureConfig(), waypoints, reason)) << reason;
+  ASSERT_GE(waypoints.size(), 3U);
+  // This map carries a drift-narrowed pair (1.68 m blue<->yellow) the repair
+  // deliberately keeps — real cones at a hairpin pinch measure similarly, so
+  // only sub-footprint pairs are dropped. The corridor is honestly tight
+  // there (d ~0.03 m at three samples), never inverted or invented.
+  for (const auto & waypoint : waypoints) {
+    EXPECT_GE(waypoint.d_left, 0.0);
+    EXPECT_GE(waypoint.d_right, 0.0);
+    EXPECT_LT(waypoint.d_left, fixtureConfig().max_track_width_m);
+    EXPECT_LT(waypoint.d_right, fixtureConfig().max_track_width_m);
+  }
 }
 
 }  // namespace hyu_global_planner::test

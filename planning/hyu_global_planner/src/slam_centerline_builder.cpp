@@ -244,6 +244,69 @@ bool validateWaypoints(
   return true;
 }
 
+// SLAM occasionally splits one physical cone into two landmarks (association
+// split while the pose estimate was off). Rejecting the whole map for that
+// (duplicate_ghost) starved the mission of a global path over a defect with an
+// obvious local repair: the pair IS one cone, so collapse it to its midpoint.
+// Iterate until no pair remains — a chain of splits must not leave a fresh
+// sub-threshold pair behind. The sets are a few hundred points; the quadratic
+// sweep is nothing at the rebuild rate.
+std::size_t mergeSameColorDuplicates(std::vector<PlannerPoint> & points, double threshold)
+{
+  std::size_t merged = 0U;
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (std::size_t i = 0; i < points.size() && !changed; ++i) {
+      for (std::size_t j = i + 1U; j < points.size(); ++j) {
+        if (distance(points[i], points[j]) < threshold) {
+          points[i] = scale(add(points[i], points[j]), 0.5);
+          points.erase(points.begin() + static_cast<std::ptrdiff_t>(j));
+          ++merged;
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+  return merged;
+}
+
+// A landmark whose nearest opposite-colour cone is far beyond any track width
+// cannot flank drivable track, and one within the car's own footprint of an
+// opposite cone implies a corridor nothing could ever drive — a ghost or a
+// colour misclassification either way. Both were observed to cost a whole
+// valid lap on map_20260720_233754: an infield yellow 9.9 m from every blue
+// stranded the ordering walk, and a blue/yellow pair 0.86 m apart at a track
+// pinch squeezed the published corridor width to zero. The pairing sweep skips
+// sub-minimum widths anyway, so these points only ever hurt (walk zigzags,
+// corridor pinches); dropping them costs nothing the sweep wanted.
+// Drop a stray minority only; if more than the same 1/4 fraction the width
+// gates use is implicated, the map is genuinely wrong (crossed/swapped
+// boundaries) and is left intact for those gates to reject with their reason.
+std::size_t dropOffCorridorGhosts(
+  std::vector<PlannerPoint> & points, const std::vector<PlannerPoint> & opposite,
+  double near_ghost_limit, double far_ghost_limit)
+{
+  if (opposite.empty()) {
+    return 0U;
+  }
+  std::vector<std::size_t> ghosts;
+  for (std::size_t i = 0; i < points.size(); ++i) {
+    const double width = nearestDistance(points[i], opposite);
+    if (width > far_ghost_limit || width < near_ghost_limit) {
+      ghosts.push_back(i);
+    }
+  }
+  if (ghosts.empty() || ghosts.size() > points.size() / 4U) {
+    return 0U;
+  }
+  for (std::size_t i = ghosts.size(); i > 0U; --i) {
+    points.erase(points.begin() + static_cast<std::ptrdiff_t>(ghosts[i - 1U]));
+  }
+  return ghosts.size();
+}
+
 bool hasSameColorDuplicate(
   const std::vector<PlannerPoint> & points, const char * side, double threshold, std::string & reason)
 {
@@ -908,6 +971,25 @@ bool buildCenterlineFromSlamMap(
   auto blue_points = finiteConePoints(cone_map.blue_cones);
   auto yellow_points = finiteConePoints(cone_map.yellow_cones);
 
+  // Repair before judging: collapse split-landmark duplicates and shed stray
+  // off-corridor ghosts so a handful of bad landmarks costs those landmarks,
+  // not the whole global path. Both repairs are bounded to stray minorities —
+  // widespread defects still reach the fail-closed gates below untouched.
+  const double duplicate_ghost_threshold = std::max(
+    config.duplicate_point_tolerance, config.min_track_width_m * 0.25);
+  mergeSameColorDuplicates(blue_points, duplicate_ghost_threshold);
+  mergeSameColorDuplicates(yellow_points, duplicate_ghost_threshold);
+  // Half the minimum width, not the minimum itself: at a hairpin pinch a REAL
+  // boundary cone can sit just under min_track_width from the OTHER section's
+  // opposite boundary (map_20260720_233754 measured 1.8 m there), and dropping
+  // it kinks the centerline at the apex. Below half the minimum nothing real
+  // survives — that is inside the car's own footprint.
+  const double near_ghost_limit = 0.5 * config.min_track_width_m;
+  const double far_ghost_limit = 1.5 * config.max_track_width_m;
+  const std::vector<PlannerPoint> blue_before_ghost_drop = blue_points;
+  dropOffCorridorGhosts(blue_points, yellow_points, near_ghost_limit, far_ghost_limit);
+  dropOffCorridorGhosts(yellow_points, blue_before_ghost_drop, near_ghost_limit, far_ghost_limit);
+
   // The start/finish markers join the boundaries before every gate below, so the
   // duplicate and width checks validate exactly the points the sweep will pair.
   std::vector<PlannerPoint> markers = finiteConePoints(cone_map.big_orange_cones);
@@ -947,10 +1029,10 @@ bool buildCenterlineFromSlamMap(
     return false;
   }
 
-  // Map-level gates are seed-independent: a genuinely bad map (ghost
-  // duplicates, impossible widths) fails closed once, before any retry.
-  const double duplicate_ghost_threshold = std::max(
-    config.duplicate_point_tolerance, config.min_track_width_m * 0.25);
+  // Map-level gates are seed-independent: a genuinely bad map (impossible
+  // widths, fragmented boundaries) fails closed once, before any retry. The
+  // duplicate gate is an invariant guard now — the merge pass above collapsed
+  // every sub-threshold pair, and the marker fold never introduces one.
   if (hasSameColorDuplicate(blue_points, "blue", duplicate_ghost_threshold, reason) ||
     hasSameColorDuplicate(yellow_points, "yellow", duplicate_ghost_threshold, reason))
   {

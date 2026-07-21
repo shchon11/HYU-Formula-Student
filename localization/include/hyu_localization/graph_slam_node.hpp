@@ -653,6 +653,26 @@ private:
   double pose_gate_max_heading_vs_gnss_rad_{2.094};   // 120 deg
   double pose_gate_gnss_heading_max_age_{0.5};
   double pose_gate_gnss_heading_max_sigma_{0.2};
+  // RTK-primary output: when GNSS is trusted, publish a fresh RTK-grade fix
+  // (cm position + dual-antenna heading, no left/right ambiguity) as ego_odom
+  // DIRECTLY -- the cone graph is demoted to a map builder. This removes the
+  // symmetric-layout mirror drift by construction (the cone-anchored estimate
+  // can alias; an absolute fix cannot). Falls back to the estimate + the pose
+  // gates during a GNSS outage. The graph optimization is untouched (so it
+  // cannot be destabilized), only which pose reaches the planner changes.
+  bool rtk_primary_enable_{true};
+  double rtk_primary_max_position_sigma_{0.2};
+  double rtk_primary_max_yaw_sigma_{0.1};
+  double rtk_primary_max_age_{0.2};
+  // RTK-primary MAP: pin each keyframe pose to a fresh RTK-grade fix and freeze
+  // it, so the optimiser triangulates landmarks at the correct (RTK) poses --
+  // mapping-with-known-poses. The cone map then cannot be warped onto the
+  // mirror/aliased branch on a symmetric layout (skidpad). Falls back to the
+  // movable cone-SLAM vertex when RTK is absent/degraded (GNSS fault), where the
+  // GNSS-free drift-recovery anchors take over.
+  bool rtk_map_enable_{true};
+  double rtk_map_max_yaw_sigma_{0.1};
+  bool rtk_map_pinning_{false};   // latest keyframe was RTK-pinned this update
   bool have_last_pub_pose_{false};
   double last_pub_x_{0.0};
   double last_pub_y_{0.0};
