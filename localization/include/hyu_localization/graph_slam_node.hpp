@@ -31,7 +31,7 @@
 #include "hyu_msgs/msg/car_state.hpp"
 #include "hyu_msgs/msg/cone_array_with_covariance.hpp"
 #include "hyu_msgs/msg/cone_with_covariance.hpp"
-#include "hyu_localization/gate_anchor.hpp"
+#include "hyu_localization/correlation_grid.hpp"
 #include "hyu_localization/local_submap.hpp"
 #include "hyu_localization/slam_lifecycle_classifiers.hpp"
 #include "hyu_localization/tentative_track_frontend.hpp"
@@ -115,13 +115,11 @@ private:
     std::size_t matched_landmarks;
   };
 
-  void declareRecoveryParameters();
   void configureOptimizer();
   void resetGraph();
 
   void stateCallback(const hyu_msgs::msg::CarState::SharedPtr msg);
   void conesCallback(const hyu_msgs::msg::ConeArrayWithCovariance::SharedPtr msg);
-  void gnssOdomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
   void initialPoseCallback(
     const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
   void relocalizeTo(const g2o::SE2 & pose);
@@ -162,57 +160,27 @@ private:
     const std::vector<SubmapPoint> & points,
     const std::vector<SubmapPoint> & targets,
     int * best_inliers_out) const;
-  // Cross-check a candidate absolute pose against a fresh, healthy GNSS fix
-  // (when one exists): scan-match and seam corrections are the two paths
-  // that can teleport the pose, and both must lose to a healthy RTK fix.
-  bool gnssVetoesCandidate(
-    const Eigen::Vector2d & candidate, double now_sec, const char * context);
-  // Lost detection + automatic recovery against the frozen map: cones are
-  // visible but none associate for N consecutive frames -> re-localize via
-  // (orange-gate seed, else escalating-radius grid search), gated on the
-  // scan-match inlier count.
-  void maybeAutoRelocalize(const ObservationUpdate & update, const rclcpp::Time & stamp);
-  // Orange-gate constellation match: orange/big-orange observations (the
-  // big/small distinction is size-only and misclassifies at range) against
-  // the big-orange landmarks (optionally only those near the lap origin, to
-  // exclude drift-era duplicate gates while mapping). Drift-magnitude
-  // independent — see gate_anchor.hpp.
-  bool matchGateFromObservations(
-    const std::vector<ConeObservation> & observations,
-    bool restrict_to_lap_origin,
-    g2o::SE2 * pose_out,
-    int * inliers_out) const;
-  // Mapping-lap seam closure beyond the association gate: when the gate
-  // match implies a correction too large for per-cone association to ever
-  // recover, re-seed the current keyframe estimate so the optimizer closes
-  // the loop instead of duplicating the map. Returns true if applied.
-  bool maybeApplyGateAnchor(
-    const std::vector<ConeObservation> & observations,
-    const g2o::SE2 & observation_pose,
-    const g2o::SE2 & keyframe_to_observation,
-    const PoseRecord & pose);
-  // GNSS-free lap-seam closure without the orange gate: once the estimate
-  // re-enters the lap-origin neighbourhood, scan-match the local submap
-  // against FIRST-LAP landmarks only (founded >= loop_gap of travel ago) and
-  // re-seed the keyframe like the gate anchor does. This is the loop closure
-  // that survives an occluded/misclassified gate — the pure-odometry seam
-  // path the gate anchor cannot provide.
-  bool maybeApplySeamAnchor(
-    const g2o::SE2 & observation_pose,
-    const g2o::SE2 & keyframe_to_observation,
-    const PoseRecord & pose);
-  void suppressGnssPriors(double now_sec);
   g2o::SE2 latestRawOdom() const;
+  // Correlative registration (correlation_grid.hpp): the ONE re-registration
+  // mechanism. Tracking mode keeps the pose glued to the map inside a tight
+  // window; loop mode matches the submap constellation against the OLD map
+  // (pre loop-gap landmarks) over a wide window to close the lap seam.
+  // Returns true when the keyframe estimate was re-seeded.
+  bool maybeCsmRegister(
+    PoseRecord & pose, const g2o::SE2 & keyframe_to_observation);
+  // Registered-but-unobserved reaper (mapping mode): a landmark well inside
+  // the conservative visibility envelope that keeps missing is a ghost.
+  // Misses count once per keyframe frame; big-orange gate cones are exempt.
+  std::size_t reapUnobservedLandmarks(
+    const g2o::SE2 & observation_pose,
+    const std::vector<std::size_t> & observed_landmark_indices);
+  bool removeLandmarkAt(std::size_t landmark_index);
 
   g2o::SE2 poseFromCarState(const hyu_msgs::msg::CarState & msg) const;
   g2o::SE2 estimateFromRawOdometry(const g2o::SE2 & raw_odom) const;
   bool shouldCreateKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & stamp) const;
   void addInitialPose(const g2o::SE2 & raw_odom, const rclcpp::Time & stamp);
   void addKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & stamp);
-  // Anchor a keyframe's (x,y) to the latest GNSS absolute fix with a unary
-  // EdgeSE2XYPrior, gated on the fix's freshness and covariance so the anchor
-  // fades out smoothly as the GNSS/INS solution degrades (RTK dropout).
-  void maybeAddGnssPrior(g2o::VertexSE2 * vertex, const rclcpp::Time & stamp);
 
   ObservationUpdate addConeObservations(
     const hyu_msgs::msg::ConeArrayWithCovariance & msg,
@@ -241,15 +209,6 @@ private:
     ConeColor color,
     bool as_map_repair = false);
 
-  // Localization-mode map repair (frozen-but-self-healing map): with a
-  // HEALTHY pose, a track that clears a much stricter bar may fill a hole
-  // in the frozen map, and a landmark that is repeatedly expected-visible
-  // yet never observed may be reaped (big-orange gate cones never are). A
-  // wrongly reaped cone re-adds itself through the same path — the repair
-  // is self-correcting in both directions.
-  bool loc_map_repair_enable_{true};
-  int loc_repair_min_hits_{8};
-  int loc_repair_missed_to_delete_{40};
   bool updateLandmarkEstimate(
     LandmarkRecord & landmark,
     const Eigen::Vector2d & map_point,
@@ -267,27 +226,10 @@ private:
     g2o::VertexSE2 * pose_vertex,
     LandmarkRecord & landmark,
     bool loop_edge = false);
-  // Attach the configured robust kernel (dcs | huber | none) to a cone
+  // Attach the configured robust kernel (huber | none) to a cone
   // observation edge — one place, so merge-reanchored edges cannot drift out
   // of sync with newly created ones.
   void attachObservationKernel(g2o::EdgeSE2PointXY * edge, bool loop_edge) const;
-  std::size_t deleteMissedVisibleLandmarks(
-    const PoseRecord & pose,
-    const std::vector<std::size_t> & observed_landmark_indices);
-  bool landmarkExpectedVisible(
-    const PoseRecord & pose,
-    const LandmarkRecord & landmark) const;
-  bool removeLandmarkAt(std::size_t landmark_index);
-  bool shouldUpdateLandmarkDeletion(const rclcpp::Time & stamp, bool force_update);
-  std::size_t mergeCloseLandmarks();
-  // Merge same-color landmark pairs within merge_distance. With
-  // min_last_seen_gap_m > 0 only pairs whose last observations are separated
-  // by at least that much TRAVEL merge (drift-era duplicates: association
-  // missed under drift, so the stale twin stopped being observed when its
-  // re-mapped sibling took over), and the recently-seen member's vertex is
-  // kept. Real adjacent cones are both observed continuously and never meet
-  // the gap, so a radius larger than the cone spacing stays safe.
-  std::size_t mergeCloseLandmarks(double merge_distance, double min_last_seen_gap_m);
 
   void recordRawOdometry(double stamp_sec, const g2o::SE2 & raw_odom);
   g2o::SE2 rawOdomAt(double stamp_sec) const;
@@ -371,7 +313,6 @@ private:
   rclcpp::Subscription<hyu_msgs::msg::ConeArrayWithCovariance>::SharedPtr cones_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr
     initialpose_sub_;
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr gnss_odom_sub_;
   rclcpp::Publisher<hyu_msgs::msg::ConeArrayWithCovariance>::SharedPtr map_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
@@ -414,72 +355,6 @@ private:
   std::string g2o_output_path_;
   std::string map_save_dir_;
 
-  // GNSS global-anchor (unary prior) configuration.
-  std::string gnss_prior_topic_;
-  bool gnss_prior_enable_;
-  double gnss_prior_max_position_sigma_;
-  // Tighter sigma gate once the map is FROZEN: the map is then the trusted
-  // reference and a degraded (float/single, 0.3-1.2 m sigma) anchor stream
-  // only fights it — observed as 26 lost/relocalize cycles across one
-  // single-point window (F1 fault injection). Only RTK-grade anchors may
-  // pull a localization-mode pose.
-  double gnss_prior_loc_max_position_sigma_{0.5};
-  double gnss_prior_max_age_;
-  double gnss_prior_robust_delta_;
-  double gnss_prior_min_sigma_;
-  // Pre-convergence anchor de-weighting (sigma multiplier): during mapping
-  // the elastic graph has no innovation gate, and full-strength anchors
-  // chasing the INS's time-correlated error shift landmarks under the
-  // incoming observations until associations split (duplicate cones).
-  double gnss_prior_mapping_sigma_scale_{4.0};
-  double gnss_prior_innovation_max_residual_;
-  double gnss_prior_min_interval_;
-  // ---- L3: tiered GNSS priors ------------------------------------------
-  // A single-grade fix (sigma above the normal gate) is still an absolute
-  // measurement -- but feeding it to the POSE directly is EMPIRICALLY poison
-  // (autocross/single: 11% -> 70% ghost even at 14 m effective sigma +
-  // huber): its colored bias fights cone-SLAM coherently and shreds
-  // association. It only becomes safe routed through the GAUGE VERTEX
-  // (map->ENU variable), where the bias lands in g instead of the pose-vs-map
-  // fight. Disabled (0) until the gauge vertex lands; then re-enable.
-  double gnss_prior_degraded_max_sigma_{0.0};
-  double gnss_prior_degraded_sigma_scale_{3.0};
-  double gnss_prior_degraded_interval_scale_{5.0};
-  // "huber" (default) or "dcs". DCS drives an inconsistent prior's influence
-  // to zero (information x s^2) -- which VERIFIED EMPIRICALLY self-seals a
-  // drifted gauge: after an AHRS window every returning RTK prior has a huge
-  // chi^2 at the drifted linearization, DCS kills them all, and the recovery
-  // never happens (autocross/mode_transition: 11% -> 75% ghost). Huber's
-  // linear tail keeps pulling. DCS becomes safe once the gauge vertex
-  // absorbs the coherent offset (planned L3b); until then default huber.
-  std::string gnss_prior_kernel_{"huber"};
-  // ---- L3b: gauge vertex -----------------------------------------------
-  // Single SE2 variable g modelling the map->ENU registration; GNSS fixes
-  // constrain (g o x_i) instead of x_i directly (edge_se2_gauge_xy.hpp).
-  // DEFAULT OFF -- verified empirically HARMFUL as a single static variable:
-  // the colored GNSS bias is time-VARYING, so a static g absorbs only its
-  // mean while its 3-DOF freedom lets the whole map twist slowly (measured
-  // -2.8..+4.6 deg map rotation, ghost 11%->67% on autocross/single). The
-  // principled form is a g_t random-walk SEQUENCE (slowly-varying bias
-  // state); until that exists, direct XY priors + the founding trust gates
-  // are strictly better. Kept behind this flag for future work.
-  bool gauge_enable_{false};
-  double gauge_prior_sigma_pos_{15.0};
-  double gauge_prior_sigma_yaw_{0.3};
-  g2o::VertexSE2 * gauge_vertex_{nullptr};
-  // Lazily creates the gauge vertex (+ weak identity prior); nullptr when
-  // gauge_enable_ is false. gaugeEstimate() is identity in that case.
-  g2o::VertexSE2 * ensureGaugeVertex();
-  g2o::SE2 gaugeEstimate() const;
-  double last_gnss_prior_stamp_sec_;
-  // Manual relocalization (/initialpose) suppresses GNSS priors: the click is
-  // a competing absolute reference, and an RTK prior would otherwise yank the
-  // pose straight back. Priors re-arm only once GNSS agrees with the
-  // cone-anchored pose again (or never, if the map is in a different frame).
-  double gnss_prior_suppress_duration_;
-  double gnss_prior_rearm_max_residual_;
-  bool gnss_prior_suppressed_;
-  double gnss_prior_suppress_until_sec_;
 
   double keyframe_distance_;
   double keyframe_yaw_;
@@ -493,63 +368,48 @@ private:
   // near/far split rule, crowd radius, soft founding covariance).
   FrontendParams frontend_params_{};
   std::unique_ptr<TentativeTrackFrontend> frontend_;
-  // Robust kernel on cone observation edges: "dcs" (Dynamic Covariance
-  // Scaling, Agarwal ICRA'13 — the closed-form equivalent of switchable
-  // constraints) lets the optimizer down-weight a wrong association instead
-  // of letting it distort the map; "huber" keeps the legacy kernel; "none"
-  // disables. Odometry edges are NEVER robustified (they are the gradient
-  // backbone; see the robust-SLAM literature).
-  std::string observation_robust_kernel_{"dcs"};
-  double observation_dcs_phi_{1.0};
+  // Robust kernel on cone observation edges: "huber" tolerates a wrong
+  // association without letting it distort the map; "none" disables.
+  // Odometry edges are NEVER robustified (they are the gradient backbone).
+  std::string observation_robust_kernel_{"huber"};
   double relocalize_search_radius_;
   double relocalize_search_yaw_;
   double relocalize_inlier_distance_;
 
-  // Automatic relocalization (localization mode only). Association failure
-  // is an absorbing state: once the pose is outside the gate nothing pulls
-  // it back, so the node must notice and recover on its own.
-  bool auto_relocalize_enable_{true};
-  int auto_relocalize_min_visible_cones_{3};
-  int auto_relocalize_lost_frames_{10};
-  int auto_relocalize_min_inliers_{4};
-  double auto_relocalize_search_radius_{4.0};
-  double auto_relocalize_max_search_radius_{16.0};
-  double auto_relocalize_cooldown_sec_{3.0};
-  // Disarm auto-relocalization while GNSS priors are being ACCEPTED: a
-  // corroborated pose with zero associations is a perception hiccup, not
-  // "lost". 3 s = three missed 1 Hz anchor intervals before re-arming.
-  double auto_relocalize_gnss_holdoff_sec_{3.0};
-  // Wrong-branch guard: a relocalization candidate is a scan match of as few
-  // as 3 cones, and autocross-style tracks repeat that pattern on parallel
-  // sections — accepting one 30-40 m off then SUPPRESSES the GNSS priors that
-  // could correct it (self-sealing mis-registration, observed on
-  // autocross_kase2026). Reject any candidate farther than this from a fresh,
-  // healthy GNSS fix. <= 0 disables.
-  double auto_relocalize_max_gnss_residual_m_{10.0};
-  // Aliased-localization breaker: a pose glued to the WRONG branch of a
-  // repetitive section keeps matching cones (never "lost") while RTK-grade
-  // fixes fail the innovation gate forever — the self-sealing autocross
-  // failure, reproduced live on comp_2021 (5 m offset, matched 33, lost 0).
-  // A streak of rejected sub-sigma fixes IS a lost signal: relocalize
-  // seeded at the fix. 0 disables.
-  int gnss_reject_streak_relocalize_{8};
-  int gnss_reject_streak_{0};
-  Eigen::Vector2d last_rejected_fix_{Eigen::Vector2d::Zero()};
-  bool last_rejected_fix_valid_{false};
-  // Weighted lost score, NOT a plain frame count: a zero-association frame
-  // adds 2, a weak frame (under a quarter of the visible cones matched —
-  // the wrong-branch aliasing signature, which the old zero-only detector
-  // never saw) adds 1, and the trigger threshold is
-  // 2 * auto_relocalize_lost_frames so full-loss latency is unchanged.
-  int lost_frames_{0};
-  // Consecutive frames with >= 2 associations. A SINGLE match while lost is
-  // routinely an aliased cone (on a 10 m kidnap some cone always falls in
-  // some wrong landmark's gate), so one match must neither clear the lost
-  // counter nor de-escalate the search radius.
-  int healthy_streak_{0};
-  double auto_relocalize_current_radius_{4.0};
-  double last_auto_relocalize_attempt_sec_{-1.0e18};
-  std::size_t auto_relocalize_count_{0U};
+  // Correlative scan matching (see maybeCsmRegister).
+  bool csm_enable_{true};
+  CorrelationGrid::Params csm_params_{};
+  double csm_track_window_m_{2.0};
+  double csm_track_window_theta_{0.17};
+  double csm_loop_window_m_{6.0};
+  double csm_loop_window_theta_{0.35};
+  // Synthetic calibration: a unique match reports sigma 0.2-0.8 m (the
+  // moment estimate integrates the smear width), a one-spacing alias on a
+  // uniform straight reports ~4 m. The gap is wide; sit in the middle.
+  double csm_max_sigma_xy_{1.2};
+  double csm_max_sigma_theta_{0.05};
+  // Unimodality: the best hypothesis must beat every out-of-basin hypothesis
+  // by this response margin (synthetic: orange-gated seam wins by ~0.29, a
+  // uniform straight's alias ties at ~0.00).
+  double csm_peak_margin_{0.10};
+  double csm_loop_min_response_{0.60};
+  double csm_apply_cooldown_m_{2.0};
+  bool landmark_delete_enable_{true};
+  int landmark_delete_misses_{20};
+  double landmark_delete_max_range_{10.0};
+  double landmark_delete_fov_{1.5};
+  // The orange gate's own response at the matched pose (loop mode): the
+  // seam certificate. Corridors may alias; the gate may not.
+  double csm_loop_min_orange_response_{0.5};
+  // Observation-sigma bound for a cone to carry GATE credentials in the
+  // submap: lidar-backed orange passes, vision-only ZNCC-depth orange
+  // (meters of range variance) is demoted to unknown geometry.
+  double csm_orange_max_obs_sigma_{0.45};
+  double csm_min_interval_m_{1.0};
+  double last_csm_travel_{-1.0e18};
+  std::size_t csm_track_applied_{0U};
+  std::size_t csm_loop_applied_{0U};
+
 
   // Local submap (see local_submap.hpp): the rolling constellation of recent
   // cone observations every scan match fits instead of a single frame.
@@ -568,204 +428,31 @@ private:
   // odometry stream has a discontinuity, so the submap's frame-to-frame
   // rigidity is broken and its history must be dropped before the next
   // match. Consumed (cleared) on the cone thread.
-  std::atomic<bool> submap_reset_pending_{false};
 
   // Post-resume mapping quarantine. A blind odometry gap (INS free-inertial
   // fault -> bridge stops publishing -> stream resumes with the
   // re-acquisition pull-in transient still decaying) must not seed new
   // landmarks: mapping the pull-in error mints an offset copy of everything
   // in view (F2 fault-injection autopsy: 82 false cones from one 20 s
-  // outage). While quarantined, association / loop candidates / GNSS priors
-  // all keep running — only track founding and promotion pause, so the map
-  // stays clean while the anchors pull the pose back in.
-  double odom_gap_reset_sec_{1.0};
-  double odom_gap_quarantine_sec_{6.0};
-  std::atomic<double> mapping_quarantine_until_sec_{0.0};
-  // ---- L0 founding trust gate ------------------------------------------
-  // Landmark founding is only safe while the pose is corroborated. Two
-  // triggers quarantine/skip founding (association, edges, GNSS priors all
-  // keep running):
-  //  (1) GNSS trust-TIER transition (rtk_fixed/float/single/none, from the
-  //      fix sigma): every mode or correction change drags an INS
-  //      re-alignment transient where the believed sigma snaps instantly
-  //      but the realized error decays slowly -- landmarks founded from the
-  //      transient are drift-era ghosts (mode_transition: 65% ghost).
-  //  (2) association-health: revisiting a mapped region with cones in view
-  //      but NOT associating is the slid-pose signature (colored single-fix
-  //      wander, aliasing) -- founding then mints offset duplicates of the
-  //      very cones we failed to match (autocross/single: 73% ghost). Armed
-  //      only where confirmed landmarks SHOULD be visible, so frontier
-  //      mapping is unaffected.
-  double gnss_transition_quarantine_sec_{4.0};
-  int gnss_tier_prev_{-999};
-  double founding_assoc_min_ratio_{0.25};
-  int founding_assoc_min_visible_{3};
-  // ---- Verified GNSS recovery (re-linearization) -----------------------
-  // When RTK-grade fixes RESUME after a fault and coherently disagree with
-  // the pose chain (dead-reckoning drift), the graph must not re-anchor
-  // through the disagreement (that kinks the chain and mints ghost cones).
-  // Instead: Detect (recovery_window_ consecutive keyframes whose implied
-  // correction T = fix (-) pose agrees within the agreement bounds),
-  // Verify (current cone constellation must fit the landmark map BETTER at
-  // the corrected pose -- vetoes multipath/aliased fixes; skipped when too
-  // few landmarks are in range), Apply (interpolate T 0 -> 100% along the
-  // post-hinge pose chain as an INITIAL-GUESS update -- re-linearization,
-  // no information destroyed -- where the hinge is the last RTK-pinned
-  // keyframe). GNSS pins/priors are suppressed while a recovery is pending.
-  // DEFAULT OFF -- seven iterations (verification polarity, pre-drift-only
-  // targets, screw interpolation, landmark co-move, escaped sanity bound,
-  // translation-only) never beat the no-recovery baseline over N=4 stats
-  // (mode_transition ghost stayed 30-80% either way), while bad applies
-  // (31 m/84 deg, -14 deg twists) actively shredded runs. The DESIGN
-  // (detect/verify/re-linearize) still looks right; the failure is that
-  // ghosts form continuously during the outage, not only at the recovery
-  // moment, so fixing the return-jump alone cannot clear the metric.
-  // Revisit as part of full L2 loop closure with a ghost-merge pass.
-  // Re-enable attempt (combined with re-acquisition, translation-only)
-  // FAILED again: the apply misfired on small_track (pose rmse 6.2 m,
-  // 9.6 m map offset). The frontier half needs a different treatment.
-  bool recovery_enable_{false};
-  // Fire BELOW the association gate (1.5 m): ghosts start forming the
-  // moment pose error exceeds what association can absorb, so waiting for
-  // 1.5 m detects the disease only after infection.
-  double recovery_min_correction_m_{0.8};
-  // Corrections beyond this need positive cone corroboration (an honest
-  // dead-reckoning drift is bounded; bigger = suspect fix).
-  double recovery_max_correction_m_{15.0};
-  double recovery_min_correction_yaw_{0.17};
-  int recovery_window_{5};
-  double recovery_agreement_m_{0.8};
-  double recovery_agreement_yaw_{0.10};
-  int recovery_min_inliers_{5};
-  int recovery_min_inlier_gain_{3};
-  double recovery_cooldown_sec_{10.0};
-  struct RecoverySample
-  {
-    g2o::SE2 correction;
-    double stamp_sec;
-    double traveled_m;
-  };
-  std::deque<RecoverySample> recovery_samples_;
-  double last_recovery_stamp_sec_{-1.0e18};
-  int last_pinned_graph_id_{-1};
-  // Give-up bound: if verification keeps refusing (e.g. the map near the
-  // pose is ALL drift-era ghosts and no pre-drift truth is in range), stop
-  // suppressing the anchors after this long and fall back to the old
-  // crude re-anchoring -- never worse than the pre-recovery behaviour.
-  double recovery_pending_max_sec_{8.0};
-  double recovery_pending_since_sec_{-1.0};
-  // Travel at the last moment the pose AGREED with an RTK-grade fix: the
-  // boundary of the drift era. Landmarks founded after it are ghost
-  // suspects and are excluded from recovery verification targets.
-  double last_gnss_agree_traveled_m_{0.0};
-  // Returns true while a recovery is PENDING (anchors must stand down).
-  bool maybeRecoverFromGnss(g2o::VertexSE2 * vertex, const rclcpp::Time & stamp);
-  // ---- Mapping-mode cone re-acquisition --------------------------------
-  // THE duplicate-prevention mechanism. Mapping-mode association is per-cone
-  // NN inside a ~1.5 m gate, so once the pose slides past the gate (GNSS
-  // fault + odometry drift) every visible cone stops matching and the
-  // frontend -- which cannot tell "unmapped frontier" from "known cones the
-  // pose slid off of" -- founds drift-offset DUPLICATES. But the local cone
-  // CONSTELLATION still matches the existing map at the true pose: when
-  // association collapses while the map says cones should be visible (the
-  // L0 weak-association signal, sustained), scan-match the submap
-  // constellation against the landmark map and re-linearize the recent
-  // chain onto the match. "If the observed cones can be matched to nearby
-  // map cones, THAT match is the correct pose" -- so duplicates never form.
-  // Acceptance is triple-gated: inlier count, healthy-GNSS veto
-  // (gnssVetoesCandidate), and the INS absolute-yaw mirror guard (valid
-  // even in AHRS mode), so a symmetric layout cannot snap to its mirror.
-  bool cone_reacquire_enable_{true};
-  int cone_reacquire_min_weak_frames_{3};
-  double cone_reacquire_search_radius_m_{8.0};
-  double cone_reacquire_search_yaw_{0.4};
-  int cone_reacquire_min_inliers_{8};
-  double cone_reacquire_cooldown_sec_{5.0};
-  // PARTIAL-slide trigger (the measured ghost-formation path): ghosts are
-  // minted while association is only DEGRADED -- the pose slides 1-2 m, the
-  // near half of the view keeps matching (some cones even MIS-associate to
-  // neighbours and self-support the slid branch), and the far half founds
-  // duplicates. Total-collapse detection (<0.25) never fires there (0-2
-  // weak frames per run measured vs 56-63% ghost). A sustained ratio below
-  // this threshold triggers a SMALL-radius constellation snap; promotions
-  // pause while the streak stands so no ghost outruns the snap.
-  double cone_reacquire_trigger_ratio_{0.6};
-  double cone_reacquire_partial_radius_m_{3.0};
-  double cone_reacquire_partial_yaw_{0.2};
-  // The candidate must BEAT the current pose by this many inliers -- in a
-  // partial slide the current pose still explains part of the view, and
-  // snapping to a tie would just thrash.
-  int cone_reacquire_min_inlier_gain_{3};
-  int weak_assoc_streak_{0};
-  int last_healthy_assoc_graph_id_{-1};
-  double last_cone_reacquire_sec_{-1.0e18};
-  void maybeConeReacquire(const rclcpp::Time & stamp, bool collapse);
+  // outage). While quarantined, association / loop candidates all keep
+  // running — only track founding and promotion pause, so the map stays
+  // clean through the transient.
 
-  // GNSS-free seam anchor (mapping mode): submap-vs-first-lap-landmarks scan
-  // Plausible-drift budget: honest dead-reckoning drift since the last
-  // ACCEPTED healthy GNSS prior is bounded, so any implied correction far
-  // beyond base + rate * distance is an aliased match, not drift. Measured
-  // motivation (2026-07-21 small_track mode_transition): seam anchors
-  // "closed" 14-19 m of drift 2 s after AHRS entry on 17-23% inlier fits,
-  // and a recovery moved the map 17.7 m on a 5/44 corroboration -- every one
-  // an alias on the symmetric layout. Rate is calibrated from the same
-  // harness, not theory: genuine unanchored drift measured ~3.5% of distance
-  // (rejected-correction ladder 4.2->6.8 m over 123->208 m grew smoothly
-  // with travel; a 2% budget starved those real closures and the pose went
-  // LOST), so 5% passes genuine closures with margin while the 14-19 m
-  // aliases still need 250 m+ of unanchored travel to sneak under it.
-  // 2026-07-21 verdict: the 2% rate + the round-2 stack measured
-  // {0,5,37,37,40,0}% ghost on mode_transition with no pose blowups (user:
-  // "round 2 was the perfect one"); the 5% recalibration was reasoned from a
-  // run confounded by the (since-reverted) founding-suspension spiral and is
-  // NOT validated -- keep 2% unless a clean A/B says otherwise.
-  double gnss_drift_budget_base_m_{1.0};
-  double gnss_drift_budget_per_m_{0.02};
-  double last_healthy_gnss_traveled_m_{0.0};
-
-  // match near the lap origin, applied like the gate anchor.
-  bool seam_anchor_enable_{true};
-  double seam_anchor_search_radius_m_{15.0};
-  double seam_anchor_search_yaw_{0.35};
-  double seam_anchor_trigger_radius_m_{30.0};
-  int seam_anchor_min_inliers_{8};
-  double seam_anchor_cooldown_travel_m_{10.0};
-  double seam_anchor_attempt_interval_m_{1.0};
-  double last_seam_anchor_traveled_m_{-1.0e18};
-  double last_seam_anchor_attempt_traveled_m_{-1.0e18};
-  std::size_t seam_anchor_count_{0U};
-
-  // Orange-gate global anchor (see gate_anchor.hpp).
-  bool gate_anchor_enable_{true};
-  double gate_anchor_cluster_radius_m_{1.5};
-  double gate_anchor_pair_tolerance_m_{0.5};
-  double gate_anchor_min_pair_separation_m_{2.0};
-  double gate_anchor_max_pair_separation_m_{9.0};
-  int gate_anchor_min_inliers_{4};
-  // Below min the normal association gate is already closing the loop; above
-  // max the match is more likely a mis-association than real drift.
-  double gate_anchor_min_correction_m_{2.4};
-  double gate_anchor_max_correction_m_{60.0};
-  double gate_anchor_cooldown_travel_m_{5.0};
-  double last_gate_anchor_traveled_m_{-1.0e18};
-  std::size_t gate_anchor_count_{0U};
   double association_inflation_per_meter_;
   double association_max_inflation_;
-  double landmark_merge_distance_;
-  double map_trust_info_scale_;
   double min_observation_range_;
   double max_observation_range_;
+  // Sensor visibility model for the frontend's track-miss accounting: a
+  // track only accrues misses while it should be observable from the
+  // current pose (FOV/range exits must not eat the miss budget).
+  double track_visible_max_range_{30.0};
+  double track_visible_fov_{std::acos(-1.0)};
   double default_observation_sigma_;
   double min_observation_variance_;
   double odom_translation_sigma_;
   double odom_yaw_sigma_;
   double robust_kernel_delta_;
   double marker_scale_;
-  double landmark_delete_fov_;
-  double landmark_delete_max_range_;
-  double landmark_delete_max_abs_x_;
-  double landmark_delete_max_abs_y_;
-  double landmark_delete_min_interval_;
   double landmark_update_gain_;
   double landmark_update_process_variance_;
 
@@ -775,10 +462,8 @@ private:
   int max_landmarks_;
   int max_optimization_poses_;
   int path_max_poses_to_publish_;
-  int landmark_missed_observations_to_delete_;
   int landmark_confirm_observations_;
   double loop_gap_distance_;
-  int map_trust_loop_closures_required_;
 
   bool localization_mode_;
   std::string load_map_path_;
@@ -818,44 +503,6 @@ private:
   // frame-to-frame step past physical limits and dead-reckon the last good pose
   // by the motion twist instead; a genuine step (real motion, converged
   // relocalisation across keyframes) stays under the limit and passes.
-  bool pose_gate_enable_{true};
-  double pose_gate_max_speed_mps_{40.0};
-  double pose_gate_max_yaw_rate_radps_{10.0};
-  // Absolute-heading guard: veto the published pose when its heading disagrees
-  // with the trusted INS/GNSS absolute heading by more than this, then
-  // dead-reckon. Catches the mirror-solution flip on a symmetric layout even
-  // when it converges GRADUALLY (each small step passes the per-frame rate gate
-  // above, but the flipped end-state is ~180 deg from the INS heading). Large
-  // by design so only a gross flip trips it, never normal heading refinement.
-  bool pose_gate_heading_enable_{true};
-  double pose_gate_max_heading_vs_gnss_rad_{2.094};   // 120 deg
-  double pose_gate_gnss_heading_max_age_{0.5};
-  double pose_gate_gnss_heading_max_sigma_{0.2};
-  // RTK-primary output: when GNSS is trusted, publish a fresh RTK-grade fix
-  // (cm position + dual-antenna heading, no left/right ambiguity) as ego_odom
-  // DIRECTLY -- the cone graph is demoted to a map builder. This removes the
-  // symmetric-layout mirror drift by construction (the cone-anchored estimate
-  // can alias; an absolute fix cannot). Falls back to the estimate + the pose
-  // gates during a GNSS outage. The graph optimization is untouched (so it
-  // cannot be destabilized), only which pose reaches the planner changes.
-  bool rtk_primary_enable_{true};
-  double rtk_primary_max_position_sigma_{0.2};
-  double rtk_primary_max_yaw_sigma_{0.1};
-  double rtk_primary_max_age_{0.2};
-  // RTK-primary MAP: pin each keyframe pose to a fresh RTK-grade fix and freeze
-  // it, so the optimiser triangulates landmarks at the correct (RTK) poses --
-  // mapping-with-known-poses. The cone map then cannot be warped onto the
-  // mirror/aliased branch on a symmetric layout (skidpad). Falls back to the
-  // movable cone-SLAM vertex when RTK is absent/degraded (GNSS fault), where the
-  // GNSS-free drift-recovery anchors take over.
-  bool rtk_map_enable_{true};
-  double rtk_map_max_yaw_sigma_{0.1};
-  bool rtk_map_pinning_{false};   // latest keyframe was RTK-pinned this update
-  bool have_last_pub_pose_{false};
-  double last_pub_x_{0.0};
-  double last_pub_y_{0.0};
-  double last_pub_yaw_{0.0};
-  double last_pub_sec_{0.0};
 
   // Freeze-time map ADMISSION check: freezing certifies the map as the
   // fixed reference for every remaining lap, so a polluted map must not
@@ -865,17 +512,8 @@ private:
   // cone on one side = a missing tooth that would break the planner's
   // corridor). While the check fails the car keeps mapping — an extra lap
   // fills holes and merges twins — up to a bounded number of extra returns.
-  bool mapQualityAcceptable(std::string * reason) const;
-  int freeze_max_duplicate_pairs_{2};
-  double freeze_hole_max_gap_m_{6.0};
-  double freeze_hole_corridor_m_{6.0};
-  int freeze_max_quality_gated_returns_{3};
-  int quality_gated_returns_{0};
-  double last_quality_gate_travel_{-1.0e18};
-  double last_admission_check_travel_{-1.0e18};
   // Last admission result, published in the lifecycle diagnostics so a
   // delayed freeze is attributable from the topic alone.
-  std::string last_admission_reason_{"unchecked"};
 
   // Lap origin is captured a few meters into the drive so it sits on the
   // racing line (the spawn pose can be offset from it); each lap then passes
@@ -892,16 +530,13 @@ private:
   bool use_cone_covariance_;
   bool process_every_cone_message_;
   bool publish_tf_;
-  bool delete_stale_landmarks_;
   bool update_existing_landmarks_;
-  bool map_trust_after_loop_closure_;
 
   double optimize_min_interval_;
   double visual_publish_min_interval_;
   double tf_stamp_offset_;
   double last_optimization_time_sec_;
   double last_visual_publish_time_sec_;
-  double last_landmark_delete_time_sec_;
 
   int next_vertex_id_;
   int next_edge_id_;
@@ -912,15 +547,9 @@ private:
   // map_converged_ turns on and confirmed-landmark observation edges are
   // trusted more so the pose conforms to the settled map.
   bool map_converged_;
-  LoopConfirmationConfig loop_confirmation_config_;
-  LoopConfirmationWindow loop_confirmation_window_;
   bool loop_confirmation_ready_for_optimize_;
-  int loop_closure_optimize_cycles_;
   std::size_t loop_candidate_count_;
   std::size_t loop_confirmed_count_;
-  std::size_t loop_rejected_count_;
-  std::size_t loop_candidate_window_count_;
-  LoopConfirmationReason last_loop_confirmation_reason_;
   bool optimizer_skipped_pose_limit_;
   double last_odom_stamp_sec_;
   double last_cone_stamp_sec_;
@@ -934,27 +563,25 @@ private:
   // require seam evidence — candidates re-associating landmarks near the lap
   // origin — plus a bounded dwell so the seam accumulates constraints before
   // the map freezes. See LapFinishGate.
-  bool require_lap_seam_loop_closure_{false};
-  double lap_seam_landmark_radius_m_{10.0};
-  int lap_seam_candidates_required_{2};
-  double lap_finish_dwell_m_{0.0};
-  LapFinishGate lap_finish_gate_{};
-  std::size_t seam_loop_candidate_count_{0U};
   // Once the vehicle has verifiably returned to the lap origin, that geometry
   // independently corroborates a loop: optionally relax the confirmation
   // window's candidate threshold (never its residual gates). 0 disables.
-  int loop_confirmation_required_candidates_on_lap_return_{0};
-  bool loop_confirmation_relaxed_on_lap_return_{false};
   // The origin pose is captured while the car is standing on it, so the
   // return check is trivially satisfied in that same update; only travel
   // beyond this floor after capture counts as a LAP return. Guards both the
   // relaxation trigger and the finish gate.
   double lap_return_min_travel_m_{50.0};
+  // Freeze on the Nth certified lap return: lap 2 lays revisit loop edges
+  // along the whole track so first-lap drift is ironed out before landmarks
+  // fix (1 = freeze immediately, fastest global path, warp risk on long
+  // tracks).
+  int lap_returns_to_freeze_{2};
+  int lap_returns_seen_{0};
+  bool lap_return_window_active_{false};
   double lap_origin_capture_traveled_m_{0.0};
   // Freeze-time drift-duplicate sweep: same-color pairs within this radius
   // whose last observations are separated by >= loop_gap_distance of travel
   // merge into the recently-seen member before the map freezes. 0 disables.
-  double freeze_merge_stale_distance_m_{0.0};
 
   g2o::SE2 latest_estimate_;
   bool has_latest_pose_;
@@ -990,26 +617,6 @@ private:
   };
   KeyframeSnapshot keyframe_snapshot_;
   std::mutex snapshot_mutex_;
-
-  // Latest GNSS absolute fix (map/ENU frame) from the bridge's /localization/gnss_odom,
-  // consumed as a unary prior on new keyframes. Guarded by gnss_mutex_ so the
-  // GNSS callback can write while the keyframe/optimization thread reads.
-  struct GnssFix
-  {
-    double stamp_sec{0.0};
-    Eigen::Vector2d position{Eigen::Vector2d::Zero()};
-    double sigma_x{0.0};
-    double sigma_y{0.0};
-    // Absolute heading (map/ENU frame) from the SBG dual-antenna/AHRS solution,
-    // valid whenever the INS is (mode >= 2), even when RTK position drifts.
-    // Used only as a mirror-flip guard on symmetric layouts, never as a pull.
-    double yaw{0.0};
-    double yaw_sigma{0.0};
-    bool yaw_valid{false};
-    bool valid{false};
-  };
-  GnssFix latest_gnss_fix_;
-  mutable std::mutex gnss_mutex_;
 };
 
 }  // namespace hyu_localization
