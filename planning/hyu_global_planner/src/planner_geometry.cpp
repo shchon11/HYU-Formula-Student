@@ -129,9 +129,26 @@ std::vector<PlannerPoint> resampleBySpacing(
     }
   }
 
+  // Keep the exact endpoint, but never as a sub-half-spacing tail segment:
+  // total_length mod spacing can leave the final sample arbitrarily close to
+  // the endpoint (measured 0.04 m on a live map), and the curvature model's
+  // 1/(h1*h2) weights then explode exactly there. On a closed loop that pair
+  // lands at the ring seam, acting as a near-rigid staple the optimiser bends
+  // the neighbouring line around, and downstream the published kappa spikes
+  // (|kappa| ~ 5 -> the velocity profile brakes hard for a phantom corner).
+  // Merging the last sample onto the endpoint caps the tail at
+  // [0.5, 1.5) * spacing.
   const auto last = points.back();
-  if (resampled.empty() || distance(resampled.back(), last) > safe_duplicate_tolerance) {
+  if (resampled.empty()) {
     resampled.push_back(last);
+  } else if (distance(resampled.back(), last) > safe_duplicate_tolerance) {
+    if (resampled.size() >= 2U &&
+      distance(resampled.back(), last) < 0.5 * effective_spacing)
+    {
+      resampled.back() = last;
+    } else {
+      resampled.push_back(last);
+    }
   }
   return resampled;
 }

@@ -30,6 +30,16 @@ struct SlamCenterlineConfig
   // Unused. Kept so existing parameter files keep loading unchanged: the old
   // Laplacian step size has no meaning for the min-curvature solver.
   double raceline_alpha{0.3};
+  // Speed-weighted raceline: weight each point's squared-curvature penalty by
+  // (v_max / v_i)^exponent, where v_i comes from a drivable speed profile
+  // (friction-circle corner speeds + accel/decel passes) over the CURRENT
+  // line. Curvature then costs most where the car actually spends time -- slow
+  // hairpins and the still-slow acceleration zone after them -- and almost
+  // nothing through fast kinks the car never slows for. Because accel < decel,
+  // corner EXITS stay slow longer than entries brake, so the optimum shifts
+  // toward a late apex. 0 disables (pure minimum curvature, previous behavior).
+  double raceline_speed_weight_exponent{0.0};
+  VelocityProfileConfig raceline_speed_model{};
 };
 
 bool buildCenterlineFromSlamMap(
@@ -52,5 +62,19 @@ void applyMinimumCurvatureRaceline(
   const std::vector<PlannerPoint> & left_boundary,
   const std::vector<PlannerPoint> & right_boundary,
   const SlamCenterlineConfig & config);
+
+// Time-density weights for the speed-weighted raceline (exposed for tests).
+// Runs the friction-circle + accel/decel speed profile over the given
+// curvature/spacing sequence (wrap-around on a closed ring) and returns one
+// weight per point, (v_max / v_i)^exponent normalised to mean 1. Uniform
+// speed therefore returns all-ones, and exponent <= 0 returns all-ones.
+// `segment_length[i]` is the distance from point i to point i+1 (wrapping to
+// point 0 when closed), so it has size n when closed and n-1 when open.
+std::vector<double> computeRacelineSpeedWeights(
+  const std::vector<double> & signed_curvature,
+  const std::vector<double> & segment_length,
+  bool closed,
+  double exponent,
+  const VelocityProfileConfig & speed_model);
 
 }  // namespace hyu_global_planner

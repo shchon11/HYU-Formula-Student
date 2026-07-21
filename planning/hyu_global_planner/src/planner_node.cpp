@@ -89,6 +89,10 @@ void PlannerNode::declareParameters()
   declare_parameter<int>("raceline_smoothing_iterations", 0);
   declare_parameter<double>("raceline_margin_m", 1.2);
   declare_parameter<double>("raceline_alpha", 0.3);
+  declare_parameter<double>("raceline_speed_weight_exponent", 0.0);
+  declare_parameter<double>("raceline_speed_cap_mps", 7.5);
+  declare_parameter<double>("raceline_accel_mps2", -1.0);
+  declare_parameter<double>("raceline_decel_mps2", -1.0);
 }
 
 void PlannerNode::loadParameters()
@@ -127,6 +131,28 @@ void PlannerNode::loadParameters()
       get_logger(),
       "raceline_margin_m/raceline_alpha invalid; raceline smoothing disabled");
     raceline_smoothing_iterations_ = 0;
+  }
+  raceline_speed_weight_exponent_ =
+    get_parameter("raceline_speed_weight_exponent").as_double();
+  raceline_speed_cap_mps_ = get_parameter("raceline_speed_cap_mps").as_double();
+  if (!std::isfinite(raceline_speed_weight_exponent_) ||
+    raceline_speed_weight_exponent_ < 0.0 ||
+    !std::isfinite(raceline_speed_cap_mps_) || raceline_speed_cap_mps_ <= 0.0)
+  {
+    RCLCPP_WARN(
+      get_logger(),
+      "raceline_speed_weight_exponent/raceline_speed_cap_mps invalid; "
+      "speed weighting disabled (pure minimum-curvature raceline)");
+    raceline_speed_weight_exponent_ = 0.0;
+  }
+  // <= 0 inherits the published profile's max_accel/max_decel.
+  raceline_accel_mps2_ = get_parameter("raceline_accel_mps2").as_double();
+  raceline_decel_mps2_ = get_parameter("raceline_decel_mps2").as_double();
+  if (!std::isfinite(raceline_accel_mps2_)) {
+    raceline_accel_mps2_ = -1.0;
+  }
+  if (!std::isfinite(raceline_decel_mps2_)) {
+    raceline_decel_mps2_ = -1.0;
   }
 
   min_cones_per_side_ = std::max(1, min_cones_per_side_);
@@ -325,7 +351,7 @@ bool PlannerNode::inputsAllowPlanning(std::string & reason) const
 
 SlamCenterlineConfig PlannerNode::centerlineConfig() const
 {
-  return SlamCenterlineConfig{
+  SlamCenterlineConfig config{
     min_cones_per_side_,
     max_boundary_gap_m_,
     min_track_width_m_,
@@ -336,6 +362,17 @@ SlamCenterlineConfig PlannerNode::centerlineConfig() const
     raceline_smoothing_iterations_,
     raceline_margin_m_,
     raceline_alpha_};
+  config.raceline_speed_weight_exponent = raceline_speed_weight_exponent_;
+  // The weight profile is the node's published velocity profile capped at the
+  // speed the TMPC will actually drive (tmpc_performance_speed_cap_mps): the
+  // line should be shaped for real speeds, not the 15 m/s profile ceiling.
+  config.raceline_speed_model = VelocityProfileConfig{
+    std::min(max_speed_mps_, raceline_speed_cap_mps_),
+    min_speed_mps_,
+    max_lateral_accel_mps2_,
+    raceline_accel_mps2_ > 0.0 ? raceline_accel_mps2_ : max_accel_mps2_,
+    raceline_decel_mps2_ > 0.0 ? raceline_decel_mps2_ : max_decel_mps2_};
+  return config;
 }
 
 hyu_msgs::msg::WaypointArrayStamped PlannerNode::buildWaypointMessage(

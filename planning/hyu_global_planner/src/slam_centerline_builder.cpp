@@ -533,6 +533,89 @@ void rebaseLoopAtStartFinishGate(
 
 }  // namespace
 
+std::vector<double> computeRacelineSpeedWeights(
+  const std::vector<double> & signed_curvature,
+  const std::vector<double> & segment_length,
+  bool closed,
+  double exponent,
+  const VelocityProfileConfig & speed_model)
+{
+  const std::size_t n = signed_curvature.size();
+  std::vector<double> weights(n, 1.0);
+  if (n < 2U || !(exponent > 0.0) || !std::isfinite(exponent)) {
+    return weights;
+  }
+  if (segment_length.size() != (closed ? n : n - 1U)) {
+    return weights;
+  }
+
+  const double v_max = std::max(speed_model.min_speed_mps, speed_model.max_speed_mps);
+  const double v_min = std::clamp(speed_model.min_speed_mps, 1.0e-3, v_max);
+  const double a_lat = std::max(0.0, speed_model.max_lateral_accel_mps2);
+  const double a_acc = std::max(0.0, speed_model.max_accel_mps2);
+  const double a_dec = std::max(0.0, speed_model.max_decel_mps2);
+  if (!(v_max > 0.0)) {
+    return weights;
+  }
+
+  // Friction-circle corner speed per point.
+  std::vector<double> v(n, v_max);
+  for (std::size_t i = 0; i < n; ++i) {
+    const double kappa = std::abs(signed_curvature[i]);
+    if (a_lat > 0.0 && kappa > 1.0e-9) {
+      v[i] = std::clamp(std::sqrt(a_lat / kappa), v_min, v_max);
+    }
+  }
+
+  // Accel/decel passes. On a closed ring the binding constraint is the global
+  // minimum-speed point and it only propagates in the pass direction, so two
+  // wrapped laps are exact: the first lap is correct everywhere at least one
+  // lap downstream of that minimum, the second covers the wrap. An open path
+  // gets the plain single passes.
+  const std::size_t laps = closed ? 2U * n : n;
+  for (std::size_t k = 1; k < laps; ++k) {
+    const std::size_t i = closed ? k % n : k;
+    const std::size_t prev = closed ? (k - 1U) % n : k - 1U;
+    const double ds = std::max(0.0, segment_length[prev]);
+    v[i] = std::min(v[i], std::sqrt(v[prev] * v[prev] + 2.0 * a_acc * ds));
+  }
+  for (std::size_t k = laps - 1U; k-- > 0U; ) {
+    const std::size_t i = closed ? k % n : k;
+    const std::size_t next = closed ? (k + 1U) % n : k + 1U;
+    const double ds = std::max(0.0, segment_length[i % segment_length.size()]);
+    v[i] = std::min(v[i], std::sqrt(v[next] * v[next] + 2.0 * a_dec * ds));
+  }
+
+  // (v_max / v)^exponent, normalised to mean 1 so the weighting reshapes the
+  // objective without rescaling it (step sizes and convergence behave as
+  // before). The ring is resampled to uniform spacing before optimisation, so
+  // per-point time density needs no extra ds factor.
+  double sum = 0.0;
+  for (std::size_t i = 0; i < n; ++i) {
+    weights[i] = std::pow(v_max / std::max(v[i], v_min), exponent);
+    sum += weights[i];
+  }
+  if (!(sum > 0.0) || !std::isfinite(sum)) {
+    return std::vector<double>(n, 1.0);
+  }
+  const double scale = static_cast<double>(n) / sum;
+  for (double & weight : weights) {
+    weight *= scale;
+  }
+  // Floor the normalised weights: with a high cap and exponent the fast
+  // sections' weight otherwise tends to zero, and the QP then plants
+  // essentially FREE zigzags there to buy tiny gains in the expensive slow
+  // corners (measured on a live map: an S-wiggle before the start gate whose
+  // peak curvature GREW with more iterations -- the kink is the optimum, not
+  // underconvergence). Physically, curvature on a flat-out section is never
+  // free: steering effort, tire scrub and tracking risk all remain. Half the
+  // average cost is the regularisation floor.
+  for (double & weight : weights) {
+    weight = std::max(weight, 0.5);
+  }
+  return weights;
+}
+
 void applyMinimumCurvatureRaceline(
   std::vector<PlannerPoint> & centerline,
   const std::vector<PlannerPoint> & left_boundary,
@@ -614,6 +697,31 @@ void applyMinimumCurvatureRaceline(
     lower[i] = std::min(lower[i], 0.0);
   }
 
+  // Slope-limit the corridor bounds. Each bound samples the distance to a cone
+  // POLYLINE independently per point, so at cone vertices (and the folded gate
+  // markers) it can step by decimetres between neighbouring samples. A line
+  // riding the bound -- which the optimum legitimately does -- inherits that
+  // step as a kink (measured: isolated |kappa| ~ 0.5 spikes before the gate,
+  // which the velocity profile answers by braking for a phantom corner).
+  // Limiting the per-sample change spreads any step over several samples. The
+  // envelope only ever SHRINKS the corridor (min/max against the neighbour's
+  // reach), so the clearance guarantee is untouched. alpha = 0 stays feasible:
+  // upper >= 0 and lower <= 0 are preserved by construction of the sweeps.
+  const double bound_step = 0.1 * config.waypoint_spacing_m;
+  const std::size_t sweep = closed ? 2U * n : n;
+  for (std::size_t k = 1; k < sweep; ++k) {
+    const std::size_t i = closed ? k % n : k;
+    const std::size_t p = closed ? (k - 1U) % n : k - 1U;
+    upper[i] = std::min(upper[i], std::max(0.0, upper[p] + bound_step));
+    lower[i] = std::max(lower[i], std::min(0.0, lower[p] - bound_step));
+  }
+  for (std::size_t k = sweep - 1U; k-- > 0U; ) {
+    const std::size_t i = closed ? k % n : k;
+    const std::size_t q = closed ? (k + 1U) % n : k + 1U;
+    upper[i] = std::min(upper[i], std::max(0.0, upper[q] + bound_step));
+    lower[i] = std::max(lower[i], std::min(0.0, lower[q] - bound_step));
+  }
+
   // kappa_i = base_i + ca_i*alpha_{i-1} + cc_i*alpha_i + cb_i*alpha_{i+1}, using
   // the three-point second-derivative weights for UNEVEN spacing: the centerline
   // is sampled at uniform blue arc length, which compresses the midpoints
@@ -651,6 +759,28 @@ void applyMinimumCurvatureRaceline(
     // the dominant alpha'' term is untouched.
     cc[i] = w2 + 2.0 * base[i] * base[i];
     cb[i] = w3 * (normal[q].x * normal[i].x + normal[q].y * normal[i].y);
+  }
+
+  // Speed weighting: scale row i of the linear curvature model by sqrt(w_i),
+  // which turns the objective into sum w_i * kappa_i^2 without touching the
+  // solver. The weights come from a drivable speed profile over the CURRENT
+  // ring (base[] is its signed curvature), so they are rebuilt along with the
+  // rest of the linearisation on every re-linearisation pass.
+  if (config.raceline_speed_weight_exponent > 0.0) {
+    std::vector<double> segment(closed ? n : n - 1U, 0.0);
+    for (std::size_t i = 0; i + (closed ? 0U : 1U) < n; ++i) {
+      segment[i] = distance(ring[i], ring[closed ? (i + 1U) % n : i + 1U]);
+    }
+    const auto weights = computeRacelineSpeedWeights(
+      base, segment, closed, config.raceline_speed_weight_exponent,
+      config.raceline_speed_model);
+    for (std::size_t i = first; i <= last; ++i) {
+      const double row_scale = std::sqrt(weights[i]);
+      base[i] *= row_scale;
+      ca[i] *= row_scale;
+      cb[i] *= row_scale;
+      cc[i] *= row_scale;
+    }
   }
 
   // A: alpha -> curvature deviation, and its transpose. Pinned entries of alpha

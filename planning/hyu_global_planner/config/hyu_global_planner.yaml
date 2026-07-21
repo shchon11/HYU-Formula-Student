@@ -91,6 +91,31 @@ planner_node:
     # Unused by the min-curvature solver (legacy Laplacian step size). Kept so
     # existing parameter files keep loading unchanged.
     raceline_alpha: 0.3
+    # Speed-weighted raceline: each point's curvature penalty is scaled by
+    # (v_cap / v)^exponent, v from the friction-circle + accel/decel profile of
+    # the current line (the same model as the published velocity profile,
+    # capped below). Curvature then costs most where the car is slowest --
+    # hairpins and the still-slow acceleration zone after them -- so track
+    # width is spent there instead of on fast kinks, and because accel (3) <
+    # decel (5) the apex shifts late. 0 = pure minimum curvature (previous
+    # behavior). 2 matches the time-density heuristic (dt ~ ds/v, and the
+    # grip-limited v itself moves with curvature).
+    raceline_speed_weight_exponent: 2.0
+    # Cap for the WEIGHT profile only (published speeds are unaffected). Match
+    # the controller actually driving the line: MAP/pure-pursuit follows the
+    # published profile (its max_speed_mps is 15), so no extra cap -> 15.0.
+    # When running the TMPC stack instead, drop this to lock-step with
+    # wpnt_publisher tmpc_performance_speed_cap_mps (7.5): shaping the line
+    # for speeds the tube MPC refuses to drive wastes track width.
+    raceline_speed_cap_mps: 15.0
+    # Longitudinal limits for the WEIGHT profile only (<= 0 inherits
+    # max_accel/max_decel above). accel 5.0 was chosen deliberately
+    # conservative (2026-07-22): above the plant's +3 cap that max_accel
+    # mirrors, below the measured 1g so exit weighting is not overstated.
+    # Note accel == decel makes the entry/exit weighting symmetric -- the
+    # late-apex bias only appears when accel < decel.
+    raceline_accel_mps2: 5.0
+    raceline_decel_mps2: -1.0
 
 wpnt_publisher:
   ros__parameters:

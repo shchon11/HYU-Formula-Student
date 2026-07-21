@@ -69,6 +69,10 @@ private:
   int raceline_smoothing_iterations_{0};
   double raceline_margin_m_{1.2};
   double raceline_alpha_{0.3};
+  double raceline_speed_weight_exponent_{0.0};
+  double raceline_speed_cap_mps_{7.5};
+  double raceline_accel_mps2_{-1.0};
+  double raceline_decel_mps2_{-1.0};
 
   bool has_cone_map_{false};
   bool has_ego_odom_{false};
