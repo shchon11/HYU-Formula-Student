@@ -121,6 +121,19 @@ TERRAIN_XACRO_ARGS = [
         'Mean bump peak height [m]. Raise to stress ground-plane removal.',
     ),
     (
+        'calib_error',
+        'true',
+        'Sensor-mount calibration residual: the physical sensors sit at '
+        'nominal + a per-launch random draw (ChArUco-class sigma) while TF '
+        'stays nominal. false = ideal rig.',
+    ),
+    (
+        'calib_seed',
+        '-1',
+        'Seed for the calibration-residual draw. -1 = fresh draw every '
+        'launch; any other value reproduces the same rig error.',
+    ),
+    (
         'road_noise',
         'true',
         'Speed-scaled roughness vibration on the body. It is louder than the '
@@ -155,6 +168,42 @@ def spawn_car(context, *args, **kwargs):
         for name, _, _ in TERRAIN_XACRO_ARGS
     }
 
+    # Calibration residual: one fresh draw per launch (real recalibration =
+    # a new rig error). Sigmas are ChArUco-class for our setup (12 cm
+    # squares): mount rotation ~0.12 deg / translation ~4 mm per axis on
+    # each sensor (relative lidar-camera then lands near the board method's
+    # typical ~0.3 deg / 1 cm), stereo rectification residual ~0.03 deg.
+    # The draw is LOGGED so any run's true rig error is recoverable.
+    import random
+    calib_enabled = terrain_mappings.pop('calib_error', 'true') == 'true'
+    calib_seed = int(terrain_mappings.pop('calib_seed', '-1'))
+    rng = random.Random(calib_seed if calib_seed >= 0 else None)
+
+    def draw(sigma_xyz, sigma_rpy):
+        return ' '.join(
+            f'{rng.gauss(0.0, s):.5f}'
+            for s in [sigma_xyz] * 3 + [sigma_rpy] * 3)
+
+    if calib_enabled:
+        calib_mappings = {
+            'calib_cam_err': draw(0.004, 0.0021),
+            'calib_lidar_err': draw(0.005, 0.0023),
+            'calib_stereo_err_rpy': ' '.join(
+                f'{rng.gauss(0.0, 0.0004):.5f}' for _ in range(3)),
+        }
+    else:
+        calib_mappings = {
+            'calib_cam_err': '0 0 0 0 0 0',
+            'calib_lidar_err': '0 0 0 0 0 0',
+            'calib_stereo_err_rpy': '0 0 0',
+        }
+    print(
+        '[calib_error] cam=[%s] lidar=[%s] stereo_rpy=[%s] (seed=%s)' % (
+            calib_mappings['calib_cam_err'],
+            calib_mappings['calib_lidar_err'],
+            calib_mappings['calib_stereo_err_rpy'],
+            calib_seed if calib_seed >= 0 else 'fresh'))
+
     simulate_perception = 'true' if launch_group == 'no_perception' else 'false'
     config_file = join(get_package_share_directory('eufs_racecar'), 'robots', robot_name,
                        vehicle_model_config)
@@ -186,6 +235,7 @@ def spawn_car(context, *args, **kwargs):
                                  'bounding_box_settings': bounding_boxes_file,
                                  **perception_mappings,
                                  **terrain_mappings,
+                                 **calib_mappings,
                              })
     out = xacro.open_output(urdf_path)
     out.write(doc.toprettyxml(indent='  '))

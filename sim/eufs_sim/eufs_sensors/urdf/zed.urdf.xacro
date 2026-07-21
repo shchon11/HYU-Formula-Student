@@ -4,6 +4,18 @@
 
   <xacro:property name="M_PI" value="3.1415926535897931" />
 
+  <!-- Calibration residual (sim-to-real): the PHYSICAL sensors sit at
+       nominal + these offsets while every TF/projection keeps consuming the
+       nominal frames — exactly the error a real calibration leaves behind.
+       The values arrive from load_car.launch.py, which draws a FRESH
+       residual per launch (sigma calibrated to our rig: stereo
+       self-rectification + lidar-camera ChArUco board with 12 cm squares)
+       and logs the draw. Defaults are the ideal rig. -->
+  <xacro:arg name="calib_cam_err" default="0 0 0 0 0 0"/>
+  <xacro:arg name="calib_stereo_err_rpy" default="0 0 0"/>
+  <xacro:property name="zed_mount_err" value="$(arg calib_cam_err)"/>
+  <xacro:property name="zed_stereo_err_rpy" value="$(arg calib_stereo_err_rpy)"/>
+
   <!-- depth: emit the Gazebo `depth` sensor. Off by default because it costs a
        second full 1280x720 render pass plus a point cloud, competing with the
        left and right cameras for the render thread, and nothing in this
@@ -154,6 +166,8 @@
           <always_on>true</always_on>
           <update_rate>30.0</update_rate>
           <visualize>false</visualize>
+          <!-- Rig mount calibration residual (see the property block). -->
+          <pose>${zed_mount_err}</pose>
           <!-- Poses are RELATIVE to the sensor's reference link, which is
                already the LEFT camera frame (y=+0.06 from center). The old
                "0 +/-0.06" poses double-applied the left offset: left
@@ -171,7 +185,12 @@
             </image>
             <clip>
               <near>0.5</near>
-              <far>20</far>
+              <!-- 300, not 20: the SkyX cloud layer lives hundreds of
+                   meters up and a 20 m far plane culled it, so the camera
+                   only ever saw the bare gradient — an unrealistically
+                   clean YOLO background. Track geometry past 20 m is a few
+                   cones; the render cost is negligible. -->
+              <far>300</far>
             </clip>
             <noise>
               <type>gaussian</type>
@@ -180,7 +199,9 @@
             </noise>
           </camera>
           <camera name="right">
-            <pose>0 -0.12 0 0 0 0</pose>
+            <!-- Stereo rectification residual on the right eye (rotation
+                 only): biases ZNCC disparity like an imperfect self-calib. -->
+            <pose>0 -0.12 0 ${zed_stereo_err_rpy}</pose>
             <horizontal_fov>1.91986</horizontal_fov>
             <image>
               <width>1280</width>
@@ -189,7 +210,12 @@
             </image>
             <clip>
               <near>0.5</near>
-              <far>20</far>
+              <!-- 300, not 20: the SkyX cloud layer lives hundreds of
+                   meters up and a 20 m far plane culled it, so the camera
+                   only ever saw the bare gradient — an unrealistically
+                   clean YOLO background. Track geometry past 20 m is a few
+                   cones; the render cost is negligible. -->
+              <far>300</far>
             </clip>
             <noise>
               <type>gaussian</type>
@@ -198,7 +224,11 @@
             </noise>
           </camera>
 
-          <plugin name="${prefix}_stereo_controller" filename="libgazebo_ros_camera.so">
+          <!-- Stock gazebo_ros_camera subclass: rolling-shutter skew and
+               exposure motion blur are applied to the render buffer INSIDE
+               the publish path (zero extra hop/latency; body twist read
+               straight from physics). See eufs_plugins/gazebo_camera_realism. -->
+          <plugin name="${prefix}_stereo_controller" filename="libgazebo_camera_realism.so">
             <ros>
               <remapping>${prefix}/left/image_raw:=${prefix}/left/image_rect_color</remapping>
               <remapping>${prefix}/right/image_raw:=${prefix}/right/image_rect_color</remapping>
@@ -206,6 +236,13 @@
             <camera_name>${prefix}</camera_name>
             <frame_name>${prefix}_left_camera_optical_frame</frame_name>
             <hack_baseline>0.12</hack_baseline>
+            <motionBlur>true</motionBlur>
+            <rollingShutter>true</rollingShutter>
+            <exposureTime>0.004</exposureTime>
+            <readoutTime>0.020</readoutTime>
+            <blurTaps>3</blurTaps>
+            <cameraHeight>0.85</cameraHeight>
+            <horizontalFov>1.91986</horizontalFov>
           </plugin>
         </sensor>
       </gazebo>

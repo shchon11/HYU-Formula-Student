@@ -92,6 +92,7 @@ install(DIRECTORY urdf DESTINATION share/${PROJECT_NAME})
 # absolute path (see RaceCarModelPlugin::initTerrain), not via GAZEBO_MODEL_PATH.
 install(DIRECTORY meshes DESTINATION share/${PROJECT_NAME})
 
+add_subdirectory(gazebo_camera_realism)
 add_subdirectory(gazebo_cone_plugins)
 add_subdirectory(gazebo_race_car_model)
 add_subdirectory(gazebo_simulate_bounding_boxes)

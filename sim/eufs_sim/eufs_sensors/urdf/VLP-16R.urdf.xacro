@@ -1,5 +1,7 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="VLP-16">
+  <!-- Fresh per-launch draw from load_car.launch.py; default = ideal. -->
+  <xacro:arg name="calib_lidar_err" default="0 0 0 0 0 0"/>
   <xacro:property name="M_PI" value="3.1415926535897931" />
   <!-- Real VLP-16 spec, not a cheaper approximation of one.
 
@@ -140,7 +142,12 @@
       <gazebo reference="${name}">
         <sensor type="${'gpu_ray' if str(gpu).lower() in ('true', '1') else 'ray'}" name="${name}-VLP16">
           <always_on>true</always_on>
-          <pose>0 0 0 0 0 0</pose>
+          <!-- Mount calibration residual: the PHYSICAL lidar sits at nominal
+               + this offset while TF keeps the nominal frame — the error a
+               real ChArUco-board (12 cm squares) lidar-camera calibration
+               leaves behind. Drawn fresh per launch in load_car.launch.py;
+               see zed.urdf.xacro for the camera-side residual. -->
+          <pose>$(arg calib_lidar_err)</pose>
           <visualize>false</visualize>
           <update_rate>${hz}</update_rate>
           <ray>
