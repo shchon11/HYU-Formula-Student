@@ -89,6 +89,33 @@ class SkidpadDirector(Node):
         # the young SLAM map to confirm the sparse lane cones.
         self.lane_half_width_m = self.declare_parameter("lane_half_width_m", 1.55).value
         self.lane_pair_spacing_m = self.declare_parameter("lane_pair_spacing_m", 2.0).value
+        # Temporal persistence of the circle corridor. The fed SLAM map drops
+        # cones intermittently (association/observation-count churn), leaving a
+        # transient GAP in the forward-curving arc -> the local planner (which is
+        # itself robust) then correctly builds a SHORT path from the near
+        # straight-ish lead-in -> the car cuts the corner and clips. Cones are
+        # static, so a last-seen REAL position stays valid: keep feeding each
+        # observed ring cone for a short while after it drops (updating its
+        # position while it is seen, aging it out if it stays gone) so the
+        # corridor the planner sees is always complete. Not synthesis (real
+        # positions), no map-size assumption (a dedup length + a frame count).
+        self.circle_persist_frames = int(
+            self.declare_parameter("circle_persist_frames", 20).value)
+        self.circle_persist_dedup_m = self.declare_parameter(
+            "circle_persist_dedup_m", 0.6).value
+        # Junction-gate widening. At the top of a circle -- the middle )( gate --
+        # the OUTER ring is open (the lane runs through it), so the local planner
+        # pairs each inner gate cone with a far outer cone and pulls the midpoint
+        # inward; the driven line then cut across the inner gate cones on every
+        # entry/exit. Only THERE (|y| below the gate band), feed the ring cones
+        # shifted radially OUTWARD -- tapered to zero at the band edge so the rest
+        # of the circle is the real geometry -- so the corridor rounds the gate
+        # wide instead of cutting in. A local geometry nudge at the gate, not a
+        # whole-circle offset; scaled to the observed ring, no map-size baked in.
+        self.junction_widen_m = self.declare_parameter("junction_widen_m", 1.2).value
+        self.junction_widen_band_y_m = self.declare_parameter(
+            "junction_widen_band_y_m", 5.0).value
+        self.persist = []   # [x, y, was_blue, age]
 
         self.phase = PHASE_ENTRY
         self.ego_x = 0.0
@@ -131,6 +158,7 @@ class SkidpadDirector(Node):
         self.phase = phase
         self.cum_angle = 0.0
         self.prev_angle = None
+        self.persist = []   # corridor persistence is per-circle
         self.publish_phase()
 
     def in_junction_zone(self):
@@ -197,8 +225,9 @@ class SkidpadDirector(Node):
 
     def _circle_filter(self, msg, out, centre):
         other = self.left_centre if centre is self.right_centre else self.right_centre
-        for source, sink in ((msg.blue_cones, out.blue_cones),
-                             (msg.yellow_cones, out.yellow_cones)):
+        # This frame's active-circle ring cones (true SLAM positions).
+        observed = []
+        for source, was_blue in ((msg.blue_cones, True), (msg.yellow_cones, False)):
             for cone in source:
                 x, y = self._position(cone)
                 fit = self._ring_fit(x, y, centre)
@@ -206,15 +235,43 @@ class SkidpadDirector(Node):
                     continue
                 if fit > self._ring_fit(x, y, other) + self.ring_share_margin_m:
                     continue  # clearly the other circle's cone
-                # Feed the cone at its true SLAM position: the planner's
-                # blue/yellow midpoints then trace the true circle centreline
-                # (no radial bias). Any inner-ring corner-cut is a controller
-                # concern (lookahead), not something to bake into the path.
-                kept = ConeWithCovariance()
-                kept.point.x = x
-                kept.point.y = y
-                kept.covariance = list(cone.covariance)
-                sink.append(kept)
+                observed.append((x, y, was_blue))
+
+        # Merge into the persistence set: update a matching cone's position and
+        # reset its age, else add it. Then age everyone and drop the stale.
+        for (x, y, was_blue) in observed:
+            best_i, best_d = -1, self.circle_persist_dedup_m
+            for i, p in enumerate(self.persist):
+                d = math.hypot(p[0] - x, p[1] - y)
+                if d < best_d:
+                    best_d, best_i = d, i
+            if best_i >= 0:
+                self.persist[best_i] = [x, y, was_blue, 0]
+            else:
+                self.persist.append([x, y, was_blue, 0])
+        for p in self.persist:
+            p[3] += 1
+        self.persist = [p for p in self.persist if p[3] <= self.circle_persist_frames]
+
+        # Feed the persisted corridor. Near the middle )( gate (|y| within the
+        # band) push each ring cone radially OUTWARD from the active centre, the
+        # shift tapering linearly to zero at the band edge so the widening is a
+        # smooth local bulge and the rest of the circle keeps its true geometry.
+        for (x, y, was_blue, _age) in self.persist:
+            fx, fy = x, y
+            taper = 1.0 - abs(y) / self.junction_widen_band_y_m
+            if self.junction_widen_m > 0.0 and taper > 0.0:
+                dx, dy = x - centre[0], y - centre[1]
+                radius = math.hypot(dx, dy)
+                if radius > 1e-6:
+                    scale = (radius + self.junction_widen_m * taper) / radius
+                    fx = centre[0] + dx * scale
+                    fy = centre[1] + dy * scale
+            kept = ConeWithCovariance()
+            kept.point.x = fx
+            kept.point.y = fy
+            kept.covariance = [0.04, 0.0, 0.0, 0.04]
+            (out.blue_cones if was_blue else out.yellow_cones).append(kept)
 
     def on_cone_map(self, msg):
         out = ConeArrayWithCovariance()
