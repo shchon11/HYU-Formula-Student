@@ -39,7 +39,7 @@ Run `hyu_tmpc` separately after its trajectory inputs are ready.
   pose: x, y, quaternion                   │
   twist: vx, vy, yaw rate                  │
                                            │
-/odometry_integration/car_state -----------+--> latest input cache
+/localization/wheel_odom -----------+--> latest input cache
   linear_acceleration: ax, ay              │         │
                                            │         v
 /vehicle/wheel_speeds ---------------------┘    100 Hz timer
@@ -99,7 +99,7 @@ Run `hyu_tmpc` separately after its trajectory inputs are ready.
 
 ```text
 valid_imu_default == true
-AND /odometry_integration/car_state가 timeout 안쪽으로 fresh함
+AND /localization/wheel_odom가 timeout 안쪽으로 fresh함
 AND ax, ay가 finite함
 ```
 
@@ -187,7 +187,7 @@ localization, acceleration, wheel-speeds 중 하나라도 아직 수신되지 �
 | Launch argument / parameter suffix | 기본값 | 설명 |
 |---|---:|---|
 | `localization_topic` | `/localization/ego_odom` | pose, velocity, yaw-rate 입력 |
-| `car_state_topic` | `/odometry_integration/car_state` | acceleration 입력 |
+| `car_state_topic` | `/localization/wheel_odom` | acceleration 입력 |
 | `wheel_speeds_topic` | `/vehicle/wheel_speeds` | steering 입력 |
 | `output_topic` | `/control/tmpc/vehicle_state` | MPC vehicle-state 출력 |
 | `publish_rate_hz` | `100.0` | timer 발행 주기 |
@@ -206,7 +206,7 @@ localization, acceleration, wheel-speeds 중 하나라도 아직 수신되지 �
 
    ```zsh
    ros2 topic hz /localization/ego_odom
-   ros2 topic hz /odometry_integration/car_state
+   ros2 topic hz /localization/wheel_odom
    ros2 topic hz /vehicle/wheel_speeds
    ```
 

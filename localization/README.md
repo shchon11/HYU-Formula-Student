@@ -1,258 +1,121 @@
-# EUFS Graph SLAM
+# 🗺 Localization
 
-`hyu_localization` is a ROS 2 Humble package that builds a 2D g2o graph from EUFS simulator car state and cone observations.
+**인지가 준 콘 관측과 차량 오도메트리로 트랙의 콘 지도(`cone_map`)와 내 위치(`ego_odom`)를 동시에 만듭니다.**
+랩 1에서 지도를 만들고(mapping), 출발점으로 돌아오면 지도를 얼려 그 위에서 위치만 푸는(localization) 2단계 생애주기가 핵심입니다.
 
-The node subscribes to:
+```mermaid
+flowchart LR
+    CONES["/perception/cones<br/>(base_footprint)"] --> GS
+    ODOM["/localization/wheel_odom<br/>또는 /localization/ins_odom"] --> GS
 
-- `/odometry_integration/car_state` (`hyu_msgs/msg/CarState`) for SE2 keyframe motion
-- `/perception/cones` (`hyu_msgs/msg/ConeArrayWithCovariance`) for local cone observations in `base_footprint`
+    subgraph BRIDGE["INS/SBG 브리지 (실차 체인)"]
+        SBG["🛰 /sbg/ekf_nav · ekf_euler"] --> BR["sbg_odometry_bridge"]
+        WS["⚙️ /vehicle/wheel_speeds"] --> BR
+        BR -->|"ins_odom (상대, 점프 없음)"| GS
+    end
 
-It publishes:
+    GS["graph_slam<br/>g2o 포즈그래프 + CSM 보정"]
+    GS ==>|"/localization/cone_map"| P1["planning"]
+    GS ==>|"/localization/ego_odom"| P1
+    GS ==>|"/localization/status"| P1
+    GS -->|"map → odom → base_footprint"| TF["TF"]
 
-- `/localization/cone_map` (`hyu_msgs/msg/ConeArrayWithCovariance`)
-- `/localization/ego_odom` (`nav_msgs/msg/Odometry`)
-- `/localization/debug/path` (`nav_msgs/msg/Path`)
-- `/localization/debug/markers` (`visualization_msgs/msg/MarkerArray`)
-- `status_topic`, default `~/status` (`std_msgs/msg/String`)
-- `map_converged_topic`, default `~/map_converged` (`std_msgs/msg/Bool`)
-
-When TF publishing is enabled, the node owns `map -> odom` and
-`odom -> base_footprint`. The simulator ground-truth TF publisher must stay
-disabled so `base_footprint` has one parent.
-
-## Planner-facing contract
-
-Graph SLAM owns the localization outputs consumed by the planning integration:
-
-- `/localization/cone_map` is a reliable transient-local
-  `hyu_msgs/msg/ConeArrayWithCovariance` map snapshot.
-- `/localization/ego_odom` is the live `nav_msgs/msg/Odometry` ego pose stream.
-- `/localization/status` remains Graph-SLAM-owned lifecycle state with values
-  `mapping`, `mapping_converged`, and `localization`.
-- `/localization/map_converged` remains a latched map convergence signal.
-
-The planning stack only allows global waypoint use when `/localization/status` is
-`localization`. Planner liveness is not inferred from the status topic; it comes
-from the selected global waypoint writer's reliable volatile
-`/planning/global_path_valid` heartbeat.
-
-Graph SLAM does not publish `/planning/global_waypoints` or
-`/planning/global_path_valid`. Those topics must have one writer in any launch:
-the SLAM `planner_node` or the CSV global planner, never both on the default
-topics.
-
-The phase-1 planner consumes the existing `ConeArrayWithCovariance` map. A
-planner-friendly `SlamConeMap.msg` with landmark IDs/versioning is deferred to a
-later compatible schema phase.
-
-## Build
-
-From the EUFS workspace root:
-
-```bash
-source /opt/ros/humble/setup.zsh
-colcon build --symlink-install --packages-up-to hyu_localization
-source install/setup.zsh
+    style GS fill:#1d4d33,stroke:#4fca7f,color:#e9fbef
 ```
 
-`--packages-up-to` builds workspace dependencies such as `hyu_msgs` before building `hyu_localization`.
+## Input / Output
 
-The package first tries `find_package(g2o CONFIG)`. If that is not available, it vendors a sibling g2o source tree at `../g2o` relative to `eufs_simulator`. For a different location, pass:
+| 방향 | 토픽 | 타입 | 역할 |
+|---|---|---|---|
+| in | `/perception/cones` | `ConeArrayWithCovariance` | 콘 관측 (공분산 = 가중치) |
+| in | `/localization/wheel_odom` (sim) / `ins_odom` (실차) | `CarState` | 키프레임 간 모션 |
+| in | `/initialpose` | `PoseWithCovarianceStamped` | RViz 수동 재국지화 |
+| **out** | **`/localization/cone_map`** | `ConeArrayWithCovariance` | **콘 지도** (map frame, latched) |
+| **out** | **`/localization/ego_odom`** | `Odometry` | **보정된 내 위치** (map → base_footprint) |
+| **out** | **`/localization/status`** | `String` | `mapping` → `mapping_converged` → `localization` |
 
-```bash
-colcon build --symlink-install --packages-up-to hyu_localization \
-  --cmake-args -DG2O_VENDOR_SOURCE_DIR=/path/to/g2o
-```
+`status`가 `localization`으로 바뀌는 순간이 전체 스택의 분기점입니다 — global planner가
+이때부터 레이스라인을 만들기 시작합니다. TF는 graph_slam이 `map→odom→base_footprint`
+전체를 소유합니다 (sim의 ground-truth TF는 꺼야 함).
 
-## Run
+## 어떻게 동작하나
 
-Start the simulator with simulated perception, then run:
+**콘 = 랜드마크.** 키프레임(0.5 m 또는 0.2 rad마다) 포즈와 콘 랜드마크를 정점으로,
+오도메트리와 관측을 간선으로 하는 2D 포즈그래프를 g2o(Levenberg)로 풉니다.
 
-```bash
-ros2 launch hyu_localization graph_slam.launch.py
-```
+**1. 의심 많은 frontend — 콘은 바로 지도에 넣지 않습니다.**
+새 관측이 기존 랜드마크와 매칭(χ² 게이트, 전역 greedy + 상호배제)에 실패하면 일단
+그래프 **바깥의 tentative track**으로 둡니다. 여러 번 재관측되어 수렴한 트랙만
+랜드마크로 승격하고, 그 시점에 과거 관측 이력을 원래 키프레임들에 소급 등록합니다.
+유령 콘 하나가 지도에 박히면 association이 연쇄로 무너지기 때문입니다.
 
-Useful services:
+**2. 보정의 주역은 CSM(Correlative Scan Matching)입니다.**
+최근 ~20 m의 콘 궤적을 하나의 서브맵으로 묶어 지도 격자 위에서 (x, y, θ) 전탐색 매칭:
 
-```bash
-ros2 service call /graph_slam/reset std_srvs/srv/Trigger "{}"
-ros2 service call /graph_slam/save_graph std_srvs/srv/Trigger "{}"   # raw g2o graph
-ros2 service call /graph_slam/save_map std_srvs/srv/Trigger "{}"     # cone map CSV
-```
+- **tracking 모드** (localization 중) — 좁은 창(2 m)으로 상시 보정, 드리프트를 association 게이트 아래로 유지
+- **loop/seam 모드** — 출발점 복귀 시 넓은 창(10 m)으로 랩 누적 드리프트를 한 번에 회수.
+  **오렌지 게이트 콘 ≥2개가 보일 때만** 발화하고, 응답 표면이 애매하면(앨리어싱 능선) 스스로 기각
 
-## Saving and loading cone maps
+**mapping 중에는 게이트를 통과하지 못한 보정이 그래프를 건드릴 수 없습니다** — 지도가
+만들어지는 중에 잘못된 보정이 들어가면 지도 자체가 휘기 때문입니다.
 
-`~/save_map` writes the current landmark map to
-`map_save_dir/map_<timestamp>.csv` using the same columns as `eufs_tracks`
-track CSVs (`tag,x,y,direction,x_variance,y_variance,xy_covariance`, plus a
-`car_start` origin row), so saved maps are interchangeable with track files.
-Launched via `graph_slam.launch.py`, `map_save_dir` defaults to the package's
-`map/` directory.
+**3. 랩 완주 판정은 이중 증명을 요구합니다.**
+출발점 근처 복귀(기하 조건) **그리고** 오렌지 게이트 seam CSM 등록 성공 — 둘 다
+있어야 지도를 얼립니다(일반 loop edge는 증명서로 인정 안 함). 얼린 뒤에는 랜드마크가
+전부 고정되고 위치 추정만 계속합니다. 고정 지도도 완전히 불변은 아니어서, 훨씬 엄격한
+기준(5회 연속 히트/미스)으로만 콘 추가·삭제를 허용합니다 (오렌지 게이트 콘은 절대 삭제 불가).
 
-Set `localization_mode:=true load_map_path:=<csv>` to localize against a saved
-map instead of building one. The loaded cones become **fixed** landmarks
-(`setFixed(true)`); mapping, deletion, and merging are disabled, and the
-optimizer moves only the pose to fit the fixed map — so drift is corrected
-against a known map. The loaded map is published once on the configured
-`map_topic` (latched) for preview; the default is the planner-facing
-`/localization/cone_map` topic.
+**4. 절대 위치 복구는 게이트 별자리로.**
+big-orange 출발 게이트 4개의 고유한 배치에서 드리프트와 무관하게 절대 SE2 포즈를
+복원합니다(gate anchor). 좌우·180° 모호성은 시야 내 전체 콘의 지도 정합 수로 해소합니다.
 
-```bash
-ros2 launch hyu_localization graph_slam.launch.py \
-  localization_mode:=true \
-  load_map_path:=<workspace>/hyu_localization/map/small_track_slam.csv
-```
+## INS/SBG 브리지 (실차 측위 체인)
 
-If localization is lost, use RViz's **2D Pose Estimate** tool (fixed frame
-`map`): it publishes `/initialpose`, and the node drops its pose trajectory,
-re-anchors at the clicked pose (keeping the fixed map), and re-localizes from
-there.
+`ins_pipeline.launch.py`가 SBG Ellipse-D → `sbg_odometry_bridge` → graph_slam 체인을 띄웁니다.
+브리지의 설계 원칙은 **"끊기보다 열화"** — GNSS 품질(solution mode 4=RTK … 2=AHRS)에 따라:
 
-## Trackdrive lifecycle (automatic mapping -> localization)
+| mode | 동작 |
+|---|---|
+| 4 (RTK) | 정밀 오도메트리 (σ=0.05) |
+| 3 (Float) | 계속 발행, σ=0.20으로 불신 표시 |
+| 2 (AHRS) | **dead-reckoning 폴백** — 휠속 × AHRS 헤딩으로 적분 지속 |
+| ≤1 | 발행 중단 → SLAM이 스냅샷으로 관성 주행 |
 
-With `auto_localization_after_lap` (default on) the node runs the full
-trackdrive lifecycle without operator input:
+출력은 두 갈래: `/localization/ins_odom`(점프 없는 상대 오도메트리 — SLAM 입력)과
+`/localization/gnss_odom`(절대 ENU 앵커 — HUD·진단용). GNSS 재획득 직후 3초는
+공분산 바닥을 깔아 "자신만만하지만 틀린" prior를 막습니다(refix holdoff).
 
-1. **Mapping**: lap 1 builds the map as usual. The lap origin is captured
-   `lap_origin_capture_distance` (15 m) into the drive so it sits on the
-   racing line rather than the spawn pose.
-2. **Lap completion**: once the map has converged (loop closures reconciled)
-   and the car returns within `lap_return_radius` / `lap_return_yaw` of the lap
-   origin, the node freezes every landmark, auto-saves the map CSV to
-   `map_save_dir`, and switches to localization.
-3. **Localization**: only the most recent `localization_window_poses` pose
-   vertices are kept (the oldest is fixed as the anchor), so the graph stays
-   bounded for arbitrarily many laps — full-batch optimization never outgrows
-   real time.
-
-The lifecycle is published (latched) on:
-
-- `status_topic`, default `~/status` (`std_msgs/String`): `mapping`,
-  `mapping_converged`, or `localization` — RViz HUD via
-  `/localization/debug/status_overlay`.
-- `map_converged_topic`, default `~/map_converged` (`std_msgs/Bool`):
-  planning can switch from local to global planning on this flag. It also
-  publishes true in localization mode after a fixed map has been loaded.
-
-The map and odometry output topics are launch parameters. For an older tool
-that still expects the legacy Graph SLAM names, start with:
+## 실행 · 서비스 · 맵
 
 ```bash
-ros2 launch hyu_localization graph_slam.launch.py \
-  map_topic:=/localization/map \
-  slam_odom_topic:=/graph_slam/odom
+ros2 launch hyu_localization graph_slam.launch.py     # 휠오돔 + SLAM (sim 기본)
+ros2 launch hyu_localization ins_pipeline.launch.py   # INS 체인 포함 (실차 경로)
+# race/pbring에는 이미 포함 — 중복 실행 금지 (TF 충돌)
 ```
-
-## Wheel-encoder odometry
-
-`ros2 run hyu_localization wheel_odometry` integrates rear wheel speeds (RPM,
-`/vehicle/wheel_speeds`) with an IMU yaw rate (`/imu/data`; bicycle-model
-steering fallback) into `/localization/wheel_odom` — a GNSS-independent
-odometry source for `car_state_topic`, keeping the GNSS prior as the only
-absolute channel. On the real car only the two input topics change.
-
-## GUI
-
-`graph_slam.launch.py` starts a control GUI (`gui:=true`, default) alongside
-the node: switch between mapping and localization, pick a saved map from the
-map directory with a live cone preview, and save the current map. It drives the
-node's `~/save_map`, `~/load_map`, and `~/start_mapping` services.
-
-Landmark deletion is handled separately from reset. When `delete_stale_landmarks`
-is enabled, landmarks that should be visible but are missed for
-`landmark_missed_observations_to_delete` deletion updates are removed from the
-g2o graph with their connected observation edges. The default visibility gate
-matches the simulator perception window: 180 degree FOV, 30 m range, and
-20 m absolute x/y bounds in `base_footprint`. Landmarks that accumulated at
-least `landmark_confirm_observations` keyframe observations are confirmed and
-get a 10x miss budget: occlusions or perception dropouts cannot erase their
-loop-closure constraints, while drift-era ghost duplicates that are never
-observed again still age out.
-
-Existing landmark positions are also updated between graph optimizations. When
-`update_existing_landmarks` is enabled, each associated cone observation is
-transformed through the latest live pose estimate and fused into the landmark
-vertex with a covariance-aware update. Keyframe observations still add g2o
-edges; duplicate in-between observations only update the vertex estimate and
-published covariance.
-
-## Estimation pipeline notes
-
-- The node runs on a two-thread `MultiThreadedExecutor` with two mutually
-  exclusive callback groups: car state in one, cones + a 250 ms optimization
-  timer in the other. The state callback only *tries* to take the graph lock;
-  when optimization holds it, live odometry is dead-reckoned from the last
-  keyframe snapshot instead of blocking, so `/localization/ego_odom` and TF keep
-  the input rate.
-- The optimizer uses g2o's sparse `LinearSolverEigen`, so the whole session
-  (`max_optimization_poses`) stays inside periodic Levenberg-Marquardt runs
-  every `optimize_every_n_keyframes` keyframes.
-- Cone messages are re-anchored in time: raw odometry is interpolated at the
-  cone stamp and each measurement is re-expressed in the keyframe base frame
-  before an `EdgeSE2PointXY` is added. Without this the measurement can be off
-  by up to `keyframe_distance` at speed.
-- Data association is a Mahalanobis nearest-neighbour gate
-  (`association_gate_chi2`) over landmark + observation covariance. The gate
-  is inflated by `association_inflation_per_keyframe` for every keyframe a
-  landmark went unseen (capped at `association_max_inflation`), which is what
-  lets lap-closure re-associations succeed despite accumulated drift. Nearly
-  tied candidates (`association_ambiguity_ratio`) are skipped instead of
-  guessed.
-- Re-associating a landmark unseen for `loop_gap_keyframes` keyframes is
-  treated as a loop closure and forces an immediate graph optimization.
-- After each optimization, landmarks of compatible colours closer than
-  `landmark_merge_distance` are merged; the surviving vertex inherits the
-  other's observation edges. Big orange cones are exempt: start-line pairs
-  legitimately stand ~0.4 m apart.
-- Landmark colours are decided by majority vote over associated observations,
-  so a single mislabelled detection cannot lock in a wrong colour.
-
-Known limitations:
-
-- Landmarks whose observations mostly fall outside the simulated camera FOV
-  (120 deg, 15 m) keep colour `unknown` — the vote never receives a coloured
-  sample. This is a perception characteristic, not a SLAM association error.
-- When the state callback falls back to snapshot dead-reckoning (optimization
-  in progress), the published pose lags any correction from that very
-  optimization by one cycle; the error is bounded by one keyframe of drift.
-- Loop closure relies on gated nearest-neighbour re-association. It recovers
-  multi-metre drift (validated to ~5 m RMSE input error on small_track), but
-  has no place-recognition fallback for drift far beyond the inflated gate.
-- The estimator is 2D (x, y, yaw); slopes and banking are not modelled.
-- Big orange start-line pairs (~0.4 m apart) are closer than the association
-  gate, so each pair typically collapses into a single landmark at creation.
-  Separating them needs joint per-frame assignment (e.g. Hungarian), which is
-  not implemented.
-
-Parameters live in `config/graph_slam.yaml`.
-
-## Experiment harness
-
-`scripts/` contains a self-contained evaluation loop used to tune the node:
-
-- `run_experiment.sh OUT.json [DURATION] [DRIFT] [-p param:=value ...]` —
-  headless Gazebo (small_track) + graph SLAM + pure-pursuit driver +
-  evaluator; tears everything down afterwards and writes a JSON report.
-- `drive_track.py` — sets the TRACK_DRIVE mission and follows the track
-  centreline (from the track CSV) with ground truth, so driving quality does
-  not depend on SLAM output.
-- `evaluate_slam.py` — reports trajectory ATE for SLAM vs the raw odometry
-  input, and map quality (matches, RMSE, duplicates, false positives, colour
-  accuracy) against the track CSV. It listens to `/localization/ego_odom` and
-  `/localization/cone_map` by default; use `--slam-odom /graph_slam/odom` and
-  `--map-topic /localization/map` for legacy runs.
-
-The drifting odometry the node consumes is produced by the simulator itself:
-the race-car plugin publishes ground truth on `/ground_truth/state` and a
-drift-integrated pose on `/odometry_integration/car_state` (the node's default
-`car_state_topic`). Drift is enabled by `driftOdometry` in
-`eufs_plugins.gazebo.xacro` and tuned by `driftVelocityBias`,
-`driftYawRateBias`, `driftVelocityNoise`, and `driftYawRateNoise`. The legacy
-standalone `drift_odom.py` node is superseded by this and no longer used by the
-harness.
-
-Example:
 
 ```bash
-./hyu_localization/scripts/run_experiment.sh /tmp/slam_report.json 120 1
+ros2 service call /graph_slam/save_map      std_srvs/srv/Trigger   # 지도 → map/map_<날짜>.csv
+ros2 service call /graph_slam/load_map      std_srvs/srv/Trigger   # 저장맵을 고정 지도로 로드
+ros2 service call /graph_slam/start_mapping std_srvs/srv/Trigger   # 매핑 모드로 리셋
+ros2 service call /graph_slam/reset         std_srvs/srv/Trigger
 ```
+
+저장맵으로 랩 1을 생략하려면 launch 인자 `localization_mode:=true load_map_path:=<csv>`.
+
+## 튜닝 포인트
+
+전부 [config/graph_slam.yaml](config/graph_slam.yaml) — 주석에 근거 있습니다.
+
+| 파라미터 | 기본 | 뜻 |
+|---|---|---|
+| `keyframe_distance` | 0.5 m | 그래프 밀도 (촘촘할수록 정확·무거움) |
+| `association_max_distance` / `_gate_chi2` | 1.5 / 5.991 | 관측↔랜드마크 매칭 게이트 |
+| `csm_track_window_m` / `csm_loop_window_m` | 2.0 / 10.0 | CSM 탐색 창 — loop 창은 랩 드리프트를 덮어야 함 |
+| `lap_returns_to_freeze` | 1 | 몇 번째 복귀에 지도를 얼릴지 |
+| `odom_sigma_mode3/2` (브리지) | 0.20 | 열화 모드 오도메트리 불신 정도 — **0.5로 올리면 지도가 휨** |
+
+## 평가
+
+검증은 반드시 **real perception**으로 (`race perception` 또는 풀스택) — GT 콘 입력은
+association 회귀를 숨깁니다. ATE·지도 품질 하네스는 `scripts/evaluate_slam.py`,
+라이브 모니터는 `ate_monitor`(HUD `GNSS` 줄)입니다.

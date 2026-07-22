@@ -60,8 +60,9 @@ ros2 launch hyu_tmpc hyu_tmpc.launch.xml
 
 [`hyu_tmpc_output_bridge`](src/hyu_tmpc_output_bridge/README.md)는 `/output`의
 steering과 longitudinal force를 EUFS용 `AckermannDriveStamped`로 변환합니다.
-기본 출력은 실제 `/vehicle/cmd`가 아닌 `/control/tmpc/cmd_shadow`이며, 현재 1300 kg MPC 모델과
-300 kg EUFS 차량 사이의 질량 변환 정책은 패키지 README에 정리되어 있습니다.
+단독 실행 기본 출력은 `/control/tmpc/cmd_shadow`(섀도 모드)이고, hybrid bringup이
+`/control/tmpc/cmd`로 remap합니다. 힘→가속 변환 질량은 MPC 코드젠과 동일한 225 kg
+(`conversion_mass_kg`)이며, 코드젠 차량 파라미터를 바꾸면 함께 맞춰야 합니다.
 
 차량 상태 토픽 이름은 현재 래퍼의 기본값을 의도적으로 따릅니다. 사용하는 스택의
 토픽이 `/control/tmpc/vehicle_state`라면 `hyu_tmpc/vehicle_state_topic`

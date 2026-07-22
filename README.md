@@ -14,26 +14,60 @@
 
 ---
 
-## ⚡ Quick Start
+## ⚡ Quick Start — 3단계 실행
+
+실행은 **환경 → 스택 → 미션** 세 단계입니다. 실차 절차와 sim 절차가 1단계만 다르고
+2·3단계는 동일합니다. **3단계 전에는 차가 물리적으로 못 움직입니다** —
+`mission`만이 `/vehicle/set_mission`을 호출해 AS_DRIVING으로 만듭니다.
 
 ```bash
-race            # 이거 하나. YOLO+LiDAR perception + SLAM + planning 전체가 뜨고 차가 스스로 달림
-race sim        # Gazebo simulated /perception/cones로만 돌릴 때
-race perception # 인지 평가 모드 — planner 없이 teleop 주행 + provenance별 채점
-race stop       # 전부 종료   |   race attach — 재접속
+# ① 환경 — 하나만 선택
+race                      # sim: small_track + YOLO+LiDAR perception (기본)
+race small_track sim      # sim: Gazebo ground-truth 콘 (YOLO 없음 — 가볍고 빠름)
+race skidpad real         # 트랙만 여기서 고름 (eufs_tracks/csv/ 이름). 미션은 ③에서
+fsk                       # 실차: 센서 드라이버 + perception (RViz는 'fsk rviz'로 opt-in)
+
+# ② 스택 — INS + SLAM + planning + control, STANDBY로 대기
+stack
+
+# ③ 미션 — 이 순간부터 주행
+mission trackdrive 10     # 랩 1 매핑 → global 레이스라인, 10랩 후 정지
+mission autocross         # 1랩 (랩 수 지정 가능), 목표 랩에서 자동 정지
+mission skidpad 2         # 진입 → 우원×2 → 좌원×2 → 탈출 → 정지
+mission acceleration      # 직선 코리도 스프린트, 콘 끝나면 제동
+mission inspection        # 제22조 검차 (잭 스탠드 위 구동/조향 시험)
 ```
 
-tmux 창 하나에 5개 pane이 뜹니다: ①sim+perception ②planning(SLAM+global/local+상태기계+selector+controller) ③미션 자동 ARM ④GNSS HUD(`ins_pipeline slam:=false`) ⑤라이브 모니터(path_source/state/lap/CTE). **teleop 불필요** — 컨트롤러가 유일한 `/vehicle/cmd` writer로 직접 주행합니다.
-
-> 처음이라면 [패치 Gazebo 빌드](#15-패치-gazebo-빌드--gpu-lidar)부터 — LiDAR가 기본 `gpu_ray`라서, stock gazebo로 뜨면 하늘이 점군에 찍힙니다.
-
-<details>
-<summary><b>모듈별로 따로 띄우려면</b></summary>
+같은 tmux 세션에 pane이 쌓입니다: ①sim(또는 실차 센서)+perception ②INS ③planning(STANDBY) ④모니터(path_source/state/lap/CTE/DSSI).
+미션을 바꾸면 `mission`이 planning pane만 알맞은 프로필로 재기동한 뒤 ARM합니다.
 
 ```bash
-simfull track:=small_track    # ① sim + Gazebo /perception/cones (+RViz, YOLO 없음)
-pbring                        # ② planning 전체 (자체 graph_slam 포함 — slam 계열과 같이 켜지 말 것)
-mission                       # ③ 미션 ARM → 5초 뒤 자율주행 시작
+mission status   # state/lap/AS/DSSI 한 번에 확인
+mission stop     # EBS — 긴급 제동
+mission reset    # standby 복귀: 차 원위치 + INS 재시작 + planning 재기동
+race attach      # 세션 재접속        race stop — 전부 종료 (모든 단계)
+race perception  # (독립 모드) 인지 평가 — planner 없이 teleop 주행 + provenance별 채점
+```
+
+**백그라운드 실행**: ①에 `bg`를 붙이면(`race small_track sim bg norviz` / `fsk bg`) attach 없이
+세션만 만듭니다 — `stack`/`mission`은 원래 attach하지 않으므로 이후 전 과정을 터미널에서 그대로
+진행하고, 필요할 때만 `race attach`(빠져나오기 Ctrl-b d). TTY 없는 환경(nohup/CI)은 자동 detach.
+단, 완전 헤드리스에서 real perception은 GPU LiDAR 때문에 GPU X 서버(DISPLAY)가 필요합니다 —
+없으면 콘 0개로 조용히 멈춥니다(`sim` 모드는 무관).
+
+> 처음이라면 [패치 Gazebo 빌드](#15-패치-gazebo-빌드--gpu-lidar)부터 — LiDAR가 기본 `gpu_ray`라서, stock gazebo로 뜨면 하늘이 점군에 찍힙니다.
+>
+> ⚠️ **실차 1단계(`fsk`)의 센서 드라이버 브링업은 아직 스텁**입니다 — LiDAR/ZED/SBG
+> 드라이버가 in-tree에 없어서 pane ①이 필요한 목록만 출력하고 멈춥니다(의도된 fail-loud).
+> 드라이버가 준비되면 2·3단계는 sim과 완전히 동일하게 동작합니다.
+
+<details>
+<summary><b>tmux 없이 모듈별로 따로 띄우려면</b></summary>
+
+```bash
+simfull track:=small_track    # sim + Gazebo /perception/cones (+RViz, YOLO 없음)
+pbring                        # planning 전체 (자체 graph_slam 포함 — slam 계열과 같이 켜지 말 것)
+ros2 service call /vehicle/set_mission hyu_msgs/srv/SetCanState '{ami_state: 14}'   # 수동 ARM
 ```
 계획만 보고 싶으면 `pbring enable_controller:=false`, 수동 주행은 그 상태에서 `teleop`.
 </details>
@@ -85,7 +119,7 @@ flowchart LR
     CAM -->|image| YOLO
     LID -->|points| FUSE
     FUSE -->|"/perception/cones"| GS
-    SBG -->|"/localization/gnss_odom · RTK prior"| GS
+    SBG -->|"SBG 브리지 → ins_odom (실차 모션 입력)"| GS
     ENC -->|car_state| GS
 
     GS -->|"cone_map + ego_odom"| LP
@@ -110,9 +144,15 @@ flowchart LR
     class PP,CAR ctrl
 ```
 
-- **PERCEPTION**은 카메라·LiDAR만 소비해 `/perception/cones`(색·위치·공분산) 하나로 요약합니다. 콘마다 provenance(`cluster_camera`/`cluster_only`/`sparse`/`monocular_zncc`)가 붙고, 운용 범위는 **robust-inside-10 m** — 비전 계열(sparse·ZNCC)은 12 m에서 캡(10 m 존 진입 전 2 m 온램프), LiDAR 클러스터는 캡 없음. LiDAR는 콘 앞면만 보므로 전방 range bias(+0.046 m)를 보정합니다. 수치와 근거는 전부 `hyu_perception/config/perception.yaml` 주석에 있습니다. sim 모드에선 Gazebo 플러그인이 이 토픽을 직접 냅니다.
-- **SLAM**은 `/perception/cones` + 휠 odometry + (RTK일 때만) GNSS prior로 콘 랜드마크 포즈그래프를 풀어 **cone_map과 ego_odom**을 만들고, 루프 클로저가 확정되면 localization으로 전환합니다.
-- **PLANNING**에서 hyu_state_machine이 랩·상태 기반으로 `path_source`를 정하고, selector가 local/global 중 하나를 `/planning/path`로 확정 — **컨트롤러는 항상 이 토픽 하나만** 봅니다. skidpad 미션에선 director가 cone_map을 phase별로 걸러 local planner에 공급합니다.
+단계마다 **토픽 하나가 계약의 전부**입니다 — 상류가 어떻게 만들었는지 하류는 모릅니다.
+각 파이프라인의 내부 동작·튜닝은 해당 README에 있습니다:
+
+| 파이프라인 | 계약 (출력) | 한 줄 요약 |
+|---|---|---|
+| [👁 perception/](perception/README.md) | `/perception/cones` | LiDAR가 위치, 카메라가 색 — 콘마다 provenance·공분산. 운용 범위 robust-inside-10 m |
+| [🗺 localization/](localization/README.md) | `cone_map` + `ego_odom` + `status` | 콘 랜드마크 포즈그래프(g2o+CSM). 랩 1 매핑 → 지도 동결 → localization |
+| [🧠 planning/](planning/README.md) | `/planning/path` | local/global/미션 프로필을 selector가 경로 하나로 확정 — writer는 selector뿐 |
+| [🎮 control/](control/README.md) | `/vehicle/cmd` | MAP pure pursuit (+선택 TMPC hybrid) — writer는 항상 정확히 1개 |
 
 **2단계 주행 시나리오** — 이게 설계의 핵심입니다:
 
@@ -273,13 +313,16 @@ source ~/fsk/src/scripts/fsk-shellrc
   `__GLX_VENDOR_LIBRARY_NAME=nvidia`. iGPU+dGPU 랩탑에서 gzserver의 gpu_ray와 rviz가
   기본으로 iGPU(Mesa)를 잡아 dGPU가 놀기 때문 — 이걸로 RTX에 태웁니다.
 
-| 명령 | 역할 |
-|---|---|
-| `race [track] [sim\|real] [args...]` | 자율주행 전체 스택 (tmux). `race stop` / `race attach` |
-| `race perception [track]` | 인지 평가 모드 — planner 없이 sim+perception+SLAM+teleop, provenance별 채점 |
-| `fsb` | 빌드 + 소싱 · `fsk` — 워크스페이스로 cd |
-| `simfull` / `pbring` / `teleop` | sim+perception / planning 전체 / 키보드 주행 |
-| `mission [ami]` / `resetcar` / `slamreset` / `rv` | 미션 ARM(기본 14) / 차 원위치 / 매핑 재시작 / RViz |
+| 명령 | 단계 | 역할 |
+|---|---|---|
+| `race [track] [sim\|real] [bg] [norviz]` | ① | sim + perception (tmux 세션 시작). `race stop`(전체 종료) / `race attach` |
+| `fsk [bg] [rviz]` | ① | 실차 센서 + perception — sim 대신 (드라이버 브링업은 아직 스텁) |
+| `stack [args]` | ② | INS + SLAM + planning + control, STANDBY |
+| `mission <이름> [laps]` | ③ | 미션 ARM — trackdrive/autocross/skidpad/acceleration/inspection · `stop`(EBS)/`reset`/`status` |
+| `race perception [track]` | — | 인지 평가 모드 — planner 없이 sim+perception+SLAM+teleop, provenance별 채점 |
+| `fsb` / `fskcd` | — | 빌드 + 소싱 / 워크스페이스로 cd |
+| `simfull` / `pbring` / `teleop` | — | 모듈 단독: sim+perception / planning 전체 / 키보드 주행 |
+| `resetcar` / `slamreset` / `rv` | — | 차 원위치 / 매핑 재시작 / RViz |
 
 워크스페이스가 `~/fsk`가 아니면 그 경로의 `src/scripts/fsk-shellrc`를 소싱하면 됩니다 —
 나머지는 알아서 맞춰집니다. 적용: 새 터미널 또는 `source ~/.bashrc`.
@@ -291,30 +334,34 @@ source ~/fsk/src/scripts/fsk-shellrc
 
 ## ▶️ Running — 모드별 가이드
 
-### 🏁 Trackdrive (기본 미션)
+### 🏁 Trackdrive / Autocross
 랩 1은 local 경로로 탐험·매핑, 랩 완주 후 global 레이스라인으로 핸드오프.
 ```bash
-race                # small_track, CUDA YOLO+LiDAR perception (기본)
-race sim            # 같은 트랙, Gazebo simulated /perception/cones (YOLO 없음 — 가볍고 빠름)
-race peanut         # 다른 트랙 (eufs_tracks/csv/ 의 이름)
+race                     # ① small_track, CUDA YOLO+LiDAR perception (기본)
+race peanut sim          #   다른 트랙(eufs_tracks/csv/ 이름) + Gazebo GT 콘 (YOLO 없음 — 가볍고 빠름)
 race peanut sim gazebo_gui:=true    # 트랙/모드 뒤 인자는 simulation.launch.py로 전달
+stack                    # ② standby
+mission trackdrive 10    # ③ 10랩 주행 후 정지 (기본 10)
+mission autocross        #   또는 autocross: 1랩(지정 가능), 목표 랩에서 어떤 상태에서든 정지
 ```
 모니터 pane에서 `path_source: LOCAL → GLOBAL_FULL` 전환과 CTE를 실시간으로 봅니다.
+같은 세션에서 다음 런은 `mission reset` 후 다시 `mission <이름>` — 차 원위치·INS 재시작·planning
+재기동까지 한 번에 처리됩니다.
 
 ### 🛞 Skidpad (8자 미션)
-트랙 이름이 `skidpad*`면 **자동으로 skidpad 프로필**로 뜹니다: global planner 없이
-local planner만, skidpad_director가 미션 단계(진입→우측 원×N→좌측 원×N→탈출→정지)별로
-콘 피드를 게이트, AMI_SKIDPAD(12)로 ARM.
+`mission skidpad`가 **skidpad 프로필**로 planning을 재기동해 ARM합니다: global planner
+없이 local planner만, skidpad_director가 미션 단계(진입→우측 원×N→좌측 원×N→탈출→정지)별로
+콘 피드를 게이트.
 ```bash
-race skidpad_kase2026 real   # 넓은 버전 (KASE 2026)
-race skidpad real            # 좁은 표준 skidpad
-race skidpad sim             # simulated perception으로도 동일하게 동작
+race skidpad_kase2026        # ① 넓은 버전 (KASE 2026). 좁은 표준은 'race skidpad'
+stack                        # ②
+mission skidpad 2            # ③ 원별 바퀴 수 (우×2 → 좌×2)
 ```
-자주 만지는 튜닝 (전부 launch 인자/파라미터 — 코드 수정 불필요):
+자주 만지는 튜닝 (전부 명령/파라미터 — 코드 수정 불필요):
 
 | 항목 | 위치 | 기본값 |
 |---|---|---|
-| 원별 바퀴 수 | `pbring skidpad:=true skidpad_right_laps:=N skidpad_left_laps:=N` | 2 / 2 |
+| 원별 바퀴 수 | `mission skidpad <laps>` | 2 / 2 |
 | 콘 여유 (바깥 바이어스) | skidpad_director 파라미터 `circle_outward_bias_m` | 0.5 m |
 | 주행 속도 | `planning/hyu_local_planner/config/hyu_local_planner_skidpad.yaml` | 4.0 m/s |
 | 컨트롤러 (lookahead·상한) | `hyu_pure_pursuit/config/hyu_pure_pursuit_skidpad.yaml` | 3.0 m / 4.0 m/s |
@@ -322,13 +369,15 @@ race skidpad sim             # simulated perception으로도 동일하게 동작
 진행 단계는 `/planning/skidpad/phase`로 확인 (모니터 pane에 표시됨).
 
 ### 🚀 Acceleration (직선 가속 미션)
-`acceleration` 트랙(또는 `accel` 약칭)이면 **자동으로 가속 프로필**로 뜹니다: global
-planner 없이 local planner만 3 m 직선 코리도를 따라 top-speed로 쭉 가속, AMI_ACCELERATION(11)로
-ARM. **별도 정지 로직 없음** — 피니시를 지나 코리도 콘이 끝나면 local 경로가 무효가 되고,
-컨트롤러가 무효 경로에 대해 `brake_acceleration_mps2`로 자동 제동해 braking zone 안에서 멈춥니다.
+`mission acceleration`이 **가속 프로필**로 planning을 재기동해 ARM합니다: global planner
+없이 local planner만 3 m 직선 코리도를 따라 top-speed로 쭉 가속. **별도 정지 로직 없음** —
+피니시를 지나 코리도 콘이 끝나면 local 경로가 무효가 되고, 컨트롤러가 무효 경로에 대해
+`brake_acceleration_mps2`로 자동 제동해 braking zone 안에서 멈춥니다. dlc_track 같은
+열린 코리도 트랙도 같은 프로필로 달립니다.
 ```bash
-race accel           # 'acceleration' 트랙, CUDA YOLO+LiDAR perception (기본)
-race acceleration sim   # 같은 미션, Gazebo simulated /perception/cones
+race accel               # ① 'acceleration' 트랙 (accel 약칭 허용)
+stack                    # ②
+mission acceleration     # ③ 콘 끝나면 제동, 정지 확인 후 Finished 보고
 ```
 **제동 예산 (감속 성능 3 m/s² 가정 — 바뀌면 아래 두 감속값을 함께 수정):** 코리도 콘은 map
 x=+20에서 끝나고 경로는 그 1 m쯤 뒤에서 무효화되므로, 하드 브레이크는 top-speed V로 x≈21에서
@@ -401,6 +450,11 @@ race small_track sim road_noise:=false                 # 노면 진동 노이즈
 > σ≈0.69°인데 하중이동 pitch는 0.2° 수준이라 **노이즈가 신호를 3배로 덮습니다.**
 
 ### 자주 쓰는 변형
+
+3단계 플로우에서는 planning launch 인자를 `stack`에 그대로 주면 됩니다
+(예: `stack controller_max_speed_mps:=8.0`) — 미션 전환으로 planning이 재기동돼도
+자동으로 다시 적용됩니다. 아래는 모듈 단독(`pbring`) 기준 예시:
+
 ```bash
 pbring enable_controller:=false      # 주행 없이 계획만 (수동 개입: teleop)
 pbring local_source_mode:=live_cones # local 경로 live perception 진단 override
@@ -424,9 +478,9 @@ ros2 topic echo --once /vehicle/as_state_str
 ros2 launch hyu_localization ins_pipeline.launch.py
 ```
 
-`race`는 GNSS HUD만 채우도록 `ins_pipeline.launch.py slam:=false`를
-자동으로 같이 띄웁니다. `pbring`을 수동으로 켠 상태에서 GNSS HUD만 보고
-싶으면 같은 방식으로 graph_slam 중복 없이 실행하세요:
+`stack`(2단계)은 INS pane에서 `ins_pipeline.launch.py slam:=false`를 이미 띄웁니다 —
+graph_slam은 planning pane 쪽이 소유하므로 중복이 없습니다. `pbring`을 수동으로 켠
+상태에서 GNSS HUD만 보고 싶으면 같은 방식으로 실행하세요:
 
 ```bash
 ros2 launch hyu_localization ins_pipeline.launch.py slam:=false
@@ -481,28 +535,21 @@ ros2 service call /graph_slam/save_map       std_srvs/srv/Trigger               
 
 ---
 
-## 🧩 Packages
+## 🧩 저장소 지도
 
-```
-eufs_sim/                 시뮬레이터 (Gazebo, 차량 URDF, 센서, 플러그인, 런처)
-hyu_msgs/                EUFS 메시지/서비스
-hyu_localization/          graph SLAM + INS/SBG 브리지 + CTE 모니터
-hyu_perception/ YOLO26n-pose + LiDAR 융합 → /perception/cones (provenance별)
-hyu_teleop/              키보드 주행
-hyu_rviz_presets/         RViz 원클릭 디스플레이 그룹
-hyu_pure_pursuit/  경로 추종 제어 → /vehicle/cmd (planning과 분리된 control 계층)
-sbg_ros2_driver/          SBG INS/GNSS ROS 드라이버 (vendored v3.3.2 — apt 버전은 overlay에 가려짐)
-scripts/                  race.sh (자율 전체 스택 tmux 런처) + fsk-shellrc
-tools/gazebo-patches/     GPU LiDAR용 패치 Gazebo 11.10.2 빌드 킷 (SkyX 돔 제거 · 해상도 노브 → ~/opt/gazebo11-fsk)
-planning/
-  ├─ hyu_planning_bringup/    ★ planning 전체 조립 launch (아래 전부 + graph_slam + controller)
-  ├─ hyu_local_planner/       라이브 콘 → 즉석 로컬 경로 (랩 1)
-  ├─ hyu_global_planner/      SLAM 콘맵 → 전역 레이스라인
-  ├─ hyu_frenet_conversion/   전역경로 기준 Frenet (s,d) — CTE의 원천
-  ├─ hyu_state_machine/       랩 카운트 · local↔global 전환 · 스톱존
-  ├─ hyu_path_selector/       local/global 중 컨트롤러가 따를 경로 확정
-  └─ trajectory_generator/ 오프라인 raceline (CSV)
-```
+파이프라인 디렉토리 4개는 각자 README가 입구입니다 — 다이어그램·I/O 계약·동작 원리·튜닝 포인트 순서로 정리되어 있습니다.
+
+| 디렉토리 | 내용 |
+|---|---|
+| [perception/](perception/README.md) | YOLO26n-pose + LiDAR 융합 → `/perception/cones` |
+| [localization/](localization/README.md) | graph SLAM (g2o+CSM) + INS/SBG 브리지 + 맵 저장/로드 |
+| [planning/](planning/README.md) | bringup(조립 launch) · local/global planner · state machine · selector · frenet |
+| [control/](control/README.md) | MAP pure pursuit · TMPC hybrid · cmd selector · 헤드리스 튜닝 하네스 |
+| `common/` | `hyu_msgs` (메시지/서비스) · `hyu_rviz_presets` (RViz 원클릭 그룹) |
+| `sim/` | `eufs_sim` (Gazebo·차량·센서·플러그인) · `hyu_teleop` (키보드 주행) |
+| `sbg_ros2_driver/` | SBG INS/GNSS 드라이버 (vendored v3.3.2 — apt 버전은 overlay에 가려짐) |
+| `scripts/` | `race.sh` (전체 스택 tmux 런처) · `fsk-shellrc` (환경/alias) |
+| [tools/gazebo-patches/](tools/gazebo-patches/README.md) | GPU LiDAR용 패치 Gazebo 11.10.2 빌드 킷 (→ `~/opt/gazebo11-fsk`) |
 
 ---
 
@@ -558,7 +605,7 @@ DDS 디스커버리 실패입니다. 이 stack은 `ROS_LOCALHOST_ONLY=1`(loopbac
 <details>
 <summary><b>차가 안 움직임</b></summary>
 
-미션 미설정이 대부분. `race`는 자동 ARM하지만 수동 실행이면 `mission` → `/vehicle/as_state_str`가 `AS:DRIVING`인지 확인. `/reset_world`는 차를 못 되돌리니 `resetcar`.
+**3단계를 안 밟은 게 대부분** — 차는 `mission <이름>`으로 ARM되기 전엔 설계상 못 움직입니다. `mission status`로 AS 상태 확인 (`AS:DRIVING`이어야 주행). 미션이 꼬였으면 `mission reset`. `/reset_world`는 차를 못 되돌리니 `resetcar`(또는 `mission reset`).
 </details>
 
 <details>
@@ -610,7 +657,7 @@ GNSS HUD publisher만 필요하면 `ins_pipeline.launch.py slam:=false`로 실�
 <details>
 <summary><b>빌드/토픽이 안 보임</b></summary>
 
-워크스페이스 미소싱. 새 터미널을 열거나 `fsk && source install/setup.zsh`. 빌드는 `fsb`.
+워크스페이스 미소싱. 새 터미널을 열거나 `fskcd && source install/setup.zsh`. 빌드는 `fsb`.
 </details>
 
 ---
