@@ -219,6 +219,10 @@ GraphSlamNode::GraphSlamNode()
     "csm_apply_cooldown_m", csm_apply_cooldown_m_);
   csm_loop_min_orange_response_ = declare_parameter<double>(
     "csm_loop_min_orange_response", csm_loop_min_orange_response_);
+  csm_loop_min_rail_response_ = declare_parameter<double>(
+    "csm_loop_min_rail_response", csm_loop_min_rail_response_);
+  submap_dedup_orange_m_ = declare_parameter<double>(
+    "submap_dedup_orange_m", submap_dedup_orange_m_);
   csm_params_.orange_weight = declare_parameter<double>(
     "csm_orange_weight", csm_params_.orange_weight);
   csm_orange_max_obs_sigma_ = declare_parameter<double>(
@@ -231,6 +235,17 @@ GraphSlamNode::GraphSlamNode()
     "submap_dedup_radius_m", submap_dedup_radius_m_);
   submap_min_match_points_ = declare_parameter<int>(
     "submap_min_match_points", submap_min_match_points_);
+  {
+    // The declared values must actually reach the submap (it was default-
+    // constructed before this block existed).
+    LocalSubmapParams submap_params;
+    submap_params.span_m = submap_span_m_;
+    submap_params.max_frames = static_cast<std::size_t>(
+      std::max(1, submap_max_frames_));
+    submap_params.dedup_radius_m = submap_dedup_radius_m_;
+    submap_params.dedup_radius_orange_m = submap_dedup_orange_m_;
+    submap_ = LocalConeSubmap(submap_params);
+  }
   landmark_delete_enable_ = declare_parameter<bool>(
     "landmark_delete_enable", landmark_delete_enable_);
   landmark_delete_misses_ = std::max(
@@ -1040,6 +1055,11 @@ bool GraphSlamNode::maybeCsmRegister(
   // re-association sets it mid-lap-1, long before any real seam.
   const double travel_since_origin =
     traveled_distance_ - lap_origin_capture_traveled_m_;
+  // Orange >= 2: a gate may be one cone per side, so demanding more would
+  // starve such tracks of any seam. The response floor (0.8) sorts the
+  // paired-gate cases (full overlay ~0.9 beats pair-interleave ~0.5); the
+  // two-cone left/right tie surfaces as second_peak ~= best, both go to
+  // stage 2, and the corridors + rail floors decide.
   if (!localization_mode_ && orange_query_points >= 2 &&
     lap_origin_captured_ && travel_since_origin >= lap_return_min_travel_m_ &&
     csm_loop_applied_ < 3U && loop_gap_distance_ > 0.0)
@@ -1100,6 +1120,9 @@ bool GraphSlamNode::maybeCsmRegister(
     CorrelationGrid::Params gate_params = csm_params_;
     gate_params.min_query_points =
       std::min<int>(3, static_cast<int>(orange_query.size()));
+    // Gate stage scores CONJUNCTIVELY: every observed orange must fit or
+    // the hypothesis earns ~nothing (see correlation_grid.hpp).
+    gate_params.conjunctive = true;
     const CorrelationGrid gate_grid(
       targets,
       reference_estimate.translation().x(),
@@ -1131,30 +1154,39 @@ bool GraphSlamNode::maybeCsmRegister(
     if (gate_match.second_peak >= csm_loop_min_orange_response_) {
       hypotheses.push_back(gate_match.second_pose);
     }
+    // Corridors are a TIE-BREAKER, never a veto: the gate locked
+    // conjunctively, so the seam WILL apply -- on a twisted ring the
+    // corridor response is low by necessity and gating on it killed
+    // every certified seam (run2: gate 0.99/0.95, zero seams, ghost 89%).
+    // Pick whichever gate hypothesis the corridors prefer; if refinement
+    // wanders off the gate or fails outright, apply the raw gate pose.
     double best_response = -1.0;
+    bool have_refined = false;
+    GateSe2 chosen = gate_match.pose;
     for (const GateSe2 & hypothesis : hypotheses) {
       const CsmMatch refined = grid.match(
         match_points.points, hypothesis, 1.0, 0.09);
       if (!refined.valid || refined.response <= best_response) {
         continue;
       }
-      // The gate must still fit at the refined pose (corridors polish,
-      // never drag off the gate).
       if (gate_grid.layerResponseAt(
           orange_query, refined.pose, 2) < csm_loop_min_orange_response_)
       {
-        continue;
+        continue;  // refinement dragged off the gate: keep the gate pose
       }
       best_response = refined.response;
+      chosen = refined.pose;
+      have_refined = true;
       match = refined;
     }
-    if (best_response < 0.0) {
-      RCLCPP_INFO_THROTTLE(
-        get_logger(), *get_clock(), 5000,
-        "CSM loop: no gate hypothesis survived corridor refinement "
-        "(gate response %.2f, %zu hypotheses)",
+    if (!have_refined) {
+      match = gate_match;
+      match.pose = chosen;
+      RCLCPP_INFO(
+        get_logger(),
+        "CSM loop: corridors could not corroborate; applying the raw gate "
+        "pose (gate response %.2f, %zu hypotheses)",
         gate_match.response, hypotheses.size());
-      return false;
     }
   } else {
     match = grid.match(
@@ -1168,10 +1200,15 @@ bool GraphSlamNode::maybeCsmRegister(
   // disagrees, which is an alias, not a seam.
   const double response_floor =
     loop_mode ? csm_loop_min_response_ : csm_params_.fine_response_min;
+  // Loop mode: ambiguity was already owned by the gate-hypothesis vote (a
+  // left/right or flip tie is EXPECTED there), so the unimodality margin
+  // must not re-reject it. Tracking keeps the margin.
+  const bool multimodal =
+    !loop_mode && match.response - match.second_peak < csm_peak_margin_;
   if (match.response < response_floor ||
     match.sigma_x > csm_max_sigma_xy_ || match.sigma_y > csm_max_sigma_xy_ ||
     match.sigma_theta > csm_max_sigma_theta_ ||
-    match.response - match.second_peak < csm_peak_margin_)
+    multimodal)
   {
     RCLCPP_INFO_THROTTLE(
       get_logger(), *get_clock(), 5000,

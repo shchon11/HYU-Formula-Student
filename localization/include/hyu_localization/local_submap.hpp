@@ -149,6 +149,10 @@ struct LocalSubmapParams
   double min_frame_travel_m{0.1};
   // Same-color sightings within this radius merge into one centroid.
   double dedup_radius_m{0.6};
+  // Orange classes keep a tighter radius: the big-orange gate is REAL pairs
+  // ~0.39 m apart, and merging a pair to one point costs the seam matcher
+  // half its yaw evidence exactly where yaw matters most.
+  double dedup_radius_orange_m{0.25};
 };
 
 class LocalConeSubmap
@@ -201,6 +205,8 @@ public:
     std::vector<std::size_t> counts;
     const GateSe2 reference_inverse = inverseSe2(reference);
     const double radius_sq = params_.dedup_radius_m * params_.dedup_radius_m;
+    const double orange_radius_sq =
+      params_.dedup_radius_orange_m * params_.dedup_radius_orange_m;
 
     for (const Frame & frame : frames_) {
       const GateSe2 relative = composeSe2(reference_inverse, frame.raw_odom);
@@ -213,7 +219,9 @@ public:
           }
           const double dx = centroids[i].x - q.x;
           const double dy = centroids[i].y - q.y;
-          if (dx * dx + dy * dy > radius_sq) {
+          const bool orange_class = q.color == kSubmapColorOrange ||
+            q.color == kSubmapColorBigOrange;
+          if (dx * dx + dy * dy > (orange_class ? orange_radius_sq : radius_sq)) {
             continue;
           }
           const double n = static_cast<double>(counts[i]);

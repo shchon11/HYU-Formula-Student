@@ -67,7 +67,15 @@ graph_slam:
     csm_loop_window_m: 10.0
     csm_loop_window_theta: 0.35
     csm_loop_min_response: 0.60           # full-constellation refine floor
-    csm_loop_min_orange_response: 0.5     # stage-1: the gate itself must fit
+    # 0.8: the observed orange must FULLY overlay. With gate pairs, an
+    # interleaved fit (a pair on the WRONG pair, the "| | |" seam) matches
+    # 2/4 = ~0.5 and dies here; with one cone per side both sites score 1.0,
+    # surface as tied hypotheses, and stage-2 corridors + rail floors decide.
+    csm_loop_min_orange_response: 0.8
+    # Each corridor rail must fit at the refined seam pose: a twisted seam's
+    # rigid optimum is winner-take-one-rail (the splayed rail ghosts as a
+    # third row) -- reject lopsided fits and retry on the next approach.
+    csm_loop_min_rail_response: 0.35
     csm_orange_weight: 10.0               # gate dominance in mixed scoring
     # Only lidar-grade orange observations carry gate credentials; ZNCC-depth
     # (vision-only) orange has meters of range variance and is demoted to
@@ -171,6 +179,7 @@ graph_slam:
     submap_span_m: 20.0
     submap_max_frames: 250
     submap_dedup_radius_m: 0.6
+    submap_dedup_orange_m: 0.25   # keep the 0.39 m gate pairs (yaw evidence)
     submap_min_match_points: 6
 
     # ==== Manual relocalization (RViz /initialpose) =======================

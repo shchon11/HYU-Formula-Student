@@ -76,6 +76,12 @@ public:
     // unique feature on an FS track. EXTREME weight: gate agreement must
     // dominate the response, corridors only refine it.
     double orange_weight{10.0};
+    // Conjunctive scoring (gate stage): response = GEOMETRIC mean over ALL
+    // query points, no coverage exemption. One unmatched point collapses
+    // the score, so partial-credit optima -- a gate pair overlaid on the
+    // WRONG pair, one side matched one side splayed -- can never outscore
+    // the full overlay. Points must ALL fit to earn anything.
+    bool conjunctive{false};
   };
 
   // Builds the grids over a bounding box that covers the search region:
@@ -358,6 +364,24 @@ private:
   // never be carried by a handful of lucky cones.
   double coveredResponse(double tx, double ty, bool coarse) const
   {
+    if (params_.conjunctive) {
+      // Geometric mean over EVERY point, no coverage exemption: the caller
+      // asserts all its points must be explained by the map.
+      constexpr double kEps = 1e-3;
+      double log_sum = 0.0;
+      int n = 0;
+      for (const RotatedPoint & point : rotated_) {
+        const double value = coarse ?
+          coarseAt(point.layer, tx + point.x, ty + point.y) :
+          fineAt(point.layer, tx + point.x, ty + point.y);
+        log_sum += std::log(std::max(value, kEps));
+        ++n;
+      }
+      if (n < params_.min_query_points) {
+        return 0.0;
+      }
+      return std::exp(log_sum / static_cast<double>(n));
+    }
     double sum = 0.0;
     double weight_sum = 0.0;
     int covered = 0;

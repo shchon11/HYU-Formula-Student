@@ -419,7 +419,15 @@ private:
   int loc_map_repair_delete_misses_{40};
   // The orange gate's own response at the matched pose (loop mode): the
   // seam certificate. Corridors may alias; the gate may not.
-  double csm_loop_min_orange_response_{0.5};
+  // 0.8, not 0.5: a pair-interleaved gate fit (observed pair overlaid on
+  // the WRONG map pair, the "| | |" seam) matches 2 of 4 gate cones and
+  // scores ~0.5 -- only the full-rectangle overlay clears 0.8.
+  double csm_loop_min_orange_response_{0.8};
+  // Each corridor rail (blue, yellow) must fit at the refined seam pose:
+  // a twisted seam's correlation optimum is winner-take-one-rail and the
+  // splayed rail becomes a third row of ghosts.
+  double csm_loop_min_rail_response_{0.35};
+  double submap_dedup_orange_m_{0.25};
   // Observation-sigma bound for a cone to carry GATE credentials in the
   // submap: lidar-backed orange passes, vision-only ZNCC-depth orange
   // (meters of range variance) is demoted to unknown geometry.
