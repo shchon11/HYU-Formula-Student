@@ -4,6 +4,9 @@
 #include <functional>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
+
+#include "hyu_path_selector/continuity_geometry.hpp"
 
 namespace hyu_path_selector
 {
@@ -51,6 +54,23 @@ PathSelectorNode::PathSelectorNode()
   const double heartbeat_hz = declare_parameter<double>("heartbeat_hz", 10.0);
   if (!std::isfinite(heartbeat_hz) || heartbeat_hz <= 0.0) {
     throw std::invalid_argument("heartbeat_hz must be positive");
+  }
+
+  blend_enabled_ = declare_parameter<bool>("transition_blend_enabled", true);
+  blend_config_.blend_length_m =
+    declare_parameter<double>("transition_blend_length_m", 10.0);
+  blend_config_.waypoint_spacing_m =
+    declare_parameter<double>("blend_waypoint_spacing_m", 0.5);
+  blend_config_.max_lateral_accel_mps2 =
+    declare_parameter<double>("blend_max_lateral_accel_mps2", 3.0);
+  blend_config_.min_speed_mps =
+    declare_parameter<double>("blend_min_speed_mps", 1.0);
+  if (!std::isfinite(blend_config_.blend_length_m) ||
+    blend_config_.blend_length_m <= 0.0 ||
+    !std::isfinite(blend_config_.waypoint_spacing_m) ||
+    blend_config_.waypoint_spacing_m <= 0.0)
+  {
+    throw std::invalid_argument("transition blend length/spacing must be positive");
   }
 
   const auto reliable_qos = rclcpp::QoS(rclcpp::KeepLast(10)).reliable().durability_volatile();
@@ -177,22 +197,89 @@ void PathSelectorNode::publishHeartbeat()
       *state.global.path, *state.odometry.odometry);
   }
 
+  const bool local_candidate_ready =
+    local_validation.ready && odometry_validation.ready && local_trimmed.success();
+  const bool global_candidate_ready =
+    global_validation.ready && odometry_validation.ready && global_trimmed.success();
+
+  // Remember the freshest tracked local path so the blend can freeze it at
+  // the LOCAL->GLOBAL flip even if the local planner drops out that instant.
+  if (local_trimmed.success()) {
+    last_local_trimmed_ = *local_trimmed.path;
+    last_local_trimmed_time_sec_ = receive_now_sec;
+  }
+
+  // Handoff no longer waits for the local and global paths to geometrically
+  // agree (the old overlap gate parked the car on excessive_start_separation
+  // while both paths were perfectly drivable). A usable global candidate IS
+  // handoff-ready; the transition blend below absorbs the geometry jump.
+  // continuity.evaluate() results stay in the debug stream as diagnostics.
+  const bool handoff_ready = global_candidate_ready;
+
   const auto decision = selection_policy_.decide(
     SelectionInputs{
       state.requested_source,
       state.source_receive_time_sec,
       receive_now_sec,
-      local_validation.ready && odometry_validation.ready && local_trimmed.success(),
-      global_validation.ready && odometry_validation.ready && global_trimmed.success(),
-      continuity.ready,
+      local_candidate_ready,
+      global_candidate_ready,
+      handoff_ready,
       state.global_entry_handoff_consumed});
 
+  if (state.requested_source == "LOCAL") {
+    resetBlend();
+  }
+
+  hyu_msgs::msg::WaypointArrayStamped blended_storage;
   const hyu_msgs::msg::WaypointArrayStamped * selected_path = nullptr;
   if (decision.valid() && decision.selected_candidate == SelectedCandidate::Local) {
     selected_path = &*local_trimmed.path;
   }
   if (decision.valid() && decision.selected_candidate == SelectedCandidate::Global) {
     selected_path = &*global_trimmed.path;
+
+    if (!state.global_entry_handoff_consumed && blend_enabled_ && !blend_active_ &&
+      last_local_trimmed_.has_value() &&
+      continuity_geometry::isFresh(
+        last_local_trimmed_time_sec_, receive_now_sec,
+        continuity_check_.thresholds().timeout_sec * 2.0))
+    {
+      // First GLOBAL tick: freeze what the car was actually tracking.
+      blend_active_ = true;
+      blend_travelled_m_ = 0.0;
+      has_blend_last_ego_ = false;
+      blend_frozen_local_ = last_local_trimmed_;
+    }
+
+    if (blend_active_) {
+      const auto & ego = state.odometry.odometry->pose.pose.position;
+      if (has_blend_last_ego_) {
+        blend_travelled_m_ += std::hypot(
+          ego.x - blend_last_ego_x_, ego.y - blend_last_ego_y_);
+      }
+      has_blend_last_ego_ = true;
+      blend_last_ego_x_ = ego.x;
+      blend_last_ego_y_ = ego.y;
+
+      bool blended = false;
+      if (blend_travelled_m_ < blend_config_.blend_length_m) {
+        const auto frozen_trimmed = continuity_check_.trimAtEgoNearestPoint(
+          *blend_frozen_local_, *state.odometry.odometry);
+        if (frozen_trimmed.success()) {
+          auto blend = buildTransitionPath(
+            *frozen_trimmed.path, *global_trimmed.path, blend_travelled_m_,
+            blend_config_);
+          if (blend.has_value()) {
+            blended_storage = std::move(*blend);
+            selected_path = &blended_storage;
+            blended = true;
+          }
+        }
+      }
+      if (!blended) {
+        resetBlend();
+      }
+    }
   }
   const bool selected_valid = selected_path != nullptr;
 
@@ -206,7 +293,7 @@ void PathSelectorNode::publishHeartbeat()
   }
 
   std_msgs::msg::Bool handoff_message;
-  handoff_message.data = continuity.ready;
+  handoff_message.data = handoff_ready;
   handoff_ready_pub_->publish(handoff_message);
 
   if (selected_valid) {
@@ -221,6 +308,14 @@ void PathSelectorNode::publishHeartbeat()
   std_msgs::msg::String debug_message;
   debug_message.data = makeDiagnostic(state, decision, continuity, selected_valid);
   debug_pub_->publish(debug_message);
+}
+
+void PathSelectorNode::resetBlend()
+{
+  blend_active_ = false;
+  blend_travelled_m_ = 0.0;
+  has_blend_last_ego_ = false;
+  blend_frozen_local_.reset();
 }
 
 double PathSelectorNode::steadyNowSec()
@@ -251,7 +346,9 @@ std::string PathSelectorNode::makeDiagnostic(
          << " global_trim_failure=" << toString(continuity.global_trim_failure)
          << " common_length_m=" << continuity.common_forward_length_m
          << " start_separation_m=" << continuity.start_separation_m
-         << " heading_difference_rad=" << continuity.heading_difference_rad;
+         << " heading_difference_rad=" << continuity.heading_difference_rad
+         << " blend_active=" << (blend_active_ ? "true" : "false")
+         << " blend_travelled_m=" << blend_travelled_m_;
   return output.str();
 }
 

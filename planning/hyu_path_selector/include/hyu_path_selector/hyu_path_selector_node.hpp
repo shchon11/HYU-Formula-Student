@@ -14,6 +14,7 @@
 
 #include "hyu_path_selector/continuity_check.hpp"
 #include "hyu_path_selector/selection_policy.hpp"
+#include "hyu_path_selector/transition_blend.hpp"
 
 namespace hyu_path_selector
 {
@@ -49,6 +50,8 @@ private:
     const ContinuityResult & continuity,
     bool selected_valid) const;
 
+  void resetBlend();
+
   std::string path_source_topic_;
   std::string local_path_topic_;
   std::string local_validity_topic_;
@@ -63,6 +66,19 @@ private:
 
   SelectionPolicy selection_policy_;
   ContinuityCheck continuity_check_;
+
+  // LOCAL->GLOBAL transition blend. All of this state is only touched from
+  // the heartbeat timer thread, so it needs no locking.
+  bool blend_enabled_{true};
+  TransitionBlendConfig blend_config_;
+  bool blend_active_{false};
+  double blend_travelled_m_{0.0};
+  bool has_blend_last_ego_{false};
+  double blend_last_ego_x_{0.0};
+  double blend_last_ego_y_{0.0};
+  std::optional<hyu_msgs::msg::WaypointArrayStamped> blend_frozen_local_;
+  std::optional<hyu_msgs::msg::WaypointArrayStamped> last_local_trimmed_;
+  double last_local_trimmed_time_sec_{0.0};
 
   std::mutex state_mutex_;
   NodeState state_;

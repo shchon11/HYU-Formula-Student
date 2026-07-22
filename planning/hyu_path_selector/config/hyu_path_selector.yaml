@@ -14,6 +14,17 @@ hyu_path_selector_node:
     path_source_timeout_sec: 0.5
     input_timeout_sec: 0.5
     heartbeat_hz: 10.0
+    # These three no longer gate the handoff — a usable global path IS
+    # handoff-ready and the transition blend absorbs the geometry jump.
+    # They still feed the continuity diagnostics in the debug stream.
     minimum_common_length_m: 5.0
     maximum_start_separation_m: 1.5
     maximum_heading_difference_rad: 0.52
+    # LOCAL->GLOBAL transition blend: cross-fade the frozen local path into
+    # the global path over this travel distance. Speed profiling follows
+    # hyu_local_planner: v = max(min, sqrt(max_lateral_accel / |kappa|)).
+    transition_blend_enabled: true
+    transition_blend_length_m: 10.0
+    blend_waypoint_spacing_m: 0.5
+    blend_max_lateral_accel_mps2: 3.0
+    blend_min_speed_mps: 1.0

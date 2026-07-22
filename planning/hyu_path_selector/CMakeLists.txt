@@ -19,6 +19,7 @@ add_library(hyu_path_selector_core
   src/continuity_check.cpp
   src/continuity_geometry.cpp
   src/selection_policy.cpp
+  src/transition_blend.cpp
 )
 target_include_directories(hyu_path_selector_core
   PUBLIC
@@ -68,6 +69,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_continuity_check test/test_continuity_check.cpp)
   target_link_libraries(test_continuity_check hyu_path_selector_core)
+
+  ament_add_gtest(test_transition_blend test/test_transition_blend.cpp)
+  target_link_libraries(test_transition_blend hyu_path_selector_core)
   add_test(
     NAME empty_global_path
     COMMAND $<TARGET_FILE:test_continuity_check>
