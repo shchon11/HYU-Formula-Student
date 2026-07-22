@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <vector>
@@ -410,6 +411,47 @@ TEST(LocalPathBuilder, CentrelineUnknownConeIsDropped)
   }
 }
 
+TEST(LocalPathBuilder, StopAtPathEndTapersSpeedToZeroAtTheOpenEnd)
+{
+  // Open-ended track (dlc mission): the path speed must walk down to zero at
+  // the corridor end following v = sqrt(2*a*max(0, remaining - margin)), below
+  // the min_speed floor, while the cruise cap still rules far from the end.
+  ConeSet cones;
+  for (double x = 0.0; x <= 20.0; x += 2.0) {
+    cones.blue.push_back({x, 1.5});
+    cones.yellow.push_back({x, -1.5});
+  }
+  PlannerConfig config;
+  config.two_sided_speed_mps = 6.0;
+  config.stop_at_path_end = true;
+  config.end_stop_decel_mps2 = 2.0;
+  config.end_stop_margin_m = 1.0;
+
+  const auto result = buildLocalPath(cones, config);
+  ASSERT_TRUE(result.valid) << result.reason;
+  ASSERT_EQ(result.kind, PathKind::kTwoSided);
+  const double end_s = result.waypoints.back().s;
+  ASSERT_GT(end_s, 15.0);
+  EXPECT_DOUBLE_EQ(result.waypoints.front().speed, 6.0);
+  EXPECT_DOUBLE_EQ(result.waypoints.back().speed, 0.0);
+  for (const auto & waypoint : result.waypoints) {
+    const double remaining =
+      std::max(0.0, end_s - waypoint.s - config.end_stop_margin_m);
+    const double taper =
+      std::sqrt(2.0 * config.end_stop_decel_mps2 * remaining);
+    EXPECT_LE(waypoint.speed, std::min(6.0, taper) + 1.0e-9);
+    EXPECT_GE(waypoint.speed, 0.0);
+  }
+
+  // Off by default: the same corridor carries cruise speed to the last
+  // waypoint (the fail-safe brake owns the stop, as on closed-loop missions).
+  PlannerConfig untapered_config = config;
+  untapered_config.stop_at_path_end = false;
+  const auto untapered = buildLocalPath(cones, untapered_config);
+  ASSERT_TRUE(untapered.valid) << untapered.reason;
+  EXPECT_DOUBLE_EQ(untapered.waypoints.back().speed, 6.0);
+}
+
 PlannerConfig straightCorridorConfig()
 {
   PlannerConfig config;
@@ -508,6 +550,135 @@ TEST(LocalPathBuilder, StraightCorridorStopsPastCorridorEnd)
   const auto result = buildLocalPath(cones, straightCorridorConfig());
   ASSERT_TRUE(result.evaluated);
   EXPECT_FALSE(result.valid) << "corridor is behind the ego; path must be invalid";
+}
+
+// Straight cones spanning the ego (ego-frame), frontier 10 m ahead: fit gives
+// line y=0 with x_end = 10 + cap(5) = 15 and corridor end at x=10.
+ConeSet straightLatchCones()
+{
+  ConeSet cones;
+  for (double x : {-10.0, -5.0, 0.0, 5.0, 10.0}) {
+    cones.blue.push_back({x, 1.5});
+    cones.yellow.push_back({x, -1.5});
+  }
+  return cones;
+}
+
+TEST(LocalPathBuilder, StraightFitExposesLatchableLine)
+{
+  const auto result = buildLocalPath(straightLatchCones(), straightCorridorConfig());
+  ASSERT_TRUE(result.valid) << result.reason;
+  ASSERT_TRUE(result.straight_fit);
+  EXPECT_NEAR(result.straight_line_start.x, 0.0, 1.0e-9);
+  EXPECT_NEAR(result.straight_line_start.y, 0.0, 1.0e-6);
+  EXPECT_NEAR(result.straight_line_end.x, 15.0, 1.0e-6);
+  EXPECT_NEAR(result.straight_line_end.y, 0.0, 1.0e-6);
+  EXPECT_NEAR(result.straight_corridor_max_x, 10.0, 1.0e-9);
+
+  // Generic (non-fit) results must never latch: the sparse single-pair creep
+  // path carries no line.
+  ConeSet pair_only;
+  pair_only.blue = {{8.0, 1.5}};
+  pair_only.yellow = {{8.0, -1.5}};
+  PlannerConfig config = straightCorridorConfig();
+  config.allow_partial_boundary = true;
+  const auto sparse = buildLocalPath(pair_only, config);
+  ASSERT_TRUE(sparse.valid) << sparse.reason;
+  EXPECT_FALSE(sparse.straight_fit);
+  EXPECT_FALSE(latchStraightLine(sparse, 0.0, 0.0, 0.0).has_value());
+}
+
+TEST(LocalPathBuilder, HeldStraightLineSurvivesTotalObservationDropout)
+{
+  // The unstable case: after a good fit the observations vanish entirely. The
+  // latched line must keep producing the same straight path from the advanced
+  // ego pose, with no cones at all.
+  const PlannerConfig config = straightCorridorConfig();
+  const auto fit = buildLocalPath(straightLatchCones(), config);
+  ASSERT_TRUE(fit.valid) << fit.reason;
+  const auto latch = latchStraightLine(fit, 0.0, 0.0, 0.0);
+  ASSERT_TRUE(latch.has_value());
+
+  // 5 m further down the run, slightly off-centre and askew.
+  const auto held = buildHeldStraightPath(*latch, 5.0, 0.2, 0.05, config);
+  ASSERT_TRUE(held.valid) << held.reason;
+  EXPECT_EQ(held.kind, PathKind::kTwoSided);
+  // The path tracks the latched odom line (y=0), not the ego centreline: in
+  // the ego frame the line sits ~0.2 m to the right.
+  for (const auto & waypoint : held.waypoints) {
+    const double odom_y = 0.2 + waypoint.x * std::sin(0.05) + waypoint.y * std::cos(0.05);
+    EXPECT_NEAR(odom_y, 0.0, 1.0e-6);
+    EXPECT_DOUBLE_EQ(waypoint.speed, config.two_sided_speed_mps);  // corridor ahead
+  }
+  // Still ends at the latched end (odom x=15 -> ~10 m ahead of the ego).
+  EXPECT_NEAR(held.waypoints.back().s, 10.0, 0.1);
+}
+
+TEST(LocalPathBuilder, HeldStraightLineTransformsAcrossYaw)
+{
+  // Latch computed while the run points along odom +y (ego yaw 90 deg): the
+  // hold from a pose further along that line must still head straight ahead.
+  const PlannerConfig config = straightCorridorConfig();
+  const auto fit = buildLocalPath(straightLatchCones(), config);
+  ASSERT_TRUE(fit.valid) << fit.reason;
+  const double yaw = 1.57079632679489662;
+  const auto latch = latchStraightLine(fit, 3.0, -2.0, yaw);
+  ASSERT_TRUE(latch.has_value());
+  EXPECT_NEAR(latch->dir.x, 0.0, 1.0e-9);
+  EXPECT_NEAR(latch->dir.y, 1.0, 1.0e-9);
+
+  const auto held = buildHeldStraightPath(*latch, 3.0, 3.0, yaw, config);
+  ASSERT_TRUE(held.valid) << held.reason;
+  for (const auto & waypoint : held.waypoints) {
+    EXPECT_NEAR(waypoint.y, 0.0, 1.0e-6);   // dead ahead in the ego frame
+    EXPECT_GE(waypoint.x, -1.0e-9);
+  }
+  EXPECT_NEAR(held.waypoints.back().x, 10.0, 0.1);  // latched end, 5 m consumed
+}
+
+TEST(LocalPathBuilder, HeldStraightLineBrakesPastCorridorAndEndsAtLatchedEnd)
+{
+  const PlannerConfig config = straightCorridorConfig();
+  const auto fit = buildLocalPath(straightLatchCones(), config);
+  ASSERT_TRUE(fit.valid) << fit.reason;
+  const auto latch = latchStraightLine(fit, 0.0, 0.0, 0.0);
+  ASSERT_TRUE(latch.has_value());
+
+  // Past the latched corridor end (x=10) but before the latched line end
+  // (x=15): still a valid forward path, at braking speed.
+  const auto braking = buildHeldStraightPath(*latch, 12.0, 0.0, 0.0, config);
+  ASSERT_TRUE(braking.valid) << braking.reason;
+  for (const auto & waypoint : braking.waypoints) {
+    EXPECT_DOUBLE_EQ(waypoint.speed, config.fallback_speed_mps);
+  }
+
+  // At/past the latched end there is no forward path left -> invalid -> the
+  // car brakes to a stop exactly as it would have with a live fit.
+  const auto past_end = buildHeldStraightPath(*latch, 16.0, 0.0, 0.0, config);
+  ASSERT_TRUE(past_end.evaluated);
+  EXPECT_FALSE(past_end.valid);
+}
+
+TEST(LocalPathBuilder, HeldStraightLineFailsClosedOnPoseJumpOrFlip)
+{
+  const PlannerConfig config = straightCorridorConfig();
+  const auto fit = buildLocalPath(straightLatchCones(), config);
+  ASSERT_TRUE(fit.valid) << fit.reason;
+  const auto latch = latchStraightLine(fit, 0.0, 0.0, 0.0);
+  ASSERT_TRUE(latch.has_value());
+
+  // Lateral pose jump beyond max_start_distance_m: the hold must brake, not
+  // steer the car back across the corridor cones.
+  const auto jumped = buildHeldStraightPath(*latch, 5.0, 6.0, 0.0, config);
+  ASSERT_TRUE(jumped.evaluated);
+  EXPECT_FALSE(jumped.valid);
+
+  // Heading flipped 180 deg: the held path would run backward in the ego
+  // frame; the straight-mode no-backward gate must reject it.
+  const auto flipped = buildHeldStraightPath(
+    *latch, 5.0, 0.0, 3.14159265358979323846, config);
+  ASSERT_TRUE(flipped.evaluated);
+  EXPECT_FALSE(flipped.valid);
 }
 
 TEST(LocalPathBuilder, PartialBoundarySinglePairBuildsSparsePath)

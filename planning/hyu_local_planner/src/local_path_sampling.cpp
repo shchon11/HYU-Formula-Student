@@ -175,6 +175,20 @@ BuildResult finishPath(
     }
     waypoint.speed = std::max(config.min_speed_mps, v);
   }
+  // Open-end stop taper (stop_at_path_end): walk the speed down to zero over
+  // the final metres of the path so the controller rolls to rest at the
+  // corridor end. Applied after -- and allowed below -- the min_speed floor:
+  // the floor keeps the car moving mid-track, but reaching zero is the point
+  // here. See PlannerConfig::stop_at_path_end for the frontier-vs-end argument.
+  if (config.stop_at_path_end) {
+    const double end_s = result.waypoints.back().s;
+    for (auto & waypoint : result.waypoints) {
+      const double remaining = std::max(
+        0.0, end_s - waypoint.s - config.end_stop_margin_m);
+      waypoint.speed = std::min(
+        waypoint.speed, std::sqrt(2.0 * config.end_stop_decel_mps2 * remaining));
+    }
+  }
   for (std::size_t index = 0; index < result.waypoints.size(); ++index) {
     const auto & waypoint = result.waypoints[index];
     if (!std::isfinite(waypoint.x) || !std::isfinite(waypoint.y) ||

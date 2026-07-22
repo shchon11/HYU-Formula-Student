@@ -35,6 +35,8 @@ bool validConfig(const PlannerConfig & config)
     config.unknown_absorb_lateral_m,
     config.unknown_geom_deadband_m,
     config.straight_extension_cap_m,
+    config.end_stop_decel_mps2,
+    config.end_stop_margin_m,
   };
   for (const double value : values) {
     if (!std::isfinite(value)) {
@@ -52,7 +54,8 @@ bool validConfig(const PlannerConfig & config)
          config.two_sided_horizon_m > 0.0 && config.fallback_horizon_m > 0.0 &&
          config.fallback_offset_m > 0.0 && config.two_sided_speed_mps > 0.0 &&
          config.fallback_speed_mps > 0.0 && config.unknown_absorb_lateral_m >= 0.0 &&
-         config.unknown_geom_deadband_m >= 0.0 && config.straight_extension_cap_m >= 0.0;
+         config.unknown_geom_deadband_m >= 0.0 && config.straight_extension_cap_m >= 0.0 &&
+         config.end_stop_decel_mps2 > 0.0 && config.end_stop_margin_m >= 0.0;
 }
 
 std::string traversalFailureReason(internal::TraversalFailure failure)
@@ -347,9 +350,13 @@ BuildResult buildLocalPath(const ConeSet & cones, const PlannerConfig & config)
       in_corridor ? config.two_sided_speed_mps : config.fallback_speed_mps;
     const auto fitted = straightCorridorPath(blue, yellow, config);
     if (fitted.size() >= 2U) {
-      const BuildResult straight = internal::finishPath(
+      BuildResult straight = internal::finishPath(
         fitted, config.two_sided_horizon_m, speed, PathKind::kTwoSided, config);
       if (straight.valid) {
+        straight.straight_fit = true;
+        straight.straight_line_start = fitted.front();
+        straight.straight_line_end = fitted.back();
+        straight.straight_corridor_max_x = corridor_max_x;
         return straight;
       }
     }
@@ -428,6 +435,89 @@ BuildResult buildLocalPath(const ConeSet & cones, const PlannerConfig & config)
   return internal::finishPath(
     centerline, config.fallback_horizon_m, config.fallback_speed_mps,
     use_blue ? PathKind::kBlueOnly : PathKind::kYellowOnly, config);
+}
+
+std::optional<StraightLineLatch> latchStraightLine(
+  const BuildResult & result, double ego_x, double ego_y, double ego_yaw)
+{
+  if (!result.straight_fit) {
+    return std::nullopt;
+  }
+  const double cos_yaw = std::cos(ego_yaw);
+  const double sin_yaw = std::sin(ego_yaw);
+  const auto to_odom = [&](const Point2 & p) -> Point2 {
+      return {
+        ego_x + p.x * cos_yaw - p.y * sin_yaw,
+        ego_y + p.x * sin_yaw + p.y * cos_yaw,
+      };
+    };
+  const Point2 start = to_odom(result.straight_line_start);
+  const Point2 end = to_odom(result.straight_line_end);
+  const double length = internal::distance(start, end);
+  if (!std::isfinite(length) || length <= 1.0e-9 ||
+    !std::isfinite(start.x) || !std::isfinite(start.y))
+  {
+    return std::nullopt;
+  }
+  StraightLineLatch latch;
+  latch.origin = start;
+  latch.dir = {(end.x - start.x) / length, (end.y - start.y) / length};
+  latch.path_end_s = length;
+  // The fitted line is parameterised by ego-frame x (start sits at x=0, end at
+  // x_end > 0), so the furthest corridor cone maps onto the line at the same
+  // x fraction. -inf (fit ran on braking-zone orange only) stays -inf: the
+  // whole held path is then braking-speed, matching the live fit.
+  const double end_x = result.straight_line_end.x;
+  latch.corridor_end_s =
+    std::isfinite(result.straight_corridor_max_x) && end_x > 1.0e-9 ?
+    length * result.straight_corridor_max_x / end_x :
+    -std::numeric_limits<double>::infinity();
+  return latch;
+}
+
+BuildResult buildHeldStraightPath(
+  const StraightLineLatch & latch, double ego_x, double ego_y, double ego_yaw,
+  const PlannerConfig & config)
+{
+  BuildResult invalid;
+  invalid.evaluated = true;
+  const double dir_norm = std::hypot(latch.dir.x, latch.dir.y);
+  if (!std::isfinite(dir_norm) || std::abs(dir_norm - 1.0) > 1.0e-6 ||
+    !std::isfinite(latch.path_end_s) || !std::isfinite(ego_x) ||
+    !std::isfinite(ego_y) || !std::isfinite(ego_yaw))
+  {
+    invalid.reason = "held straight line latch is degenerate";
+    return invalid;
+  }
+  const double s_ego =
+    (ego_x - latch.origin.x) * latch.dir.x + (ego_y - latch.origin.y) * latch.dir.y;
+  if (latch.path_end_s - s_ego <= 0.0) {
+    invalid.reason = "held straight line is behind the ego";
+    return invalid;
+  }
+  const double cos_yaw = std::cos(ego_yaw);
+  const double sin_yaw = std::sin(ego_yaw);
+  const auto to_ego = [&](double s) -> Point2 {
+      const double odom_x = latch.origin.x + s * latch.dir.x - ego_x;
+      const double odom_y = latch.origin.y + s * latch.dir.y - ego_y;
+      return {
+        odom_x * cos_yaw + odom_y * sin_yaw,
+        -odom_x * sin_yaw + odom_y * cos_yaw,
+      };
+    };
+  // Same speed rule as the live fit: full while the latched corridor end is
+  // still at or ahead of the ego, braking speed once only the extension (the
+  // braking zone) remains.
+  const bool in_corridor = latch.corridor_end_s - s_ego > -config.waypoint_spacing_m;
+  const double speed =
+    in_corridor ? config.two_sided_speed_mps : config.fallback_speed_mps;
+  // finishPath applies the start-distance gate (a pose jump off the line stays
+  // a brake, not a swerve back), the no-backward gate (a flipped heading never
+  // yields a path behind the car), and the minimum resampled length (so the
+  // hold still ends -- and the car still stops -- at the latched line end).
+  return internal::finishPath(
+    {to_ego(s_ego), to_ego(latch.path_end_s)}, config.two_sided_horizon_m, speed,
+    PathKind::kTwoSided, config);
 }
 
 }

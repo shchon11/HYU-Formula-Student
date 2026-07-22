@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -92,6 +93,20 @@ struct PlannerConfig
   // = more tolerance to a lagging frontier, but the car brakes later / stops
   // further down the braking zone. Only used when extend_straight_to_horizon.
   double straight_extension_cap_m{5.0};
+  // Open-ended track missions (DLC / demo corridors, no closing loop): taper
+  // every published path's speed toward zero at the path end,
+  // v(d) = sqrt(2 * end_stop_decel * max(0, d - end_stop_margin)) with d the
+  // remaining arc to the last waypoint, so the controller rolls the car to a
+  // planned stop where the cones run out instead of carrying the cruise speed
+  // past the last pair and tripping its fail-safe brake (steering zeroed, hard
+  // decel). While cruising the path end is the map/perception frontier well
+  // beyond the taper zone, so speeds are untouched; only an end that stops
+  // advancing -- the open track end -- walks the speed down. The taper is
+  // deliberately allowed below min_speed_mps: that floor keeps the car moving
+  // mid-track, but here zero is the goal.
+  bool stop_at_path_end{false};
+  double end_stop_decel_mps2{2.0};
+  double end_stop_margin_m{1.0};
 };
 
 enum class PathKind
@@ -119,7 +134,47 @@ struct BuildResult
   PathKind kind{PathKind::kNone};
   std::vector<PathWaypoint> waypoints;
   std::string reason{"not implemented"};
+  // Set only when the straight-corridor line fit produced this result: the
+  // fitted line endpoints (ego frame; start is the ego anchor at x=0, end is
+  // the line carried straight_extension_cap_m past the furthest cone) and the
+  // x of the furthest blue/yellow corridor cone (braking-zone orange excluded;
+  // -inf when the fit ran on orange only). The node latches these in the odom
+  // frame so the line survives observation dropouts.
+  bool straight_fit{false};
+  Point2 straight_line_start{};
+  Point2 straight_line_end{};
+  double straight_corridor_max_x{0.0};
 };
+
+// Odom-frame latch of the straight-corridor line (acceleration mission). All
+// scalars are arc lengths along `dir` measured from `origin`. The latch is a
+// snapshot: path_end_s marks last-cone + cap at latch time, so a held path
+// still ends -- and the car still brakes -- at the same place a live fit
+// would have ended.
+struct StraightLineLatch
+{
+  Point2 origin;               // point on the line (odom frame)
+  Point2 dir;                  // unit direction, forward along the run
+  double path_end_s{0.0};      // line end: furthest cone + extension cap
+  double corridor_end_s{0.0};  // furthest blue/yellow cone; past it -> braking speed
+};
+
+// Convert a straight-fit BuildResult into an odom-frame latch using the ego
+// pose the fit was computed at. Returns nullopt when the result carries no
+// usable fit (not a straight fit, or a degenerate line).
+std::optional<StraightLineLatch> latchStraightLine(
+  const BuildResult & result, double ego_x, double ego_y, double ego_yaw);
+
+// Rebuild the latched line as a local path from the current ego pose, with no
+// cone observations at all: the path runs from the ego's projection onto the
+// line forward to the latched end. Full speed while the latched corridor is
+// still ahead, braking (fallback) speed past it, and invalid -- brake -- once
+// the latched end is closer than the minimum path length. The normal
+// start-distance and no-backward gates apply, so a pose jump off the line
+// invalidates the hold instead of steering the car across the corridor.
+BuildResult buildHeldStraightPath(
+  const StraightLineLatch & latch, double ego_x, double ego_y, double ego_yaw,
+  const PlannerConfig & config);
 
 BuildResult buildLocalPath(const ConeSet & cones, const PlannerConfig & config = PlannerConfig{});
 bool pathSelfIntersects(const std::vector<Point2> & points);

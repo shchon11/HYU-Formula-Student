@@ -57,5 +57,12 @@ hyu_local_planner_node:
     # yet still ends -> the car brakes ~straight_extension_cap_m past the corridor
     # (last cone x=+20 -> brake ~x=+23, stop ~x=+47 at 12 m/s). SAFE ONLY on a
     # straight track. Larger cap = later brake / longer stop.
+    # The node also latches every successful fit in the odom frame and, on
+    # frames where the fit is unavailable (observations thin out or vanish),
+    # holds that latched line instead of falling back to the generic
+    # two-sided/sparse planner -- so after the first fit the path never depends
+    # on frame-to-frame cone visibility. The hold keeps the latched end (last
+    # cone + cap), so the brake/stop point is unchanged, and a pose jump off
+    # the line still fails closed (max_start_distance_m) into a brake.
     extend_straight_to_horizon: true
-    straight_extension_cap_m: 5.0
+    straight_extension_cap_m: 10.0

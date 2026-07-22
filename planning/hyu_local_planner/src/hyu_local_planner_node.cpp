@@ -92,6 +92,12 @@ LocalPlannerNode::LocalPlannerNode(const rclcpp::NodeOptions & options)
     declare_parameter<bool>("extend_straight_to_horizon", false);
   planner_config_.straight_extension_cap_m =
     declare_parameter<double>("straight_extension_cap_m", 5.0);
+  planner_config_.stop_at_path_end =
+    declare_parameter<bool>("stop_at_path_end", false);
+  planner_config_.end_stop_decel_mps2 =
+    declare_parameter<double>("end_stop_decel_mps2", 2.0);
+  planner_config_.end_stop_margin_m =
+    declare_parameter<double>("end_stop_margin_m", 1.0);
   log_diagnostics_ = declare_parameter<bool>("log_planner_diagnostics", false);
 
   if (!std::isfinite(max_stamp_skew_sec_) || max_stamp_skew_sec_ < 0.0 ||
@@ -133,6 +139,57 @@ hyu_local_planner::PlannerConfig LocalPlannerNode::configForOdom(
   return config;
 }
 
+namespace
+{
+
+double yawFromOdom(const nav_msgs::msg::Odometry & odom)
+{
+  const auto & q = odom.pose.pose.orientation;
+  return std::atan2(
+    2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+}
+
+}
+
+void LocalPlannerNode::applyStraightLatch(
+  BuildResult & result, const nav_msgs::msg::Odometry & odom,
+  const PlannerConfig & config)
+{
+  if (!planner_config_.extend_straight_to_horizon) {
+    return;
+  }
+  const double ego_x = odom.pose.pose.position.x;
+  const double ego_y = odom.pose.pose.position.y;
+  const double ego_yaw = yawFromOdom(odom);
+  if (result.valid && result.straight_fit) {
+    // A fresh fit re-anchors the latch every frame, so the held line is always
+    // the newest one the map supported.
+    auto latch = latchStraightLine(result, ego_x, ego_y, ego_yaw);
+    if (latch) {
+      straight_latch_ = *latch;
+    }
+    return;
+  }
+  if (!straight_latch_) {
+    return;  // nothing fitted yet (launch): let the generic planner creep
+  }
+  // No fit this frame. The generic fall-back result (sparse creep, one-sided
+  // offset, or invalid) depends on exactly which cones happen to be visible
+  // and flip-flops with them; the latched line does not, so it wins whenever
+  // it is still drivable. When the hold itself is invalid (latched end
+  // reached, or the ego jumped off the line) keep the generic result -- an
+  // invalid path is the brake, which is the correct end-of-run behaviour.
+  BuildResult held = buildHeldStraightPath(
+    *straight_latch_, ego_x, ego_y, ego_yaw, config);
+  if (held.valid) {
+    RCLCPP_INFO_THROTTLE(
+      get_logger(), *get_clock(), 2000,
+      "straight-corridor fit unavailable (%s); holding latched line",
+      result.reason.c_str());
+    result = std::move(held);
+  }
+}
+
 void LocalPlannerNode::processLivePair(const LiveInputPair & input)
 {
   const auto odom_metadata = odomMetadata(*input.odom, input.odom_receive_time);
@@ -145,7 +202,9 @@ void LocalPlannerNode::processLivePair(const LiveInputPair & input)
   }
 
   const auto cone_set = liveConeSet(*input.cones);
-  const auto result = buildLocalPath(cone_set, configForOdom(*input.odom));
+  const auto config = configForOdom(*input.odom);
+  auto result = buildLocalPath(cone_set, config);
+  applyStraightLatch(result, *input.odom, config);
   logPlannerDiagnostics(cone_set, result);
   if (!result.valid) {
     output_->retainUntilStale(result.reason);
@@ -178,7 +237,9 @@ void LocalPlannerNode::processSlamMap(const SlamMapInput & input)
         live_extension_config_);
     }
   }
-  const auto result = buildLocalPath(cone_set, configForOdom(*input.odom));
+  const auto config = configForOdom(*input.odom);
+  auto result = buildLocalPath(cone_set, config);
+  applyStraightLatch(result, *input.odom, config);
   logPlannerDiagnostics(cone_set, result);
   if (result.valid) {
     output_->publishPath(result, *input.odom, input.odom->header.stamp, input.odom_receive_time);
