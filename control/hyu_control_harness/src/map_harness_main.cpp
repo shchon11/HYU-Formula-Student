@@ -22,6 +22,7 @@ Controller keys:
   map_lookahead_max_m map_speed_source (planned|measured)
 Planner keys:
   two_sided_speed_mps max_lateral_accel_mps2 min_speed_mps two_sided_horizon_m
+  stop_at_path_end (0|1) end_stop_decel_mps2 end_stop_margin_m
 
 Prints one JSON object with the run metrics to stdout.
 )";
@@ -98,6 +99,12 @@ bool parseArg(const std::string & key, const std::string & value,
       planner.min_speed_mps = std::stod(value);
     } else if (key == "two_sided_horizon_m") {
       planner.two_sided_horizon_m = std::stod(value);
+    } else if (key == "stop_at_path_end") {
+      planner.stop_at_path_end = (value == "1" || value == "true");
+    } else if (key == "end_stop_decel_mps2") {
+      planner.end_stop_decel_mps2 = std::stod(value);
+    } else if (key == "end_stop_margin_m") {
+      planner.end_stop_margin_m = std::stod(value);
     } else {
       return false;
     }

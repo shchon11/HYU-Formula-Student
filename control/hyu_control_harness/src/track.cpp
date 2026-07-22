@@ -120,13 +120,34 @@ Centerline Centerline::build(const Track & track)
     centerline.points_.push_back(point);
   }
 
+  // Open-corridor detection: on a closed track the last midpoint loops back
+  // within roughly one cone spacing of the first; on an open corridor
+  // (acceleration / dlc) the end-to-start gap IS the track length. Call it
+  // open when the gap dominates the summed midpoint chain, and keep no wrap
+  // segment: the ring's wrap edge would lie on top of the corridor and both
+  // corrupt projections and double the length.
+  double open_length = 0.0;
+  for (std::size_t i = 0; i + 1U < centerline.points_.size(); ++i) {
+    const Vec2 & a = centerline.points_[i].position;
+    const Vec2 & b = centerline.points_[i + 1U].position;
+    open_length += std::hypot(b.x - a.x, b.y - a.y);
+  }
+  if (centerline.points_.size() >= 2U) {
+    const Vec2 & first = centerline.points_.front().position;
+    const Vec2 & last = centerline.points_.back().position;
+    const double gap = std::hypot(last.x - first.x, last.y - first.y);
+    centerline.closed_ = gap < 0.25 * open_length;
+  }
+
   centerline.cumulative_s_.resize(centerline.points_.size(), 0.0);
   double s = 0.0;
   for (std::size_t i = 0; i < centerline.points_.size(); ++i) {
     centerline.cumulative_s_[i] = s;
-    const Vec2 & a = centerline.points_[i].position;
-    const Vec2 & b = centerline.points_[(i + 1U) % centerline.points_.size()].position;
-    s += std::hypot(b.x - a.x, b.y - a.y);
+    if (i + 1U < centerline.points_.size() || centerline.closed_) {
+      const Vec2 & a = centerline.points_[i].position;
+      const Vec2 & b = centerline.points_[(i + 1U) % centerline.points_.size()].position;
+      s += std::hypot(b.x - a.x, b.y - a.y);
+    }
   }
   centerline.length_m_ = s;
   return centerline;
@@ -140,7 +161,8 @@ CenterlineProjection Centerline::project(const Vec2 & p) const
     return best;
   }
   double best_sq = std::numeric_limits<double>::infinity();
-  for (std::size_t i = 0; i < points_.size(); ++i) {
+  const std::size_t segment_count = closed_ ? points_.size() : points_.size() - 1U;
+  for (std::size_t i = 0; i < segment_count; ++i) {
     const std::size_t j = (i + 1U) % points_.size();
     const auto projection = projectOntoSegment(points_[i].position, points_[j].position, p);
     if (projection.distance_sq < best_sq) {
@@ -152,10 +174,16 @@ CenterlineProjection Centerline::project(const Vec2 & p) const
       best.s_m = cumulative_s_[i] + projection.t * seg_len;
       best.half_width_m = points_[i].half_width_m +
         projection.t * (points_[j].half_width_m - points_[i].half_width_m);
+      // Open corridor: a projection clamped to the very first or very last
+      // midpoint means p lies before the corridor entry or past its end --
+      // there is no track there to be off of.
+      best.beyond_ends = !closed_ &&
+        ((i == 0U && projection.t <= 0.0) ||
+        (i + 1U == segment_count && projection.t >= 1.0));
     }
   }
   if (best.s_m >= length_m_) {
-    best.s_m -= length_m_;
+    best.s_m = closed_ ? best.s_m - length_m_ : length_m_;
   }
   return best;
 }
@@ -163,6 +191,9 @@ CenterlineProjection Centerline::project(const Vec2 & p) const
 double Centerline::wrappedDelta(double s_prev, double s_next) const
 {
   double delta = s_next - s_prev;
+  if (!closed_) {
+    return delta;
+  }
   while (delta > 0.5 * length_m_) {
     delta -= length_m_;
   }

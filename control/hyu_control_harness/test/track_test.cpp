@@ -56,6 +56,47 @@ TEST(Centerline, WrappedDeltaHandlesTheSeam)
   EXPECT_NEAR(centerline.wrappedDelta(10.0, 12.5), 2.5, 1e-9);
 }
 
+namespace
+{
+
+// Open corridor (dlc/acceleration-like): straight 3 m wide lane, x in [0, 30].
+ch::Track openCorridorTrack()
+{
+  ch::Track track;
+  for (double x = 0.0; x <= 30.0; x += 3.0) {
+    track.blue.push_back({x, 1.5});
+    track.yellow.push_back({x, -1.5});
+  }
+  track.start = {-3.0, 0.0, 0.0};
+  return track;
+}
+
+}  // namespace
+
+TEST(Centerline, OpenCorridorHasNoWrapSegmentAndFlagsBeyondEnds)
+{
+  const auto centerline = ch::Centerline::build(openCorridorTrack());
+  ASSERT_TRUE(centerline.valid());
+  EXPECT_FALSE(centerline.closed());
+  // Open length only -- no wrap edge from (30,0) back to (0,0).
+  EXPECT_NEAR(centerline.length(), 30.0, 1e-9);
+  // wrappedDelta must not fold a long forward step through a nonexistent seam.
+  EXPECT_NEAR(centerline.wrappedDelta(1.0, 29.0), 28.0, 1e-9);
+
+  // Inside the corridor: normal projection, not beyond the ends.
+  const auto inside = centerline.project({15.0, 0.5});
+  EXPECT_FALSE(inside.beyond_ends);
+  EXPECT_NEAR(inside.cte_m, 0.5, 1e-9);
+
+  // Before the entry and past the exit: flagged, so the closed loop harness
+  // does not score the legitimate start/roll-out zones as off-track.
+  EXPECT_TRUE(centerline.project({-3.0, 0.0}).beyond_ends);
+  EXPECT_TRUE(centerline.project({33.0, 0.0}).beyond_ends);
+
+  // The circular track stays a ring.
+  EXPECT_TRUE(ch::Centerline::build(circularTrack()).closed());
+}
+
 TEST(Track, MissingFileFailsCleanly)
 {
   EXPECT_FALSE(ch::loadTrackCsv("/nonexistent/track.csv").has_value());

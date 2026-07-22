@@ -389,7 +389,10 @@ HarnessResult runMapHarness(const HarnessConfig & config, const Track & track)
       std::max(result.steer_rate_max_radps, std::abs(act.delta - prev_delta) / dt);
     ++steer_rate_samples;
 
-    if (v > kMovingSpeedMps) {
+    // beyond_ends: on an open corridor the car legitimately starts before the
+    // first midpoint and rolls out past the last -- no cone line exists there,
+    // so those samples carry no off-track/CTE information.
+    if (v > kMovingSpeedMps && !projection.beyond_ends) {
       cte_sq_sum += projection.cte_m * projection.cte_m;
       ++cte_samples;
       result.cte_max_m = std::max(result.cte_max_m, projection.cte_m);
