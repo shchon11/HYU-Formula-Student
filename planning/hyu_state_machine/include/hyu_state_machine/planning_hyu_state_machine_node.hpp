@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "hyu_msgs/msg/can_state.hpp"
 #include "hyu_msgs/msg/cone_array_with_covariance.hpp"
 #include "hyu_msgs/msg/waypoint_array_stamped.hpp"
 #include "nav_msgs/msg/odometry.hpp"
@@ -83,6 +84,10 @@ public:
   bool gateValid() const;
   bool armed() const;
   int countedLaps() const;
+  double gateAx() const {return gate_ax_;}
+  double gateAy() const {return gate_ay_;}
+  double gateBx() const {return gate_bx_;}
+  double gateBy() const {return gate_by_;}
   bool hasLapTime() const;
   double lastLapSec() const;
   double bestLapSec() const;
@@ -91,6 +96,14 @@ public:
   double currentLapElapsedSec(double now_sec) const;
 
 private:
+  // A refitted gate whose endpoints moved more than this is treated as a NEW
+  // line: crossing history and arming reset (early-mapping gates jump around,
+  // and a moving gate sweeping over a stationary ego "crosses" it).
+  static constexpr double kGateMoveResetM = 0.75;
+  // Between-sample ego jumps beyond this are pose snaps/teleports, not
+  // driving; the spanned segment is never tested against the gate.
+  static constexpr double kMaxPlausibleStepM = 2.0;
+
   double cluster_tolerance_m_;
   double min_gate_width_m_;
   double max_gate_width_m_;
@@ -140,7 +153,9 @@ private:
   void onStopZoneSStart(const std_msgs::msg::Float64::SharedPtr msg);
   void onStopZoneSEnd(const std_msgs::msg::Float64::SharedPtr msg);
   void onStopZoneValid(const std_msgs::msg::Bool::SharedPtr msg);
+  void onAsState(const hyu_msgs::msg::CanState::SharedPtr msg);
   void onTimer();
+  void updateMissionFinished();
   void updateState();
   void publishOutputs();
 
@@ -174,7 +189,40 @@ private:
 
   int target_lap_count_{4};
   int initial_lap_count_{0};
-  int final_lap_start_count_{3};
+  // Autocross: stop from ANY state (including LOCAL) the moment lap_count
+  // reaches target_lap_count. Off for trackdrive (stop belongs to the
+  // GLOBAL_FINAL_STOP path) and for skidpad, where the gate line is crossed
+  // on every circle and would end the mission mid-figure-eight.
+  bool stop_on_target_laps_{false};
+  // KASE 제35조③ USS: after the run's final stop the DS must report Finished
+  // within 30 s or the run is scored DNF. mission_completed_ goes (latched)
+  // true once the vehicle has DRIVEN and then been at rest for
+  // finish_rest_duration_sec while either
+  //   - state_ == STOP (trackdrive / autocross lap-target stop), or
+  //   - finish_on_rest_ is set (local-only missions — acceleration, skidpad —
+  //     where the controller brakes itself when the corridor ends and the
+  //     state machine never enters STOP).
+  // The flag is published on /vehicle/mission_completed, which the vehicle
+  // state machine (sim plugin today, actuation bridge later) turns into
+  // AS_FINISHED — and the DSSI then goes dark per 제20조.
+  bool finish_on_rest_{false};
+  double finish_rest_speed_mps_{0.15};
+  double finish_rest_duration_sec_{3.0};
+  bool has_vehicle_moved_{false};
+  bool mission_finished_{false};
+  rclcpp::Time last_motion_time_;
+  bool has_last_motion_time_{false};
+
+  // Lap counting is inhibited until the vehicle has actually entered
+  // AS_DRIVING once. The car spawns ON the start/finish gate, and SLAM/INS
+  // (re)initialisation transients can throw the ego estimate >3 m (arming
+  // the gate) and then jitter it across the line — a fake lap counted while
+  // the car is physically standing still. With the long pre-mission standby
+  // of the 3-step flow that fake lap was reliably observed (and it instantly
+  // "completes" a 1-lap autocross). Pre-mission laps are meaningless anyway.
+  bool vehicle_driving_seen_{false};
+  // Resolved at construction: <0 in the parameter means target_lap_count - 1.
+  int final_lap_start_count_{-1};
   // Published lap count = max of two INDEPENDENT estimators, so neither can
   // wedge the count if the other stalls (see recomputeLapCount):
   //  - the orange-gate tracker (accurate + the sole lap-time source), and
@@ -195,6 +243,9 @@ private:
   double lap_gate_max_width_m_{7.0};
   double lap_gate_arm_distance_m_{12.0};
   double lap_gate_cooldown_sec_{10.0};
+  // Ego samples slower than this never reach the gate tracker: standstill
+  // SLAM pose snaps must not arm the gate or count crossings.
+  double min_lap_count_speed_mps_{0.3};
   double final_path_end_threshold_{2.0};
   double stop_zone_s_margin_{0.0};
   double max_abs_d_for_global_{2.0};
@@ -250,12 +301,14 @@ private:
   rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr stop_zone_s_start_sub_;
   rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr stop_zone_s_end_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr stop_zone_valid_sub_;
+  rclcpp::Subscription<hyu_msgs::msg::CanState>::SharedPtr as_state_sub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr path_source_pub_;
   rclcpp::Publisher<std_msgs::msg::Int32>::SharedPtr lap_count_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr lap_time_last_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr lap_time_best_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr stop_request_pub_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr mission_completed_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr debug_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
 };

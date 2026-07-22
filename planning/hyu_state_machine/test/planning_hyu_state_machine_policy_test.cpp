@@ -199,13 +199,34 @@ OrangeGateLapTracker makeGateTracker()
   return tracker;
 }
 
-// Drive the ego through one full lap: away from the gate, then back across
-// it in +x. Returns whether the final crossing counted.
-bool driveLap(OrangeGateLapTracker & tracker, double start_time)
+// Walk the ego along y = 0 from x0 to x1 in plausible sub-2 m steps (larger
+// jumps are rejected as pose snaps), 0.5 s apart, arriving at end_time.
+// Returns whether any step counted a lap.
+bool walk(OrangeGateLapTracker & tracker, double x0, double x1, double end_time)
 {
-  EXPECT_FALSE(tracker.observeEgo(-30.0, 0.0, start_time));       // far -> armed
-  EXPECT_FALSE(tracker.observeEgo(-1.0, 0.0, start_time + 1.0));  // approach
-  return tracker.observeEgo(1.0, 0.0, start_time + 2.0);          // cross
+  std::vector<double> xs;
+  const double step = (x1 > x0) ? 1.5 : -1.5;
+  for (double x = x0; (step > 0.0) ? (x < x1) : (x > x1); x += step) {
+    xs.push_back(x);
+  }
+  xs.push_back(x1);
+  bool counted = false;
+  double t = end_time - 0.5 * static_cast<double>(xs.size() - 1U);
+  for (const double x : xs) {
+    counted = tracker.observeEgo(x, 0.0, t) || counted;
+    t += 0.5;
+  }
+  return counted;
+}
+
+// Drive one full lap: out beyond the 12 m arm radius, then back across the
+// gate in +x, final crossing just before end_time. Returns whether it counted.
+// (The outbound pass back through the line is direction-mismatched and armed
+// is false there, so it never counts — same as the real out-and-around lap.)
+bool driveLap(OrangeGateLapTracker & tracker, double end_time)
+{
+  EXPECT_FALSE(walk(tracker, 1.0, -14.0, end_time - 5.0));
+  return walk(tracker, -14.0, 1.0, end_time);
 }
 
 }
@@ -224,33 +245,38 @@ TEST(OrangeGateLapTracker, RequiresTwoSideClusters)
   EXPECT_TRUE(tracker.updateGate({}));
 }
 
-TEST(OrangeGateLapTracker, SpawnCrossingStartsTimerWithoutCounting)
+TEST(OrangeGateLapTracker, RunStartCrossingNeverCounts)
 {
   auto tracker = makeGateTracker();
-  // Car spawns just behind the line and rolls across it: no lap.
-  EXPECT_FALSE(tracker.observeEgo(-2.0, 0.0, 0.0));
-  EXPECT_FALSE(tracker.observeEgo(2.0, 0.0, 0.5));
-  EXPECT_GE(tracker.currentLapElapsedSec(10.5), 9.9);
+  // Spawn 13 m behind the line — beyond the 12 m arm radius, so the tracker
+  // is armed before the car ever moves (small_track spawns outside the tuned
+  // 3 m radius the same way). The departure crossing is the RACE START:
+  // zero laps are complete there, so it must start the timer, not count.
+  EXPECT_FALSE(tracker.observeEgo(-13.0, 0.0, 0.0));
+  EXPECT_TRUE(tracker.armed());
+  EXPECT_FALSE(walk(tracker, -13.0, 1.0, 10.0));
+  EXPECT_EQ(tracker.countedLaps(), 0);
   EXPECT_FALSE(tracker.hasLapTime());
+  // The crossing lands on the walk's second-to-last sample (t = 9.5).
+  EXPECT_NEAR(tracker.currentLapElapsedSec(20.0), 10.5, 1.0e-9);
 }
 
 TEST(OrangeGateLapTracker, CountsArmedCrossingsAndTimesLaps)
 {
   auto tracker = makeGateTracker();
   EXPECT_EQ(tracker.countedLaps(), 0);
-  EXPECT_FALSE(tracker.observeEgo(-2.0, 0.0, 0.0));
-  EXPECT_FALSE(tracker.observeEgo(2.0, 0.0, 1.0));   // start crossing, t=1
+  EXPECT_FALSE(walk(tracker, -2.0, 1.0, 1.0));       // race start, t=1
 
-  EXPECT_TRUE(driveLap(tracker, 40.0));              // lap 1 at t=42
+  EXPECT_TRUE(driveLap(tracker, 40.0));              // lap 1 at t=40
   ASSERT_TRUE(tracker.hasLapTime());
   EXPECT_EQ(tracker.countedLaps(), 1);
-  EXPECT_NEAR(tracker.lastLapSec(), 41.0, 1.0e-9);
-  EXPECT_NEAR(tracker.bestLapSec(), 41.0, 1.0e-9);
+  EXPECT_NEAR(tracker.lastLapSec(), 39.0, 1.0e-9);
+  EXPECT_NEAR(tracker.bestLapSec(), 39.0, 1.0e-9);
 
-  EXPECT_TRUE(driveLap(tracker, 80.0));              // lap 2 at t=82
+  EXPECT_TRUE(driveLap(tracker, 78.0));              // lap 2 at t=78
   EXPECT_EQ(tracker.countedLaps(), 2);
-  EXPECT_NEAR(tracker.lastLapSec(), 40.0, 1.0e-9);
-  EXPECT_NEAR(tracker.bestLapSec(), 40.0, 1.0e-9);
+  EXPECT_NEAR(tracker.lastLapSec(), 38.0, 1.0e-9);
+  EXPECT_NEAR(tracker.bestLapSec(), 38.0, 1.0e-9);
 }
 
 // The published lap count is max(gate, fallback), so a gate that never
@@ -273,14 +299,43 @@ TEST(OrangeGateLapTracker, StalledGateDoesNotWedgeCombinedCount)
 TEST(OrangeGateLapTracker, LineJitterAndReverseDoNotCount)
 {
   auto tracker = makeGateTracker();
-  EXPECT_TRUE(driveLap(tracker, 0.0));               // lap 1, disarms
+  EXPECT_FALSE(walk(tracker, -2.0, 1.0, 1.0));       // race start
+  EXPECT_TRUE(driveLap(tracker, 41.0));              // lap 1, disarms
   // Jitter back and forth across the line without re-arming: nothing.
-  EXPECT_FALSE(tracker.observeEgo(-1.0, 0.0, 3.0));
-  EXPECT_FALSE(tracker.observeEgo(1.0, 0.0, 3.5));
-  // Re-arm far away, then cross BACKWARD: direction mismatch, no count.
-  EXPECT_FALSE(tracker.observeEgo(30.0, 0.0, 20.0));
-  EXPECT_FALSE(tracker.observeEgo(1.0, 0.0, 21.0));
-  EXPECT_FALSE(tracker.observeEgo(-1.0, 0.0, 21.5));
+  EXPECT_FALSE(tracker.observeEgo(-1.0, 0.0, 43.0));
+  EXPECT_FALSE(tracker.observeEgo(1.0, 0.0, 43.5));
+  // Re-arm far past the line, then cross BACKWARD: direction mismatch.
+  EXPECT_FALSE(walk(tracker, 1.0, 15.0, 60.0));
+  EXPECT_FALSE(walk(tracker, 15.0, -1.0, 70.0));
+  EXPECT_EQ(tracker.countedLaps(), 1);
+}
+
+TEST(OrangeGateLapTracker, PoseSnapAcrossTheLineDoesNotCross)
+{
+  auto tracker = makeGateTracker();
+  EXPECT_FALSE(walk(tracker, -2.0, 1.0, 1.0));       // race start
+  EXPECT_TRUE(driveLap(tracker, 41.0));              // real lap 1
+  // Relocalisation snap from far behind to far past the line: the >2 m step
+  // is a measurement discontinuity, the spanned segment never happened.
+  EXPECT_FALSE(tracker.observeEgo(-14.0, 0.0, 60.0));
+  EXPECT_FALSE(tracker.observeEgo(14.0, 0.0, 60.5));
+  EXPECT_EQ(tracker.countedLaps(), 1);
+}
+
+TEST(OrangeGateLapTracker, RefittedGateSweepingOverEgoResetsInsteadOfCounting)
+{
+  auto tracker = makeGateTracker();
+  // Young-map gate 13 m ahead of a stationary ego: armed by distance alone.
+  EXPECT_FALSE(tracker.observeEgo(-13.0, 0.0, 0.0));
+  EXPECT_FALSE(tracker.observeEgo(-12.9, 0.0, 0.5));
+  EXPECT_TRUE(tracker.armed());
+  // SLAM refits the gate to the ego's far side (way beyond the 0.75 m move
+  // threshold): arming and crossing history reset with the new line, so the
+  // sweep over the stationary car cannot read as a crossing.
+  EXPECT_TRUE(tracker.updateGate({{{-20.0, 1.5}}, {{-20.0, -1.5}}}));
+  EXPECT_FALSE(tracker.armed());
+  EXPECT_FALSE(tracker.observeEgo(-12.8, 0.0, 1.0));
+  EXPECT_EQ(tracker.countedLaps(), 0);
 }
 
 }

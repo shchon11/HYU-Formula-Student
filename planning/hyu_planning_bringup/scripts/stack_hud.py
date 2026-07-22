@@ -130,6 +130,7 @@ class StackHud(Node):
             "selected_path_valid_topic", "/planning/selected_path_valid").value
         cmd_topic = p("cmd_topic", "/vehicle/cmd").value
         can_state_topic = p("can_state_topic", "/vehicle/as_state").value
+        dssi_topic = p("dssi_topic", "/vehicle/dssi").value
         cte_topic = p("cte_topic", "/planning/cte").value
         cte_rmse_topic = p("cte_rmse_topic", "/planning/cte_rmse").value
         self.target_laps = p("target_lap_count", 4).value
@@ -148,6 +149,7 @@ class StackHud(Node):
         self.selected_valid = TopicAge()
         self.cmd = TopicAge()
         self.can = TopicAge()
+        self.dssi = TopicAge()
         self.cte = TopicAge()
         self.cte_rmse = TopicAge()
         self.cones_rx_window = []  # monotonic stamps for rate estimation
@@ -177,6 +179,7 @@ class StackHud(Node):
         # NOTE: the sim publishes /vehicle/as_state only while it has
         # subscribers — this subscription is what makes it flow.
         sub(CanState, can_state_topic, self.can.put, be)
+        sub(String, dssi_topic, self.dssi.put, reliable)
         sub(Float32, cte_topic, self.cte.put, reliable)
         sub(Float32, cte_rmse_topic, self.cte_rmse.put, reliable)
 
@@ -192,7 +195,9 @@ class StackHud(Node):
                 "rviz_2d_overlay_msgs not found; install "
                 "ros-humble-rviz-2d-overlay-plugins for the stack HUD.")
 
-        self.create_timer(0.2, self._render)  # 5 Hz
+        # 10 Hz so the banner's 0.1s live lap clock actually ticks every digit
+        # (the state machine feeds lap_elapsed at 20 Hz).
+        self.create_timer(0.1, self._render)
         self.get_logger().info(
             f"stack HUD: board on '{self.hud_topic}', banner on "
             f"'{self.banner_topic}'")
@@ -244,9 +249,13 @@ class StackHud(Node):
             h_dist=12, v_dist=56, size=12.0)
 
         text, color = self._banner(debug, sel, statuses)
+        # The 44px banner fits exactly one visual line — anything that wraps
+        # gets clipped. Size the width to the text: DejaVu Sans Mono at 19pt
+        # advances ~16px per glyph (19pt * 96/72 dpi * 0.63 advance ratio).
+        width = max(760, 40 + 16 * len(text))
         self._publish(
             self.banner_pub, span(text, color),
-            width=760, height=44,
+            width=width, height=44,
             h_align=OverlayText.CENTER, v_align=OverlayText.TOP,
             h_dist=0, v_dist=8, size=19.0)
 
@@ -398,6 +407,24 @@ class StackHud(Node):
                 mis = (B_WARN, WARN, f"{body} — arm mission")
         lines.append(self._stage("MISSION", *mis))
 
+        # DSSI — KASE 제20조 indication (from dssi_state.py). The flashing
+        # states blink at 1 Hz on the HUD's own wall clock, mirroring what the
+        # physical LEDs would show.
+        blink_on = (time.monotonic() % 1.0) < 0.5
+        if self.dssi.msg is None or not self.dssi.fresh(1.5):
+            dssi_line = (B_DIM, DIM, "waiting for /vehicle/dssi")
+        else:
+            dssi_line = {
+                "off": (B_DIM, DIM, "OFF"),
+                "yellow_flashing": (
+                    B_OK if blink_on else B_DIM, WARN,
+                    "YELLOW FLASHING — system check"),
+                "yellow_continuous": (B_OK, WARN, "YELLOW — RTAD"),
+                "blue_continuous": (B_OK, INFO, "BLUE — driverless"),
+            }.get(self.dssi.msg.data,
+                  (B_ERR, ERR, f"unknown '{self.dssi.msg.data}'"))
+        lines.append(self._stage("DSSI", *dssi_line))
+
         # TRACKING — cross-track error + Frenet position (needs ate_monitor).
         if self.cte.msg is not None and self.cte.fresh(1.5):
             d_val = self.cte.msg.data
@@ -440,7 +467,12 @@ class StackHud(Node):
             elapsed = float(debug.get("lap_elapsed", "-1"))
         except ValueError:
             return ""
-        return f" · ⏱{elapsed:.0f}s" if elapsed >= 0.0 else ""
+        return f" · ⏱{elapsed:.1f}s" if elapsed >= 0.0 else ""
+
+    def _lap_banner_tail(self, debug):
+        """' · last 42.3s best 41.8s' suffix for the racing banner lines."""
+        laps = self._lap_times(debug)
+        return f" · {laps}" if laps else ""
 
     def _banner(self, debug, sel, st):
         """One line answering: what is the car doing / why is it stuck."""
@@ -457,9 +489,9 @@ class StackHud(Node):
         if st.get("as_state") == 3:
             return "✕ EMERGENCY BRAKE (AS:EBS)", ERR
         if state == "STOP" or st.get("as_state") == 4:
-            return f"⚑ FINISHED — {lap} laps", TEXT
+            return f"⚑ FINISHED — {lap} laps{self._lap_banner_tail(debug)}", TEXT
         if not driving:
-            return "WAITING MISSION — run: race (auto-arms) or set_mission", WARN
+            return "WAITING MISSION — mission trackdrive|autocross|skidpad|accel", WARN
         # From here on the car is armed & driving: diagnose why it may be stuck.
         if self.cmd.rx is not None and not self.cmd.fresh(1.5):
             return "✕ CONTROLLER SILENT — /vehicle/cmd stopped", ERR
@@ -473,37 +505,43 @@ class StackHud(Node):
             return "✕ PERCEPTION SILENT — SLAM starving", ERR
         if slam in ("mapping", "mapping_converged") or state == "LOCAL":
             if slam == "localization":
-                gate = self._handoff_gate(debug)
+                gate = self._handoff_gate(debug, sel)
                 return f"LOCALIZED · awaiting handoff ({gate})", INFO
             label = "MAPPING" if slam != "mapping_converged" else "MAP CONVERGED"
             return f"LAP 1 · {label} · LOCAL · {v_txt}", WARN
         if path_source == "GLOBAL_FINAL_STOP":
             return (
                 f"FINAL LAP {lap}/{self.target_laps} · {v_txt}"
-                f"{self._lap_elapsed(debug)}", ACCENT)
+                f"{self._lap_elapsed(debug)}{self._lap_banner_tail(debug)}",
+                ACCENT)
         if state == "GLOBAL":
             return (
                 f"RACING · GLOBAL · lap {lap}/{self.target_laps} "
-                f"· {v_txt}{self._lap_elapsed(debug)}", OK)
+                f"· {v_txt}{self._lap_elapsed(debug)}"
+                f"{self._lap_banner_tail(debug)}", OK)
         return f"{state or '?'} · {path_source or '?'} · {v_txt}", TEXT
 
-    def _handoff_gate(self, debug):
-        """Name the first failing LOCAL->GLOBAL entry gate for the banner."""
-        if debug.get("global_path_valid") == "false":
-            return "global path invalid"
-        if debug.get("frenet_fresh") == "false":
-            return "frenet odom stale"
-        try:
-            d = abs(float(debug.get("current_d", "0")))
-            if d > 2.0:
-                return f"|d|={d:.1f}m > 2.0 gate"
-        except ValueError:
-            pass
-        for key in ("global_handoff_dwell_ready", "global_handoff_ready",
-                    "global_path_ready"):
-            if debug.get(key) == "false":
-                return key.replace("global_", "").replace("_", " ")
-        return "selector dwell"
+    def _handoff_gate(self, debug, sel):
+        """Name the LOCAL->GLOBAL entry blocker for the banner.
+
+        The state machine already publishes the authoritative, correctly
+        ordered blocker as global_entry_reason — display that instead of
+        re-deriving it from raw gate keys (the old key-sniffing checked the
+        dwell gate FIRST, which is implied-false by every earlier gate, so
+        the banner nearly always blamed the dwell and its prettified key
+        name "handoff dwell ready" read exactly backwards).
+        """
+        reason = debug.get("global_entry_reason", "")
+        if reason in ("", "ready"):
+            # All gates passed; the flip lands on the next state-machine tick.
+            return "switching"
+        if reason == "handoff_not_ready":
+            # The selector's continuity detail says WHY the handoff isn't
+            # ready (start separation, heading diff, common length, ...).
+            cont = sel.get("continuity_failure", "")
+            if cont and cont != "none":
+                return f"handoff not ready: {cont}"
+        return reason.replace("_", " ")
 
     def _publish(self, pub, text, width, height, h_align, v_align,
                  h_dist, v_dist, size):

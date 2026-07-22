@@ -15,7 +15,8 @@ planning_hyu_state_machine_node:
 
     target_lap_count: 10
     initial_lap_count: 0
-    final_lap_start_count: 9
+    # final_lap_start_count defaults to target_lap_count - 1; only set it to
+    # trigger GLOBAL_FINAL_STOP on a different lap than the last one.
 
     frenet_odom_timeout_sec: 0.5
     global_path_valid_timeout_sec: 0.5

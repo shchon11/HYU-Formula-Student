@@ -1,5 +1,7 @@
 #include "hyu_state_machine/planning_hyu_state_machine_node.hpp"
 
+#include "hyu_state_machine/planning_state_debug.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -40,7 +42,26 @@ PlanningStateMachineNode::PlanningStateMachineNode()
 
   target_lap_count_ = declare_parameter<int>("target_lap_count", 4);
   initial_lap_count_ = declare_parameter<int>("initial_lap_count", 0);
-  final_lap_start_count_ = declare_parameter<int>("final_lap_start_count", 3);
+  // Autocross-only (see header): trackdrive stops via GLOBAL_FINAL_STOP, and
+  // skidpad crosses the gate line every circle, so both keep this off.
+  stop_on_target_laps_ = declare_parameter<bool>("stop_on_target_laps", false);
+  // Finished reporting (KASE USS rule) — see header.
+  finish_on_rest_ = declare_parameter<bool>("finish_on_rest", false);
+  finish_rest_speed_mps_ = declare_parameter<double>("finish_rest_speed_mps", 0.15);
+  finish_rest_duration_sec_ =
+    declare_parameter<double>("finish_rest_duration_sec", 3.0);
+  // -1 (default) derives target_lap_count - 1, so changing the lap target
+  // cannot silently desync the final-lap trigger; an explicit value wins.
+  final_lap_start_count_ = declare_parameter<int>("final_lap_start_count", -1);
+  if (final_lap_start_count_ < 0) {
+    final_lap_start_count_ = target_lap_count_ - 1;
+  } else if (final_lap_start_count_ != target_lap_count_ - 1) {
+    RCLCPP_WARN(
+      get_logger(),
+      "final_lap_start_count=%d != target_lap_count-1=%d — final-lap "
+      "behaviour (GLOBAL_FINAL_STOP) will not align with the last lap",
+      final_lap_start_count_, target_lap_count_ - 1);
+  }
   // 1.0 s (was 0.5): under sim load spikes the whole 100 Hz graph stalls
   // 0.3-0.4 s at a time (measured 2026-07-19); 0.5 left the LOCAL->GLOBAL
   // re-entry gate flapping on "frenet odom stale" after every demotion.
@@ -61,6 +82,8 @@ PlanningStateMachineNode::PlanningStateMachineNode()
   lap_gate_arm_distance_m_ =
     declare_parameter<double>("lap_gate_arm_distance_m", 12.0);
   lap_gate_cooldown_sec_ = declare_parameter<double>("lap_gate_cooldown_sec", 10.0);
+  min_lap_count_speed_mps_ =
+    declare_parameter<double>("min_lap_count_speed_mps", 0.3);
   final_path_end_threshold_ = declare_parameter<double>("final_path_end_threshold", 2.0);
   stop_zone_s_margin_ = declare_parameter<double>("stop_zone_s_margin", 0.0);
   max_abs_d_for_global_ = declare_parameter<double>("max_abs_d_for_global", 2.0);
@@ -127,17 +150,36 @@ PlanningStateMachineNode::PlanningStateMachineNode()
     stop_zone_valid_topic_, 10,
     std::bind(&PlanningStateMachineNode::onStopZoneValid, this, _1));
 
+  // Lap-counting inhibit until AS_DRIVING (see vehicle_driving_seen_).
+  // Best-effort: matches the sim plugin, which also only publishes the topic
+  // while it has subscribers — this subscription is part of what makes it flow.
+  as_state_sub_ = create_subscription<hyu_msgs::msg::CanState>(
+    declare_parameter<std::string>("as_state_topic", "/vehicle/as_state"),
+    rclcpp::QoS(rclcpp::KeepLast(5)).best_effort(),
+    std::bind(&PlanningStateMachineNode::onAsState, this, _1));
+
   state_pub_ = create_publisher<std_msgs::msg::String>("/planning/state", 10);
   path_source_pub_ = create_publisher<std_msgs::msg::String>("/planning/path_source", 10);
   lap_count_pub_ = create_publisher<std_msgs::msg::Int32>("/planning/lap_count", 10);
   lap_time_last_pub_ = create_publisher<std_msgs::msg::Float64>("/planning/lap_time_last", 10);
   lap_time_best_pub_ = create_publisher<std_msgs::msg::Float64>("/planning/lap_time_best", 10);
   stop_request_pub_ = create_publisher<std_msgs::msg::Bool>("/planning/stop_request", 10);
+  mission_completed_pub_ = create_publisher<std_msgs::msg::Bool>(
+    declare_parameter<std::string>(
+      "mission_completed_topic", "/vehicle/mission_completed"), 10);
   debug_pub_ = create_publisher<std_msgs::msg::String>("/planning/debug", 10);
 
   timer_ = create_wall_timer(
     std::chrono::milliseconds(state_timer_period_ms_),
     std::bind(&PlanningStateMachineNode::onTimer, this));
+}
+
+void PlanningStateMachineNode::onAsState(const hyu_msgs::msg::CanState::SharedPtr msg)
+{
+  if (!vehicle_driving_seen_ && msg->as_state == hyu_msgs::msg::CanState::AS_DRIVING) {
+    vehicle_driving_seen_ = true;
+    RCLCPP_INFO(get_logger(), "AS_DRIVING observed — lap counting enabled.");
+  }
 }
 
 void PlanningStateMachineNode::onFrenetOdom(const nav_msgs::msg::Odometry::SharedPtr msg)
@@ -153,11 +195,14 @@ void PlanningStateMachineNode::onFrenetOdom(const nav_msgs::msg::Odometry::Share
   // while the orange gate is valid — so a gate that mislocates or misses a
   // crossing can never wedge the lap count (the published count is the max of
   // the two estimators; see recomputeLapCount).
-  if (lap_tracking_policy_ && lap_tracking_policy_->observeFrenetSample(
+  if (vehicle_driving_seen_ && lap_tracking_policy_ && lap_tracking_policy_->observeFrenetSample(
       current_s_, receive_time.seconds(), frenet_odom_timeout_sec_, 2.0))
   {
     ++fallback_lap_count_;
     recomputeLapCount();
+    RCLCPP_INFO(
+      get_logger(), "Frenet seam-wrap: fallback lap %d (s=%.2f) — lap %d.",
+      fallback_lap_count_, current_s_, lap_count_);
   }
 }
 
@@ -179,13 +224,47 @@ void PlanningStateMachineNode::onSlamConeMap(
 
 void PlanningStateMachineNode::onEgoOdom(const nav_msgs::msg::Odometry::SharedPtr msg)
 {
+  // Pre-driving the car sits ON the gate and ego transients can fake a
+  // crossing (see vehicle_driving_seen_) — do not even feed the tracker.
+  if (!vehicle_driving_seen_) {
+    return;
+  }
+  const double ego_speed = std::hypot(
+    msg->twist.twist.linear.x, msg->twist.twist.linear.y);
+  // Rest tracking for the Finished report (see header): "moved" needs real
+  // driving speed once; "at rest" means no sample above the rest threshold
+  // for finish_rest_duration_sec.
+  if (std::isfinite(ego_speed)) {
+    const rclcpp::Time sample_time = now();
+    if (ego_speed > 0.5) {
+      has_vehicle_moved_ = true;
+    }
+    if (ego_speed > finish_rest_speed_mps_ || !has_last_motion_time_) {
+      last_motion_time_ = sample_time;
+      has_last_motion_time_ = true;
+    }
+  }
+  // Standstill guard: SLAM (re)initialisation can SNAP the pose estimate by
+  // meters while the car is not moving — a segment that "crosses" the gate
+  // and can even fake the 3 m arming distance. A real crossing happens at
+  // speed; the measured body velocity stays ~0 through a standstill pose
+  // snap, so it cleanly separates the two.
+  if (!std::isfinite(ego_speed) || ego_speed < min_lap_count_speed_mps_) {
+    return;
+  }
   if (gate_tracker_ && gate_tracker_->observeEgo(
       msg->pose.pose.position.x, msg->pose.pose.position.y, now().seconds()))
   {
     recomputeLapCount();
     RCLCPP_INFO(
-      get_logger(), "Start/finish gate crossed: lap %d, lap time %.2f s",
-      lap_count_, gate_tracker_->lastLapSec());
+      get_logger(),
+      "Start/finish gate crossed: lap %d, lap time %.2f s "
+      "(ego %.2f,%.2f v=%.2f gate A %.2f,%.2f B %.2f,%.2f)",
+      lap_count_, gate_tracker_->lastLapSec(),
+      msg->pose.pose.position.x, msg->pose.pose.position.y,
+      std::hypot(msg->twist.twist.linear.x, msg->twist.twist.linear.y),
+      gate_tracker_->gateAx(), gate_tracker_->gateAy(),
+      gate_tracker_->gateBx(), gate_tracker_->gateBy());
   }
 }
 
@@ -209,9 +288,14 @@ void PlanningStateMachineNode::onGraphSlamStatus(const std_msgs::msg::String::Sh
   // guarantees at least one lap. This is part of the fallback estimator (see
   // onFrenetOdom) and floors the count unconditionally so lap_count is never
   // stuck below 1 even if the gate never registers a crossing.
-  if (lap_tracking_policy_ && lap_tracking_policy_->observeGraphSlamStatus(msg->data)) {
+  if (lap_tracking_policy_ && lap_tracking_policy_->observeGraphSlamStatus(msg->data) &&
+    vehicle_driving_seen_)
+  {
     fallback_lap_count_ = std::max(fallback_lap_count_, 1);
     recomputeLapCount();
+    RCLCPP_INFO(
+      get_logger(), "Discovery-lap floor: graph SLAM '%s' — lap %d.",
+      msg->data.c_str(), lap_count_);
   }
   global_path_readiness_.onGraphSlamStatus(msg->data);
 }
@@ -271,7 +355,29 @@ void PlanningStateMachineNode::onStopZoneValid(const std_msgs::msg::Bool::Shared
 void PlanningStateMachineNode::onTimer()
 {
   updateState();
+  updateMissionFinished();
   publishOutputs();
+}
+
+void PlanningStateMachineNode::updateMissionFinished()
+{
+  if (mission_finished_) {
+    return;  // Latched: Finished never reverts (제6조⑥ — the run is over).
+  }
+  if (!vehicle_driving_seen_ || !has_vehicle_moved_ || !has_last_motion_time_) {
+    return;
+  }
+  if (state_ != PlanningState::STOP && !finish_on_rest_) {
+    return;
+  }
+  if ((now() - last_motion_time_).seconds() < finish_rest_duration_sec_) {
+    return;
+  }
+  mission_finished_ = true;
+  RCLCPP_INFO(
+    get_logger(),
+    "Mission FINISHED (at rest %.1f s, state %s) — reporting mission_completed.",
+    finish_rest_duration_sec_, planningStateToString(state_).c_str());
 }
 
 void PlanningStateMachineNode::updateState()
@@ -283,6 +389,15 @@ void PlanningStateMachineNode::updateState()
 
   if (state_ == PlanningState::STOP) {
     // TODO(haejun): Add finished/mission-complete handling later.
+    return;
+  }
+
+  if (stop_on_target_laps_ && vehicle_driving_seen_ && lap_count_ >= target_lap_count_) {
+    state_ = PlanningState::STOP;
+    last_stop_request_reason_ = "target_laps_reached";
+    RCLCPP_INFO(
+      get_logger(), "Lap target reached (%d/%d) — stopping (stop_on_target_laps).",
+      lap_count_, target_lap_count_);
     return;
   }
 

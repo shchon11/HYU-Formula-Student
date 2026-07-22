@@ -52,6 +52,24 @@ ARGUMENTS = (
     ("stop_zone_s_start_topic", "/planning/stop_zone/s_start", "Final stop-zone start position."),
     ("stop_zone_s_end_topic", "/planning/stop_zone/s_end", "Final stop-zone end position."),
     ("stop_zone_valid_topic", "/planning/stop_zone/valid", "Final stop-zone validity."),
+    # Mission lap profile (mission.sh threads these): trackdrive N laps,
+    # autocross 1 lap + stop_on_target_laps so the car stops from LOCAL.
+    ("target_lap_count", "10", "State-machine lap target (trackdrive laps; autocross uses 1)."),
+    (
+        "stop_on_target_laps",
+        "false",
+        "Stop from any state once the lap target is reached (autocross). Keep "
+        "false for trackdrive (GLOBAL_FINAL_STOP owns the stop) and skidpad "
+        "(the gate line is crossed every circle).",
+    ),
+    (
+        "finish_on_rest",
+        "false",
+        "Report /vehicle/mission_completed once the car has driven and come "
+        "to rest, even without a STOP state. For local-only missions "
+        "(acceleration, skidpad) where the controller brakes itself at the "
+        "corridor end; trackdrive/autocross report Finished from STOP.",
+    ),
     ("local_max_stamp_skew_sec", "0.1", "Local planner cones/odom stamp-skew gate (sec, sim time)."),
     ("local_max_input_age_sec", "0.5", "Local planner input freshness gate (sec, sim time)."),
     ("local_max_start_distance_m", "4.0", "Max distance from ego to the local path start (m)."),
@@ -87,6 +105,14 @@ ARGUMENTS = (
     # gating -- the local planner drives the full SLAM cone map straight down
     # the corridor and the controller brakes on its own when the cones run out.
     ("acceleration", "false", "Acceleration mission: local-only straight-line, no global planner."),
+    # DLC / open-corridor demo mission: local-only like acceleration, but the
+    # corridor curves (lane changes), so its parameter file keeps the default
+    # curved-planner tuning -- no straight-line fit. The one difference in the
+    # dlc yaml is the stop_at_path_end taper: the track is open at both ends,
+    # so the path speed walks down to zero at the corridor end and the car
+    # rolls to a planned stop instead of hitting the controller's fail-safe
+    # brake at cruise speed past the last cone pair.
+    ("dlc", "false", "DLC mission: local-only, trackdrive tunings + planned stop at the open corridor end."),
 )
 
 PARAMETER_FILES = (
@@ -147,15 +173,17 @@ def generate_launch_description() -> LaunchDescription:
     configuration_names.extend(name for name, _, _, _ in PARAMETER_FILES)
     values = {name: LaunchConfiguration(name) for name in configuration_names}
 
-    # Local-only missions (skidpad, acceleration) keep the global planner and
-    # its Frenet/handoff group down; the state machine stays in LOCAL for the
-    # whole run. Resolves to the literal 'true'/'false' for launch conditions.
+    # Local-only missions (skidpad, acceleration, dlc) keep the global planner
+    # and its Frenet/handoff group down; the state machine stays in LOCAL for
+    # the whole run. Resolves to the literal 'true'/'false' for launch conditions.
     local_only = PythonExpression(
         [
             "'true' if '",
             values["skidpad"],
             "' == 'true' or '",
             values["acceleration"],
+            "' == 'true' or '",
+            values["dlc"],
             "' == 'true' else 'false'",
         ]
     )
@@ -249,8 +277,8 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
     # Each local-only mission swaps in its own tuned parameter files (skidpad:
-    # slow, short lookahead; acceleration: full-speed straight) without touching
-    # the trackdrive defaults.
+    # slow, short lookahead; acceleration: full-speed straight; dlc: trackdrive
+    # tuning + open-end stop taper) without touching the trackdrive defaults.
     local_params_selected = PythonExpression(
         [
             "'",
@@ -261,9 +289,13 @@ def generate_launch_description() -> LaunchDescription:
             _params_file("hyu_local_planner", "hyu_local_planner_acceleration.yaml"),
             "' if '",
             values["acceleration"],
+            "' == 'true' else ('",
+            _params_file("hyu_local_planner", "hyu_local_planner_dlc.yaml"),
+            "' if '",
+            values["dlc"],
             "' == 'true' else '",
             values["local_params_file"],
-            "')",
+            "'))",
         ]
     )
     controller_params_selected = PythonExpression(
@@ -339,6 +371,12 @@ def generate_launch_description() -> LaunchDescription:
                 "global_requires_graph_slam_localization": values[
                     "global_requires_graph_slam_localization"
                 ],
+                "target_lap_count": ParameterValue(
+                    values["target_lap_count"], value_type=int),
+                "stop_on_target_laps": ParameterValue(
+                    values["stop_on_target_laps"], value_type=bool),
+                "finish_on_rest": ParameterValue(
+                    values["finish_on_rest"], value_type=bool),
                 "use_sim_time": values["use_sim_time"],
             },
         ],
@@ -398,6 +436,16 @@ def generate_launch_description() -> LaunchDescription:
         ],
         remappings=controller_remappings,
     )
+    # KASE 제20조 DSSI indication state — the LED driver's input topic. Not
+    # gated on enable_hud: the topic is a vehicle-facing contract, the HUD is
+    # merely one consumer.
+    dssi_state = Node(
+        package="hyu_planning_bringup",
+        executable="dssi_state.py",
+        name="dssi_state",
+        output="screen",
+        parameters=[{"use_sim_time": values["use_sim_time"]}],
+    )
     stack_hud = Node(
         package="hyu_planning_bringup",
         executable="stack_hud.py",
@@ -436,5 +484,6 @@ def generate_launch_description() -> LaunchDescription:
         hyu_state_machine,
         selector,
         controller,
+        dssi_state,
         stack_hud,
     ])

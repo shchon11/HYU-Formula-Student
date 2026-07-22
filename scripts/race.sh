@@ -1,43 +1,35 @@
 #!/usr/bin/env bash
-# race.sh — full autonomous stack in one tmux session.
+# race.sh — STEP 1 (sim): simulator + perception, in a tmux session.
 #
-#   race [track] [sim|real] [tmpc] [use_sim_time:=true|false] [extra sim args...]
+#   race [track] [sim|real] [bg] [norviz] [use_sim_time:=true|false] [extra sim args...]
 #                                          # start (default: small_track real)
 #   race perception [track] [extra args]   # sim+perception+SLAM+teleop only,
 #                                          # for per-tier evaluation vs GT cones
-#   race stop                              # tear down
+#   race stop                              # tear down the WHOLE session (all steps)
 #   race attach                            # re-attach
 #
-# 'tmpc' swaps the planning pane to tmpc_trackdrive.launch.py: Pure Pursuit
-# drives LOCAL, the TUM TMPC takes /vehicle/cmd in GLOBAL via the command selector.
-# use_sim_time:= is threaded into every stack launch (planning/TMPC chain,
-# GNSS HUD) as the single clock-domain switch; it defaults to true because
-# this script always brings up the Gazebo sim.
+# The run flow is three explicit steps — nothing drives until step 3:
 #
-# Brings up sim+perception, the whole hyu_planning_bringup graph (graph_slam +
-# global/local planner + state machine + hyu_path_selector + pure-pursuit
-# controller), then arms the mission so the CONTROLLER drives the car itself —
-# no teleop. Panes self-sequence; a monitor pane shows the live path source /
-# state / lap / cross-track error.
+#   step 1   race small_track sim     simulator + perception   (this script)
+#            fsk                      vehicle sensors + perception (fsk.sh)
+#   step 2   stack                    INS + SLAM + planning + control (standby)
+#   step 3   mission trackdrive 10    arm a mission — ONLY now can the car move
+#
+# The car physically cannot move before step 3: the sim race-car plugin
+# ignores commands until /vehicle/set_mission puts it in AS_DRIVING, and
+# mission.sh is the only thing that calls that service.
+#
+# Options:
+#   sim | real   perception mode. 'real' (default) = YOLO+LiDAR fusion on the
+#                simulated sensors; 'sim' = lightweight Gazebo ground-truth
+#                cones straight onto /perception/cones, no YOLO.
+#   bg           do not attach the tmux session (background/headless run).
+#   norviz       start without RViz.
 
 set -o pipefail
-
-# Unique session name: a bare 'race' collides with any other tmux session of
-# the same name (e.g. a Claude remote-control CLI session), and 'race stop'
-# would kill it. Keep this specific so kill-session only ever hits our stack.
-SESSION="fsk_race"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-SRC_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-DEFAULT_EUFS_MASTER="$(cd "$SRC_DIR/.." && pwd)"
-if [ ! -f "$DEFAULT_EUFS_MASTER/install/setup.zsh" ] && [ -f "$SRC_DIR/install/setup.zsh" ]; then
-  DEFAULT_EUFS_MASTER="$SRC_DIR"
-fi
-EUFS_MASTER="${EUFS_MASTER:-$DEFAULT_EUFS_MASTER}"
-if [ ! -f "$EUFS_MASTER/install/setup.zsh" ] && [ -f "$DEFAULT_EUFS_MASTER/install/setup.zsh" ]; then
-  EUFS_MASTER="$DEFAULT_EUFS_MASTER"
-fi
-WS_SETUP="$EUFS_MASTER/install/setup.zsh"       # tmux panes run zsh
-ROS_SETUP="/opt/ros/humble/setup.zsh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/fsk-session.sh"
 
 case "${1:-start}" in
   stop|kill|down)
@@ -55,14 +47,19 @@ PMODE="real"
 FILTERED=""
 HAS_MOTION_COMP_ARG=0
 EVAL_MODE=0
-TMPC_MODE=0
 USE_SIM_TIME="true"
+BG=0
+RVIZ="true"
 for tok in "$@"; do
   case "$tok" in
     perception) EVAL_MODE=1 ;;
-    tmpc) TMPC_MODE=1 ;;
+    bg|headless) BG=1 ;;
+    norviz) RVIZ="false" ;;
+    rviz:=*) RVIZ="${tok#rviz:=}" ;;
     use_sim_time:=*) USE_SIM_TIME="${tok#use_sim_time:=}" ;;
     sim|real) PMODE="$tok" ;;
+    tmpc)
+      echo "race: the TMPC hybrid stack is retired from this flow — the MAP controller drives. Ignoring 'tmpc'." >&2 ;;
     *)
       case "$tok" in
         perception_motion_compensation_frame:=*) HAS_MOTION_COMP_ARG=1 ;;
@@ -77,113 +74,40 @@ for tok in "$@"; do
       ;;
   esac
 done
+# Accept the mission-name shorthands people type here out of habit: the track
+# for accel is called 'acceleration'. (The mission itself is step 3's job.)
+case "$TRACK" in
+  accel) TRACK="acceleration" ;;
+esac
 
 # Only what simulation.launch.py actually declares may be passed. ros2 launch
-# does NOT reject an undeclared argument -- it accepts it silently and the value
-# goes nowhere -- so a name that has gone away reads as "configured" forever.
-# Removed here for exactly that reason, each verified silently ignored:
-#
-#   yolo_model_path / yolo_device  never wrapped by simulation.launch.py. Both
-#       modes always ran the declared default (cone_pose_8kpt), so the "legacy
-#       model pin" this script claimed to apply never applied. yolo_device is
-#       not needed either: the node omits `device` when it is empty and
-#       ultralytics selects the GPU itself (measured 29.4 Hz on a 4070).
-#   perception_monocular_fallback_enabled / perception_stereo_fallback_enabled
-#       tier-era knobs, deleted with the tiers. The node now picks a provenance
-#       per cone from what the sensors support, so there is nothing to switch.
+# does NOT reject an undeclared argument -- it accepts it silently and the
+# value goes nowhere -- so a name that has gone away reads as "configured"
+# forever. (History of names removed for exactly that reason: yolo_model_path,
+# yolo_device, perception_*_fallback_enabled — see git log.)
 if [ "$PMODE" = "real" ] && [ "$HAS_MOTION_COMP_ARG" -eq 0 ]; then
   FILTERED="$FILTERED perception_motion_compensation_frame:=odom"
 fi
 if [ "$EVAL_MODE" -eq 1 ]; then
-  # cone_provenance labels every published cone with what produced it; the full
-  # GT track is the ruler. The flag is perception_publish_debug -- this script
-  # asked for perception_publish_fusion_debug, which is not a declared name, so
-  # the markers only ever appeared because the real flag defaults to true.
+  # cone_provenance labels every published cone with what produced it; the
+  # full GT track is the ruler. The real flag is perception_publish_debug.
   FILTERED="$FILTERED perception_publish_debug:=true pub_ground_truth:=true"
 fi
 EXTRA="perception_mode:=$PMODE$FILTERED"
 
-# Skidpad tracks run the skidpad mission profile: local-planner-only planning
-# behind the phase-gating director, no global planner, AMI_SKIDPAD mission.
-PLAN_EXTRA=""
-AMI_STATE=14   # AMI_TRACK_DRIVE
-MISSION_NOTE="Lap 1 = local path, then handoff to global."
-MONITOR_EXTRA=""
-case "$TRACK" in
-  skidpad*)
-    PLAN_EXTRA=" skidpad:=true"
-    AMI_STATE=12   # AMI_SKIDPAD
-    MISSION_NOTE="skidpad: entry → right x2 → left x2 → exit (laps via skidpad_right/left_laps)."
-    MONITOR_EXTRA="echo -n 'skidpad:     '; timeout 1 ros2 topic echo --once /planning/skidpad/phase 2>/dev/null | grep -o 'data:.*'; "
-    if [ "$TMPC_MODE" -eq 1 ]; then
-      echo "race: 'tmpc' needs a GLOBAL phase — skidpad is local-only. Ignoring 'tmpc'." >&2
-      TMPC_MODE=0
-    fi
-    ;;
-  accel|acceleration*)
-    # Straight-line sprint on the 'acceleration' track (accept 'accel' shorthand).
-    # Local-only planning, no global planner; the controller brakes itself when
-    # the corridor cones end past the finish (local path goes invalid).
-    TRACK="acceleration"
-    PLAN_EXTRA=" acceleration:=true"
-    AMI_STATE=11   # AMI_ACCELERATION
-    MISSION_NOTE="acceleration: local-only straight sprint; controller brakes when the corridor cones end (finish → braking zone)."
-    if [ "$TMPC_MODE" -eq 1 ]; then
-      echo "race: 'tmpc' needs a GLOBAL phase — acceleration is local-only. Ignoring 'tmpc'." >&2
-      TMPC_MODE=0
-    fi
-    ;;
-esac
-
-# Planning launch selection: the TMPC hybrid stack owns /vehicle/cmd through its
-# command selector; the plain stack lets Pure Pursuit own /vehicle/cmd directly.
-PLAN_LAUNCH="local_global_planning.launch.py"
-if [ "$TMPC_MODE" -eq 1 ]; then
-  PLAN_LAUNCH="tmpc_trackdrive.launch.py"
-  MISSION_NOTE="$MISSION_NOTE TMPC hybrid: PP drives LOCAL, TMPC takes /vehicle/cmd in GLOBAL (selector on /control/selector/status)."
-  MONITOR_EXTRA="${MONITOR_EXTRA}echo -n 'selector:    '; timeout 1 ros2 topic echo --once /control/selector/status 2>/dev/null | grep -o 'data:.*'; "
-fi
-
-if [ ! -f "$WS_SETUP" ]; then
-  echo "race: workspace not built ($WS_SETUP missing). Run 'fsb' first." >&2
-  exit 1
-fi
-tmux has-session -t "$SESSION" 2>/dev/null && { echo "race: already running — 'race stop' first, or 'race attach'."; exit 1; }
-
-# ROS's own tools resolve their interpreter through `#!/usr/bin/env python3`, so
-# whatever python3 sits earliest on PATH BECOMES ROS's python. A conda/anaconda
-# env on PATH therefore replaces python3.10 with an interpreter that has none of
-# ROS's dependencies, and the failure is not where you would look for it:
-# spawn_entity.py dies on `ModuleNotFoundError: lxml`, no car is ever spawned,
-# and every other pane sits forever on `until ros2 node list | grep -q race_car`
-# with no error of its own. Strip it here rather than asking the shell profile to
-# stay clean -- these panes exist to run ROS, not the user's python.
-SANE_PATH='export PATH="$(echo "$PATH" | tr ":" "\n" | grep -vE "conda|/\.venv" | paste -sd:)";'
-# ROS_LOCALHOST_ONLY: =1 (loopback-only) DDS discovery needs the MULTICAST flag
-# on `lo`. Hosts without it silently break cross-process discovery, hanging
-# every pane forever on WAIT_CAR (ros2 node list never sees race_car). Detect
-# it HERE — not via an inherited env var, which the tmux pane's fresh shell can
-# drop — so the value baked into every pane's SRC is always right for this box.
-if ip link show lo 2>/dev/null | grep -q "MULTICAST"; then RLO=1; else RLO=0; fi
-SRC="$SANE_PATH source $ROS_SETUP; source $WS_SETUP; export EUFS_MASTER=$EUFS_MASTER ROS_LOCALHOST_ONLY=$RLO;"
-# --no-daemon: the ros2 daemon can serve a stale (pre-sim) graph cache in
-# which race_car never appears, wedging every pane at "waiting for car…"
-# forever. Direct discovery is slower per poll but immune to that.
-WAIT_CAR="until ros2 node list --no-daemon 2>/dev/null | grep -q race_car; do sleep 2; done"
-WAIT_GT="until ros2 topic list --no-daemon 2>/dev/null | grep -q /ground_truth/state; do sleep 2; done"
-WAIT_STATE="until ros2 topic list 2>/dev/null | grep -q /planning/state; do sleep 2; done"
+fsk_require_built
+fsk_session_exists && { echo "race: already running — 'race stop' first, or 'race attach'."; exit 1; }
 
 # Perception evaluation: sim + real perception + SLAM + teleop. No planner, no
-# controller — you drive, and the evaluator scores each PROVENANCE (what
-# produced the cone: cluster_camera / cluster_only / sparse / monocular /
-# monocular_zncc) against the full ground-truth track.
+# controller — you drive, and the evaluator scores each PROVENANCE against the
+# full ground-truth track. Self-contained; steps 2/3 do not apply.
 if [ "$EVAL_MODE" -eq 1 ]; then
   echo "race: launching PERCEPTION+SLAM (teleop, no planner/controller) on track '$TRACK'…"
   tmux new-session -d -s "$SESSION" -n FSK
 
   P_SIM=$(tmux list-panes -t "$SESSION" -F '#{pane_id}' | head -1)
   tmux send-keys -t "$P_SIM" \
-    "$SRC echo '[① SIM + PERCEPTION (LiDAR backbone + camera, provenance markers on)]'; ros2 launch eufs_launcher simulation.launch.py track:=$TRACK gazebo_gui:=false rviz:=true show_rqt_gui:=false $EXTRA" C-m
+    "$SRC echo '[① SIM + PERCEPTION (LiDAR backbone + camera, provenance markers on)]'; ros2 launch eufs_launcher simulation.launch.py track:=$TRACK gazebo_gui:=false rviz:=$RVIZ show_rqt_gui:=false $EXTRA" C-m
 
   P_SLAM=$(tmux split-window -h -t "$P_SIM" -P -F '#{pane_id}')
   tmux send-keys -t "$P_SLAM" \
@@ -194,16 +118,14 @@ if [ "$EVAL_MODE" -eq 1 ]; then
   tmux send-keys -t "$P_TELE" \
     "$SRC echo '[③ TELEOP — drive a lap. arms AMI_MANUAL itself]'; $WAIT_CAR; sleep 3; ros2 run hyu_teleop teleop" C-m
 
-  # --duration 0 collects until Ctrl-C, so it can start now and be stopped when
-  # the lap is done; the report prints on Ctrl-C. A fixed --duration would force
-  # guessing the lap time before the car has even moved.
+  # --duration 0 collects until Ctrl-C: start now, stop when the lap is done.
   P_EVAL=$(tmux split-window -v -t "$P_TELE" -P -F '#{pane_id}')
   tmux send-keys -t "$P_EVAL" \
-    "$SRC echo '[④ EVALUATOR] collecting… drive a lap in pane ③, then Ctrl-C HERE for the per-tier report.'; until ros2 topic list 2>/dev/null | grep -q /perception/cones; do sleep 2; done; ros2 run hyu_perception evaluate_perception_tiers.py --duration 0" C-m
+    "$SRC echo '[④ EVALUATOR] collecting… drive a lap in pane ③, then Ctrl-C HERE for the per-tier report.'; $WAIT_CONES; ros2 run hyu_perception evaluate_perception_tiers.py --duration 0" C-m
 
   P_MON=$(tmux split-window -v -t "$P_SLAM" -P -F '#{pane_id}')
   tmux send-keys -t "$P_MON" \
-    "$SRC echo '[⑤ MONITOR] rates are WALL clock: ros2 topic hz cannot read sim time.'; echo '   At RTF ~0.35 a 10 Hz sim topic reads ~3.5 here. That is CORRECT, not slow.'; echo '   Divide by RTF, or use: ros2 run hyu_perception measure_sim_rates.py 25'; until ros2 topic list 2>/dev/null | grep -q /perception/cones; do sleep 2; done; while true; do printf '\\n== %s (wall Hz) ==\\n' \"\$(date +%H:%M:%S)\"; for t in /perception/bounding_boxes /perception/debug/cone_keypoints /perception/cones /perception/debug/cone_provenance /ground_truth/cones /ground_truth/track /localization/map; do printf '%-32s ' \"\$t\"; r=\$(timeout 6 env PYTHONUNBUFFERED=1 ros2 topic hz \"\$t\" 2>/dev/null | grep -m1 -o 'average rate: [0-9.]*'); if [ -n \"\$r\" ]; then echo \"\$r\"; elif timeout 3 ros2 topic echo --once \"\$t\" >/dev/null 2>&1; then echo 'alive (slow)'; else echo '(silent)'; fi; done; sleep 3; done" C-m
+    "$SRC echo '[⑤ MONITOR] rates are WALL clock: ros2 topic hz cannot read sim time.'; echo '   At RTF ~0.35 a 10 Hz sim topic reads ~3.5 here. That is CORRECT, not slow.'; echo '   Divide by RTF, or use: ros2 run hyu_perception measure_sim_rates.py 25'; $WAIT_CONES; while true; do printf '\\n== %s (wall Hz) ==\\n' \"\$(date +%H:%M:%S)\"; for t in /perception/bounding_boxes /perception/debug/cone_keypoints /perception/cones /perception/debug/cone_provenance /ground_truth/cones /ground_truth/track /localization/map; do printf '%-32s ' \"\$t\"; r=\$(timeout 6 env PYTHONUNBUFFERED=1 ros2 topic hz \"\$t\" 2>/dev/null | grep -m1 -o 'average rate: [0-9.]*'); if [ -n \"\$r\" ]; then echo \"\$r\"; elif timeout 3 ros2 topic echo --once \"\$t\" >/dev/null 2>&1; then echo 'alive (slow)'; else echo '(silent)'; fi; done; sleep 3; done" C-m
 
   tmux select-layout -t "$SESSION" tiled
   tmux select-pane   -t "$P_TELE"
@@ -213,53 +135,32 @@ if [ "$EVAL_MODE" -eq 1 ]; then
 race: perception+SLAM up on '$TRACK'.  attach → 'race attach'   |   stop → 'race stop'
   panes: ①sim+perception(provenance markers on)  ②ins+graph_slam  ③teleop  ④evaluator  ⑤monitor
   NO planner/controller — drive with teleop (pane ③), then run the evaluator (pane ④).
-  Per-provenance error comes from /perception/debug/cone_provenance, measured against
-  /ground_truth/track — the FULL track. Not /ground_truth/cones: that one is itself
-  FOV/range-filtered by the sim plugin, so recall against it plots the instrument's
-  limit rather than the pipeline's.
+  Errors are measured against /ground_truth/track — the FULL track, not the
+  FOV/range-filtered /ground_truth/cones.
 EOF
+  [ "$BG" -eq 1 ] || { [ -t 1 ] && exec tmux attach -t "$SESSION"; }
   exit 0
 fi
 
-echo "race: launching AUTONOMOUS stack on track '$TRACK'…"
+echo "race: STEP 1 — simulator + perception ($PMODE) on track '$TRACK'…"
 tmux new-session -d -s "$SESSION" -n FSK
 
-# 0 · Simulator + perception ────────────────────────────────────────────────
 P_SIM=$(tmux list-panes -t "$SESSION" -F '#{pane_id}' | head -1)
 tmux send-keys -t "$P_SIM" \
-  "$SRC echo \"[① SIM + PERCEPTION ($PMODE)]\"; ros2 launch eufs_launcher simulation.launch.py track:=$TRACK gazebo_gui:=false rviz:=true show_rqt_gui:=false $EXTRA" C-m
+  "$SRC echo \"[① SIM + PERCEPTION ($PMODE)] step 2: 'stack'  step 3: 'mission <name> [laps]'\"; ros2 launch eufs_launcher simulation.launch.py track:=$TRACK gazebo_gui:=false rviz:=$RVIZ show_rqt_gui:=false $EXTRA" C-m
 
-# 1 · Full planning graph (starts its OWN graph_slam) ────────────────────────
-P_PLAN=$(tmux split-window -h -t "$P_SIM" -P -F '#{pane_id}')
-tmux send-keys -t "$P_PLAN" \
-  "$SRC echo '[② PLANNING: slam+global+local+SM+selector+controller] waiting for car…'; $WAIT_CAR; ros2 launch hyu_planning_bringup $PLAN_LAUNCH use_sim_time:=$USE_SIM_TIME graph_slam_ate_monitor:=true local_max_stamp_skew_sec:=2.0 local_max_input_age_sec:=3.0 local_max_start_distance_m:=8.0 ${SLAM_MOTION_TOPIC:+car_state_topic:=$SLAM_MOTION_TOPIC} ${GRAPH_SLAM_PARAMS_FILE:+graph_slam_params_file:=$GRAPH_SLAM_PARAMS_FILE}$PLAN_EXTRA" C-m
-
-# 2 · Arm the mission — then the controller drives autonomously ──────────────
-P_DRIVE=$(tmux split-window -v -t "$P_SIM" -P -F '#{pane_id}')
-tmux send-keys -t "$P_DRIVE" \
-  "$SRC echo '[③ MISSION] waiting for car…'; $WAIT_CAR; sleep 5; ros2 service call /vehicle/set_mission hyu_msgs/srv/SetCanState '{ami_state: $AMI_STATE}'; echo 'mission armed → controller now drives (no teleop). /vehicle/cmd:'; ros2 topic hz /vehicle/cmd" C-m
-
-P_GNSS=$(tmux split-window -v -t "$P_DRIVE" -P -F '#{pane_id}')
-tmux send-keys -t "$P_GNSS" \
-  "$SRC echo '[④ INS: sim Ellipse-D + SBG bridge (GNSS anchor + HUD)] waiting for ground truth…'; $WAIT_GT; ros2 launch hyu_localization ins_pipeline.launch.py slam:=false use_sim_time:=$USE_SIM_TIME ${INS_MODE_SCHED:+mode_schedule:=$INS_MODE_SCHED} ${INS_CORR_SCHED:+correction_schedule:=$INS_CORR_SCHED}" C-m
-
-P_MON=$(tmux split-window -v -t "$P_PLAN" -P -F '#{pane_id}')
-tmux send-keys -t "$P_MON" \
-  "$SRC echo '[⑤ MONITOR] waiting for planning…'; $WAIT_STATE; while true; do printf '\\n== %s ==\\n' \"\$(date +%H:%M:%S)\"; echo -n 'path_source: '; ros2 topic echo --once /planning/path_source 2>/dev/null | grep -o 'data:.*'; echo -n 'state:       '; ros2 topic echo --once /planning/state 2>/dev/null | grep -o 'data:.*'; echo -n 'lap:         '; ros2 topic echo --once /planning/lap_count 2>/dev/null | grep -o 'data:.*'; echo -n 'CTE d(m):    '; ros2 topic echo --once /planning/cte 2>/dev/null | grep -o 'data:.*'; ${MONITOR_EXTRA}sleep 3; done" C-m
-
-tmux select-layout -t "$SESSION" tiled
-tmux select-pane   -t "$P_MON"
-tmux set-option    -t "$SESSION" mouse on
+tmux set-option -t "$SESSION" mouse on
+fsk_setenv FSK_ENV sim
+fsk_setenv FSK_TRACK "$TRACK"
+fsk_setenv FSK_USE_SIM_TIME "$USE_SIM_TIME"
+fsk_setenv FSK_RVIZ "$RVIZ"
 
 cat <<EOF
-race: up.  attach → 'race attach'   |   stop everything → 'race stop'
-  panes: ①sim+perception  ②planning(slam+global+local+SM+selector+controller)  ③mission  ④ins(ellipse-d+sbg bridge, gnss anchor+hud)  ⑤monitor
-  the CONTROLLER drives the car — no teleop. $MISSION_NOTE
+race: step 1 up (track '$TRACK', perception '$PMODE', rviz $RVIZ).
+  next:  step 2 → 'stack'                 (INS + SLAM + planning + control, standby)
+         step 3 → 'mission trackdrive 10' | 'mission autocross' | 'mission skidpad 2' | 'mission acceleration'
+  The car does NOT move until a mission is armed in step 3.
+  attach → 'race attach'   |   stop everything → 'race stop'
 EOF
-# Attaching needs a real terminal. Interactive launch attaches as before;
-# a headless launch (nohup/CI: stdout is not a TTY) leaves the session running
-# detached instead of dying on tmux's "open terminal failed: not a terminal".
-if [ -t 1 ]; then
-  exec tmux attach -t "$SESSION"
-fi
-echo "race: headless (no TTY) — session '$SESSION' is running detached; 'race attach' to view."
+[ "$BG" -eq 1 ] && { fsk_attach_or_report bg; exit 0; }
+fsk_attach_or_report

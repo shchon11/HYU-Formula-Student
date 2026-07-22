@@ -7,6 +7,8 @@ install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 install(PROGRAMS
   scripts/stack_hud.py
   scripts/skidpad_director.py
+  scripts/dssi_state.py
+  scripts/inspection_mission.py
   DESTINATION lib/${PROJECT_NAME})
 
 ament_package()

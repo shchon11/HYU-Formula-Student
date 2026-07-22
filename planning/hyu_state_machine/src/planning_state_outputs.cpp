@@ -37,6 +37,12 @@ void PlanningStateMachineNode::publishOutputs()
   stop_request_msg.data = stop_request;
   stop_request_pub_->publish(stop_request_msg);
 
+  // Periodic (not latched): the vehicle state machine subscribes with a
+  // plain volatile QoS, and a steady stream doubles as liveness.
+  std_msgs::msg::Bool mission_completed_msg;
+  mission_completed_msg.data = mission_finished_;
+  mission_completed_pub_->publish(mission_completed_msg);
+
   std_msgs::msg::String debug_msg;
   debug_msg.data = makePlanningStateDebugString({
     state_,

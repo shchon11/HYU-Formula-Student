@@ -77,25 +77,32 @@ if [ -f "$HOME/opt/gazebo11-fsk/share/gazebo/setup.sh" ]; then
 fi
 
 # --- workspace ----------------------------------------------------------------
-fsk() { cd "$EUFS_MASTER"; }
+fskcd() { cd "$EUFS_MASTER"; }
 fsb() {
   cd "$EUFS_MASTER" && colcon build --symlink-install --base-paths src "$@" &&
     source "install/setup.$_fsk_ext"
 }
 
-# --- run ----------------------------------------------------------------------
-# race [track] [sim|real] [extra args...]  — full autonomous stack in tmux.
-#   Track skidpad / skidpad_kase2026 switches to the skidpad mission profile,
-#   and accel / acceleration to the straight-line acceleration profile,
-#   automatically. Stop: race stop | re-attach: race attach
+# --- run: the 3-step flow ------------------------------------------------------
+# Nothing drives until step 3 — the vehicle ignores commands until a mission
+# is armed.
+#   step 1  race [track] [sim|real] [bg] [norviz]   sim + perception
+#           fsk [bg] [rviz]                         vehicle sensors + perception
+#   step 2  stack [args]                            INS+SLAM+planning+control (standby)
+#   step 3  mission trackdrive [laps=10] | autocross [laps=1]
+#           mission skidpad [laps-per-circle=2] | acceleration
+#           mission stop (EBS) | reset | status
+# Stop everything: race stop | re-attach: race attach
 race()    { "$EUFS_MASTER/src/scripts/race.sh" "$@"; }
+fsk()     { "$EUFS_MASTER/src/scripts/fsk.sh" "$@"; }
+stack()   { "$EUFS_MASTER/src/scripts/stack.sh" "$@"; }
+mission() { "$EUFS_MASTER/src/scripts/mission.sh" "$@"; }
 simfull() { ros2 launch eufs_launcher simulation.launch.py perception_mode:=sim rviz:=true "$@"; }
 pbring()  { ros2 launch hyu_planning_bringup local_global_planning.launch.py "$@"; }
 teleop()  { ros2 run hyu_teleop teleop "$@"; }
 
 # --- helpers ------------------------------------------------------------------
-mission()  { ros2 service call /ros_can/set_mission hyu_msgs/srv/SetCanState "{ami_state: ${1:-14}}"; }
-resetcar() { ros2 service call /ros_can/reset_vehicle_pos std_srvs/srv/Trigger; }
+resetcar() { ros2 service call /vehicle/reset_vehicle_pos std_srvs/srv/Trigger; }
 slamreset(){ ros2 service call /graph_slam/start_mapping std_srvs/srv/Trigger; }
 rv()       { rviz2 -d "$EUFS_MASTER/install/eufs_launcher/share/eufs_launcher/config/default.rviz" "$@"; }
 

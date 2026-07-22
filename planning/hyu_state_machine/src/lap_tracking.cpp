@@ -282,6 +282,26 @@ bool OrangeGateLapTracker::updateGate(
   }
 
   if (found) {
+    // A gate that MOVED materially is a different measurement, not the line
+    // the ego history was observed against: while SLAM is still building the
+    // map the big-orange clusters (and thus the fitted gate) jump around, and
+    // a gate segment sweeping across a STATIONARY ego is geometrically
+    // indistinguishable from the ego crossing the gate — laps were counted
+    // with the car standing still at the start line this way. Endpoint pairing
+    // is order-free (clusters carry no identity between snapshots).
+    if (gate_valid_) {
+      const double direct = std::max(
+        std::hypot(best_a[0] - gate_ax_, best_a[1] - gate_ay_),
+        std::hypot(best_b[0] - gate_bx_, best_b[1] - gate_by_));
+      const double swapped = std::max(
+        std::hypot(best_a[0] - gate_bx_, best_a[1] - gate_by_),
+        std::hypot(best_b[0] - gate_ax_, best_b[1] - gate_ay_));
+      if (std::min(direct, swapped) > kGateMoveResetM) {
+        // Crossing history and arming both referred to the old line.
+        has_prev_ = false;
+        armed_ = false;
+      }
+    }
     gate_ax_ = best_a[0];
     gate_ay_ = best_a[1];
     gate_bx_ = best_b[0];
@@ -302,6 +322,13 @@ bool OrangeGateLapTracker::observeEgo(double x, double y, double time_sec)
 
   if (std::hypot(x - gate_cx_, y - gate_cy_) > arm_distance_m_) {
     armed_ = true;
+  }
+
+  // A between-sample jump no car can drive (pose snap / relocalisation /
+  // teleport) is a measurement discontinuity: the segment it spans never
+  // physically happened, so it must not be tested against the gate.
+  if (has_prev_ && std::hypot(x - prev_x_, y - prev_y_) > kMaxPlausibleStepM) {
+    has_prev_ = false;
   }
 
   if (!has_prev_ || time_sec < prev_time_sec_ || time_sec - prev_time_sec_ > 2.0) {
@@ -335,7 +362,20 @@ bool OrangeGateLapTracker::observeEgo(double x, double y, double time_sec)
     const bool same_direction = sign * direction_sign_ > 0.0;
     const bool cooldown_complete = !has_count_time_ ||
       time_sec - last_count_time_sec_ >= cooldown_sec_;
-    if (armed_ && same_direction && cooldown_complete) {
+    if (counted_laps_ == 0 && !timer_started_) {
+      // The FIRST crossing of a run is the RACE START, not a completed lap:
+      // the car starts behind the line (FS/KASE start box), so it always
+      // crosses once on departure. It must never count — including when the
+      // spawn sits beyond the arming radius (small_track spawns 3.4 m behind
+      // the gate, arm radius 3 m: the tracker was born armed and counted the
+      // departure, instantly "completing" a 1-lap autocross). Start the lap
+      // timer and the count cooldown here instead.
+      timer_started_ = true;
+      lap_start_time_sec_ = time_sec;
+      has_count_time_ = true;
+      last_count_time_sec_ = time_sec;
+      armed_ = false;
+    } else if (armed_ && same_direction && cooldown_complete) {
       if (timer_started_) {
         last_lap_sec_ = time_sec - lap_start_time_sec_;
         has_lap_time_ = true;

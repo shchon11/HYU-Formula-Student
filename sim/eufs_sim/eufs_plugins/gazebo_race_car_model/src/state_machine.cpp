@@ -168,7 +168,7 @@ void StateMachine::updateState(gazebo::common::Time current_time) {
       if (!in_transition_) {
         transition_begin_ = current_time.Double();
         in_transition_ = true;
-      } else if (current_time.Double() - transition_begin_ >= 5.0) {
+      } else{
         // Transition to driving.
         as_state_ = hyu_msgs::msg::CanState::AS_DRIVING;
         RCLCPP_DEBUG(rosnode->get_logger(), "state_machine :: switching to AS_DRIVING state");
