@@ -22,15 +22,21 @@ idempotent — re-running on an already-patched (or already-`.h`) tree is a no-o
 
 ## Usage
 
-The driver is vendored (see `.gitignore`) and wiped on re-clone, so re-apply
-after every import:
+The driver now lives **directly in this repo** (`sbg_ros2_driver/`, MIT-licensed)
+with these patches already applied and committed — it is no longer vcs-imported,
+so nothing has to be re-applied for a normal build. This script is kept for one
+job: **refreshing from upstream**. Clone a new upstream tag into a scratch dir,
+run the script against it, and diff the result into `sbg_ros2_driver/`:
 
 ```bash
-# from the workspace root (~/fsk)
-vcs import src < src/external.repos          # (re)clones sbg_ros2_driver @ 3.3.2
-bash src/tools/sbg-patches/patch-sbg-humble.sh
-colcon build --packages-select sbg_driver --symlink-install
+git clone -b 3.3.2 https://github.com/SBG-Systems/sbg_ros2_driver.git /tmp/sbg-new
+SBG_SRC=/tmp/sbg-new bash src/tools/sbg-patches/patch-sbg-humble.sh
+# then diff /tmp/sbg-new into src/sbg_ros2_driver/ and keep our local additions
+# (scripts/ntrip_client.py, the config output/rtcm edits, launch wiring)
 ```
+
+What the script applies: the Humble tf2 `.hpp`->`.h` include fix, and the config
+edits `log_ekf_rot_accel_body: 8` and `rtcm.subscribe: true`.
 
 ## Alternative
 

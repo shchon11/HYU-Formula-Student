@@ -5,10 +5,10 @@
 # velodyne / zed-ros2-wrapper: 실차 브링업 개발 시 실제 사용 버전으로
 # 태그를 고정할 것 (ZED는 차량 컴퓨트의 ZED SDK 버전과 맞춰야 함).
 repositories:
-  sbg_ros2_driver:
-    type: git
-    url: https://github.com/SBG-Systems/sbg_ros2_driver.git
-    version: 3.3.2
+  # sbg_ros2_driver is now vendored directly in this repo (see
+  # sbg_ros2_driver/, MIT-licensed) with our Humble/RTCM/output patches applied
+  # and the ntrip_client node added, so it is no longer vcs-imported. To refresh
+  # from upstream: clone 3.3.2 elsewhere, re-apply tools/sbg-patches, diff in.
   velodyne:
     type: git
     url: https://github.com/ros-drivers/velodyne.git

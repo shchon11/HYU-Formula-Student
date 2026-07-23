@@ -51,6 +51,13 @@ for rel in config/sbg_device_uart_default.yaml config/sbg_device_udp_default.yam
   before="$(cat "$f")"
   sed -i 's/^\(\s*log_ekf_rot_accel_body:\s*\)0\b/\18/' "$f"
   if [ "$before" != "$(cat "$f")" ]; then echo "patched: $rel (log_ekf_rot_accel_body -> 8)"; changed=1; fi
+  # Subscribe to the NTRIP client's RTCM so the driver forwards carrier-phase
+  # corrections to the Ellipse-D for RTK (only the rtcm.subscribe flag; the
+  # feed is hyu_localization ntrip_client on ntrip_client/rtcm). Scoped to the
+  # rtcm: block so the nmea: block's own subscribe/publish is untouched.
+  before="$(cat "$f")"
+  sed -i '/^\s*rtcm:/,/^\s*nmea:/ s/^\(\s*subscribe:\s*\)false\b/\1true/' "$f"
+  if [ "$before" != "$(cat "$f")" ]; then echo "patched: $rel (rtcm.subscribe -> true)"; changed=1; fi
 done
 
 if [ "$changed" -eq 0 ]; then

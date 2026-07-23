@@ -19,6 +19,3 @@ __pycache__/
 AGENTS.md
 # graph SLAM run-output maps (timestamped); test fixtures are force-added
 localization/map/map_[0-9]*.csv
-
-# Vendored SBG driver — has its own git repo, not tracked here
-sbg_ros2_driver/
