@@ -111,6 +111,10 @@ install(PROGRAMS scripts/sbg_odometry_bridge.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME sbg_odometry_bridge)
 
+install(PROGRAMS scripts/status_monitor.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME status_monitor)
+
 install(DIRECTORY config launch map
   DESTINATION share/${PROJECT_NAME})
 
