@@ -106,6 +106,8 @@ def _reset(node, seed, mode_schedule, corr_schedule):
     node.accel_bias_gm = [0.0, 0.0, 0.0]
     node.gyro_bias_gm = [0.0, 0.0, 0.0]
     node.att_ramp = 0.0
+    node._stationary = False
+    node._stand_heading = 0.0
     node.acc_pos_lin = node.acc_pos_var = 0.0
     node.acc_vel_lin = node.acc_vel_var = 0.0
     node.acc_hdg_lin = node.acc_hdg_var = 0.0
@@ -214,7 +216,9 @@ def test_velocity_error_is_colored_not_white(scenario):
         sigmas.append(math.sqrt(var))
         integrals.append(abs(sum(v / 200.0 for v in seg)))
     assert 0.8 <= _median(taus) <= 5.0  # vel_error_tau default 2 s
-    assert 0.015 <= _median(sigmas) <= 0.06  # sigma_vel default 0.03
+    # velocity sigma is now per-tier; the scenario runs rtk_fixed by default ->
+    # sigma_vel["rtk_fixed"] = 0.03 (measured RTK bag 2026-07-24, 0.027 m/s).
+    assert 0.015 <= _median(sigmas) <= 0.06
     white_integral = 0.03 * math.sqrt(30.0 / 200.0)
     assert _median(integrals) > 4 * white_integral
 
@@ -336,3 +340,92 @@ def test_transport_latency_delays_arrival_not_stamp(node):
     assert min(delays) > 0.02 and max(delays) < 0.1
     stamps = [stamp for _, stamp in arrivals]
     assert stamps == sorted(stamps)
+
+
+def _make_still_state(t, x=0.0, y=0.0, yaw=0.0):
+    """Ground truth for a genuinely stopped car: zero twist, fixed pose."""
+    msg = CarState()
+    sec = int(t)
+    msg.header.stamp = TimeMsg(sec=sec, nanosec=int(round((t - sec) * 1e9)))
+    msg.pose.pose.position.x = x
+    msg.pose.pose.position.y = y
+    msg.pose.pose.orientation.z = math.sin(yaw / 2.0)
+    msg.pose.pose.orientation.w = math.cos(yaw / 2.0)
+    msg.twist.twist.linear.x = 0.0
+    msg.twist.twist.angular.z = 0.0
+    return msg
+
+
+def test_standstill_realised_degrades_while_believed_stays_confident(node):
+    """At a stop the sim must reproduce the believed!=realised trap: heading
+    free-drifts and velocity reads a few cm/s of noise (not a clean zero), while
+    solution_mode stays 4, the valid flags stay true, and the reported sigmas do
+    not move -- only gps1_hdt_used drops, which is why the heading drifts."""
+    _reset(node, seed=7, mode_schedule=(), corr_schedule=())
+    rate = 200.0
+    dt = 1.0 / rate
+    for i in range(int(1.0 * rate)):          # a second of motion, then stop
+        node.on_ground_truth(_make_state(_EPOCH + i * dt))
+    t1 = _EPOCH + 1.0
+    for i in range(int(120.0 * rate)):        # 120 s stopped
+        node.on_ground_truth(_make_still_state(t1 + i * dt, yaw=0.0))
+
+    def _t(m):
+        return m.header.stamp.sec + m.header.stamp.nanosec * 1e-9
+    navs = [m for m in node.nav_pub.msgs if _t(m) >= t1 + 1.0]
+    euls = [m for m in node.euler_pub.msgs if _t(m) >= t1 + 1.0]
+    assert navs and euls
+
+    last = navs[-1]
+    # Believed: still fully confident.
+    assert last.status.solution_mode == 4
+    assert last.status.velocity_valid and last.status.heading_valid
+    assert last.velocity_accuracy.x == pytest.approx(
+        node.sigma_vel[node.correction], abs=0.05)
+    # ...but the dual-antenna heading is no longer fused (the drift's cause).
+    assert last.status.gps1_hdt_used is False
+
+    # Realised velocity: small noise, not a clean zero, far below moving tier.
+    vmags = [math.hypot(m.velocity.x, m.velocity.y) for m in navs]
+    assert 0.005 < _median(vmags) < 0.12
+
+    # Realised heading DRIFTS: NED wire angle.z = normalize(pi/2 - yaw_out);
+    # true yaw is 0 so the departure from pi/2 is the accumulated heading error.
+    def _wrap(a):
+        return math.atan2(math.sin(a), math.cos(a))
+    hd = [abs(math.degrees(_wrap(m.angle.z - 0.5 * math.pi))) for m in euls]
+    assert max(hd) > 0.7            # drifted well past the 0.2 deg moving wander
+    # Reported heading sigma stays at its nominal (believed unchanged).
+    assert euls[-1].accuracy.z < math.radians(1.0)
+
+
+def test_velocity_accuracy_tracks_correction_tier(node):
+    """The reported velocity_accuracy is the ONE INS number that reaches graph
+    SLAM (it sets the odom EdgeSE2 weight); it must track the correction tier --
+    cm-grade at RTK, degrading toward single -- since that is the only channel
+    through which the RTK/PSRDIFF split bites the map."""
+    want = {"rtk_fixed": 0.03, "rtk_float": 0.06, "psrdiff": 0.12, "single": 0.15}
+    for corr, exp in want.items():
+        _reset(node, seed=3, mode_schedule=(), corr_schedule=())
+        node.correction = corr
+        for i in range(int(2.0 * 200)):        # 2 s so the GM state settles
+            node.on_ground_truth(_make_state(_EPOCH + i / 200.0))
+        va = node.nav_pub.msgs[-1].velocity_accuracy.x
+        assert va == pytest.approx(exp, abs=0.02), f"{corr}: {va:.3f} != {exp}"
+
+
+def test_rtk_auto_visits_multiple_tiers(node):
+    """rtk_auto reproduces the field bag's tier dynamics without a schedule:
+    a startup ramp (single -> float -> fixed) plus stochastic dropouts, so a run
+    exercises RTK_FIXED, a degraded tier, and single-point start."""
+    _reset(node, seed=1, mode_schedule=(), corr_schedule=())
+    node.rtk_auto = True
+    node.rtk_startup_sec = 20.0
+    node.rtk_dropout_rate = 0.1        # dense dropouts so the test is robust
+    seen = set()
+    for i in range(int(60.0 * 200)):
+        node.on_ground_truth(_make_state(_EPOCH + i / 200.0))
+        seen.add(node.correction)
+    assert "rtk_fixed" in seen                       # dominant steady tier
+    assert "single" in seen                          # startup ramp
+    assert seen & {"rtk_float", "psrdiff"}           # dropouts occurred

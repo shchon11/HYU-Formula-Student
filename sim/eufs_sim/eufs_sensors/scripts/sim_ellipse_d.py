@@ -177,7 +177,7 @@ _MODE_NAMES = {
     3: "NAV_VELOCITY",
     4: "NAV_POSITION",
 }
-_CORRECTION_TYPES = ("rtk_fixed", "rtk_float", "single")
+_CORRECTION_TYPES = ("rtk_fixed", "rtk_float", "psrdiff", "single")
 
 # Believed position sigma [m] above which the unit stops calling its own
 # position valid (mirrors the realised-error threshold this replaced).
@@ -232,16 +232,41 @@ class SimEllipseD(Node):
         self.rot_accel_rate = self.declare_parameter("rot_accel_rate", 100.0).value
 
         # --- datasheet-derived 1-sigma constants -------------------------
+        # Per-tier position 1-sigma [m]. Values from the 2026-07-24 RTK field bag
+        # (rosbag2_2026_07_24-20_06_15): RTK_FIXED nav pos sigma med 1.4 cm,
+        # degraded windows 0.3-1 m. NOTE: position sigma does NOT reach graph
+        # SLAM (the gnss_odom anchor is unsubscribed) -- it only matters once the
+        # anchor is wired. The load-bearing knob is sigma_vel below.
         self.sigma_pos = {
-            "rtk_fixed": self.declare_parameter("sigma_pos_rtk_fixed", 0.01).value,
+            "rtk_fixed": self.declare_parameter("sigma_pos_rtk_fixed", 0.014).value,
             "rtk_float": self.declare_parameter("sigma_pos_rtk_float", 0.30).value,
+            "psrdiff": self.declare_parameter("sigma_pos_psrdiff", 0.50).value,
             "single": self.declare_parameter("sigma_pos_single", 1.2).value,
         }
         # Correlation time of the GNSS position error (Gauss-Markov), so
         # single-point error wanders slowly instead of white 1.2 m jitter.
         self.gnss_error_tau = self.declare_parameter("gnss_error_tau", 30.0).value
-        self.sigma_vel = self.declare_parameter("sigma_vel", 0.03).value
-        self.sigma_vel_single = self.declare_parameter("sigma_vel_single", 0.05).value
+        # Per-tier velocity 1-sigma [m/s]. THIS is the one knob that actually
+        # reaches graph SLAM in the motion-A pipeline: sbg_odometry_bridge sets
+        # odom_sigma = max(mode_tier, vel_acc), and at a 1 m keyframe the reported
+        # velocity accuracy sets the EdgeSE2 translation weight (info = 1/sigma^2)
+        # -- i.e. how hard the motion edge fights the cones. Position sigma and
+        # the correction tier itself do NOT reach SLAM (gnss_odom anchor unwired);
+        # heading sigma is masked by graph_slam's 0.008 rad/m yaw floor. So the
+        # correction tier bites SLAM ONLY through this table.
+        #
+        # Measured, not datasheet. RTK bag 2026-07-24 (rosbag2_2026_07_24-20_06_15):
+        # RTK_FIXED nav velocity_accuracy med 0.027 m/s; degraded windows spike to
+        # 0.15-0.19. PSRDIFF bag 2026-07-23 sat at 0.15 throughout. So velocity
+        # accuracy DOES track the tier (0.03 at RTK <-> 0.15 degraded) -- an
+        # earlier single 0.15 default was the PSRDIFF operating point, wrong for
+        # RTK. Graduated across tiers here.
+        self.sigma_vel = {
+            "rtk_fixed": self.declare_parameter("sigma_vel_rtk_fixed", 0.03).value,
+            "rtk_float": self.declare_parameter("sigma_vel_rtk_float", 0.06).value,
+            "psrdiff": self.declare_parameter("sigma_vel_psrdiff", 0.12).value,
+            "single": self.declare_parameter("sigma_vel_single", 0.15).value,
+        }
         # Dual-antenna heading: 0.2 deg assumes a >2 m antenna baseline; use
         # ~0.0087 (0.5 deg) for a short (~0.5 m) Formula Student baseline.
         self.sigma_heading = self.declare_parameter("sigma_heading", 0.0035).value
@@ -292,6 +317,34 @@ class SimEllipseD(Node):
         self.latency_mean = self.declare_parameter("latency_mean", 0.008).value
         self.latency_jitter = self.declare_parameter("latency_jitter", 0.002).value
 
+        # Standstill regime. At a true stop the real unit's REALISED outputs
+        # decouple from its BELIEVED covariance in a way ground truth alone can
+        # never reproduce (GT velocity is a clean zero, GT heading is exact).
+        # Measured on rosbag2_2026_07_23-21_23_30: the nav velocity reads a few
+        # cm/s of residual noise (not zero -> the bridge integrates ~2 m of
+        # phantom travel over a 90 s stop), and the heading FREE-DRIFTS ~2 deg
+        # over that stop and JUMPS up to 8.7 deg, because the dual-antenna
+        # heading stops being used (gps1_hdt_used ~1 %) and the velocity course
+        # is undefined at rest -- all while solution_mode stays 4 and every valid
+        # flag stays true. Reproduced so the bridge ZUPT gate and the SLAM front
+        # end meet the same believed!=realised trap here that they meet on the
+        # car; the reported sigmas are deliberately left untouched.
+        self.standstill_speed_thresh = self.declare_parameter(
+            "standstill_speed_thresh", 0.1).value
+        self.standstill_vel_sigma = self.declare_parameter(
+            "standstill_vel_sigma", 0.03).value
+        # Heading random-walk while stopped [deg/sqrt(s)]: 0.2 -> ~1.9 deg over a
+        # 90 s stop, matching the bag.
+        self.standstill_heading_rw = self.declare_parameter(
+            "standstill_heading_rw_dps_sqrt", 0.2).value
+        # Dual-antenna re-resolve jumps: Poisson rate [Hz] and 1-sigma size
+        # [deg]; 0.05 Hz x N(0,3 deg) reproduces the occasional multi-degree
+        # step seen at rest (one 8.7 deg jump in a 16 s stop).
+        self.standstill_jump_rate = self.declare_parameter(
+            "standstill_jump_rate_hz", 0.05).value
+        self.standstill_jump_sigma_deg = self.declare_parameter(
+            "standstill_jump_sigma_deg", 3.0).value
+
         # Mode / correction control.
         self.mode = int(self.declare_parameter("initial_mode", 4).value)
         self.correction = self.declare_parameter(
@@ -309,6 +362,21 @@ class SimEllipseD(Node):
         self.correction_schedule_index = 0
         self.manual_mode = False
         self.manual_correction = False
+
+        # Automatic correction-tier process (opt-in). Off by default so schedules
+        # and existing tests are untouched. When on it reproduces the RTK field
+        # bag's tier dynamics without a hand-written schedule: a startup ramp
+        # (single -> float -> fixed) then RTK_FIXED with occasional stochastic
+        # dropouts to float/psrdiff, matching the measured ~88 % fixed / 12 %
+        # degraded split (RTK loses lock on sat occlusion; here it is a Poisson
+        # process). Superseded by a manual set or a correction_schedule.
+        self.rtk_auto = bool(self.declare_parameter("rtk_auto", False).value)
+        self.rtk_startup_sec = self.declare_parameter("rtk_startup_sec", 60.0).value
+        # Mean dropouts per second and mean dropout duration [s]. 0.008/s x 8 s
+        # ~ 6 % of steady time degraded, plus the startup ramp -> ~12 % total.
+        self.rtk_dropout_rate = self.declare_parameter("rtk_dropout_rate_hz", 0.008).value
+        self.rtk_dropout_dur = self.declare_parameter("rtk_dropout_dur_sec", 8.0).value
+        self._dropout_until = None
 
         self.rng = random.Random(self.declare_parameter("seed", 42).value)
 
@@ -336,6 +404,11 @@ class SimEllipseD(Node):
         self.gyro_bias_gm = [0.0, 0.0, 0.0]
         self.att_ramp = 0.0
         self.accel_body_dir = [1.0, 0.0]
+        # Standstill state: latched when GT speed is below the threshold, and
+        # the accumulated unaided-heading error (drift + jumps) that rides on
+        # the true heading while stopped and re-aids away once the car moves.
+        self._stationary = False
+        self._stand_heading = 0.0
 
         # Believed (reported) accuracy state: the EKF covariance surrogate.
         # Each channel mirrors the realised propagation branch-for-branch with
@@ -495,6 +568,34 @@ class SimEllipseD(Node):
                 )
                 self.correction_schedule_index += 1
 
+    def _auto_correction(self, elapsed, dt):
+        """
+        Drive the correction tier like the RTK field bag (opt-in, rtk_auto).
+
+        Startup ramp (single -> float -> fixed over ``rtk_startup_sec``), then
+        RTK_FIXED with Poisson dropouts to float/psrdiff held for
+        ``rtk_dropout_dur_sec``. Yields to a manual set or a correction_schedule.
+        """
+        if not self.rtk_auto or self.manual_correction or self.correction_schedule:
+            return
+        if elapsed < 0.1 * self.rtk_startup_sec:
+            target = "single"
+        elif elapsed < 0.5 * self.rtk_startup_sec:
+            target = "rtk_float"
+        elif self._dropout_until is not None and elapsed < self._dropout_until:
+            target = self.correction  # hold the degraded tier until it expires
+        else:
+            self._dropout_until = None
+            if dt > 0.0 and self.rng.random() < self.rtk_dropout_rate * dt:
+                target = "rtk_float" if self.rng.random() < 0.7 else "psrdiff"
+                self._dropout_until = elapsed + self.rng.expovariate(
+                    1.0 / max(self.rtk_dropout_dur, 1e-3)
+                )
+            else:
+                target = "rtk_fixed"
+        if target != self.correction:
+            self._set_correction(target, source="auto")
+
     # --- error-state propagation -------------------------------------------
 
     def _gm_step(self, value, sigma, tau, dt, pull_in=False):
@@ -521,9 +622,7 @@ class SimEllipseD(Node):
         # heading, attitude, altitude. Steady-state sigma follows the current
         # correction tier where the tier owns the channel.
         sigma_tier = self.sigma_pos[self.correction]
-        sigma_vel = (
-            self.sigma_vel_single if self.correction == "single" else self.sigma_vel
-        )
+        sigma_vel = self.sigma_vel[self.correction]
         for i in (0, 1):
             self.gm_err[i] = self._gm_step(
                 self.gm_err[i], sigma_tier, self.gnss_error_tau, dt, pull_in=True
@@ -633,6 +732,34 @@ class SimEllipseD(Node):
             self.acc_hdg_lin += ramp
             self.acc_hdg_var += arw * arw * dt
 
+    def _propagate_standstill(self, dt, speed):
+        """
+        Latch the standstill regime and accumulate the unaided-heading error.
+
+        While the car is stopped the heading is no longer aided (no velocity
+        course, dual-antenna unused), so it random-walks and takes the odd
+        multi-degree jump when the dual antenna briefly re-resolves. Once the
+        car moves again the aiding returns and the accumulated error re-aids
+        away over ``reacquire_tau``. The realised velocity/heading OVERRIDE that
+        uses this lives in ``on_ground_truth``; the reported sigmas do not
+        change (believed != realised).
+        """
+        self._stationary = speed < self.standstill_speed_thresh
+        if dt <= 0.0 or dt > self.max_dt:
+            return
+        if self._stationary:
+            self._stand_heading += (
+                math.radians(self.standstill_heading_rw)
+                * math.sqrt(dt)
+                * self.rng.gauss(0.0, 1.0)
+            )
+            if self.rng.random() < self.standstill_jump_rate * dt:
+                self._stand_heading += math.radians(
+                    self.rng.gauss(0.0, self.standstill_jump_sigma_deg)
+                )
+        else:
+            self._stand_heading *= math.exp(-dt / self.reacquire_tau)
+
     # --- publishing ----------------------------------------------------------
 
     def _to_output_frame(self, vec_rfd):
@@ -729,7 +856,13 @@ class SimEllipseD(Node):
         self._flush_outbox(t)
         self._apply_schedules(t - self.first_stamp)
         vx, vy = msg.twist.twist.linear.x, msg.twist.twist.linear.y
-        self._propagate_errors(t - self.last_stamp, t, math.hypot(vx, vy))
+        dt_gt = t - self.last_stamp
+        speed = math.hypot(vx, vy)
+        # Auto correction-tier walk (rtk_auto) runs before propagation, which
+        # reads self.correction for the per-tier sigmas.
+        self._auto_correction(t - self.first_stamp, dt_gt)
+        self._propagate_errors(dt_gt, t, speed)
+        self._propagate_standstill(dt_gt, speed)
         self.last_stamp = t
 
         time_stamp = int((t * 1e6) % 2**32)
@@ -771,9 +904,20 @@ class SimEllipseD(Node):
         # its correlation time, not per sample.
         east = msg.pose.pose.position.x + self.pos_err[0] + self.gm_err[0]
         north = msg.pose.pose.position.y + self.pos_err[1] + self.gm_err[1]
-        ve = ve_true + self.vel_err[0] + self.vel_gm[0]
-        vn = vn_true + self.vel_err[1] + self.vel_gm[1]
-        yaw_out = _normalize_angle(yaw + self.heading_err + self.heading_gm)
+        if self._stationary:
+            # At rest the GNSS Doppler pins velocity tightly (realised error is
+            # SMALLER than the moving GM tier, ~3 cm/s), but the heading is
+            # unaided: it carries the drift + jumps accumulated in
+            # _propagate_standstill. The reported sigmas below are untouched, so
+            # the unit still calls itself confident -- the believed!=realised
+            # trap the bridge ZUPT gate exists to survive.
+            ve = self.rng.gauss(0.0, self.standstill_vel_sigma)
+            vn = self.rng.gauss(0.0, self.standstill_vel_sigma)
+            yaw_out = _normalize_angle(yaw + self._stand_heading + self.heading_gm)
+        else:
+            ve = ve_true + self.vel_err[0] + self.vel_gm[0]
+            vn = vn_true + self.vel_err[1] + self.vel_gm[1]
+            yaw_out = _normalize_angle(yaw + self.heading_err + self.heading_gm)
         roll_out = roll + self.att_gm[0]
         pitch_out = pitch + self.att_gm[1]
 
@@ -787,9 +931,7 @@ class SimEllipseD(Node):
         # Reported (believed) accuracies: deterministic covariance surrogate,
         # independent of the realised draws above. Identical across seeds.
         sigma_tier = self.sigma_pos[self.correction]
-        sigma_vel = (
-            self.sigma_vel_single if self.correction == "single" else self.sigma_vel
-        )
+        sigma_vel = self.sigma_vel[self.correction]
         pos_acc = math.sqrt(
             sigma_tier * sigma_tier
             + self.acc_pos_lin * self.acc_pos_lin
@@ -814,7 +956,10 @@ class SimEllipseD(Node):
         status.position_valid = self.mode >= 3 and pos_acc < _POSITION_VALID_SIGMA
         status.gps1_pos_used = self.mode >= 4
         status.gps1_vel_used = self.mode >= 3
-        status.gps1_hdt_used = self.mode >= 2
+        # Dual-antenna heading is not fused at a standstill (measured
+        # gps1_hdt_used ~1 %; the baseline goes unresolved with no motion), which
+        # is exactly why the heading free-drifts there.
+        status.gps1_hdt_used = self.mode >= 2 and not self._stationary
         status.odo_used = bool(self.odometer_aided) and self.mode >= 2
 
         nav = SbgEkfNav()
@@ -837,7 +982,7 @@ class SimEllipseD(Node):
         nav.position_accuracy.z = 2.0 * sigma_tier
         nav.velocity_accuracy.x = vel_acc
         nav.velocity_accuracy.y = vel_acc
-        nav.velocity_accuracy.z = self.sigma_vel
+        nav.velocity_accuracy.z = sigma_vel
 
         euler = SbgEkfEuler()
         euler.header.stamp = stamp

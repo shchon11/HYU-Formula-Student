@@ -239,6 +239,27 @@ class SbgOdometryBridge(Node):
         self.wheel_speed_timeout = self.declare_parameter(
             "wheel_speed_timeout", 0.3
         ).value
+        # Zero-velocity update (ZUPT). At a true standstill the EKF output the
+        # bridge integrates is NOT trustworthy: measured on the real unit, the
+        # nav velocity reads 2-8 cm/s of residual noise (integrated, that is
+        # ~2 m of phantom travel over a 90 s stop) and the heading free-drifts
+        # and jumps up to ~9 deg because the dual-antenna heading is unused
+        # (gps1_hdt_used ~1 %) and the velocity course is undefined at rest --
+        # all while solution_mode stays 4 and every valid flag stays true. An
+        # Ackermann car cannot translate or yaw with the wheels stopped, so when
+        # the WHEEL SPEED says stopped we freeze both the integrated position
+        # and the heading, killing the phantom motion/rotation at the source.
+        # Gate on wheel speed, NOT the nav velocity -- the nav velocity is the
+        # very signal that lies at rest; the encoder reads a true zero. With no
+        # fresh wheel speed the gate is simply inactive (no worse than before)
+        # until the CAN wheel-speed driver is wired. Hysteresis (enter < exit)
+        # stops chattering on creep at the threshold.
+        self.stationary_enter_speed = self.declare_parameter(
+            "stationary_enter_speed", 0.1
+        ).value
+        self.stationary_exit_speed = self.declare_parameter(
+            "stationary_exit_speed", 0.3
+        ).value
 
         # Local tangent-plane origin (radians) and curvature radii, set from the
         # datum or the first valid fix.
@@ -277,6 +298,8 @@ class SbgOdometryBridge(Node):
         # dead-reckoning fallback.
         self._wheel_speed = None
         self._wheel_stamp = None
+        # ZUPT latch: True while the wheels report a standstill (hysteresis).
+        self._stationary = False
 
         # Refix-holdoff state: correction tier of the last anchored message
         # (None while unanchored), whether an anchor was ever published (the
@@ -409,6 +432,30 @@ class SbgOdometryBridge(Node):
             and abs(t - self._wheel_stamp) <= self.wheel_speed_timeout
         )
 
+    def _update_stationary(self, t):
+        """
+        Latch/unlatch the ZUPT standstill state from the wheel speed.
+
+        Wheel speed is the only signal that does not lie at rest (the encoder
+        reads a true zero while the INS velocity reads noise). With no fresh
+        wheel sample the gate stays off, so the bridge behaves exactly as before
+        until the CAN wheel-speed driver exists. Hysteresis: enter below
+        ``stationary_enter_speed``, leave only above ``stationary_exit_speed``.
+        """
+        fresh = (
+            self._wheel_stamp is not None
+            and abs(t - self._wheel_stamp) <= self.wheel_speed_timeout
+        )
+        if not fresh:
+            self._stationary = False
+            return
+        ws = abs(self._wheel_speed)
+        if self._stationary:
+            if ws > self.stationary_exit_speed:
+                self._stationary = False
+        elif ws < self.stationary_enter_speed:
+            self._stationary = True
+
     def on_nav(self, msg):
         mode = msg.status.solution_mode
         stamp = msg.header
@@ -522,12 +569,24 @@ class SbgOdometryBridge(Node):
         )
         dt = t - self._last_int_t if self._last_int_t is not None else 0.0
         self._last_int_t = t
+        self._update_stationary(t)
         velocity_ok = (
             bool(msg.status.velocity_valid) and mode >= 3 and not below_min_odom
         )
         dead_reckoning = False
         held = False
-        if velocity_ok and 0.0 < dt <= self.max_dt:
+        if self._stationary:
+            # ZUPT: the wheels report a standstill. Freeze BOTH position and
+            # heading -- an Ackermann car cannot translate or yaw with the
+            # wheels stopped, so the nav-velocity noise (integrated -> phantom
+            # travel) and the unaided heading drift/jumps are pure error. The
+            # pose is held identical between frames, so the keyframe delta stays
+            # ~0 and graph_slam's skip-tiny gate drops the phantom keyframes on
+            # its own. Heading is deliberately NOT refreshed from self._yaw
+            # below, and the body twist is published as zero (the car is
+            # genuinely stopped, unlike the dead-reckoning branch).
+            self._last_vel_enu = None
+        elif velocity_ok and 0.0 < dt <= self.max_dt:
             ve, vn = self._vel_enu(msg.velocity)
             prev = self._last_vel_enu or (ve, vn)
             self._odom_xy[0] += 0.5 * (prev[0] + ve) * dt
@@ -549,7 +608,8 @@ class SbgOdometryBridge(Node):
             # are exactly what warps the map.
             self._last_vel_enu = None
             held = True
-        self._odom_yaw = self._yaw
+        if not self._stationary:
+            self._odom_yaw = self._yaw
 
         # Heading staleness: the DR path hard-gates on euler age, but the
         # velocity path would republish an arbitrarily old yaw otherwise.
@@ -582,7 +642,9 @@ class SbgOdometryBridge(Node):
         # forward velocity — publish it.
         self._publish_car_state(
             stamp, self._odom_xy, self._odom_yaw, odom_sigma, yaw_sigma,
-            body_vx=self._wheel_speed if dead_reckoning else None,
+            body_vx=0.0 if self._stationary
+            else (self._wheel_speed if dead_reckoning else None),
+            stationary=self._stationary,
         )
 
         # --- global anchor: raw absolute ENU + mode-tiered covariance ----
@@ -643,7 +705,7 @@ class SbgOdometryBridge(Node):
 
         self._publish_health(
             mode, msg.status, anchored=anchored, started=True,
-            dead_reckoning=dead_reckoning,
+            dead_reckoning=dead_reckoning, stationary=self._stationary,
         )
         self._publish_markers(
             stamp, east, north, max(pos_sigma_e, pos_sigma_n), mode,
@@ -653,6 +715,7 @@ class SbgOdometryBridge(Node):
             t, mode, max(pos_sigma_e, pos_sigma_n),
             anchored=anchored, fault=False, started=True,
             dead_reckoning=dead_reckoning, holdoff=holdoff,
+            stationary=self._stationary,
         )
 
     # --- publishing ------------------------------------------------------
@@ -674,7 +737,7 @@ class SbgOdometryBridge(Node):
         return self.odom_sigma_mode2
 
     def _publish_car_state(self, header, xy, yaw, trans_sigma, yaw_sigma,
-                           body_vx=None):
+                           body_vx=None, stationary=False):
         state = CarState()
         state.header = header
         state.header.frame_id = self.world_frame
@@ -701,7 +764,10 @@ class SbgOdometryBridge(Node):
             ve, vn = self._last_vel_enu or (0.0, 0.0)
             state.twist.twist.linear.x = cos_y * ve - sin_y * vn
             state.twist.twist.linear.y = sin_y * ve + cos_y * vn
-        state.twist.twist.angular.z = self._yaw_rate_estimate
+        # At a ZUPT standstill the car is genuinely stopped: the differentiated
+        # yaw rate is just the unaided heading drift/jumps, so report zero
+        # rotation too (not only zero linear velocity).
+        state.twist.twist.angular.z = 0.0 if stationary else self._yaw_rate_estimate
         self.car_state_pub.publish(state)
 
     def _publish_gnss_odom(
@@ -721,12 +787,15 @@ class SbgOdometryBridge(Node):
         self.gnss_odom_pub.publish(odom)
 
     @staticmethod
-    def _state_style(mode, sigma, anchored, fault, started, dead_reckoning=False):
+    def _state_style(mode, sigma, anchored, fault, started, dead_reckoning=False,
+                     stationary=False):
         """(rgb, state word) shared by the map markers and the HUD board."""
         if not started:
             return (0.55, 0.55, 0.55), "WAITING FOR FIX"
         if fault:
             return (0.9, 0.1, 0.1), "FAULT"
+        if stationary:
+            return (0.2, 0.6, 0.95), "STATIONARY (ZUPT)"
         if dead_reckoning:
             return (0.95, 0.6, 0.1), "DEAD RECKONING"
         if not anchored:
@@ -739,7 +808,7 @@ class SbgOdometryBridge(Node):
 
     def _publish_status_board(
         self, t, mode, sigma, anchored, fault, started, dead_reckoning=False,
-        holdoff=False,
+        holdoff=False, stationary=False,
     ):
         """Render a fixed HUD below the ATE overlay via rviz_2d_overlay."""
         if self.overlay_pub is None:
@@ -749,7 +818,7 @@ class SbgOdometryBridge(Node):
         self._last_board_t = t
 
         rgb, state = self._state_style(
-            mode, sigma, anchored, fault, started, dead_reckoning)
+            mode, sigma, anchored, fault, started, dead_reckoning, stationary)
         mode_names = {0: "UNINITIALIZED", 1: "VERT_GYRO", 2: "AHRS",
                       3: "NAV_VELOCITY", 4: "NAV_POSITION"}
         if holdoff:
@@ -821,11 +890,14 @@ class SbgOdometryBridge(Node):
 
         self.marker_pub.publish(markers)
 
-    def _publish_health(self, mode, status, anchored, started, dead_reckoning=False):
+    def _publish_health(self, mode, status, anchored, started,
+                        dead_reckoning=False, stationary=False):
         names = {0: "UNINITIALIZED", 1: "VERTICAL_GYRO", 2: "AHRS",
                  3: "NAV_VELOCITY", 4: "NAV_POSITION"}
         if not started:
             level, text = DiagnosticStatus.WARN, "waiting for absolute fix"
+        elif stationary:
+            level, text = DiagnosticStatus.OK, "stationary: ZUPT hold (pose frozen)"
         elif anchored:
             level, text = DiagnosticStatus.OK, "GNSS-anchored (mode 4)"
         elif dead_reckoning:

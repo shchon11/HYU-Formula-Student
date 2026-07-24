@@ -114,6 +114,7 @@ def _reset(node):
     node._heading_valid = False
     node._wheel_speed = None
     node._wheel_stamp = None
+    node._stationary = False
     node._anchor_tier = None
     node._anchor_ever = False
     node._holdoff_until = None
@@ -359,3 +360,71 @@ def test_dr_twist_reports_wheel_speed_not_zero(node):
     _drive(node, t, 1.0, rate, mode=2, v=v)
     out = node.car_state_pub.msgs[-1]
     assert out.twist.twist.linear.x == pytest.approx(v, abs=1e-6)
+
+
+def _feed_still(node, t, ve, vn, yaw_enu):
+    """A standstill tick: wheels at zero, but the nav velocity carries the real
+    unit's at-rest noise and the euler heading drifts/jumps (mode stays 4)."""
+    node.on_euler(_euler(t, yaw_enu=yaw_enu))
+    node.on_wheel_speeds(_speeds(t, 0.0))
+    node.on_nav(_nav(t, 4, ve=ve, vn=vn))
+
+
+def test_stationary_zupt_freezes_pose_despite_nav_noise(node):
+    """At a wheel-speed standstill the bridge freezes BOTH position and heading.
+    The real unit reads 2-8 cm/s velocity noise (integrated -> metres of phantom
+    travel) and the heading drifts/jumps up to ~9 deg while every valid flag
+    stays true; an Ackermann car that isn't rolling can do neither."""
+    _reset(node)
+    rate = 25.0
+    t = _drive(node, 100.0, 1.0, rate, mode=4, v=5.0)  # establish georef pose
+    ref = node.car_state_pub.msgs[-1]
+    x0, y0 = ref.pose.pose.position.x, ref.pose.pose.position.y
+    qz0, qw0 = ref.pose.pose.orientation.z, ref.pose.pose.orientation.w
+    n = int(10.0 * rate)  # 10 s stopped
+    for i in range(n):
+        yaw_drift = math.radians(9.0) * (i / n)  # unaided heading ramps to 9 deg
+        _feed_still(node, t + i / rate, ve=0.08, vn=0.06, yaw_enu=yaw_drift)
+    assert node._stationary is True
+    out = node.car_state_pub.msgs[-1]
+    # Phantom translation (0.08 m/s x 10 s ~ 0.8 m if integrated) is killed.
+    assert out.pose.pose.position.x == pytest.approx(x0, abs=0.01)
+    assert out.pose.pose.position.y == pytest.approx(y0, abs=0.01)
+    # Heading held at the last moving value, not the 9 deg drift.
+    assert out.pose.pose.orientation.z == pytest.approx(qz0, abs=1e-6)
+    assert out.pose.pose.orientation.w == pytest.approx(qw0, abs=1e-6)
+    # Twist reads a genuine standstill: no phantom linear OR angular rate.
+    assert out.twist.twist.linear.x == pytest.approx(0.0, abs=1e-9)
+    assert out.twist.twist.angular.z == pytest.approx(0.0, abs=1e-9)
+
+
+def test_stationary_exit_resumes_integration(node):
+    """Above the exit speed the ZUPT latch releases and the integrator resumes
+    from the held pose (hysteresis: enter < exit)."""
+    _reset(node)
+    rate = 25.0
+    t = _drive(node, 100.0, 1.0, rate, mode=4, v=5.0)
+    for i in range(int(2.0 * rate)):
+        _feed_still(node, t + i / rate, ve=0.05, vn=0.0, yaw_enu=0.0)
+    assert node._stationary is True
+    held_x = node.car_state_pub.msgs[-1].pose.pose.position.x
+    _drive(node, t + 2.0, 1.0, rate, mode=4, v=5.0)  # drive off
+    assert node._stationary is False
+    assert node.car_state_pub.msgs[-1].pose.pose.position.x > held_x + 1.0
+
+
+def test_stationary_needs_fresh_wheels(node):
+    """With no fresh wheel speed the ZUPT gate stays inactive (the bridge acts as
+    before): the gate keys off the wheel encoder, never the INS velocity that is
+    the very signal lying at rest. Until the CAN wheel driver is wired the nav
+    velocity noise is still integrated -- no worse than before, not silently on."""
+    _reset(node)
+    rate = 25.0
+    t = _drive(node, 100.0, 1.0, rate, mode=4, v=5.0)
+    x0 = node.car_state_pub.msgs[-1].pose.pose.position.x
+    for i in range(int(5.0 * rate)):  # nav velocity but NO wheel messages
+        ti = t + i / rate
+        node.on_euler(_euler(ti))
+        node.on_nav(_nav(ti, 4, ve=0.5, vn=0.0))
+    assert node._stationary is False
+    assert node.car_state_pub.msgs[-1].pose.pose.position.x > x0 + 1.0
