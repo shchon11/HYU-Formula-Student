@@ -19,3 +19,6 @@ __pycache__/
 AGENTS.md
 # graph SLAM run-output maps (timestamped); test fixtures are force-added
 localization/map/map_[0-9]*.csv
+
+# Reference rosbags for docs (large binaries, kept local)
+localization/docs/datasets/

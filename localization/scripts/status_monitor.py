@@ -16,6 +16,11 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sbg_driver.msg import (SbgEkfNav, SbgEkfEuler, SbgGpsPos, SbgGpsHdt,
                             SbgGpsVel, SbgImuData, SbgEkfRotAccel, SbgStatus)
+try:
+    from rtcm_msgs.msg import Message as RtcmMessage
+    HAVE_RTCM = True
+except Exception:
+    HAVE_RTCM = False
 
 R="\033[0m"; B="\033[1m"; D="\033[2m"
 GRN="\033[32m"; YEL="\033[33m"; RED="\033[31m"; CYN="\033[36m"; GRY="\033[90m"; WHT="\033[97m"
@@ -51,6 +56,7 @@ class Monitor(Node):
         sub("/sbg/gps_pos",SbgGpsPos); sub("/sbg/gps_hdt",SbgGpsHdt); sub("/sbg/gps_vel",SbgGpsVel)
         sub("/sbg/imu_data",SbgImuData); sub("/sbg/ekf_rot_accel_body",SbgEkfRotAccel)
         sub("/sbg/status",SbgStatus)
+        if HAVE_RTCM: sub("/ntrip_client/rtcm",RtcmMessage)
         self.create_timer(0.5,self.draw)
 
     def rate(self,t,want):
@@ -129,6 +135,28 @@ class Monitor(Node):
             A(c(B," VEL  ")+f"speed {spd:4.2f}m/s  course {gv.course:6.1f}° ±"+
               grade(gv.course_acc,1,3,"{:.2f}")+"°   "
               "σv "+grade(max(gv.velocity_accuracy.x,gv.velocity_accuracy.y),0.1,0.5,"{:.2f}")+"m/s")
+
+        # ---- RTCM / RTK correction chain ----
+        A(c(GRY,line))
+        rt=self.tr.get("/ntrip_client/rtcm")
+        if rt and rt.last and rt.live(3):
+            nb=len(rt.msg.message) if rt.msg is not None else 0
+            A(c(B," RTCM ")+c(GRN,"FLOWING")+f"  {self.rate('/ntrip_client/rtcm',1)}  last {nb}B "+c(GRY,"(NTRIP→device)"))
+        elif HAVE_RTCM:
+            A(c(B," RTCM ")+c(RED,"MISSING")+c(GRY,"  (NTRIP 미연결 → PSRDIFF 한계)"))
+        else:
+            A(c(B," RTCM ")+c(GRY,"rtcm_msgs 미설치"))
+        if g and self.tr["/sbg/gps_pos"].live(4):
+            ty=g.status.type
+            rtkc=GRN if ty in(6,7,9) else (CYN if ty==3 else GRY)
+            rtktxt={7:"RTK FIXED",6:"RTK FLOAT",3:"PSRDIFF",4:"SBAS",2:"SINGLE(no corr)"}.get(ty,FIX.get(ty,"?"))
+            has_base=g.base_station_id not in (0,0xFFFF)
+            if has_base:
+                da=g.diff_age*0.01; dac=GRN if da<5 else (YEL if da<20 else RED)
+                basetxt=f"base #{g.base_station_id}  diff_age "+c(dac,f"{da:.1f}s")
+            else:
+                basetxt=c(GRY,"base none (외부 보정 없음)")
+            A("   "+basetxt+"   RTK: "+c(rtkc,rtktxt))
 
         # ---- IMU + rot/accel ----
         A(c(GRY,line))

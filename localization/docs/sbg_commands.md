@@ -12,6 +12,8 @@
 ## 1. 드라이버 실행
 
 ```bash
+source /opt/ros/humble/setup.zsh && source ~/fsk/install/setup.zsh
+export ROS_LOCALHOST_ONLY=1 ROS_DOMAIN_ID=0
 # 기본 (INS만)
 ros2 launch sbg_driver sbg_device_launch.py
 
@@ -19,6 +21,8 @@ ros2 launch sbg_driver sbg_device_launch.py
 ros2 launch sbg_driver sbg_device_launch.py ntrip:=true \
   host:=RTS1.ngii.go.kr port:=2101 mountpoint:=VRS-RTCM31 \
   username:=shchon11 password:=ngii
+
+ros2 run hyu_localization status_monitor
 ```
 
 포트 잡혀있으면 먼저 정지: `kill $(pgrep -x sbg_device)`

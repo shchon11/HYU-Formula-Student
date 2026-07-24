@@ -94,7 +94,11 @@ class NtripClient(Node):
         # NTRIP protocol revision the caster speaks (1 = ICY, 2 = HTTP). Most
         # modern casters accept 2; a few legacy VRS mounts still want 1.
         self.ntrip_version = int(self.declare_parameter("ntrip_version", 2).value)
-        self.rtcm_topic = self.declare_parameter("rtcm_topic", "rtcm").value
+        # Absolute default so it matches the driver's rtcm.subscribe topic
+        # (rtcm.namespace=ntrip_client + rtcm.topic_name=rtcm) regardless of how
+        # this node is launched (node name != namespace; a relative "rtcm" would
+        # land on /rtcm and the driver would never receive it).
+        self.rtcm_topic = self.declare_parameter("rtcm_topic", "/ntrip_client/rtcm").value
 
         # VRS: uplink the rover position as GGA. Off for single-base mounts.
         self.send_gga = bool(self.declare_parameter("send_gga", True).value)

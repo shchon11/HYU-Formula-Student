@@ -268,7 +268,7 @@
       # Velocity expressed in the INS body/vehicle frame
       log_ekf_vel_body: 0
       # Rotations rate and accelerations in the INS body/vehicle frame
-      log_ekf_rot_accel_body: 0
+      log_ekf_rot_accel_body: 8
       # Rotations rate and accelerations in North, East, Down (NED) navigation frame
       log_ekf_rot_accel_ned: 0
       # Heave, surge and sway and accelerations on each axis for up to 4 points
@@ -301,7 +301,7 @@
 
     rtcm:
       # Should ros driver subscribe to RTCM topic
-      subscribe: false
+      subscribe: true
       # Topic on which RTCM is published
       topic_name: rtcm
       # Namespace where topic is published
