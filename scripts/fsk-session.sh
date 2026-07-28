@@ -20,16 +20,26 @@ SESSION="fsk_race"
 FSK_SESSION_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "$FSK_SESSION_LIB_DIR/.." && pwd)"
 DEFAULT_EUFS_MASTER="$(cd "$SRC_DIR/.." && pwd)"
-if [ ! -f "$DEFAULT_EUFS_MASTER/install/setup.zsh" ] && [ -f "$SRC_DIR/install/setup.zsh" ]; then
+if [ ! -f "$DEFAULT_EUFS_MASTER/install/setup.bash" ] && [ -f "$SRC_DIR/install/setup.bash" ]; then
   DEFAULT_EUFS_MASTER="$SRC_DIR"
 fi
 EUFS_MASTER="${EUFS_MASTER:-$DEFAULT_EUFS_MASTER}"
-if [ ! -f "$EUFS_MASTER/install/setup.zsh" ] && [ -f "$DEFAULT_EUFS_MASTER/install/setup.zsh" ]; then
+if [ ! -f "$EUFS_MASTER/install/setup.bash" ] && [ -f "$DEFAULT_EUFS_MASTER/install/setup.bash" ]; then
   EUFS_MASTER="$DEFAULT_EUFS_MASTER"
 fi
-WS_SETUP="$EUFS_MASTER/install/setup.zsh"       # tmux panes run zsh
+# Which setup file the PANES source depends on the shell tmux actually starts,
+# not on what we assume. Sourcing setup.zsh under bash floods every pane with
+# "bad substitution" and leaves the workspace only half-sourced -- nodes then
+# fail far from the cause. Ask tmux; fall back to $SHELL, then zsh.
+_PANE_SHELL="$(tmux show-options -gv default-shell 2>/dev/null)"
+_PANE_SHELL="${_PANE_SHELL:-${SHELL:-/bin/zsh}}"
+case "$_PANE_SHELL" in
+  *bash) PANE_EXT=bash ;;
+  *)     PANE_EXT=zsh  ;;
+esac
+WS_SETUP="$EUFS_MASTER/install/setup.$PANE_EXT"
 WS_SETUP_BASH="$EUFS_MASTER/install/setup.bash" # these scripts run bash
-ROS_SETUP="/opt/ros/humble/setup.zsh"
+ROS_SETUP="/opt/ros/humble/setup.$PANE_EXT"
 
 # ROS's own tools resolve their interpreter through `#!/usr/bin/env python3`,
 # so whatever python3 sits earliest on PATH BECOMES ROS's python. A conda env
@@ -117,7 +127,13 @@ fsk_plan_cmd() {
 fsk_ins_cmd() {
   local use_sim_time
   use_sim_time="$(fsk_getenv FSK_USE_SIM_TIME)"
-  echo "ros2 launch hyu_localization ins_pipeline.launch.py slam:=false use_sim_time:=${use_sim_time:-true}${INS_MODE_SCHED:+ mode_schedule:=$INS_MODE_SCHED}${INS_CORR_SCHED:+ correction_schedule:=$INS_CORR_SCHED}"
+  # sim_ins follows the ENVIRONMENT, not the clock. Bag replay runs on
+  # use_sim_time to share the bag's clock domain, but it is still a real INS
+  # chain -- and eufs_sensors (the simulated Ellipse-D) does not exist on the
+  # vehicle compute, so keying off the clock would kill the whole pipeline.
+  local sim_ins=false
+  [ "$(fsk_getenv FSK_ENV)" = "sim" ] && sim_ins=true
+  echo "ros2 launch hyu_localization ins_pipeline.launch.py slam:=false sim_ins:=$sim_ins use_sim_time:=${use_sim_time:-true}${INS_MODE_SCHED:+ mode_schedule:=$INS_MODE_SCHED}${INS_CORR_SCHED:+ correction_schedule:=$INS_CORR_SCHED}"
 }
 
 # Attach if stdout is a real terminal, else leave the session detached

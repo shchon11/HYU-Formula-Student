@@ -92,11 +92,31 @@ def generate_launch_description():
                 default_value="true",
                 description="Forwarded to graph_slam.launch.py.",
             ),
+            # The SIMULATED Ellipse-D. It lives in eufs_sensors, which is part
+            # of the Gazebo simulator and is not built on the vehicle compute
+            # (no arm64 gazebo exists at all). Unconditional, it took the whole
+            # INS pipeline down on the car with "package 'eufs_sensors' not
+            # found" -- and with it sbg_odometry_bringup, so /localization/
+            # ins_odom stayed silent and SLAM never got a motion input while
+            # the real SBG topics were arriving at 25 Hz. Gate it on the clock:
+            # a simulated INS is only ever meaningful against a simulated one.
+            DeclareLaunchArgument(
+                "sim_ins",
+                default_value="false",
+                description="Run the simulated Ellipse-D instead of a real "
+                            "INS. Off by default: eufs_sensors is part of the "
+                            "simulator and is not built on the car, so a wrong "
+                            "value here takes the whole INS pipeline down. "
+                            "fsk-session.sh sets it from FSK_ENV, not from the "
+                            "clock -- bag replay uses sim time with a REAL "
+                            "INS chain.",
+            ),
             Node(
                 package="eufs_sensors",
                 executable="sim_ellipse_d",
                 name="sim_ellipse_d",
                 output="screen",
+                condition=IfCondition(LaunchConfiguration("sim_ins")),
                 parameters=[
                     {
                         "use_sim_time": use_sim_time,

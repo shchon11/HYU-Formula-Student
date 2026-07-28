@@ -102,10 +102,11 @@ def _quat_from_mat(m):
     return (x, y, z, w)
 
 
-def _static_tf(name, parent, child, xyz, quat):
+def _static_tf(name, parent, child, xyz, quat, use_sim_time='false'):
     return Node(
         package='tf2_ros', executable='static_transform_publisher', name=name,
         output='screen',
+        parameters=[{'use_sim_time': use_sim_time.lower() in ('true', '1')}],
         arguments=['--x', f'{xyz[0]:.6f}', '--y', f'{xyz[1]:.6f}',
                    '--z', f'{xyz[2]:.6f}',
                    '--qx', f'{quat[0]:.9f}', '--qy', f'{quat[1]:.9f}',
@@ -134,7 +135,8 @@ def _tf_actions(context, share):
                     f'lidar xyz=({lx:.3f}, {ly:.3f}, {lz:.3f}) '
                     f'yaw={math.degrees(lyaw):+.2f}deg'),
         _static_tf('mount_tf_lidar', 'base_footprint', 'rslidar',
-                   (lx, ly, lz), _rpy_to_quat(lr, lp, lyaw)),
+                   (lx, ly, lz), _rpy_to_quat(lr, lp, lyaw),
+                   context.launch_configurations['use_sim_time']),
     ]
 
     ext_path = context.launch_configurations['extrinsic']
@@ -182,7 +184,8 @@ def _tf_actions(context, share):
             f"as '{cam_frame}' so TF resolves; fix the yaml to stop the drift.")))
 
     actions.append(_static_tf('mount_tf_camera', 'base_footprint', cam_frame,
-                              tbc, _quat_from_mat(Rbc)))
+                              tbc, _quat_from_mat(Rbc),
+                              context.launch_configurations['use_sim_time']))
     actions.append(LogInfo(msg=(
         f'[sensors] camera TF from {os.path.basename(ext_path)}: '
         f'base_footprint -> {cam_frame} '
@@ -234,9 +237,15 @@ def _setup(context, *_args, **_kwargs):
         except Exception:
             pass
         if gnss == 'on' or os.path.exists(port):
+            # NOT namespaced. The driver publishes relative topics (sbg/ekf_nav,
+            # imu/data, ...), so a 'sensors' namespace would put them on
+            # /sensors/sbg/* while hyu_localization's sbg_odometry_bridge and
+            # wheel_odometry both subscribe /sbg/* -- the INS chain would sit
+            # silent with the driver visibly running. docs/topic_contract.md
+            # lists /sbg/* as the driver default; keep it that way.
             actions.append(Node(
                 package='sbg_driver', executable='sbg_device',
-                name='gnss_driver', namespace='sensors', output='screen',
+                name='gnss_driver', output='screen',
                 parameters=[sbg_cfg]))
         else:
             actions.append(LogInfo(msg=(
@@ -271,5 +280,7 @@ def generate_launch_description():
         DeclareLaunchArgument('camera_frame',
                               default_value='zed_left_camera_optical_frame',
                               description='must match hyu_perception camera_frame'),
+        # Bag replay drives every stamp off /clock; on the car this stays false.
+        DeclareLaunchArgument('use_sim_time', default_value='false'),
         OpaqueFunction(function=_setup),
     ])
