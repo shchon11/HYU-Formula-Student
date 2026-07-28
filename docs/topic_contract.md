@@ -8,13 +8,41 @@ upstream 기본값을 유지한다. 디버그/시각화는 `<subsystem>/debug/*`
 
 ## 드라이버 원시 토픽 (upstream 기본값, 개명 금지)
 
-| 토픽 | 타입 | 발행자 | QoS |
-|---|---|---|---|
-| `/velodyne_points` | sensor_msgs/PointCloud2 | velodyne_pointcloud (sim: lidar_realism) | SensorData |
-| `/zed/zed_node/left/image_rect_color` 등 | sensor_msgs/Image, CameraInfo | zed-ros2-wrapper (sim: gazebo camera) | SensorData |
-| `/sbg/ekf_nav`, `/sbg/ekf_euler`, `/sbg/ekf_rot_accel_body` 등 | sbg_driver/* | sbg_ros2_driver (sim: sim_ellipse_d) | driver 기본 |
+토픽명은 개명하지 않는다. 다만 **실차는 드라이버를 `/sensors` 네임스페이스
+아래에 띄운다** — 드라이버가 스스로 붙이는 하위 경로는 그대로 두고 접두사만
+얹으므로 개명이 아니고, 릴레이 노드도 없다(30 Hz raw Image 복사 회피).
 
-sim은 위 토픽명을 그대로 흉내내어 발행한다(실차/sim 동일 계약).
+| 토픽 (실차) | 토픽 (sim) | 타입 | 발행자 | QoS |
+|---|---|---|---|---|
+| `/sensors/lidar/points` | `/velodyne_points` | sensor_msgs/PointCloud2 | rslidar_sdk RS-16 (sim: lidar_realism) | SensorData |
+| `/sensors/zed/left/color/rect/image` | `/zed/left/image_rect_color` | sensor_msgs/Image | zed-ros2-wrapper 5.x (sim: gazebo camera) | SensorData |
+| `/sensors/zed/left/color/rect/camera_info` | `/zed/left/camera_info` | sensor_msgs/CameraInfo | 〃 | SensorData |
+| `/sensors/zed/right/color/rect/image` | `/zed/right/image_rect_color` | sensor_msgs/Image | 〃 | SensorData |
+| `/sbg/ekf_nav`, `/sbg/ekf_euler`, `/sbg/ekf_rot_accel_body` 등 | 동일 | sbg_driver/* | sbg_ros2_driver (sim: sim_ellipse_d) | driver 기본 |
+
+실차와 sim의 카메라 경로가 다른 것은 개명이 아니라 **드라이버가 다르기
+때문**이다: ZED wrapper 5.x는 `left/color/rect/image`로 발행하고, gazebo
+카메라는 `left/image_rect_color`로 발행한다.
+
+**프레임 이름은 실차/sim 공통**이다(`zed_left_camera_optical_frame`, `rslidar`,
+`base_footprint`). 그래서 `hyu_sensor_bringup`은 ZED를 `camera_name:=zed`로
+띄운다 — 이 인자가 토픽 루트와 TF 프레임 접두사를 동시에 결정한다.
+
+`hyu_perception`의 입력 토픽 기본값은 **실차 쪽**이다. sim은
+`simulation.launch.py`가 `perception_left_image_topic` 등으로 자기 토픽명을
+명시적으로 넘겨 맞춘다. 한쪽을 바꾸면 다른 쪽도 함께 바꿀 것.
+
+## 실차 TF 체인 (`hyu_sensor_bringup`)
+
+| 변환 | 출처 |
+|---|---|
+| `base_footprint -> rslidar` | `config/vehicle_mount.yaml` (마운트 실측) |
+| `base_footprint -> zed_left_camera_optical_frame` | 위 마운트 ∘ 활성 extrinsic의 역변환 |
+
+카메라 위치는 **설정하지 않고 합성한다** — 마운트가 라이다를 앵커하고,
+캘리브레이션이 그 라이다 기준 카메라 위치를 준다. 그래서 ZED wrapper의 자체 TF
+발행은 꺼둔다(같은 프레임에 부모가 둘이면 조용히 어긋난다). 라이다는 노즈,
+카메라는 메인후프라 둘은 ~1.7 m 떨어져 있다.
 
 ## Perception (`/perception`)
 

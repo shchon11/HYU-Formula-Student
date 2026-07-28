@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
 # fsk.sh — STEP 1 (vehicle): real sensor drivers + perception, in tmux.
 #
-#   fsk [bg] [rviz] [extra perception args...]
+#   fsk [bg] [rviz] [sensor args...] [extra perception args...]
 #   fsk stop | attach        # same session as the sim flow
 #
 # Vehicle counterpart of 'race <track> sim' — same session name, so steps 2/3
 # ('stack', 'mission …') work identically on top of either. RViz is OFF by
 # default here (pit laptop opt-in: 'fsk rviz'); background with 'bg'.
 #
-# SENSOR DRIVERS ARE NOT IMPLEMENTED YET (2026-07: no LiDAR/ZED/SBG bringup in
-# tree — see the real-vehicle readiness audit). Pane ① is the placeholder
-# where that bringup will live; until it exists this pane just states what is
-# missing so a vehicle run fails loudly at step 1, not silently at step 2.
+# Pane ① is hyu_sensor_bringup: RS-16 + ZED + SBG published under /sensors,
+# and the TF chain (base_footprint -> rslidar from config/vehicle_mount.yaml,
+# -> camera composed with the active extrinsic). Args of the form lidar:=,
+# camera:=, gnss:=, tf:=, mount:=, extrinsic:=, camera_frame:= are routed
+# there; anything else goes to perception in pane ②. Examples:
+#   fsk extrinsic:=~/fsk/extrinsics/2026-07-26_0223.yaml
+#   fsk gnss:=off camera:=off          # lidar-only smoke test
+#
+# Pane ① prints the composed base_footprint -> camera pose on startup: the
+# LiDAR sits on the nose and the camera on the main hoop ~1.7 m behind it, so
+# eyeball that number against the car after any re-mount or re-calibration.
 
 set -o pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,10 +36,14 @@ esac
 BG=0
 RVIZ="false"
 EXTRA=""
+SENSOR_EXTRA=""
 for tok in "$@"; do
   case "$tok" in
     bg|headless) BG=1 ;;
     rviz) RVIZ="true" ;;
+    # Sensor-side knobs go to pane ①; everything else is a perception arg.
+    lidar:=*|camera:=*|camera_model:=*|gnss:=*|tf:=*|mount:=*|extrinsic:=*|camera_frame:=*)
+      SENSOR_EXTRA="$SENSOR_EXTRA $tok" ;;
     *) EXTRA="$EXTRA $tok" ;;
   esac
 done
@@ -43,20 +54,13 @@ fsk_session_exists && { echo "fsk: already running — 'fsk stop' first, or 'fsk
 echo "fsk: STEP 1 — vehicle sensors + perception…"
 tmux new-session -d -s "$SESSION" -n FSK
 
-# ① Sensor drivers — placeholder until the real bringup lands. Replace the
-# heredoc with `ros2 launch <vehicle_bringup> sensors.launch.py` when it does.
+# ① Sensor drivers — RS-16 + ZED + SBG under /sensors, plus the TF chain
+# (base_footprint -> rslidar from the mount yaml, -> camera composed with the
+# active extrinsic). Topic remaps for the real sensors live in that launch, not
+# here: perception already defaults to the /sensors names it publishes.
 P_SENS=$(tmux list-panes -t "$SESSION" -F '#{pane_id}' | head -1)
 tmux send-keys -t "$P_SENS" \
-  "$SRC clear; cat <<'TODO'
-[① VEHICLE SENSORS — NOT IMPLEMENTED]
-  Needed here (in launch order):
-    - LiDAR driver           → /velodyne_points (or remap perception input)
-    - ZED camera driver      → left image + camera_info (watch topic names/QoS:
-                               ZED publishes sensor-data QoS, perception expects it)
-    - SBG Ellipse-D driver   → sbg_ros2_driver is in-tree but needs a NON-stock
-                               config (stock config != our INS chain expectations)
-  Until these exist the vehicle flow stops here by design.
-TODO" C-m
+  "$SRC echo '[① VEHICLE SENSORS (RS-16 + ZED + SBG) + TF]'; ros2 launch hyu_sensor_bringup sensors.launch.py$SENSOR_EXTRA" C-m
 
 # ② Perception — the same pipeline the sim 'real' mode runs, on real topics.
 # Topic remaps for the actual sensors belong HERE next to the drivers.

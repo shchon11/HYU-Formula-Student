@@ -1,0 +1,35 @@
+# Vehicle sensor mount geometry — base_footprint -> rslidar.
+#
+# RECOVERED 2026-07-28. The original lived in the pre-merge fsg_sensors tree
+# and was lost when this repo replaced it; the values below come from the
+# 2026-07-26 vehicle bringup notes, not from a surviving file. Re-measure
+# before trusting anything marked BENCH.
+#
+# This file is the ANCHOR of the vehicle TF chain. sensors.launch.py publishes
+#   base_footprint -> rslidar                        directly from here
+#   base_footprint -> zed_left_camera_optical_frame  composed with the extrinsic
+# so the camera pose is never independently guessed — it always follows the
+# calibration. Change the mount, re-measure here; change the rig, re-calibrate.
+
+lidar:
+  # Forward of base_footprint (rear-axle centre, ground plane), metres.
+  x: 0.81          # MEASURED on the car (2026-07-26)
+  y: 0.00          # MEASURED — lidar is on the centreline
+  z: 0.75          # BENCH — never tape-measured. The ground ring punching
+                   # through the crop band suggests the real value is lower.
+                   # Rule of thumb when setting the ROI: z_min = -z + 0.2.
+
+  # The RS-16 is mounted TWISTED on the car. This yaw was back-solved from the
+  # 2026-07-26 calibration (extrinsics/2026-07-26_0223.yaml) assuming the
+  # camera looks straight ahead and level.
+  roll_deg: 0.0    # ~+1.6 deg measured but indistinguishable from camera tilt
+  pitch_deg: 0.0   # ~+1.2 deg, same reason — kept at 0 deliberately
+  yaw_deg: -48.26  # twisted ~48 deg to the right
+
+# Cross-check when this changes: a cone ~5 m straight ahead of the car must
+# land at y ~= 0 in the BEV. If the whole scene appears rotated, this yaw is
+# stale relative to the active extrinsic.
+#
+# NOTE: hyu_perception's LiDAR crop uses an azimuth wedge whose centre must be
+# the NEGATED lidar yaw (+48.26 here). Changing yaw_deg without changing that
+# centre silently crops the wrong side of the track.

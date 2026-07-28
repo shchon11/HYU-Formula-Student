@@ -1,0 +1,33 @@
+# fsg_sensors team config for rslidar_sdk (RS-16).
+# Copy of the vendor config/config.yaml with topics moved under /sensors.
+# Timestamps: host clock (use_lidar_clock: false), header = LAST point
+# (ts_first_point: false); per-point `timestamp` field enables deskewing.
+common:
+  msg_source: 1                         # 1: packets from online Lidar
+  send_packet_ros: false
+  send_point_cloud_ros: true
+lidar:
+  - driver:
+      lidar_type: RS16
+      msop_port: 6702
+      difop_port: 7791
+      imu_port: 0
+      user_layer_bytes: 0
+      tail_layer_bytes: 0
+      min_distance: 0.2
+      max_distance: 200
+      use_lidar_clock: false
+      dense_points: false
+      ts_first_point: false
+      start_angle: 0
+      end_angle: 360
+      pcap_repeat: true
+      pcap_rate: 1.0
+      pcap_path: /home/robosense/lidar.pcap
+    ros:
+      ros_frame_id: rslidar
+      ros_recv_packet_topic: /sensors/lidar/packets
+      ros_send_packet_topic: /sensors/lidar/packets
+      ros_send_imu_data_topic: /sensors/lidar/imu
+      ros_send_point_cloud_topic: /sensors/lidar/points
+      ros_queue_length: 100

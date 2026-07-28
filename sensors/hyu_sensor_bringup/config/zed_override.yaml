@@ -1,0 +1,9 @@
+# fsg_sensors ZED wrapper param override (applied on top of zed.yaml + common_stereo.yaml)
+# - publish at full grab rate (grab_frame_rate=30; default pub cap was 15)
+# - left/right rectified topics for stereo-triangulated ChArUco calibration
+/**:
+    ros__parameters:
+        general:
+            pub_frame_rate: 30.0
+        video:
+            publish_left_right: true

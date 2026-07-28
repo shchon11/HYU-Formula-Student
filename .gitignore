@@ -20,3 +20,11 @@ AGENTS.md
 # graph SLAM run-output maps (timestamped); test fixtures are force-added
 localization/map/map_[0-9]*.csv
 
+
+# External (upstream) driver packages — see external.repos. Vendored into the
+# working tree by copy or `vcs import`, never tracked here.
+/zed-ros2-wrapper/
+/rslidar_sdk/
+/rslidar_msg/
+/rtcm_msgs/
+/velodyne/

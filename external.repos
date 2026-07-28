@@ -9,6 +9,16 @@ repositories:
   # sbg_ros2_driver/, MIT-licensed) with our Humble/RTCM/output patches applied
   # and the ntrip_client node added, so it is no longer vcs-imported. To refresh
   # from upstream: clone 3.3.2 elsewhere, re-apply tools/sbg-patches, diff in.
+  #
+  # rtcm_msgs is a build dependency of the vendored sbg_ros2_driver (the
+  # ntrip_client node publishes rtcm_msgs/Message), not an optional driver.
+
+  # The vehicle LiDAR is a RoboSense RS-16, not a Velodyne. rslidar_sdk is what
+  # actually runs on the car and publishes /sensors/lidar/points; velodyne stays
+  # listed because the simulator mimics the Velodyne topic contract, but no real
+  # Velodyne is fitted. Currently vendored at 1.5.19 / ZED 5.4.0 — the ZED
+  # wrapper MUST match the ZED SDK installed on the vehicle compute, and 5.x
+  # publishes left/color/rect/image, which is what hyu_perception expects.
   velodyne:
     type: git
     url: https://github.com/ros-drivers/velodyne.git
@@ -17,3 +27,15 @@ repositories:
     type: git
     url: https://github.com/stereolabs/zed-ros2-wrapper.git
     version: master
+  rslidar_sdk:
+    type: git
+    url: https://github.com/RoboSense-LiDAR/rslidar_sdk.git
+    version: main
+  rslidar_msg:
+    type: git
+    url: https://github.com/RoboSense-LiDAR/rslidar_msg.git
+    version: main
+  rtcm_msgs:
+    type: git
+    url: https://github.com/tilk/rtcm_msgs.git
+    version: main
