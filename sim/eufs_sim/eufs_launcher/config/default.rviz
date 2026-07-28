@@ -151,6 +151,7 @@ Visualization Manager:
             blue: true
             cluster_camera_covariance: true
             cluster_only_covariance: true
+            monocular_zncc_covariance: true
             orange: true
             sparse_covariance: true
             unknown: true
@@ -602,7 +603,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/ThirdPersonFollower
-      Distance: 115.53495025634766
+      Distance: 101.6707534790039
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
