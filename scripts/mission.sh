@@ -171,6 +171,15 @@ arm() {  # arm <profile> <ami_code> <mission-name> <note>
     echo "mission: planning graph already runs this profile — arming directly."
   fi
 
+  # Start the SLAM map fresh at every arm. The mapping lap should begin from
+  # a clean slate exactly as the car starts to move (set_mission below is what
+  # releases it), so the previous run's cone map can never bleed into it. This
+  # matters most in the "arm directly" branch above, which does NOT respawn the
+  # graph; harmless elsewhere (a just-respawned graph is already empty). The
+  # service is graph SLAM's private ~/reset -> /graph_slam/reset.
+  svc /graph_slam/reset std_srvs/srv/Trigger >/dev/null 2>&1 || \
+    echo "mission: note — graph SLAM /graph_slam/reset not answered (map not cleared)." >&2
+
   local out
   out="$(svc /vehicle/set_mission hyu_msgs/srv/SetCanState "{ami_state: $ami}")"
   if ! echo "$out" | grep -q "success=True"; then
