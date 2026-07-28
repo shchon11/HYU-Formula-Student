@@ -82,6 +82,65 @@ def _nmea_gga(lat_deg, lon_deg, alt_m, quality, num_sv, t_utc):
     return f"${body}*{checksum:02X}\r\n"
 
 
+class _ChunkedDecoder:
+    """Strip HTTP chunked framing from the RTCM stream, incrementally.
+
+    An NTRIP 2.0 caster may answer ``Transfer-Encoding: chunked`` -- the NGII
+    VRS mounts (Trimble Ntrip Caster 5.2) do. Publishing those bytes verbatim
+    injects the ASCII chunk sizes ("1F\\r\\n") into the RTCM stream: the device
+    resyncs on the next 0xD3 preamble, but every frame straddling a chunk
+    boundary fails CRC and is dropped. The symptom is a base station that looks
+    intermittent rather than a parser that is wrong, so it is worth handling
+    here even though NTRIP 1.0 (ICY) needs none of it.
+    """
+
+    def __init__(self):
+        self._buf = b""
+        self._state = "size"
+        self._remaining = 0
+
+    @property
+    def finished(self):
+        return self._state == "done"
+
+    def feed(self, data):
+        self._buf += data
+        out = bytearray()
+        while True:
+            if self._state == "size":
+                idx = self._buf.find(b"\r\n")
+                if idx < 0:
+                    if len(self._buf) > 64:
+                        raise OSError("malformed chunk size line")
+                    break
+                line = self._buf[:idx].split(b";")[0].strip()
+                self._buf = self._buf[idx + 2:]
+                if not line:
+                    continue
+                size = int(line, 16)
+                if size == 0:
+                    self._state = "done"
+                    break
+                self._remaining = size
+                self._state = "data"
+            elif self._state == "data":
+                take = min(self._remaining, len(self._buf))
+                out += self._buf[:take]
+                self._buf = self._buf[take:]
+                self._remaining -= take
+                if self._remaining:
+                    break
+                self._state = "crlf"
+            elif self._state == "crlf":
+                if len(self._buf) < 2:
+                    break
+                self._buf = self._buf[2:]
+                self._state = "size"
+            else:
+                break
+        return bytes(out)
+
+
 class NtripClient(Node):
     def __init__(self):
         super().__init__("ntrip_client")
@@ -202,13 +261,22 @@ class NtripClient(Node):
         head_txt = header.decode("latin-1", "replace")
         if not ("200" in head_txt.split("\r\n")[0] or head_txt.startswith("ICY 200")):
             raise OSError(f"caster rejected: {head_txt.splitlines()[0] if head_txt else 'no reply'}")
-        self.get_logger().info("NTRIP stream open, receiving RTCM")
+        # NTRIP 2.0 casters may frame the stream with Transfer-Encoding:
+        # chunked; NTRIP 1.0 (ICY) never does. Decide from the response, not
+        # from the version we asked for -- a caster is free to answer 1.0.
+        chunked = "transfer-encoding: chunked" in head_txt.lower()
+        decoder = _ChunkedDecoder() if chunked else None
+        self.get_logger().info(
+            "NTRIP stream open, receiving RTCM" + (" (chunked)" if chunked else ""))
 
-        # Any bytes past the header are already RTCM.
+        # Bytes past the header are the start of the body.
         sep = b"\r\n\r\n" if b"\r\n\r\n" in header else b"\n\n"
         leftover = header.split(sep, 1)[1] if sep in header else b""
         if leftover:
-            self._publish(leftover)
+            if decoder is not None:
+                leftover = decoder.feed(leftover)
+            if leftover:
+                self._publish(leftover)
 
         last_gga = 0.0
         # Send an initial GGA immediately so a VRS mount starts streaming.
@@ -227,7 +295,12 @@ class NtripClient(Node):
                 continue
             if not data:
                 raise OSError("caster closed the stream")
-            self._publish(data)
+            if decoder is not None:
+                data = decoder.feed(data)
+                if decoder.finished:
+                    raise OSError("caster ended the chunked stream")
+            if data:
+                self._publish(data)
             now = time.time()
             if self.send_gga and (now - last_gga) >= self.gga_interval:
                 self._maybe_send_gga(sock)
