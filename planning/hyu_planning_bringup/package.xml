@@ -24,7 +24,12 @@
   <exec_depend>hyu_msgs</exec_depend>
   <exec_depend>ackermann_msgs</exec_depend>
   <exec_depend>rviz_2d_overlay_msgs</exec_depend>
-  <exec_depend>hyu_tmpc</exec_depend>
+  <!-- hyu_tmpc is deliberately NOT declared here. It is only reachable through
+       launch/tmpc_trackdrive.launch.py, which stack.sh has retired ("the MAP
+       controller drives"), and it vendors a prebuilt x86-64 libosqp.a that
+       cannot link on the vehicle's arm64 compute. As a hard exec_depend it
+       made an unbuildable package block the entire planning graph on the car.
+       The bridges below DO build everywhere, so they stay. -->
   <exec_depend>hyu_tmpc_state_bridge</exec_depend>
   <exec_depend>hyu_tmpc_output_bridge</exec_depend>
   <exec_depend>hyu_cmd_selector</exec_depend>

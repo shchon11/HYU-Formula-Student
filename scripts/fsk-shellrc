@@ -58,6 +58,15 @@ if [ -e /usr/lib/x86_64-linux-gnu/libGLX_nvidia.so.0 ] && command -v nvidia-smi 
   export __VK_LAYER_NV_optimus="${__VK_LAYER_NV_optimus:-NVIDIA_only}"
 fi
 
+# --- CUDA torch runtime (Jetson) ----------------------------------------------
+# The jp6/cu126 torch wheel links libcudss.so.0, which ships inside the pip
+# nvidia-cu12 package rather than on the system loader path. Without this
+# `import torch` raises and the YOLO detector dies at startup -- perception
+# then publishes nothing while every other node looks healthy. No-op off Jetson.
+_fsk_cu12="$HOME/.local/lib/python3.10/site-packages/nvidia/cu12/lib"
+[ -d "$_fsk_cu12" ] && export LD_LIBRARY_PATH="$_fsk_cu12${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+unset _fsk_cu12
+
 [ -f "/opt/ros/humble/setup.$_fsk_ext" ] && source "/opt/ros/humble/setup.$_fsk_ext"
 [ -f "$EUFS_MASTER/install/setup.$_fsk_ext" ] && source "$EUFS_MASTER/install/setup.$_fsk_ext"
 
@@ -78,10 +87,61 @@ fi
 
 # --- workspace ----------------------------------------------------------------
 fskcd() { cd "$EUFS_MASTER"; }
-fsb() {
+
+# Packages the CAR never runs. eufs_* is the Gazebo simulator, which has no
+# arm64 apt candidate at all (gazebo, ros-humble-gazebo-*), so on the vehicle
+# compute it cannot be built even in principle. hyu_tmpc vendors a prebuilt
+# x86-64 libosqp.a and will not link on arm64 either -- and stack.sh already
+# retired it ("the MAP controller drives"), so nothing is lost by skipping it.
+FSK_VEHICLE_SKIP='^eufs_|^hyu_tmpc$|^hyu_control_harness$'
+
+fsb()  { # vehicle build: everything the car needs, then re-source
+  cd "$EUFS_MASTER" &&
+  colcon build --symlink-install --base-paths src \
+    --packages-skip-regex "$FSK_VEHICLE_SKIP" "$@" &&
+  source "install/setup.$_fsk_ext"
+}
+fsba() { # everything, simulator included (x86 dev box)
   cd "$EUFS_MASTER" && colcon build --symlink-install --base-paths src "$@" &&
     source "install/setup.$_fsk_ext"
 }
+cbp()  { # build just the named packages (+ re-source): cbp hyu_perception
+  [ $# -gt 0 ] || { echo "usage: cbp <package> [package...]" >&2; return 2; }
+  cd "$EUFS_MASTER" &&
+  colcon build --symlink-install --base-paths src --packages-select "$@" &&
+  source "install/setup.$_fsk_ext"
+}
+cbs()  { fsba "$@"; }   # alias kept for muscle memory: cbs = build the lot
+cbc()  { # nuke the build tree. Needed after a source layout change: colcon
+         # caches absolute source paths and every package fails with
+         # "The source directory ... does not exist" until this is done.
+  cd "$EUFS_MASTER" && rm -rf build install log && echo "build/ install/ log/ removed"
+}
+sor()  { source "$EUFS_MASTER/install/setup.$_fsk_ext"; }
+sr()   { source "$HOME/.${_fsk_ext}rc"; }
+
+# --- ros2 shorthands ----------------------------------------------------------
+rtl() { ros2 topic list "$@"; }
+rte() { ros2 topic echo "$@"; }
+rti() { ros2 topic info "$@"; }
+rth() { ros2 topic hz "$@"; }
+rtp() { ros2 topic pub "$@"; }
+rnl() { ros2 node list "$@"; }
+rni() { ros2 node info "$@"; }
+rsl() { ros2 service list "$@"; }
+rpl() { ros2 param list "$@"; }
+rpg() { ros2 param get "$@"; }
+rps() { ros2 param set "$@"; }   # live perception tuning without a rebuild
+rl()  { ros2 launch "$@"; }
+rr()  { ros2 run "$@"; }
+# TF is the thing that silently breaks after a re-mount or re-calibration, and
+# every extrinsic check goes through it:
+#   tfe zed_left_camera_optical_frame rslidar
+tfe() { ros2 run tf2_ros tf2_echo "$@"; }
+tfv() { cd "$EUFS_MASTER" && ros2 run tf2_tools view_frames; }
+# Bags land in $EUFS_MASTER/bag so they are not scattered over the home dir.
+rbr() { mkdir -p "$EUFS_MASTER/bag" && cd "$EUFS_MASTER/bag" && ros2 bag record "$@"; }
+rbp() { ros2 bag play "$@"; }
 
 # --- run: the 3-step flow ------------------------------------------------------
 # Nothing drives until step 3 — the vehicle ignores commands until a mission
@@ -97,11 +157,30 @@ race()    { "$EUFS_MASTER/src/scripts/race.sh" "$@"; }
 fsk()     { "$EUFS_MASTER/src/scripts/fsk.sh" "$@"; }
 stack()   { "$EUFS_MASTER/src/scripts/stack.sh" "$@"; }
 mission() { "$EUFS_MASTER/src/scripts/mission.sh" "$@"; }
+# LiDAR<->camera calibration: capture -> solve -> verify -> apply in one go.
+#   calib | calib -c | calib -s [session] | calib -v [image]
+#   calib -l                list the extrinsics ('*' is active)
+#   calib -e <name>         point 'active' at another one
+# The result lands in $EUFS_MASTER/extrinsics/ and hyu_sensor_bringup reads
+# 'active', so there is no separate apply step — the next 'fsk' picks it up.
+calib()   { "$EUFS_MASTER/src/scripts/calib.sh" "$@"; }
 simfull() { ros2 launch eufs_launcher simulation.launch.py perception_mode:=sim rviz:=true "$@"; }
 pbring()  { ros2 launch hyu_planning_bringup local_global_planning.launch.py "$@"; }
 teleop()  { ros2 run hyu_teleop teleop "$@"; }
 
 # --- helpers ------------------------------------------------------------------
+# What the car should be publishing once 'fsk' is up. Quick "is the rig alive?"
+fskcheck() {
+  local t
+  for t in /sensors/lidar/points /sensors/zed/left/color/rect/image \
+           /sensors/zed/left/color/rect/camera_info \
+           /perception/bounding_boxes /perception/cones; do
+    printf '%-46s ' "$t"
+    if timeout 3 ros2 topic echo --once "$t" >/dev/null 2>&1; then echo alive
+    elif ros2 topic list 2>/dev/null | grep -qx "$t"; then echo 'advertised, silent'
+    else echo missing; fi
+  done
+}
 resetcar() { ros2 service call /vehicle/reset_vehicle_pos std_srvs/srv/Trigger; }
 slamreset(){ ros2 service call /graph_slam/start_mapping std_srvs/srv/Trigger; }
 rv()       { rviz2 -d "$EUFS_MASTER/install/eufs_launcher/share/eufs_launcher/config/default.rviz" "$@"; }
