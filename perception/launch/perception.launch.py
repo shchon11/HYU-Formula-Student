@@ -24,6 +24,7 @@ from launch.actions import (
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 PACKAGE = "hyu_perception"
@@ -49,6 +50,24 @@ def _resolve_weights(context, *_args, **_kwargs):
     return [SetLaunchConfiguration(
         "yolo_model_path",
         os.path.join(get_package_share_directory(PACKAGE), value))]
+
+
+def _config_value(key: str, fallback: str) -> str:
+    """Read one perception_node parameter out of the shipped config.
+
+    Used to seed a launch argument's DEFAULT from the config, so exposing a
+    knob on the command line does not silently change its value when nobody
+    passes it. Falls back if the config is unreadable — a launch file must not
+    fail to generate because a comment got mangled.
+    """
+    try:
+        import yaml
+        with open(_config()) as handle:
+            data = yaml.safe_load(handle) or {}
+        value = data["perception_node"]["ros__parameters"][key]
+        return str(value)
+    except Exception:
+        return fallback
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -87,6 +106,24 @@ def generate_launch_description() -> LaunchDescription:
                         "does not raise: it silently puts every vision cone in "
                         "the wrong place."),
         DeclareLaunchArgument("publish_debug", default_value="true"),
+        # How stale a bbox may be relative to the cloud before its cones are
+        # published uncoloured. Defaults to the config, so exposing it here
+        # changes nothing unless you pass it.
+        #
+        # Measured end to end on the Jetson (bag replay, RViz up): median
+        # 137 ms, p90 138 ms, max 237 ms against the 250 ms gate -- it fits,
+        # but only just. Detection is not the cost: the FP16 engine is 3.1 ms
+        # of inference (7.0 ms with pre/post). The budget is perception_node's
+        # own per-cloud work, dominated by clustering (~43 ms) with roi+ground
+        # (~16 ms) and publish (~10 ms) behind it.
+        #
+        # Raise this only with a reason. A stale bbox is a bbox from where the
+        # car WAS, and only motion compensation makes that recoverable; the
+        # honest signal when the budget is blown is uncoloured cones plus the
+        # warning, not a gate quietly widened until they stop.
+        DeclareLaunchArgument(
+            "max_cluster_age_sec",
+            default_value=_config_value("max_cluster_age_sec", "0.25")),
         # Keep in step with yolov8_bbox_node.model_path in config/perception.yaml:
         # this argument is passed as a parameter override, so it WINS over the
         # config and a stale default here silently loads the wrong weight.
@@ -143,6 +180,8 @@ def generate_launch_description() -> LaunchDescription:
                     "motion_compensation_frame"),
                 "projection_model": LaunchConfiguration("projection_model"),
                 "publish_debug": LaunchConfiguration("publish_debug"),
+                "max_cluster_age_sec": ParameterValue(
+                    LaunchConfiguration("max_cluster_age_sec"), value_type=float),
             }],
         ),
     ])

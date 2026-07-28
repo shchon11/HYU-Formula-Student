@@ -15,8 +15,16 @@ lidar:
   # Forward of base_footprint (rear-axle centre, ground plane), metres.
   x: 0.81          # MEASURED on the car (2026-07-26)
   y: 0.00          # MEASURED — lidar is on the centreline
-  z: 0.75          # BENCH — never tape-measured. The ground ring punching
-                   # through the crop band suggests the real value is lower.
+  z: 0.428         # MEASURED from the data, 2026-07-28. The previous 0.75 was
+                   # a bench guess and put base_footprint 0.32 m UNDERGROUND:
+                   # every cone rendered below the ground plane in RViz.
+                   # Derived by fitting the ground return in the LiDAR frame
+                   # over 5 frames of bag/0726_cone detection test (3-12 m
+                   # ahead, |y| < 4 m): ground sits at z = -0.428 +/- 0.004,
+                   # so the sensor is 0.428 m up. Re-derive after any re-mount:
+                   #   python3 - <<'EOF'  (see git log for the full snippet)
+                   # A tape measure to the sensor's optical centre still beats
+                   # this; it is only as good as the ground being flat there.
                    # Rule of thumb when setting the ROI: z_min = -z + 0.2.
 
   # The RS-16 is mounted TWISTED on the car. This yaw was back-solved from the

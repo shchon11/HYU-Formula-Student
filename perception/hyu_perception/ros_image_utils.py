@@ -5,19 +5,30 @@ from operator import index
 import numpy as np
 
 
+# The ZED wrapper publishes 4-channel BGRA, so the car's images are bgra8 even
+# though the simulator's gazebo camera is bgr8. Without the alpha encodings
+# here every real frame is rejected and the detector publishes nothing --
+# perception looks healthy and silently produces no cones on the vehicle only.
 _CHANNELS = {
     "bgr8": 3,
     "rgb8": 3,
+    "bgra8": 4,
+    "rgba8": 4,
     "mono8": 1,
 }
+
+# Alpha carries no detection signal; drop it and treat the frame as its
+# 3-channel base.
+_ALPHA_BASE = {"bgra8": "bgr8", "rgba8": "rgb8"}
 
 
 def image_message_to_numpy(message, desired_encoding: str = "bgr8") -> np.ndarray:
     """
     Convert a uint8 ROS Image-like message to an independent NumPy array.
 
-    ``bgr8``, ``rgb8`` and ``mono8`` are supported.  The message may contain
-    per-row padding; padding is removed from the returned C-contiguous copy.
+    ``bgr8``, ``rgb8``, ``bgra8``, ``rgba8`` and ``mono8`` are supported; the
+    alpha channel is dropped.  The message may contain per-row padding; padding
+    is removed from the returned C-contiguous copy.
     """
     source_encoding = _encoding(getattr(message, "encoding", None), "encoding")
     target_encoding = _encoding(desired_encoding, "desired_encoding")
@@ -51,10 +62,14 @@ def image_message_to_numpy(message, desired_encoding: str = "bgr8") -> np.ndarra
 
     rows = np.frombuffer(byte_view, dtype=np.uint8).reshape(height, step)
     pixels = rows[:, :row_bytes]
-    if _CHANNELS[source_encoding] == 1:
+    channels = _CHANNELS[source_encoding]
+    if channels == 1:
         source = pixels.reshape(height, width)
     else:
-        source = pixels.reshape(height, width, 3)
+        source = pixels.reshape(height, width, channels)
+        if channels == 4:
+            source = source[..., :3]
+            source_encoding = _ALPHA_BASE[source_encoding]
 
     converted = _convert_encoding(source, source_encoding, target_encoding)
     # Always detach from the ROS message buffer and remove non-unit/negative
@@ -93,6 +108,9 @@ def _convert_encoding(
 
     if source_encoding in ("bgr8", "rgb8") and target_encoding in ("bgr8", "rgb8"):
         return source[..., ::-1]
+
+    if target_encoding in ("bgra8", "rgba8"):
+        raise ValueError("alpha output encodings are not produced")
 
     if source_encoding == "mono8":
         return np.repeat(source[..., np.newaxis], 3, axis=2)
