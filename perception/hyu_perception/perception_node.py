@@ -193,7 +193,12 @@ class PerceptionNode(Node):
         self._zncc_stats = [0, 0]            # [attempted, confirmed]
 
         self.tf_buffer = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        # spin_thread: the lookups below take a timeout, and a timeout is a
+        # deadlock without this — the listener's subscription would be served
+        # by the same single-threaded executor that is blocked inside the cone
+        # callback, so the transform being waited for can never arrive.
+        self.tf_listener = tf2_ros.TransformListener(
+            self.tf_buffer, self, spin_thread=True)
 
         qos = QoSProfile(history=HistoryPolicy.KEEP_LAST,
                          depth=self.sync_queue_size,
@@ -250,6 +255,18 @@ class PerceptionNode(Node):
         self.declare_parameter("max_pair_skew_sec", 0.005)
         self.declare_parameter("motion_compensation_frame", "map")
         self.declare_parameter("tf_timeout_sec", 0.0)
+        # Largest cloud->image gap projected WITHOUT motion compensation
+        # instead of publishing the frame uncoloured. DEFAULT 0 = never.
+        # Tried at 0.03 s and measured worse: that is the mis-association
+        # boundary this file's own projection docstring identifies (33 ms =
+        # 0.21 m = ~20 px against a ~30 px cone at 15 m), and a MIS-coloured
+        # cone is worse than an uncoloured one because it breaks the
+        # blue/yellow structure association depends on. Map baseline over three
+        # runs each: 0.196/0.297/0.528 m with this off, 0.460/0.741/0.753 m
+        # with it at 0.03. It also buys nothing — the tf_timeout fix alone
+        # restores colour just as well (unknown 21-24 % either way). Kept as a
+        # knob only so the tested-and-rejected shortcut stays on the record.
+        self.declare_parameter("max_uncompensated_gap_sec", 0.0)
 
         self.declare_parameter("projection_model", "eufs_bbox")
         self.declare_parameter("bbox_coordinates", "PIXELS")
@@ -386,6 +403,7 @@ class PerceptionNode(Node):
             setattr(self, name, str(g(name)))
         self.debug_prefix = str(g("debug_prefix")).rstrip("/")
         self.motion_compensation_frame = str(g("motion_compensation_frame")).strip()
+        self.max_uncompensated_gap_sec = float(g("max_uncompensated_gap_sec"))
         self.projection_model = str(g("projection_model"))
         self.bbox_coordinates = str(g("bbox_coordinates")).upper()
         for name in ("deskew_enabled",
@@ -991,9 +1009,15 @@ class PerceptionNode(Node):
         to_camera = self._lookup_transform_between(
             self.camera_frame, image_stamp, frame.frame_id, frame.stamp)
         if to_base is None or to_camera is None:
+            leg = ("cloud->base" if to_base is None else "cloud->image-stamp camera")
+            lag = self._newest_tf_lag(image_stamp)
             self._warn_throttled(
-                "cluster_tf", "No TF to project the LiDAR points into the "
-                "image stamp; keeping the LiDAR backbone uncoloured")
+                "cluster_tf",
+                f"No TF to project the LiDAR points into the image stamp "
+                f"({leg} failed); image stamp is {lag} the newest "
+                f"{self.output_frame} transform; last error: "
+                f"{getattr(self, '_last_tf_error', 'n/a')}; "
+                f"keeping the LiDAR backbone uncoloured")
             return None
         return Scene(
             points_base=self._transform_points(frame.points_lidar, to_base),
@@ -1816,13 +1840,38 @@ class PerceptionNode(Node):
         pixels[valid, 1] = fy * points[:, 1] / points[:, 2] + cy
         return pixels
 
+    def _newest_tf_lag(self, stamp) -> str:
+        """How far the requested stamp sits past the newest transform we hold.
+
+        A positive number means the lookup asked TF to extrapolate into the
+        future, which it refuses — that is a producer-latency fault, not a
+        frame-wiring one, and it is the failure the load-dependent colour
+        collapse looks like.
+        """
+        try:
+            # Time() = "latest available". The dynamic link is the one SLAM
+            # publishes (map->odom->base); the lidar link is static and always
+            # current, so asking for it would say nothing.
+            newest = self.tf_buffer.lookup_transform(
+                self.motion_compensation_frame or "map", self.output_frame,
+                rclpy.time.Time())
+            gap = self._stamp_sec(stamp) - self._stamp_sec(newest.header.stamp)
+            return f"{gap:+.3f}s from"
+        except Exception:
+            return "(newest unknown) vs"
+
     def _lookup_transform(self, target: str, source: str,
                           stamp) -> Optional[np.ndarray]:
         try:
             transform = self.tf_buffer.lookup_transform(
                 target, source, stamp,
                 timeout=rclpy.duration.Duration(seconds=self.tf_timeout_sec))
-        except tf2_ros.TransformException:
+        except tf2_ros.TransformException as exc:
+            # Keep the reason. "No TF" is three different faults wearing one
+            # message — extrapolation past the newest transform, a missing
+            # static link, and a buffer that no longer reaches back — and they
+            # have different fixes.
+            self._last_tf_error = f"{target}<-{source}: {exc}"
             return None
         return self._transform_to_matrix(transform)
 
@@ -1842,7 +1891,26 @@ class PerceptionNode(Node):
                 target, target_stamp, source, source_stamp,
                 self.motion_compensation_frame,
                 timeout=rclpy.duration.Duration(seconds=self.tf_timeout_sec))
-        except tf2_ros.TransformException:
+        except tf2_ros.TransformException as exc:
+            self._last_tf_error = (
+                f"{target}@target_stamp<-{source}@source_stamp "
+                f"via {self.motion_compensation_frame}: {exc}")
+            # Measured: the request lands 4 ms past the newest transform and the
+            # whole frame is published uncoloured. At 6.5 m/s that compensation
+            # is worth 2.6 cm, against the 0.21 m of cone lag it exists to
+            # remove — so dropping colour to avoid it inverts the trade. Fall
+            # back to the uncompensated transform for gaps this small, and only
+            # give up when the gap is big enough to actually mis-associate.
+            gap = abs(self._stamp_sec(target_stamp) - self._stamp_sec(source_stamp))
+            if gap <= self.max_uncompensated_gap_sec:
+                fallback = self._lookup_transform(target, source, source_stamp)
+                if fallback is not None:
+                    self._warn_throttled(
+                        "tf_uncompensated",
+                        f"No cross-time TF ({gap*1000:.0f} ms); colouring with "
+                        f"the uncompensated transform instead of dropping the "
+                        f"frame")
+                    return fallback
             return None
         return self._transform_to_matrix(transform)
 
