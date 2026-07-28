@@ -386,8 +386,8 @@ class StackHud(Node):
         # MISSION — sim AS/AMI + lap progress. The lap target comes from the
         # state machine's debug stream so the HUD always shows the value the
         # mission actually uses; the parameter is only a pre-boot fallback.
-        lap = debug.get("lap_count", "?")
         self.target_laps = debug.get("target_lap_count", self.target_laps)
+        lap = self._display_lap(debug)  # current lap (see _display_lap)
         if self.can.msg is None:
             mis = (B_DIM, DIM, "waiting for /vehicle/as_state")
         else:
@@ -474,12 +474,26 @@ class StackHud(Node):
         laps = self._lap_times(debug)
         return f" · {laps}" if laps else ""
 
+    def _display_lap(self, debug):
+        """The CURRENT lap number (1..target) for display, from the state
+        machine's COMPLETED count (lap_count). Lap 1 is the mapping lap and the
+        car drives lap N while N-1 are completed, so +1 is the lap underway;
+        capped at target so the finish crossing reads target/target, not +1.
+        The ONE source of truth for every lap number the HUD shows (board AND
+        banner) — they must never disagree."""
+        completed = debug.get("lap_count", "?")
+        try:
+            return min(int(completed) + 1, int(self.target_laps))
+        except (TypeError, ValueError):
+            return completed
+
     def _banner(self, debug, sel, st):
         """One line answering: what is the car doing / why is it stuck."""
         state = debug.get("state", "")
         path_source = debug.get("path_source", "")
         slam = st.get("slam", "")
-        lap = debug.get("lap_count", "?")
+        self.target_laps = debug.get("target_lap_count", self.target_laps)
+        lap = self._display_lap(debug)
         v = st.get("actual_speed", float("nan"))
         v_txt = f"{v:.1f} m/s" if math.isfinite(v) else "- m/s"
         driving = st.get("as_state") == 2
