@@ -4,6 +4,10 @@ project(hyu_sensor_bringup)
 find_package(ament_cmake REQUIRED)
 
 install(DIRECTORY launch config DESTINATION share/${PROJECT_NAME})
-install(PROGRAMS scripts/sync_capture.py DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS
+  scripts/sync_capture.py
+  scripts/stationary_wheels.py
+  scripts/stationary_ins.py
+  DESTINATION lib/${PROJECT_NAME})
 
 ament_package()

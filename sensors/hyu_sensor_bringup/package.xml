@@ -12,6 +12,10 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>hyu_msgs</exec_depend>
+  <exec_depend>sbg_driver</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>image_transport</exec_depend>
   <!-- vcs import src < src/external.repos brings these in -->
   <exec_depend>rslidar_sdk</exec_depend>
   <exec_depend>zed_wrapper</exec_depend>

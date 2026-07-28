@@ -93,12 +93,22 @@ fskcd() { cd "$EUFS_MASTER"; }
 # compute it cannot be built even in principle. hyu_tmpc vendors a prebuilt
 # x86-64 libosqp.a and will not link on arm64 either -- and stack.sh already
 # retired it ("the MAP controller drives"), so nothing is lost by skipping it.
-FSK_VEHICLE_SKIP='^eufs_|^hyu_tmpc$|^hyu_control_harness$'
+# eufs_tracks is the exception: it is pure data (the cone .dae meshes) with no
+# gazebo dependency, and graph_slam's RViz markers reference
+# package://eufs_tracks/meshes/cone_*.dae. Skip it and the SLAM map renders as
+# a wall of "Mesh resource marker could not load" errors on the car.
+# Explicit, not a regex: eufs_tracks must NOT be skipped even though it is an
+# eufs_ package. It is pure data (the cone .dae meshes), has no gazebo
+# dependency, and graph_slam's RViz markers point at
+# package://eufs_tracks/meshes/cone_*.dae -- skip it and the SLAM map renders
+# as a wall of "Mesh resource marker could not load" errors on the car.
+FSK_VEHICLE_SKIP=(eufs_launcher eufs_models eufs_plugins eufs_racecar
+                  eufs_rqt eufs_sensors hyu_tmpc hyu_control_harness)
 
 fsb()  { # vehicle build: everything the car needs, then re-source
   cd "$EUFS_MASTER" &&
   colcon build --symlink-install --base-paths src \
-    --packages-skip-regex "$FSK_VEHICLE_SKIP" "$@" &&
+    --packages-skip "${FSK_VEHICLE_SKIP[@]}" "$@" &&
   source "install/setup.$_fsk_ext"
 }
 fsba() { # everything, simulator included (x86 dev box)
@@ -164,6 +174,11 @@ mission() { "$EUFS_MASTER/src/scripts/mission.sh" "$@"; }
 # The result lands in $EUFS_MASTER/extrinsics/ and hyu_sensor_bringup reads
 # 'active', so there is no separate apply step — the next 'fsk' picks it up.
 calib()   { "$EUFS_MASTER/src/scripts/calib.sh" "$@"; }
+# Step 1 from a bag instead of the car: replays the recorded sensors on loop,
+# runs perception live, fakes the (absent) wheel encoder as a stopped car.
+# 'stack' and 'mission' work on top exactly as they do after 'fsk'.
+#   bagplay | bagplay <bag> | bagplay rate:=0.5 | bagplay stop | bagplay attach
+bagplay() { "$EUFS_MASTER/src/scripts/bagplay.sh" "$@"; }
 simfull() { ros2 launch eufs_launcher simulation.launch.py perception_mode:=sim rviz:=true "$@"; }
 pbring()  { ros2 launch hyu_planning_bringup local_global_planning.launch.py "$@"; }
 teleop()  { ros2 run hyu_teleop teleop "$@"; }
@@ -183,6 +198,18 @@ fskcheck() {
 }
 resetcar() { ros2 service call /vehicle/reset_vehicle_pos std_srvs/srv/Trigger; }
 slamreset(){ ros2 service call /graph_slam/start_mapping std_srvs/srv/Trigger; }
-rv()       { rviz2 -d "$EUFS_MASTER/install/eufs_launcher/share/eufs_launcher/config/default.rviz" "$@"; }
+# use_sim_time follows the session: bag replay stamps everything with the
+# BAG's time, and an RViz on the wall clock silently discards every transform
+# as older than its 10 s TF cache -- the map frame then renders nothing at all
+# while every topic is plainly alive. FSK_USE_SIM_TIME is set by step 1.
+rv() {
+  local ust cfg
+  ust="$(tmux show-environment -t fsk_race FSK_USE_SIM_TIME 2>/dev/null | cut -d= -f2)"
+  ust="${ust:-false}"
+  cfg="$EUFS_MASTER/install/eufs_launcher/share/eufs_launcher/config/default.rviz"
+  [ -f "$cfg" ] || cfg=""
+  echo "rviz2 (use_sim_time=$ust)"
+  rviz2 ${cfg:+-d "$cfg"} --ros-args -p use_sim_time:="$ust" "$@"
+}
 
 unset _fsk_this _fsk_src_dir
