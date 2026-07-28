@@ -459,14 +459,32 @@ void PlanningStateMachineNode::updateLapCount()
   }
 }
 
+int authoritativeLapCount(
+  int previous_lap_count,
+  int initial_lap_count,
+  bool discovery_lap_seen,
+  int gate_counted_laps,
+  int gate_laps_at_discovery,
+  bool gate_available,
+  int frenet_fallback_laps)
+{
+  const int base = discovery_lap_seen ? 1 : 0;
+  const int gate_racing =
+    std::max(0, gate_counted_laps - gate_laps_at_discovery);
+  const int racing = gate_available ?
+    gate_racing : std::max(gate_racing, frenet_fallback_laps);
+  return std::max(previous_lap_count, std::max(initial_lap_count, base + racing));
+}
+
 void PlanningStateMachineNode::recomputeLapCount()
 {
-  // The gate is the accurate primary counter; the fallback is a floor. Taking
-  // the max means a stalled gate can never pull the lap count back down, and a
-  // stalled fallback can never cap it — the count only ever moves forward.
-  const int gate_laps = initial_lap_count_ +
-    (gate_tracker_ ? gate_tracker_->countedLaps() : 0);
-  lap_count_ = std::max(gate_laps, fallback_lap_count_);
+  // Single authoritative count (see authoritativeLapCount / its unit test).
+  lap_count_ = authoritativeLapCount(
+    lap_count_, initial_lap_count_, discovery_lap_seen_,
+    gate_tracker_ ? gate_tracker_->countedLaps() : 0,
+    gate_laps_at_discovery_,
+    gate_tracker_ && gate_tracker_->gateValid(),
+    fallback_lap_count_);
 }
 
 }

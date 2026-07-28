@@ -338,5 +338,87 @@ TEST(OrangeGateLapTracker, RefittedGateSweepingOverEgoResetsInsteadOfCounting)
   EXPECT_EQ(tracker.countedLaps(), 0);
 }
 
+// ---- Single authoritative lap count (the trackdrive-11 / "1 1 2 3" fix) ----
+
+// A clean trackdrive-10 (mapping lap 1 + 9 racing, gate never drops): the
+// count must read 1,2,...,10 exactly once each, and never overshoot to 11.
+// Spawn behind the line (gate consumed the departure as race-start, then the
+// mapping-return as gate lap 1) — the discovery anchor cancels it out.
+TEST(AuthoritativeLapCount, TrackdriveTenGateOnlyCountsOneThroughTenNoDouble)
+{
+  // Behind-line spawn: at discovery the gate already counted the
+  // mapping-return crossing (countedLaps == 1).
+  int prev = 0;
+  const int gate_at_discovery = 1;
+  // Mapping lap in progress (no discovery yet, gate has the departure=0).
+  EXPECT_EQ(authoritativeLapCount(prev, 0, false, 0, 0, true, 0), 0);
+  // Mapping complete -> discovery; gate == 1 here, anchored -> lap 1.
+  prev = authoritativeLapCount(prev, 0, true, 1, gate_at_discovery, true, 0);
+  EXPECT_EQ(prev, 1);
+  // Racing laps: each gate crossing is +1 (delta from the anchor).
+  for (int racing_lap = 2; racing_lap <= 10; ++racing_lap) {
+    const int gate_now = gate_at_discovery + (racing_lap - 1);
+    prev = authoritativeLapCount(prev, 0, true, gate_now, gate_at_discovery, true, 0);
+    EXPECT_EQ(prev, racing_lap) << "racing lap " << racing_lap;
+  }
+  EXPECT_EQ(prev, 10);  // never 11
+}
+
+// Ahead-of-line spawn (no departure crossing): the mapping-return is the
+// gate's race-start (countedLaps stays 0 at discovery). Same 1..10 result,
+// proving the anchor makes it spawn-independent.
+TEST(AuthoritativeLapCount, SpawnAheadOfLineSameOneThroughTen)
+{
+  int prev = 0;
+  const int gate_at_discovery = 0;
+  prev = authoritativeLapCount(prev, 0, true, 0, gate_at_discovery, true, 0);
+  EXPECT_EQ(prev, 1);
+  for (int racing_lap = 2; racing_lap <= 10; ++racing_lap) {
+    const int gate_now = gate_at_discovery + (racing_lap - 1);
+    prev = authoritativeLapCount(prev, 0, true, gate_now, gate_at_discovery, true, 0);
+    EXPECT_EQ(prev, racing_lap);
+  }
+  EXPECT_EQ(prev, 10);
+}
+
+// Frenet drops HALF its wraps while the gate is valid: the gate is
+// authoritative, so the count stays clean 1..N regardless of the lagging
+// fallback (the old max() let frenet drops jump/double the number).
+TEST(AuthoritativeLapCount, FrenetDropsIgnoredWhileGateValid)
+{
+  int prev = authoritativeLapCount(0, 0, true, 0, 0, true, 0);  // lap 1
+  EXPECT_EQ(prev, 1);
+  // gate advances 1..5; frenet only registered 0,1,1,2,2 (dropped half).
+  const int frenet[] = {0, 1, 1, 2, 2};
+  for (int i = 0; i < 5; ++i) {
+    prev = authoritativeLapCount(prev, 0, true, i + 1, 0, true, frenet[i]);
+    EXPECT_EQ(prev, i + 2) << "gate lap " << (i + 1);
+  }
+  EXPECT_EQ(prev, 6);
+}
+
+// Gate never becomes valid (misdetected / occluded gate): the frenet fallback
+// carries the count on top of the mapping base.
+TEST(AuthoritativeLapCount, FrenetFallbackWhenGateUnavailable)
+{
+  int prev = authoritativeLapCount(0, 0, true, 0, 0, false, 0);  // lap 1
+  EXPECT_EQ(prev, 1);
+  for (int wrap = 1; wrap <= 4; ++wrap) {
+    prev = authoritativeLapCount(prev, 0, true, 0, 0, false, wrap);
+    EXPECT_EQ(prev, 1 + wrap);
+  }
+  EXPECT_EQ(prev, 5);
+}
+
+// The count is monotonic: a momentary gate invalidation must not drop it.
+TEST(AuthoritativeLapCount, NeverMovesBackward)
+{
+  int prev = authoritativeLapCount(0, 0, true, 5, 0, true, 5);  // lap 6
+  EXPECT_EQ(prev, 6);
+  // Gate blips invalid with a lagging frenet: still 6, not lower.
+  prev = authoritativeLapCount(prev, 0, true, 5, 0, false, 3);
+  EXPECT_EQ(prev, 6);
+}
+
 }
 }

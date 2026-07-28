@@ -93,7 +93,9 @@ PlanningStateMachineNode::PlanningStateMachineNode()
     declare_parameter<bool>("global_requires_graph_slam_localization", true);
 
   lap_count_ = initial_lap_count_;
-  fallback_lap_count_ = initial_lap_count_;
+  fallback_lap_count_ = 0;
+  discovery_lap_seen_ = false;
+  gate_laps_at_discovery_ = 0;
   lap_tracking_policy_ = std::make_unique<LapTrackingPolicy>(
     lap_path_closure_tolerance_m_, lap_closing_duplicate_tolerance_m_);
   gate_tracker_ = std::make_unique<OrangeGateLapTracker>(
@@ -291,11 +293,18 @@ void PlanningStateMachineNode::onGraphSlamStatus(const std_msgs::msg::String::Sh
   if (lap_tracking_policy_ && lap_tracking_policy_->observeGraphSlamStatus(msg->data) &&
     vehicle_driving_seen_)
   {
-    fallback_lap_count_ = std::max(fallback_lap_count_, 1);
+    // The mapping lap is complete: it is lap 1, and it becomes the shared
+    // base for BOTH estimators. Anchor the gate count here so every later
+    // gate crossing is a DELTA from this moment — spawn-independent, so it
+    // does not matter whether the gate already consumed the start-box
+    // departure or the mapping-return as its race-start.
+    discovery_lap_seen_ = true;
+    gate_laps_at_discovery_ =
+      gate_tracker_ ? gate_tracker_->countedLaps() : 0;
     recomputeLapCount();
     RCLCPP_INFO(
-      get_logger(), "Discovery-lap floor: graph SLAM '%s' — lap %d.",
-      msg->data.c_str(), lap_count_);
+      get_logger(), "Discovery lap: mapping complete — lap %d (base).",
+      lap_count_);
   }
   global_path_readiness_.onGraphSlamStatus(msg->data);
 }
@@ -457,7 +466,15 @@ std::string PlanningStateMachineNode::stopRequestReason() const
   if (!hasFreshFrenetOdom()) {
     return "stale_frenet_odom";
   }
-  if (lap_count_ < target_lap_count_) {
+  // Allow the finish once we are ON the final lap, not after it. The final
+  // raceline (GLOBAL_FINAL_STOP) engages at final_lap_start_count_ (= target-1,
+  // e.g. lap_count 9 for a 10-lap mission = driving the 10th lap), and the car
+  // stops when it reaches that line's END = the finish of the target-th lap.
+  // Gating on lap_count_ >= target_lap_count_ instead demanded the target lap
+  // be COMPLETED first and only THEN drove to a path end — a whole extra lap
+  // (trackdrive 10 ran 11: mapping lap 1 + 10 racing). Autocross is unaffected
+  // (it stops via stop_on_target_laps_).
+  if (lap_count_ < final_lap_start_count_) {
     return "target_lap_pending";
   }
   if (global_path_readiness_.finalPathEndReached(

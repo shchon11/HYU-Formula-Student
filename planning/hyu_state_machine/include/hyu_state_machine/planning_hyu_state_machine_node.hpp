@@ -135,6 +135,26 @@ private:
   double best_lap_sec_{0.0};
 };
 
+// Single authoritative lap count (pure, so it is unit-testable in isolation
+// from ROS). laps COMPLETED, mapping lap = lap 1:
+//   base   = 1 once the mapping->localization discovery lap is seen, else 0.
+//   racing = the ORANGE GATE as primary — a DELTA from the gate count at the
+//            discovery moment, so the gate's spawn-dependent race-start is
+//            cancelled; the frenet seam-wrap is a FALLBACK, used only when the
+//            gate is not available (no valid gate).
+//   result = max(previous, initial, base + racing)  (monotonic, forward-only).
+// max()-combining gate and frenet on EVERY sample was the bug (frenet drops
+// and base mismatches then double- or under-counted: trackdrive 10 read 11,
+// the "1 1 2 3…" double).
+int authoritativeLapCount(
+  int previous_lap_count,
+  int initial_lap_count,
+  bool discovery_lap_seen,
+  int gate_counted_laps,
+  int gate_laps_at_discovery,
+  bool gate_available,
+  int frenet_fallback_laps);
+
 class PlanningStateMachineNode : public rclcpp::Node
 {
 public:
@@ -227,8 +247,14 @@ private:
   // wedge the count if the other stalls (see recomputeLapCount):
   //  - the orange-gate tracker (accurate + the sole lap-time source), and
   //  - the fallback (frenet seam-wrap + the mapping->localization floor).
+  // Single authoritative count (see recomputeLapCount): mapping lap = lap 1
+  // (discovery), then the gate counts each racing lap as a DELTA from the
+  // discovery moment (spawn-independent); frenet fills in only when the gate
+  // is unavailable. lap_count_ = laps COMPLETED (mapping = 1).
   int lap_count_{0};
-  int fallback_lap_count_{0};
+  int fallback_lap_count_{0};        // frenet racing-wrap count (0-based)
+  bool discovery_lap_seen_{false};   // mapping lap completed (= lap 1)
+  int gate_laps_at_discovery_{0};    // gate count anchored at discovery
 
   double frenet_odom_timeout_sec_{0.5};
   double global_path_valid_timeout_sec_{0.5};
