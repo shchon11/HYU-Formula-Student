@@ -1,3 +1,5 @@
+from glob import glob
+
 from setuptools import setup
 
 package_name = "hyu_perception"
@@ -31,11 +33,22 @@ setup(
                 "docs/perception_baseline_usage.md",
             ],
         ),
-        # The cone pose weight ships with the package so the node has no
-        # dependency on a path outside the workspace.
+        # The cone weights ship with the package so the node has no dependency
+        # on a path outside the workspace. The active one is the detect model;
+        # the pose variant stays installed so switching model_path back to it
+        # needs no rebuild.
+        #
+        # The .engine is machine-specific and untracked, so it is picked up by
+        # glob rather than named: build it with scripts/export_tensorrt_engine.py
+        # and it lands here on the next colcon build, which is what
+        # prefer_engine looks for next to the .pt.
+        (
+            f"share/{package_name}/models/cone_detect_yolo26n/weights",
+            glob("models/cone_detect_yolo26n/weights/best.*"),
+        ),
         (
             f"share/{package_name}/models/cone_pose_8kpt/weights",
-            ["models/cone_pose_8kpt/weights/best.pt"],
+            glob("models/cone_pose_8kpt/weights/best.*"),
         ),
         (
             f"share/{package_name}/scripts",

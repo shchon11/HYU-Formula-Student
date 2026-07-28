@@ -332,10 +332,29 @@ def generate_launch_description():
             default_value='false',
             description="Publish YOLO bbox debug image"),
 
+        # Sensor input topics. hyu_perception defaults to the VEHICLE contract
+        # (/sensors/*, published by the vehicle sensor bringup); the simulator
+        # publishes the gazebo driver topics, so the sim passes its own names
+        # explicitly here. Both worlds stay on one perception, no remaps.
+        DeclareLaunchArgument(
+            name='perception_left_image_topic',
+            default_value='/zed/left/image_rect_color',
+            description="Left rectified image consumed by perception (sim topic)"),
+
         DeclareLaunchArgument(
             name='perception_right_image_topic',
             default_value='/zed/right/image_rect_color',
-            description="Right rectified image consumed by perception"),
+            description="Right rectified image consumed by perception (sim topic)"),
+
+        DeclareLaunchArgument(
+            name='perception_camera_info_topic',
+            default_value='/zed/left/camera_info',
+            description="Intrinsics for perception_left_image_topic (sim topic)"),
+
+        DeclareLaunchArgument(
+            name='perception_pointcloud_topic',
+            default_value='/velodyne_points',
+            description="LiDAR backbone cloud consumed by perception (sim topic)"),
 
         DeclareLaunchArgument(
             name='perception_motion_compensation_frame',
@@ -413,8 +432,14 @@ def generate_launch_description():
                  LaunchConfiguration('perception_publish_debug')),
                 ('publish_yolo_debug_image',
                  LaunchConfiguration('perception_publish_yolo_debug_image')),
+                ('left_image_topic',
+                 LaunchConfiguration('perception_left_image_topic')),
                 ('right_image_topic',
                  LaunchConfiguration('perception_right_image_topic')),
+                ('camera_info_topic',
+                 LaunchConfiguration('perception_camera_info_topic')),
+                ('pointcloud_topic',
+                 LaunchConfiguration('perception_pointcloud_topic')),
                 ('motion_compensation_frame',
                  LaunchConfiguration('perception_motion_compensation_frame')),
             ],

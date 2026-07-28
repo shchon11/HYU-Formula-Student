@@ -9,8 +9,13 @@
 # The shipped FSOCO YOLOv8n checkpoint is tracked (6 MB); other artifacts stay out.
 !fsoco_yolov8n/weights/best.pt
 
-# The YOLO26n-pose cone detector the perception node runs by default (6.2 MB).
+# The YOLO26n-pose cone detector (6.2 MB), kept as the keypoint-capable weight.
 # It ships in-tree so the node has no dependency on a path outside the
 # workspace; a missing weight makes the detector fail at startup and /cones
 # publish nothing at all.
 !cone_pose_8kpt/weights/best.pt
+
+# The YOLO26n detect-only cone detector the perception node runs by default
+# (5.1 MB). Same five classes in the same order as the pose weight, no
+# keypoints. Tracked for the same reason as above.
+!cone_detect_yolo26n/weights/best.pt

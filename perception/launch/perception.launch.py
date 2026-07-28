@@ -59,20 +59,20 @@ def generate_launch_description() -> LaunchDescription:
     return LaunchDescription([
         DeclareLaunchArgument("use_sim_time", default_value="true"),
         DeclareLaunchArgument(
-            "left_image_topic", default_value="/zed/left/image_rect_color",
+            "left_image_topic", default_value="/sensors/zed/left/color/rect/image",
             description="The image YOLO detects on and perception projects "
                         "from. These must be the same camera."),
         DeclareLaunchArgument(
-            "right_image_topic", default_value="/zed/right/image_rect_color",
+            "right_image_topic", default_value="/sensors/zed/right/color/rect/image",
             description="Used only by the ZNCC cross-check."),
         DeclareLaunchArgument(
-            "camera_info_topic", default_value="/zed/left/camera_info",
+            "camera_info_topic", default_value="/sensors/zed/left/color/rect/camera_info",
             description="Intrinsics for left_image_topic. fx and the baseline "
                         "come from here and the TF, never from a constant."),
         DeclareLaunchArgument(
             "camera_frame", default_value="zed_left_camera_optical_frame"),
         DeclareLaunchArgument("bbox_topic", default_value="/perception/bounding_boxes"),
-        DeclareLaunchArgument("pointcloud_topic", default_value="/velodyne_points"),
+        DeclareLaunchArgument("pointcloud_topic", default_value="/sensors/lidar/points"),
         DeclareLaunchArgument("output_cones_topic", default_value="/perception/cones"),
         DeclareLaunchArgument("output_frame", default_value="base_footprint"),
         DeclareLaunchArgument(
@@ -87,8 +87,11 @@ def generate_launch_description() -> LaunchDescription:
                         "does not raise: it silently puts every vision cone in "
                         "the wrong place."),
         DeclareLaunchArgument("publish_debug", default_value="true"),
+        # Keep in step with yolov8_bbox_node.model_path in config/perception.yaml:
+        # this argument is passed as a parameter override, so it WINS over the
+        # config and a stale default here silently loads the wrong weight.
         DeclareLaunchArgument("yolo_model_path",
-                              default_value="models/cone_pose_8kpt/weights/best.pt"),
+                              default_value="models/cone_detect_yolo26n/weights/best.pt"),
         DeclareLaunchArgument("yolo_device", default_value=""),
         DeclareLaunchArgument("yolo_imgsz", default_value="640"),
         DeclareLaunchArgument("publish_yolo_debug_image", default_value="false"),
@@ -108,6 +111,11 @@ def generate_launch_description() -> LaunchDescription:
             parameters=[_config(), {
                 "use_sim_time": use_sim_time,
                 "image_topic": left_image_topic,
+                # The detector phase-locks to the LiDAR (inference_mode:
+                # lidar_locked), so it must follow pointcloud_topic. Without
+                # this it stays pinned to the config value and never ticks
+                # wherever the cloud is published under another name.
+                "lidar_topic": LaunchConfiguration("pointcloud_topic"),
                 "bbox_topic": bbox_topic,
                 "model_path": LaunchConfiguration("yolo_model_path"),
                 "device": LaunchConfiguration("yolo_device"),

@@ -12,11 +12,11 @@ perception_node:
     # anything: every bbox frame publishes.
     # ======================================================================
 
-    pointcloud_topic: /velodyne_points
+    pointcloud_topic: /sensors/lidar/points
     bbox_topic: /perception/bounding_boxes
-    camera_info_topic: /zed/left/camera_info
-    left_image_topic: /zed/left/image_rect_color
-    right_image_topic: /zed/right/image_rect_color
+    camera_info_topic: /sensors/zed/left/color/rect/camera_info
+    left_image_topic: /sensors/zed/left/color/rect/image
+    right_image_topic: /sensors/zed/right/color/rect/image
     output_cones_topic: /perception/cones
     output_frame: base_footprint
     camera_frame: zed_left_camera_optical_frame
@@ -463,7 +463,7 @@ perception_node:
     sigma_h_px: 5.5
 yolov8_bbox_node:
   ros__parameters:
-    image_topic: /zed/left/image_rect_color
+    image_topic: /sensors/zed/left/color/rect/image
     bbox_topic: /perception/bounding_boxes
     # One inference per LiDAR period, phase-locked to land just before the
     # NEXT predicted scan end: the bbox<->cloud pairing gap drops to the
@@ -472,15 +472,20 @@ yolov8_bbox_node:
     # period — anchoring to the previous cloud itself would hand every
     # cloud a 100 ms-old bbox.
     inference_mode: lidar_locked
-    lidar_topic: /velodyne_points
+    lidar_topic: /sensors/lidar/points
     lidar_period_sec: 0.1
     lock_tolerance_sec: 0.0167
-    # YOLO26n-pose cone detector: one forward pass yields the box, the class and
-    # the cone silhouette keypoints. Shipped inside the package, so there is no
-    # dependency on a path outside the workspace. The launch file overrides this
-    # with the resolved install-share path; this default serves direct
-    # `ros2 run` from a sourced workspace.
-    model_path: models/cone_pose_8kpt/weights/best.pt
+    # YOLO26n cone detector (detect task): box + class. Shipped inside the
+    # package, so there is no dependency on a path outside the workspace. The
+    # launch file overrides this with the resolved install-share path; this
+    # default serves direct `ros2 run` from a sourced workspace.
+    #
+    # models/cone_pose_8kpt/weights/best.pt is the pose variant of the same
+    # five classes in the same order — swap model_path to it and set
+    # publish_keypoints: true to get the silhouette keypoints back. Nothing on
+    # the /perception/cones path reads them (BoundingBox.msg carries no
+    # keypoint field), so the detect weight loses only the debug topic.
+    model_path: models/cone_detect_yolo26n/weights/best.pt
     # TensorRT if available, else the portable .pt. When a .engine exported from
     # this .pt sits next to it (scripts/export_tensorrt_engine.py, ~20x faster),
     # the node loads the engine; with no engine it runs the .pt unchanged. Set
@@ -506,6 +511,7 @@ yolov8_bbox_node:
     unknown_color_policy: unknown
     publish_debug_image: false
     debug_image_topic: /yolo_bounding_boxes/debug_image
-    # Emit the cone keypoints that Tier-3 propagates into the right image.
-    publish_keypoints: true
+    # The active weight is detect-only, so there are no keypoints to emit.
+    # Set true together with the cone_pose_8kpt model_path above.
+    publish_keypoints: false
     keypoints_topic: /perception/debug/cone_keypoints

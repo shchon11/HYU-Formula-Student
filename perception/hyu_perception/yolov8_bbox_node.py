@@ -151,7 +151,7 @@ class YoloV8BBoxNode(Node):
         )
 
     def _declare_parameters(self) -> None:
-        self.declare_parameter("image_topic", "/zed/left/image_rect_color")
+        self.declare_parameter("image_topic", "/sensors/zed/left/color/rect/image")
         self.declare_parameter("bbox_topic", "/perception/bounding_boxes")
         # 'all' infers every frame the worker can take (30 Hz). 'lidar_locked'
         # infers ONE frame per LiDAR period — the frame landing just before
@@ -161,7 +161,7 @@ class YoloV8BBoxNode(Node):
         # instead would hand every cloud a 100+ ms-old bbox: the fusion node
         # grabs the newest COMPLETED bbox at cloud arrival.
         self.declare_parameter("inference_mode", "all")
-        self.declare_parameter("lidar_topic", "/velodyne_points")
+        self.declare_parameter("lidar_topic", "/sensors/lidar/points")
         self.declare_parameter("lidar_period_sec", 0.1)
         # Half the camera period: exactly one 30 Hz frame per LiDAR tick.
         self.declare_parameter("lock_tolerance_sec", 0.0167)
@@ -171,7 +171,7 @@ class YoloV8BBoxNode(Node):
         # sibling .engine when one exists.
         self.declare_parameter(
             "model_path",
-            "models/cone_pose_8kpt/weights/best.pt",
+            "models/cone_detect_yolo26n/weights/best.pt",
         )
         self.declare_parameter("confidence_threshold", 0.25)
         self.declare_parameter("iou_threshold", 0.45)

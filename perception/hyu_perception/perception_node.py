@@ -237,11 +237,11 @@ class PerceptionNode(Node):
     # ---------------------------------------------------------------- params
 
     def _declare_parameters(self) -> None:
-        self.declare_parameter("pointcloud_topic", "/velodyne_points")
+        self.declare_parameter("pointcloud_topic", "/sensors/lidar/points")
         self.declare_parameter("bbox_topic", "/perception/bounding_boxes")
-        self.declare_parameter("camera_info_topic", "/zed/left/camera_info")
-        self.declare_parameter("left_image_topic", "/zed/left/image_rect_color")
-        self.declare_parameter("right_image_topic", "/zed/right/image_rect_color")
+        self.declare_parameter("camera_info_topic", "/sensors/zed/left/color/rect/camera_info")
+        self.declare_parameter("left_image_topic", "/sensors/zed/left/color/rect/image")
+        self.declare_parameter("right_image_topic", "/sensors/zed/right/color/rect/image")
         self.declare_parameter("output_cones_topic", "/perception/cones")
         self.declare_parameter("output_frame", "base_footprint")
         self.declare_parameter("camera_frame", "zed_left_camera_optical_frame")
