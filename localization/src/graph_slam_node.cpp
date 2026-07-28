@@ -213,6 +213,8 @@ GraphSlamNode::GraphSlamNode()
     "csm_min_interval_m", csm_min_interval_m_);
   csm_peak_margin_ = declare_parameter<double>(
     "csm_peak_margin", csm_peak_margin_);
+  csm_loop_min_orange_span_m_ = declare_parameter<double>(
+    "csm_loop_min_orange_span_m", csm_loop_min_orange_span_m_);
   csm_loop_min_response_ = declare_parameter<double>(
     "csm_loop_min_response", csm_loop_min_response_);
   csm_apply_cooldown_m_ = declare_parameter<double>(
@@ -1037,12 +1039,19 @@ bool GraphSlamNode::maybeCsmRegister(
   // at uniform spacing and cannot certify a seam on their own (user-observed:
   // gate slightly out of view -> wrong seam matches); the gate is the one
   // unique feature, and the seam physically lives at the gate.
-  int orange_query_points = 0;
+  std::vector<Eigen::Vector2d> orange_pts;
   for (const SubmapPoint & point : match_points.points) {
     if (point.color == kSubmapColorOrange ||
       point.color == kSubmapColorBigOrange)
     {
-      ++orange_query_points;
+      orange_pts.emplace_back(point.x, point.y);
+    }
+  }
+  const int orange_query_points = static_cast<int>(orange_pts.size());
+  double orange_span = 0.0;
+  for (std::size_t i = 0; i < orange_pts.size(); ++i) {
+    for (std::size_t j = i + 1; j < orange_pts.size(); ++j) {
+      orange_span = std::max(orange_span, (orange_pts[i] - orange_pts[j]).norm());
     }
   }
   // Loop mode exists to close the SEAM, and its lifetime is bounded by
@@ -1055,12 +1064,13 @@ bool GraphSlamNode::maybeCsmRegister(
   // re-association sets it mid-lap-1, long before any real seam.
   const double travel_since_origin =
     traveled_distance_ - lap_origin_capture_traveled_m_;
-  // Orange >= 2: a gate may be one cone per side, so demanding more would
-  // starve such tracks of any seam. The response floor (0.8) sorts the
-  // paired-gate cases (full overlay ~0.9 beats pair-interleave ~0.5); the
-  // two-cone left/right tie surfaces as second_peak ~= best, both go to
-  // stage 2, and the corridors + rail floors decide.
+  // Orange SPAN gate: >= 2 cones spanning at least csm_loop_min_orange_span_m.
+  // A count alone is not enough — one gate side is a ~0.39 m pair that is
+  // ambiguous with the other side and snaps to whichever is nearer, so a
+  // single-side view can register the seam left/right mirrored. Requiring the
+  // span means both sides are in view, which fixes the identity.
   if (!localization_mode_ && orange_query_points >= 2 &&
+    orange_span >= csm_loop_min_orange_span_m_ &&
     lap_origin_captured_ && travel_since_origin >= lap_return_min_travel_m_ &&
     csm_loop_applied_ < 3U && loop_gap_distance_ > 0.0)
   {

@@ -405,6 +405,10 @@ private:
   // by this response margin (synthetic: orange-gated seam wins by ~0.29, a
   // uniform straight's alias ties at ~0.00).
   double csm_peak_margin_{0.10};
+  // Minimum spread between the observed orange cones before a seam may be
+  // attempted. One gate side alone is ambiguous with the other; both sides in
+  // view span the track width and fix the left/right identity.
+  double csm_loop_min_orange_span_m_{1.5};
   double csm_loop_min_response_{0.60};
   double csm_apply_cooldown_m_{2.0};
   bool landmark_delete_enable_{true};

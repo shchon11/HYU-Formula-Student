@@ -71,6 +71,11 @@ graph_slam:
     # interleaved fit (a pair on the WRONG pair, the "| | |" seam) matches
     # 2/4 = ~0.5 and dies here; with one cone per side both sites score 1.0,
     # surface as tied hypotheses, and stage-2 corridors + rail floors decide.
+    # A seam is attempted only when the observed orange SPANS this far: one
+    # gate side (~0.39 m pair) is ambiguous with the other side and snaps to
+    # the nearer one; both sides in view span the track width and fix the
+    # left/right identity (user-observed single-side mismatch).
+    csm_loop_min_orange_span_m: 1.5
     csm_loop_min_orange_response: 0.8
     # Each corridor rail must fit at the refined seam pose: a twisted seam's
     # rigid optimum is winner-take-one-rail (the splayed rail ghosts as a
