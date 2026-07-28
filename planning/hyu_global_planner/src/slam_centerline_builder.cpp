@@ -966,6 +966,219 @@ void applyMinimumCurvatureRaceline(
   }
 }
 
+// --------------------------------------------------------------------------
+// Synthetic closure of a genuinely open boundary seam.
+//
+// Every repair above either DELETES points (duplicate merge, ghost drop,
+// gap-disconnected drop, end-spur trim) or REORDERS them (2-opt ring repair).
+// None of them can help when the map never observed a stretch of boundary at
+// all: both rings are then open chains whose closing gap exceeds
+// max_boundary_gap_m, so every seed dies at the ordering walk's loop-gap gate
+// and the whole map is reported as branch_jump. Measured on the live map
+// map_20260726_012627 -- the car's own start/finish straight, whose only
+// landmarks are three cones SLAM never coloured (they sit at the startup FOV
+// edge, so their colour vote never converged and the planner drops them),
+// leaving a 13.3 m blue and 19.8 m yellow hole in an otherwise clean 427 m lap.
+//
+// This tier fills the hole by interpolating along the seam chord at the
+// boundary's own cone spacing. It invents geometry the car will drive, so it
+// is fenced in hard: it runs only after every plain and 2-opt seed has failed,
+// the hole it will bridge is bounded, and when BOTH boundaries are open their
+// seams must face each other -- a hole on one side of the track and another
+// hole somewhere else are not one unmapped section. Every synthetic point must
+// then sit inside the track-width band against the opposite boundary, and the
+// ORDINARY gates downstream (the pairing sweep's width band, self-intersection,
+// heading reversal, loop closure) judge the result unchanged, so an
+// implausible closure still fails closed with its usual reason.
+// --------------------------------------------------------------------------
+
+struct SeamBridge
+{
+  bool needed{false};
+  PlannerPoint from{};
+  PlannerPoint to{};
+  std::vector<PlannerPoint> fill;
+};
+
+double medianBoundarySpacing(const std::vector<PlannerPoint> & ordered)
+{
+  std::vector<double> segments;
+  segments.reserve(ordered.size());
+  for (std::size_t i = 1; i < ordered.size(); ++i) {
+    segments.push_back(distance(ordered[i - 1U], ordered[i]));
+  }
+  if (segments.empty()) {
+    return 0.0;
+  }
+  const std::size_t mid = segments.size() / 2U;
+  std::nth_element(segments.begin(), segments.begin() + static_cast<std::ptrdiff_t>(mid),
+    segments.end());
+  return segments[mid];
+}
+
+// Returns false when this boundary must not be bridged at all; returns true
+// with bridge.needed == false when it is already closed.
+bool planSeamBridge(
+  const std::vector<PlannerPoint> & ordered, double max_gap, double max_bridge_m,
+  SeamBridge & bridge)
+{
+  bridge = SeamBridge{};
+  if (ordered.size() < 3U) {
+    return false;
+  }
+  const double gap = distance(ordered.front(), ordered.back());
+  if (gap <= max_gap) {
+    return true;
+  }
+  if (gap > max_bridge_m) {
+    return false;
+  }
+  bridge.needed = true;
+  bridge.from = ordered.back();
+  bridge.to = ordered.front();
+  // Fill at the boundary's OWN cone spacing, so the bridged stretch looks like
+  // the rest of the boundary to the walk and to the pairing sweep. Never wider
+  // than max_gap, or the walk still could not step across it.
+  const double spacing_hint = medianBoundarySpacing(ordered);
+  const double spacing = spacing_hint > 0.0 ? std::min(spacing_hint, max_gap) : max_gap;
+  const std::size_t segments = std::max<std::size_t>(
+    2U, static_cast<std::size_t>(std::ceil(gap / spacing)));
+  bridge.fill.reserve(segments - 1U);
+  for (std::size_t i = 1; i < segments; ++i) {
+    const double t = static_cast<double>(i) / static_cast<double>(segments);
+    bridge.fill.push_back(
+      PlannerPoint{
+        bridge.from.x + t * (bridge.to.x - bridge.from.x),
+        bridge.from.y + t * (bridge.to.y - bridge.from.y)});
+  }
+  return true;
+}
+
+// Two open seams describe ONE unmapped section only if they run alongside each
+// other. Distance alone is not enough (a hairpin puts unrelated boundary
+// stretches within a track width), so the seam axes must also be roughly
+// parallel. Each chain is walked in its own arbitrary direction, so compare the
+// axes, not their signs.
+bool seamsFaceEachOther(
+  const SeamBridge & blue_bridge, const SeamBridge & yellow_bridge,
+  const SlamCenterlineConfig & config)
+{
+  const std::vector<PlannerPoint> blue_seam{blue_bridge.from, blue_bridge.to};
+  const std::vector<PlannerPoint> yellow_seam{yellow_bridge.from, yellow_bridge.to};
+  double min_separation = std::numeric_limits<double>::infinity();
+  for (const auto & point : blue_seam) {
+    min_separation = std::min(
+      min_separation, distance(point, closestPointOnPolyline(point, yellow_seam)));
+  }
+  for (const auto & point : yellow_seam) {
+    min_separation = std::min(
+      min_separation, distance(point, closestPointOnPolyline(point, blue_seam)));
+  }
+  if (min_separation > config.max_track_width_m) {
+    return false;
+  }
+  const auto blue_axis = subtract(blue_bridge.to, blue_bridge.from);
+  const auto yellow_axis = subtract(yellow_bridge.to, yellow_bridge.from);
+  const double blue_length = std::hypot(blue_axis.x, blue_axis.y);
+  const double yellow_length = std::hypot(yellow_axis.x, yellow_axis.y);
+  if (blue_length <= 0.0 || yellow_length <= 0.0) {
+    return false;
+  }
+  constexpr double kMinParallelCosine = 0.5;  // 60 degrees
+  return std::abs(dot(blue_axis, yellow_axis)) / (blue_length * yellow_length) >=
+         kMinParallelCosine;
+}
+
+bool bridgeFillWithinWidthBand(
+  const std::vector<PlannerPoint> & fill, const std::vector<PlannerPoint> & opposite,
+  const SlamCenterlineConfig & config)
+{
+  for (const auto & point : fill) {
+    const double width = nearestDistance(point, opposite);
+    if (width < config.min_track_width_m || width > config.max_track_width_m) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool synthesizeOpenSeamClosure(
+  std::vector<PlannerPoint> & blue_points,
+  std::vector<PlannerPoint> & yellow_points,
+  const SlamCenterlineConfig & config)
+{
+  std::vector<PlannerPoint> ordered_blue;
+  std::vector<PlannerPoint> ordered_yellow;
+  std::string ordering_reason;
+  // Seeded from the map origin, exactly like the closed-ring attempts above, so
+  // the bridge -- and therefore the published path -- stays a pure function of
+  // the cone map rather than of where the car happened to be.
+  if (!orderSlamBoundariesOpen(
+      blue_points, yellow_points, PlannerPoint{0.0, 0.0}, config.max_boundary_gap_m,
+      ordered_blue, ordered_yellow, ordering_reason))
+  {
+    return false;
+  }
+
+  // At most two ordinary boundary gaps of unmapped track. Beyond that this is
+  // not a missed handful of cones but a section nobody drove, and a straight
+  // chord across it is a guess the car would be asked to follow.
+  const double max_bridge_m = 2.0 * config.max_boundary_gap_m;
+  SeamBridge blue_bridge;
+  SeamBridge yellow_bridge;
+  if (!planSeamBridge(ordered_blue, config.max_boundary_gap_m, max_bridge_m, blue_bridge) ||
+    !planSeamBridge(ordered_yellow, config.max_boundary_gap_m, max_bridge_m, yellow_bridge))
+  {
+    return false;
+  }
+  if (!blue_bridge.needed && !yellow_bridge.needed) {
+    return false;  // both rings already close; this tier has nothing to add
+  }
+  if (blue_bridge.needed && yellow_bridge.needed &&
+    !seamsFaceEachOther(blue_bridge, yellow_bridge, config))
+  {
+    return false;
+  }
+
+  // A fill point that lands on an existing cone would trip the same-colour
+  // duplicate gate on a point this function introduced. Drop it -- the same
+  // rule foldStartFinishMarkers applies to a marker landing on a real cone.
+  const double duplicate_threshold = std::max(
+    config.duplicate_point_tolerance, config.min_track_width_m * 0.25);
+  auto keep_distinct = [&](std::vector<PlannerPoint> & fill,
+      const std::vector<PlannerPoint> & existing) {
+      fill.erase(
+        std::remove_if(
+          fill.begin(), fill.end(), [&](const PlannerPoint & point) {
+            return nearestDistance(point, existing) <= duplicate_threshold;
+          }), fill.end());
+    };
+  keep_distinct(blue_bridge.fill, blue_points);
+  keep_distinct(yellow_bridge.fill, yellow_points);
+
+  std::vector<PlannerPoint> bridged_blue = blue_points;
+  std::vector<PlannerPoint> bridged_yellow = yellow_points;
+  bridged_blue.insert(bridged_blue.end(), blue_bridge.fill.begin(), blue_bridge.fill.end());
+  bridged_yellow.insert(
+    bridged_yellow.end(), yellow_bridge.fill.begin(), yellow_bridge.fill.end());
+
+  // Every invented cone must sit a plausible track width from the opposite
+  // boundary. This is the sharp gate: the map-level width check tolerates a
+  // quarter of the cones, which a handful of synthetic points could never trip,
+  // so a chord cutting a corner or laid across the wrong stretch of track would
+  // otherwise reach the car. Judged against the opposite boundary AFTER its own
+  // bridge, since the two holes face each other.
+  if (!bridgeFillWithinWidthBand(blue_bridge.fill, bridged_yellow, config) ||
+    !bridgeFillWithinWidthBand(yellow_bridge.fill, bridged_blue, config))
+  {
+    return false;
+  }
+
+  blue_points = std::move(bridged_blue);
+  yellow_points = std::move(bridged_yellow);
+  return true;
+}
+
 // Everything downstream of the map-level gates is seed-sensitive: the
 // boundary ordering walks from the cone nearest `seed`, and the pairing sweep
 // inherits that phase. From an awkward seed the same good map can fold at the
@@ -1321,6 +1534,32 @@ bool buildCenterlineFromSlamMap(
       {
         rebaseLoopAtStartFinishGate(markers, config, waypoints);
         return true;
+      }
+    }
+  }
+
+  // Last tier: the boundaries are not mis-ordered, they are OPEN -- the map is
+  // missing a stretch of cones. Bridge that one hole and run the ordinary
+  // pipeline over the result. Strictly after every seed above, for the same
+  // reason the 2-opt phase is: a map the existing tiers already handle must
+  // keep publishing exactly the path it published before this tier existed.
+  std::vector<PlannerPoint> bridged_blue = blue_points;
+  std::vector<PlannerPoint> bridged_yellow = yellow_points;
+  if (synthesizeOpenSeamClosure(bridged_blue, bridged_yellow, config)) {
+    const std::size_t bridged_attempts =
+      std::min(kMaxCenterlineSeedAttempts, bridged_blue.size());
+    for (const bool allow_two_opt_repair : {false, true}) {
+      for (std::size_t i = 0; i < bridged_attempts; ++i) {
+        const PlannerPoint & seed =
+          bridged_blue[(i * bridged_blue.size()) / bridged_attempts];
+        std::string retry_reason;
+        if (buildCenterlineFromSeed(
+            bridged_blue, bridged_yellow, seed, config, allow_two_opt_repair, waypoints,
+            retry_reason))
+        {
+          rebaseLoopAtStartFinishGate(markers, config, waypoints);
+          return true;
+        }
       }
     }
   }

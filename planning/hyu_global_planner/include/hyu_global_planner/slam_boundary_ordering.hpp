@@ -22,4 +22,20 @@ bool orderSlamBoundaries(
   std::string & reason,
   bool allow_two_opt_repair = false);
 
+// Walk both boundaries WITHOUT requiring either ring to close: every interior
+// step still respects max_gap and the self-intersection gate still applies, but
+// a closing gap above max_gap is returned instead of rejected. This is a
+// diagnostic entry point, not a path source -- it exists so the centerline
+// builder's seam-closure tier can see WHERE a genuinely open boundary is open.
+// Nothing that publishes a path may use it directly: an open ring has no
+// centerline, and the closure it enables is validated by the ordinary gates.
+bool orderSlamBoundariesOpen(
+  const std::vector<PlannerPoint> & blue_points,
+  const std::vector<PlannerPoint> & yellow_points,
+  const PlannerPoint & ego,
+  double max_gap,
+  std::vector<PlannerPoint> & ordered_blue,
+  std::vector<PlannerPoint> & ordered_yellow,
+  std::string & reason);
+
 }

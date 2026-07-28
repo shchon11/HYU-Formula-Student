@@ -224,4 +224,212 @@ TEST(MapSelfRepair, FragmentedBoundaryStillFailsClosed)
   EXPECT_TRUE(waypoints.empty());
 }
 
+// --- open seam closure ----------------------------------------------------
+
+namespace
+{
+
+// A ring with `removed` consecutive cones missing from BOTH boundaries: the map
+// never observed that stretch, so both rings walk as open chains and every seed
+// dies at the ordering walk's loop-gap gate.
+hyu_msgs::msg::ConeArrayWithCovariance ringMapWithHole(
+  int removed, int blue_start_index, int yellow_start_index)
+{
+  constexpr double kPi = 3.14159265358979323846;
+  constexpr int kCones = 40;
+  hyu_msgs::msg::ConeArrayWithCovariance map;
+  auto within = [kCones](int index, int start, int count) {
+      for (int k = 0; k < count; ++k) {
+        if ((start + k) % kCones == index) {
+          return true;
+        }
+      }
+      return false;
+    };
+  for (int i = 0; i < kCones; ++i) {
+    const double a = 2.0 * kPi * i / kCones;
+    if (!within(i, blue_start_index, removed)) {
+      map.blue_cones.push_back(coneAt(18.0 * std::cos(a), 18.0 * std::sin(a)));
+    }
+    if (!within(i, yellow_start_index, removed)) {
+      map.yellow_cones.push_back(coneAt(22.0 * std::cos(a), 22.0 * std::sin(a)));
+    }
+  }
+  return map;
+}
+
+double waypointLoopLength(const std::vector<PlannerWaypoint> & waypoints)
+{
+  double length = 0.0;
+  for (std::size_t i = 1; i < waypoints.size(); ++i) {
+    length += std::hypot(waypoints[i].x - waypoints[i - 1].x, waypoints[i].y - waypoints[i - 1].y);
+  }
+  return length;
+}
+
+// One boundary of a stadium: a `straight` metre straight at y = +r, a
+// half-turn of radius r, the return straight at y = -r, and the half-turn
+// home, sampled at ~`spacing` metres.
+std::vector<std::pair<double, double>> stadiumBoundary(
+  double r, double straight, double spacing)
+{
+  constexpr double kPi = 3.14159265358979323846;
+  const double perimeter = 2.0 * straight + 2.0 * kPi * r;
+  const int count = static_cast<int>(std::lround(perimeter / spacing));
+  std::vector<std::pair<double, double>> points;
+  points.reserve(static_cast<std::size_t>(count));
+  for (int i = 0; i < count; ++i) {
+    double s = perimeter * i / count;
+    if (s < straight) {
+      points.emplace_back(s, r);
+      continue;
+    }
+    s -= straight;
+    if (s < kPi * r) {
+      const double a = kPi / 2.0 - s / r;
+      points.emplace_back(straight + r * std::cos(a), r * std::sin(a));
+      continue;
+    }
+    s -= kPi * r;
+    if (s < straight) {
+      points.emplace_back(straight - s, -r);
+      continue;
+    }
+    s -= straight;
+    const double a = -kPi / 2.0 - s / r;
+    points.emplace_back(r * std::cos(a), r * std::sin(a));
+  }
+  return points;
+}
+
+// A 4 m wide stadium corridor with a ~20 m stretch of cones missing from each
+// boundary. Unlike the ring, the holes sit on the STRAIGHTS, so a chord across
+// either one lies exactly on the boundary it replaces: every synthetic cone is
+// a perfect 4 m from the opposite boundary and the width band cannot be what
+// accepts or rejects the bridge. `blue_hole_on_top` / `yellow_hole_on_top`
+// place each hole on the same straight or on opposite straights.
+hyu_msgs::msg::ConeArrayWithCovariance stadiumMapWithHoles(
+  bool blue_hole_on_top, bool yellow_hole_on_top)
+{
+  hyu_msgs::msg::ConeArrayWithCovariance map;
+  auto in_hole = [](double x, double y, bool on_top) {
+      return (y > 0.0) == on_top && x > 14.0 && x < 30.0;
+    };
+  for (const auto & [x, y] : stadiumBoundary(8.0, 40.0, 4.0)) {
+    if (!in_hole(x, y, blue_hole_on_top)) {
+      map.blue_cones.push_back(coneAt(x, y));
+    }
+  }
+  for (const auto & [x, y] : stadiumBoundary(12.0, 40.0, 4.0)) {
+    if (!in_hole(x, y, yellow_hole_on_top)) {
+      map.yellow_cones.push_back(coneAt(x, y));
+    }
+  }
+  return map;
+}
+
+}  // namespace
+
+// Four cones missing from each boundary at the same phase leaves a 13.8 m blue
+// and 16.8 m seam — both above max_boundary_gap_m, so no amount of reordering
+// or shedding closes them. The seam-closure tier must bridge that one hole and
+// publish a lap that still clears both boundaries.
+TEST(MapSelfRepair, UnobservedStretchOfBothBoundariesIsBridgedNotFatal)
+{
+  const auto map = ringMapWithHole(4, 38, 38);
+  std::vector<PlannerWaypoint> waypoints;
+  std::string reason;
+
+  ASSERT_TRUE(buildCenterlineFromSlamMap(map, egoAtOrigin(), fixtureConfig(), waypoints, reason))
+    << reason;
+  ASSERT_GE(waypoints.size(), 3U);
+  // A full lap of the ring, not a fragment: the corridor centerline is ~126 m
+  // and the straight bridge chord shortens it only slightly.
+  const double length = waypointLoopLength(waypoints);
+  EXPECT_GT(length, 110.0);
+  EXPECT_LT(length, 135.0);
+  for (const auto & waypoint : waypoints) {
+    EXPECT_GT(waypoint.d_left, 0.5) << "bridged lap grazed a boundary";
+    EXPECT_GT(waypoint.d_right, 0.5) << "bridged lap grazed a boundary";
+  }
+}
+
+// The bridge is bounded. Ten missing cones per boundary is a 27 m blue hole:
+// a section of track nobody drove, not a handful of missed cones, and a chord
+// across it is a guess. It must still fail closed.
+TEST(MapSelfRepair, UnobservedStretchBeyondBridgeBudgetStillFailsClosed)
+{
+  const auto map = ringMapWithHole(10, 35, 35);
+  std::vector<PlannerWaypoint> waypoints{{1.0, 2.0, 3.0, 4.0, 5.0}};
+  std::string reason;
+
+  EXPECT_FALSE(buildCenterlineFromSlamMap(map, egoAtOrigin(), fixtureConfig(), waypoints, reason));
+  EXPECT_EQ(reason, "branch_jump");
+  EXPECT_TRUE(waypoints.empty());
+}
+
+// Control for the pair below: both boundaries lose the same ~20 m stretch of
+// the SAME straight — one unmapped section — and the lap must build.
+TEST(MapSelfRepair, UnobservedStretchOfOneStraightIsBridgedNotFatal)
+{
+  const auto map = stadiumMapWithHoles(true, true);
+  std::vector<PlannerWaypoint> waypoints;
+  std::string reason;
+
+  ASSERT_TRUE(buildCenterlineFromSlamMap(map, egoAtOrigin(), fixtureConfig(), waypoints, reason))
+    << reason;
+  // The stadium centerline is 2*40 + 2*pi*10 = 142.8 m, and both bridges lie
+  // exactly on the straight they replace, so the lap keeps its full length.
+  const double length = waypointLoopLength(waypoints);
+  EXPECT_GT(length, 135.0);
+  EXPECT_LT(length, 150.0);
+  for (const auto & waypoint : waypoints) {
+    EXPECT_GT(waypoint.d_left, 0.5) << "bridged lap grazed a boundary";
+    EXPECT_GT(waypoint.d_right, 0.5) << "bridged lap grazed a boundary";
+  }
+}
+
+// The same two holes, moved onto OPPOSITE straights. Each one on its own is
+// exactly as bridgeable as the control above — the chords still land on their
+// own boundary at a perfect 4 m — so nothing downstream can tell this apart.
+// But two holes 24 m apart are two separate defects, and bridging both would
+// invent two stretches of track from nothing. Only the requirement that the
+// seams face each other rejects this.
+TEST(MapSelfRepair, OpenSeamsOnOppositeStraightsAreNotBridged)
+{
+  const auto map = stadiumMapWithHoles(true, false);
+  std::vector<PlannerWaypoint> waypoints{{1.0, 2.0, 3.0, 4.0, 5.0}};
+  std::string reason;
+
+  EXPECT_FALSE(buildCenterlineFromSlamMap(map, egoAtOrigin(), fixtureConfig(), waypoints, reason));
+  EXPECT_EQ(reason, "branch_jump");
+  EXPECT_TRUE(waypoints.empty());
+}
+
+// The live map that motivated the tier. Its start/finish straight was never
+// mapped: the only landmarks there are three cones SLAM left colour-unknown
+// (dropped by the planner), leaving a 13.3 m blue and 19.8 m yellow hole. Every
+// plain and 2-opt seed reported branch_jump and the mission had no global path
+// at all. The 427 m lap must build and stay inside the cone corridor.
+TEST(MapSelfRepair, LiveMapWithUnmappedStartFinishStraightBuildsFullLap)
+{
+  const auto map = loadConeMapCsv("localization/map/map_20260726_012627.csv");
+  std::vector<PlannerWaypoint> waypoints;
+  std::string reason;
+
+  ASSERT_TRUE(buildCenterlineFromSlamMap(map, egoAtOrigin(), fixtureConfig(), waypoints, reason))
+    << reason;
+
+  ASSERT_GE(waypoints.size(), 800U);
+  const double length = waypointLoopLength(waypoints);
+  EXPECT_GT(length, 400.0);
+  EXPECT_LT(length, 450.0);
+  for (const auto & waypoint : waypoints) {
+    EXPECT_GT(waypoint.d_left, 0.5);
+    EXPECT_GT(waypoint.d_right, 0.5);
+    EXPECT_LT(waypoint.d_left, fixtureConfig().max_track_width_m);
+    EXPECT_LT(waypoint.d_right, fixtureConfig().max_track_width_m);
+  }
+}
+
 }  // namespace hyu_global_planner::test

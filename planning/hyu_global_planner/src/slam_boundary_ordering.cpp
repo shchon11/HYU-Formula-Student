@@ -295,7 +295,7 @@ void twoOptRepairRing(std::vector<PlannerPoint> & ordered)
 
 bool orderAttempt(
   const std::vector<PlannerPoint> & input, std::size_t seed_index, double max_gap,
-  bool consider_input_order, std::size_t rescue_drops, bool uncross,
+  bool consider_input_order, std::size_t rescue_drops, bool uncross, bool allow_open_seam,
   std::vector<PlannerPoint> & ordered, std::string & reason)
 {
   if (!headingAwareGraphOrder(input, seed_index, max_gap, rescue_drops, ordered, reason)) {
@@ -309,7 +309,10 @@ bool orderAttempt(
     }
   }
   reinsertTailStragglers(ordered, max_gap);
-  if (rescue_drops > 0U) {
+  // Spur trimming exists to shrink a closing gap that a stray end cone inflated.
+  // Under allow_open_seam the closing gap is the very thing being measured, so
+  // trimming would eat real end cones and mis-place the seam it reports.
+  if (rescue_drops > 0U && !allow_open_seam) {
     trimOpenSeamSpurs(ordered, max_gap, rescue_drops);
   }
   if (uncross) {
@@ -321,7 +324,7 @@ bool orderAttempt(
     reason = "self_intersection";
     return false;
   }
-  if (final_score.max_gap > max_gap || final_score.loop_gap > max_gap) {
+  if (final_score.max_gap > max_gap || (!allow_open_seam && final_score.loop_gap > max_gap)) {
     reason = "branch_jump";
     return false;
   }
@@ -340,7 +343,7 @@ constexpr std::size_t kMaxOrderingSeedAttempts = 24U;
 
 bool orderBoundary(
   const std::vector<PlannerPoint> & input, const PlannerPoint & ego,
-  double max_gap, bool allow_two_opt_repair,
+  double max_gap, bool allow_two_opt_repair, bool allow_open_seam,
   std::vector<PlannerPoint> & ordered, std::string & reason)
 {
   if (input.empty()) {
@@ -359,7 +362,9 @@ bool orderBoundary(
   }
 
   std::string first_reason;
-  if (orderAttempt(input, ego_seed, max_gap, true, 0U, false, ordered, first_reason)) {
+  if (orderAttempt(input, ego_seed, max_gap, true, 0U, false, allow_open_seam, ordered,
+      first_reason))
+  {
     return true;
   }
 
@@ -370,7 +375,9 @@ bool orderBoundary(
       continue;
     }
     std::string retry_reason;
-    if (orderAttempt(input, seed, max_gap, false, 0U, false, ordered, retry_reason)) {
+    if (orderAttempt(input, seed, max_gap, false, 0U, false, allow_open_seam, ordered,
+        retry_reason))
+    {
       return true;
     }
   }
@@ -387,7 +394,9 @@ bool orderBoundary(
     for (std::size_t i = 0; i < attempts; ++i) {
       const std::size_t seed = (i * input.size()) / attempts;
       std::string retry_reason;
-      if (orderAttempt(input, seed, max_gap, false, rescue_drops, false, ordered, retry_reason)) {
+      if (orderAttempt(input, seed, max_gap, false, rescue_drops, false, allow_open_seam, ordered,
+          retry_reason))
+      {
         return true;
       }
     }
@@ -401,7 +410,9 @@ bool orderBoundary(
       for (std::size_t i = 0; i < attempts; ++i) {
         const std::size_t seed = (i * input.size()) / attempts;
         std::string retry_reason;
-        if (orderAttempt(input, seed, max_gap, false, rescue_drops, true, ordered, retry_reason)) {
+        if (orderAttempt(input, seed, max_gap, false, rescue_drops, true, allow_open_seam, ordered,
+            retry_reason))
+        {
           return true;
         }
       }
@@ -549,8 +560,10 @@ bool orderSlamBoundaries(
   std::string & reason,
   bool allow_two_opt_repair)
 {
-  if (!orderBoundary(blue_points, ego, max_gap, allow_two_opt_repair, ordered_blue, reason) ||
-    !orderBoundary(yellow_points, ego, max_gap, allow_two_opt_repair, ordered_yellow, reason))
+  if (!orderBoundary(blue_points, ego, max_gap, allow_two_opt_repair, false, ordered_blue,
+      reason) ||
+    !orderBoundary(yellow_points, ego, max_gap, allow_two_opt_repair, false, ordered_yellow,
+      reason))
   {
     return false;
   }
@@ -565,6 +578,23 @@ bool orderSlamBoundaries(
   rotateRingSeamToReference(ordered_blue, ego, max_gap);
   rotateRingSeamToReference(ordered_yellow, ego, max_gap);
   return true;
+}
+
+bool orderSlamBoundariesOpen(
+  const std::vector<PlannerPoint> & blue_points,
+  const std::vector<PlannerPoint> & yellow_points,
+  const PlannerPoint & ego,
+  double max_gap,
+  std::vector<PlannerPoint> & ordered_blue,
+  std::vector<PlannerPoint> & ordered_yellow,
+  std::string & reason)
+{
+  // No direction alignment or seam rotation here. Both operate on CLOSED rings
+  // (a rotation only relabels a closed ring's seam; on an open chain it would
+  // move the very endpoints the caller is asking about), and the caller only
+  // needs each chain's two ends.
+  return orderBoundary(blue_points, ego, max_gap, false, true, ordered_blue, reason) &&
+         orderBoundary(yellow_points, ego, max_gap, false, true, ordered_yellow, reason);
 }
 
 }
