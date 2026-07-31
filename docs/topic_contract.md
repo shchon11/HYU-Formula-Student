@@ -55,6 +55,13 @@ upstream 기본값을 유지한다. 디버그/시각화는 `<subsystem>/debug/*`
 
 ## Localization (`/localization`)
 
+> **`/localization/gnss_odom` 은 소비자가 없다.** GNSS 절대 위치를 그래프의
+> unary prior 로 넣는 설계였으나 의도적으로 빠졌고, `graph_slam_node` 에는
+> GNSS 관련 코드가 하나도 없다(위경도·datum·EdgeSE2XYPrior 전부 없음). 저장
+> 맵에도 지리참조가 들어가지 않는다. 즉 **SLAM 은 상대 오도메트리만으로 돌고,
+> 드리프트를 잡는 것은 콘 랜드마크뿐**이다. 토픽이 살아 있다고 전역 앵커가
+> 걸려 있다고 읽지 말 것.
+
 | 토픽 | 타입 | 발행자 | 구독자 | QoS |
 |---|---|---|---|---|
 | `/localization/ego_odom` | nav_msgs/Odometry | hyu_localization | planning, control | Reliable d10 |
@@ -62,10 +69,10 @@ upstream 기본값을 유지한다. 디버그/시각화는 `<subsystem>/debug/*`
 | `/localization/map` | hyu_msgs/ConeArrayWithCovariance | hyu_localization | planning, 도구 | Reliable(TransientLocal 후보) |
 | `/localization/map_converged` | std_msgs/Bool | hyu_localization | planning | Reliable |
 | `/localization/status` | (기존 graph_slam/status 타입) | hyu_localization | planning, HUD | Reliable |
-| `/localization/gnss_odom` | nav_msgs/Odometry | sbg_odometry_bridge | hyu_localization | Reliable |
+| `/localization/gnss_odom` | nav_msgs/Odometry | sbg_odometry_bridge | **없음** (아래 주 참조) | Reliable |
 | `/localization/wheel_odom` | hyu_msgs/CarState | wheel_odometry | hyu_localization, perception(deskew), tmpc_state_bridge | Reliable |
 | `/initialpose` | PoseWithCovarianceStamped | RViz(수동 재국지화) | hyu_localization | 표준 |
-| `/localization/ins_odom` | hyu_msgs/CarState | sbg_odometry_bridge | (구성에 따라) SLAM 모션 입력 | Reliable |
+| `/localization/ins_odom` | hyu_msgs/CarState | sbg_odometry_bridge | graph_slam 모션 입력 (기본 `slam_motion_topic`) | Reliable |
 | `/localization/drift_odom` | hyu_msgs/CarState | drift_odom(평가 도구) | evaluate_slam | 도구 |
 | `/localization/debug/{markers,path,status_overlay,gnss_markers,gnss_overlay}` | Marker/Path/Overlay | hyu_localization·sbg_bridge | RViz/HUD | 디버그 |
 

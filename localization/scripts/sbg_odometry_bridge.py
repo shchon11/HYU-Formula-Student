@@ -39,17 +39,32 @@ never stops the odometry:
     through arbitrary mode flapping. Publication stops only when dead
     reckoning is impossible too (mode <= 1: heading drifts freely; or stale
     wheel speeds / heading).
-  * ``/localization/gnss_odom`` (nav_msgs/Odometry) -- **global anchor**. Pose is the raw
-    ekf_nav absolute ENU position with a mode-tiered covariance (tight only at
-    mode 4 / RTK, huge otherwise). graph_slam_node adds this as a unary GPS
-    prior (EdgeSE2XYPrior) gated on the covariance, so the anchor fades out
-    smoothly as GNSS degrades instead of being switched off.
+  * ``/localization/gnss_odom`` (nav_msgs/Odometry) -- raw ekf_nav absolute ENU
+    position with a mode-tiered covariance (tight only at mode 4 / RTK, huge
+    otherwise). **Nothing consumes it.** It was meant to enter the graph as a
+    unary GPS prior gated on that covariance, so the anchor would fade as GNSS
+    degraded; that was dropped deliberately and graph_slam_node has no GNSS
+    code at all (no EdgeSE2XYPrior, no lat/lon, no datum). SLAM therefore runs
+    on RELATIVE odometry alone and only cone landmarks bound its drift.
+    Published anyway because it costs nothing and is the obvious debugging and
+    re-entry point, but do not read this topic's existence as an anchor.
   * ``/sbg_bridge/status`` (diagnostic_msgs/DiagnosticArray) -- health so the
     autonomy stack knows the current degradation tier.
 
 Both channels live in the same local ENU frame (datum = first valid fix, or a
-fixed ``datum_*`` for reproducibility), and the node waits for one valid
-absolute fix before starting so the SLAM origin is georeferenced. Heading
+fixed ``datum_*`` for reproducibility). The datum never leaves this node --
+graph_slam neither reads it nor georeferences the maps it saves -- so it
+matters only to the (unconsumed) absolute channel above.
+
+Startup is NOT gated on mode 4. A fix georeferences the origin when one is
+there; otherwise ``allow_dr_start`` (default true) starts on wheels + AHRS
+heading with a provisional (0,0) origin and holds the absolute channel until a
+fix arrives, because SLAM differences CarState and does not care where zero
+is. Mode 1 (VERTICAL_GYRO) is the floor and is refused on purpose: heading
+drifts freely there, and integrating wheel speed under it walks the pose
+confidently in the wrong direction. A bag recorded without a fix therefore
+never starts this node -- that is the design working, not a gate to relax.
+Heading
 (NED 0=North CW / ENU 0=East CCW) is converted to ROS ENU yaw; set
 ``frame_convention`` to match the driver's ``output.use_enu`` (default false =
 "ned"). Run with ``use_sim_time:=false`` on real hardware.
