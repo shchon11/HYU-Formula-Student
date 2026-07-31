@@ -116,7 +116,11 @@ fsk_plan_cmd() {
     # vehicle keeps the tighter yaml defaults.
     gates=" local_max_stamp_skew_sec:=2.0 local_max_input_age_sec:=3.0 local_max_start_distance_m:=8.0"
   fi
-  echo "ros2 launch hyu_planning_bringup local_global_planning.launch.py use_sim_time:=${use_sim_time:-true} graph_slam_ate_monitor:=true${gates}${SLAM_MOTION_TOPIC:+ car_state_topic:=$SLAM_MOTION_TOPIC}${GRAPH_SLAM_PARAMS_FILE:+ graph_slam_params_file:=$GRAPH_SLAM_PARAMS_FILE}${extra:+ $extra} $profile"
+  # Same ownership rule as fsk_ins_cmd: step 1 runs wheel_odometry unless we
+  # are in the simulator, which has no sensor bringup to run it.
+  local gs_wheel=false
+  [ "$env" = "sim" ] && gs_wheel=true
+  echo "ros2 launch hyu_planning_bringup local_global_planning.launch.py use_sim_time:=${use_sim_time:-true} graph_slam_wheel_odometry:=$gs_wheel graph_slam_ate_monitor:=true${gates}${SLAM_MOTION_TOPIC:+ car_state_topic:=$SLAM_MOTION_TOPIC}${GRAPH_SLAM_PARAMS_FILE:+ graph_slam_params_file:=$GRAPH_SLAM_PARAMS_FILE}${extra:+ $extra} $profile"
 }
 
 # The INS pipeline launch line. stack.sh (bringup) and mission.sh ('mission
@@ -131,9 +135,14 @@ fsk_ins_cmd() {
   # use_sim_time to share the bag's clock domain, but it is still a real INS
   # chain -- and eufs_sensors (the simulated Ellipse-D) does not exist on the
   # vehicle compute, so keying off the clock would kill the whole pipeline.
-  local sim_ins=false
-  [ "$(fsk_getenv FSK_ENV)" = "sim" ] && sim_ins=true
-  echo "ros2 launch hyu_localization ins_pipeline.launch.py slam:=false sim_ins:=$sim_ins use_sim_time:=${use_sim_time:-true}${INS_MODE_SCHED:+ mode_schedule:=$INS_MODE_SCHED}${INS_CORR_SCHED:+ correction_schedule:=$INS_CORR_SCHED}"
+  # odometry conditioning (sbg_odometry_bridge + wheel_odometry) belongs to
+  # whoever owns the sensors. On the car and on a bag, step 1's sensor bringup
+  # runs it -- perception's LiDAR deskew reads /localization/wheel_odom and
+  # would otherwise sit uncorrected for the whole of step 1. The simulator has
+  # no sensor bringup, so there it stays here alongside sim_ellipse_d.
+  local sim_ins=false odometry=false
+  if [ "$(fsk_getenv FSK_ENV)" = "sim" ]; then sim_ins=true; odometry=true; fi
+  echo "ros2 launch hyu_localization ins_pipeline.launch.py slam:=false sim_ins:=$sim_ins odometry:=$odometry use_sim_time:=${use_sim_time:-true}${INS_MODE_SCHED:+ mode_schedule:=$INS_MODE_SCHED}${INS_CORR_SCHED:+ correction_schedule:=$INS_CORR_SCHED}"
 }
 
 # Attach if stdout is a real terminal, else leave the session detached

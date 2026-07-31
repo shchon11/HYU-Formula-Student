@@ -252,6 +252,27 @@ def _setup(context, *_args, **_kwargs):
                 f'[sensors] GNSS not connected ({port} absent) — skipping '
                 f'sbg_driver (force with gnss:=on)')))
 
+    # --- odometry conditioning ------------------------------------------------
+    # Raw driver output -> odometry. These live here, not in step 2's INS
+    # pipeline, because every input they read is a step-1 topic:
+    #   wheel_odometry      /vehicle/wheel_speeds, /sbg/ekf_nav, /sbg/ekf_rot_accel_body
+    #   sbg_odometry_bridge /sbg/ekf_nav, /sbg/ekf_euler
+    # and because perception's LiDAR deskew subscribes /localization/wheel_odom.
+    # Started in step 2 it arrived a whole step late and perception ran the
+    # entire of step 1 with the scan uncorrected.
+    if context.launch_configurations['odometry'].lower() not in ('false', '0'):
+        use_sim_time = context.launch_configurations['use_sim_time'].lower() in ('true', '1')
+        actions.append(Node(
+            package='hyu_localization', executable='wheel_odometry',
+            name='wheel_odometry', output='screen',
+            parameters=[{'use_sim_time': use_sim_time}]))
+        actions.append(Node(
+            package='hyu_localization', executable='sbg_odometry_bridge',
+            name='sbg_odometry_bridge', output='screen',
+            parameters=[{'use_sim_time': use_sim_time,
+                         'car_state_topic':
+                             context.launch_configurations['ins_odom_topic']}]))
+
     actions.extend(_tf_actions(context, share))
     return actions
 
@@ -282,5 +303,13 @@ def generate_launch_description():
                               description='must match hyu_perception camera_frame'),
         # Bag replay drives every stamp off /clock; on the car this stays false.
         DeclareLaunchArgument('use_sim_time', default_value='false'),
+        DeclareLaunchArgument('odometry', default_value='true',
+                              description='Start wheel_odometry and '
+                                          'sbg_odometry_bridge. Step 2 must be '
+                                          'told odometry:=false when this is on, '
+                                          'or both run twice.'),
+        DeclareLaunchArgument('ins_odom_topic',
+                              default_value='/localization/ins_odom',
+                              description='must match ins_pipeline'),
         OpaqueFunction(function=_setup),
     ])

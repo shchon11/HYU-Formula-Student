@@ -78,6 +78,14 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument(
+                "odometry",
+                default_value="true",
+                description="Start the odometry conditioning nodes "
+                            "(sbg_odometry_bridge + wheel_odometry). Set false "
+                            "when step 1's sensor bringup already runs them, "
+                            "which is the vehicle and bag-replay case.",
+            ),
+            DeclareLaunchArgument(
                 "slam",
                 default_value="true",
                 description="Also launch graph SLAM pointed at the INS odometry.",
@@ -129,11 +137,17 @@ def generate_launch_description():
                     }
                 ],
             ),
+            # Sensor conditioning, not SLAM: every input is a step-1 driver
+            # topic (/sbg/ekf_nav, /sbg/ekf_euler). On the car the sensor
+            # bringup owns it so it is up in step 1, where perception's deskew
+            # can already see /localization/wheel_odom; the simulator has no
+            # sensor bringup, so there it stays here with sim_ellipse_d.
             Node(
                 package="hyu_localization",
                 executable="sbg_odometry_bridge",
                 name="sbg_odometry_bridge",
                 output="screen",
+                condition=IfCondition(LaunchConfiguration("odometry")),
                 parameters=[
                     {
                         "use_sim_time": use_sim_time,
@@ -162,6 +176,7 @@ def generate_launch_description():
                     # bridge's own fallback tier, and slam_motion_topic:=
                     # /localization/wheel_odom restores the old wiring.
                     "car_state_topic": LaunchConfiguration("slam_motion_topic"),
+                    "wheel_odometry": LaunchConfiguration("odometry"),
                     "gui": LaunchConfiguration("gui"),
                     "ate_monitor": LaunchConfiguration("ate_monitor"),
                 }.items(),
