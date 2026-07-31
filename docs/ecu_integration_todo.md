@@ -20,7 +20,20 @@
 | 타입 | `hyu_msgs/WheelSpeedsStamped` |
 | 필드 | `speeds.steering` (rad), `speeds.{lf,rf,lb,rb}_speed` (**RPM**) |
 | 소비자 | `hyu_localization/wheel_odometry` → `/localization/wheel_odom` |
+| 그 다음 소비자 | `hyu_localization`(폴백 티어), **`hyu_perception`(LiDAR deskew)**, `tmpc_state_bridge` |
 | 현재 | `hyu_sensor_bringup/stationary_wheels.py` 가 0으로 채움 |
+
+**퍼셉션도 이걸 쓴다.** `perception_node` 는 `deskew_twist_topic`
+(= `/localization/wheel_odom`) 을 구독해서 LiDAR 스캔의 모션 왜곡을 점 단위로
+보정한다 (`deskew_enabled` 기본 true). 없거나 `deskew_twist_timeout`(0.5 s) 보다
+낡으면 죽지는 않고 경고만 찍고 **보정 없이 그대로 통과**시킨다 — 정차 중엔
+무해하지만 주행 중엔 스캔이 휜 채로 융합된다.
+
+여기에 **기동 순서 문제**가 하나 있다. `wheel_odometry` 노드는 step 2 의
+`ins_pipeline → graph_slam.launch.py` 안에서 뜨는데, 퍼셉션은 step 1(`fsk`) 에서
+뜬다. 즉 step 1 동안 퍼셉션은 항상 deskew 없이 돈다. ECU 브리지를 붙일 때
+`wheel_odometry` 를 step 1 로 앞당길지도 같이 정할 것 — 퍼셉션이 유일한 소비자는
+아니지만, 스텝 경계를 넘어 의존하는 유일한 지점이다.
 
 `wheel_odometry` 는 연속 두 헤더 스탬프에서 dt 를 적분한다. **스탬프가 멈춰
 있으면 dt=0 이 되어 정지와는 전혀 다른 동작을 한다** — 실제 시각을 넣을 것.
