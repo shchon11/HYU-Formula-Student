@@ -19,7 +19,6 @@
   <!-- vcs import src < src/external.repos brings these in -->
   <exec_depend>rslidar_sdk</exec_depend>
   <exec_depend>zed_wrapper</exec_depend>
-  <exec_depend>sbg_driver</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
