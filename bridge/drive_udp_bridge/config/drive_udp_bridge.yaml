@@ -1,0 +1,14 @@
+drive_udp_bridge:
+  ros__parameters:
+    command_topic: /vehicle/cmd
+
+    # Required Speedgoat destination. The node fails fast until these are set.
+    ecu_ip: ""
+    ecu_port: 0
+
+    # 0.0.0.0 selects any local interface; port 0 selects an ephemeral port.
+    local_bind_ip: 0.0.0.0
+    local_bind_port: 0
+
+    send_rate_hz: 100.0
+    command_timeout_sec: 0.2
