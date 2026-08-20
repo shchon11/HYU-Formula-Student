@@ -22,29 +22,36 @@ Speedgoat ECU에 전달하는 독립 ROS 2 Humble 패키지입니다. 제어기 
 
 ## UDP 패킷 규격
 
-Python `struct` 형식은 `<ffB`이고 항상 Little Endian, 총 9 bytes입니다.
+Python `struct` 형식은 `<ffBB`이고 항상 Little Endian, 총 10 bytes입니다.
 
 | Byte offset | 크기 | 타입 | 필드 |
 |---:|---:|---|---|
 | 0–3 | 4 bytes | IEEE-754 float32 | `speed` |
 | 4–7 | 4 bytes | IEEE-754 float32 | `steering_angle` |
-| 8 (9번째 byte) | 1 byte | uint8 | `autonomous_enable` |
+| 8 (9번째 byte) | 1 byte | uint8 | `enable` (항상 `1`) |
+| 9 (10번째 byte) | 1 byte | uint8 | `autonomous_enable` |
 
 동일한 패킷을 만드는 Python 예시는 다음과 같습니다.
 
 ```python
-packet = struct.pack('<ffB', speed, steering_angle, autonomous_enable)
+packet = struct.pack('<ffBB', speed, steering_angle, 1, autonomous_enable)
 ```
 
-최신 `/vehicle/as_state`가 `AS_DRIVING`이고 주행 명령도 정상적으로 최신일 때만
-`autonomous_enable=1`로 전송합니다. 다음 경우에는 차량 명령을 유지하지 않고
-`speed=0.0`, `steering_angle=0.0`, `autonomous_enable=0`을 계속 전송합니다.
+최신 `/vehicle/as_state`가 `AS_DRIVING`이면 `autonomous_enable=1`, 그 외에는
+`autonomous_enable=0`으로 전송합니다. 이 마지막 바이트는 자율주행 스위치 상태만
+나타내며 주행 명령 watchdog과 독립적입니다.
 
-- AS 상태를 한 번도 받지 못했거나 `AS_DRIVING`이 아닌 경우
-- 마지막 AS 상태 수신 후 `auto_state_timeout_sec`를 초과한 경우
+다음 경우에는 `speed=0.0`, `steering_angle=0.0`을 전송합니다.
+
+- 자율주행 스위치가 OFF인 경우
 - 노드 시작 후 명령을 한 번도 받지 못한 경우
 - 마지막 명령 수신 후 `command_timeout_sec`를 초과한 경우
 - NaN, Inf 또는 float32 범위를 벗어난 명령을 받은 경우
+
+`enable`은 ECU 요청에 따라 항상 `1`입니다. 스위치가 ON이지만 명령 watchdog이
+만료된 경우 패킷은 `(0.0, 0.0, 1, 1)`입니다.
+AS 상태를 받지 못했거나 `auto_state_timeout_sec`를 초과하면 스위치도 fail-closed되어
+패킷은 `(0.0, 0.0, 1, 0)`이 됩니다.
 
 두 timeout은 ROS 메시지 시각이 아니라 이 컴퓨터에서 각 토픽을 받은 monotonic
 시각으로 계산합니다. `/clock`이 멈춰도 Ethernet watchdog 송신은 계속됩니다.
@@ -75,8 +82,9 @@ PC와 Speedgoat의 Ethernet 인터페이스를 같은 subnet의 고정 IPv4 주�
 입력합니다. Speedgoat가 정해진 source port를 요구할 때만 `local_bind_port`를 0이 아닌
 값으로 설정합니다. 양쪽 firewall에서도 설정한 UDP 포트를 허용해야 합니다.
 
-Speedgoat 수신 모델에서는 9-byte `uint8` datagram을 받아 byte offset 0과 4를
-Little-Endian single로, offset 8을 uint8로 해석해야 합니다.
+Speedgoat 수신 모델에서는 10-byte `uint8` datagram을 받아 byte offset 0과 4를
+Little-Endian single로, offset 8의 `enable`과 offset 9의 `autonomous_enable`을
+각각 uint8로 해석해야 합니다.
 
 ## 빌드 및 실행
 

@@ -15,7 +15,7 @@ def test_udp_sender_delivers_one_exact_datagram_over_loopback():
     receiver_port = receiver.getsockname()[1]
 
     sender = UdpSender('127.0.0.1', receiver_port, '127.0.0.1', 0)
-    packet = pack_command(7.25, -0.4, 1)
+    packet = pack_command(7.25, -0.4, 1, 1)
 
     try:
         sender.send(packet)

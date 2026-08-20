@@ -16,28 +16,34 @@ from drive_udp_bridge.protocol import (
 import pytest
 
 
-def test_packet_layout_is_exactly_little_endian_float_float_byte():
-    packet = pack_command(1.0, 2.0, 1)
+def test_packet_layout_is_exactly_little_endian_float_float_two_bytes():
+    packet = pack_command(1.0, 2.0, 1, 1)
 
-    assert PACKET_FORMAT == '<ffB'
-    assert PACKET_SIZE == 9
-    assert len(packet) == 9
-    assert packet == b'\x00\x00\x80?\x00\x00\x00@\x01'
-    assert struct.unpack('<ffB', packet) == (1.0, 2.0, 1)
+    assert PACKET_FORMAT == '<ffBB'
+    assert PACKET_SIZE == 10
+    assert len(packet) == 10
+    assert packet == b'\x00\x00\x80?\x00\x00\x00@\x01\x01'
+    assert struct.unpack('<ffBB', packet) == (1.0, 2.0, 1, 1)
 
 
 @pytest.mark.parametrize('enable', [-1, 2, 255])
 def test_packet_rejects_unknown_enable_value(enable):
     with pytest.raises(ValueError, match='enable'):
-        pack_command(0.0, 0.0, enable)
+        pack_command(0.0, 0.0, enable, 0)
+
+
+@pytest.mark.parametrize('autonomous_enable', [-1, 2, 255])
+def test_packet_rejects_unknown_autonomous_enable_value(autonomous_enable):
+    with pytest.raises(ValueError, match='autonomous_enable'):
+        pack_command(0.0, 0.0, 1, autonomous_enable)
 
 
 @pytest.mark.parametrize('bad_value', [math.nan, math.inf, -math.inf, 1.0e39])
 def test_packet_rejects_values_that_are_not_finite_float32(bad_value):
     with pytest.raises(ValueError, match='float32'):
-        pack_command(bad_value, 0.0, 1)
+        pack_command(bad_value, 0.0, 1, 1)
     with pytest.raises(ValueError, match='float32'):
-        pack_command(0.0, bad_value, 1)
+        pack_command(0.0, bad_value, 1, 1)
 
 
 def test_watchdog_starts_disabled_then_enables_only_while_fresh():

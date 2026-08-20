@@ -140,14 +140,16 @@ class DriveUdpBridge(Node):
             command = self._watchdog.snapshot()
             auto_enabled = self._auto_state_watchdog.enabled()
 
-        effective_enable = int(auto_enabled and command.enable == 1)
-        speed = command.speed if effective_enable else 0.0
-        steering_angle = command.steering_angle if effective_enable else 0.0
+        autonomous_enable = int(auto_enabled)
+        motion_command_valid = auto_enabled and command.enable == 1
+        speed = command.speed if motion_command_valid else 0.0
+        steering_angle = command.steering_angle if motion_command_valid else 0.0
 
         packet = pack_command(
             speed,
             steering_angle,
-            effective_enable,
+            1,
+            autonomous_enable,
         )
         try:
             if self._sender is not None:

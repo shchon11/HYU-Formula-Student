@@ -11,7 +11,7 @@ import time
 from typing import Callable, Optional, Tuple
 
 
-PACKET_FORMAT = '<ffB'
+PACKET_FORMAT = '<ffBB'
 PACKET_SIZE = struct.calcsize(PACKET_FORMAT)
 FLOAT32_MAX = 3.4028234663852886e38
 SAFE_COMMAND = (0.0, 0.0, 0)
@@ -22,13 +22,26 @@ def is_valid_float32(value: float) -> bool:
     return math.isfinite(value) and abs(value) <= FLOAT32_MAX
 
 
-def pack_command(speed: float, steering_angle: float, enable: int) -> bytes:
-    """Pack one 9-byte little-endian Speedgoat command datagram."""
+def pack_command(
+    speed: float,
+    steering_angle: float,
+    enable: int,
+    autonomous_enable: int,
+) -> bytes:
+    """Pack one 10-byte little-endian Speedgoat command datagram."""
     if not is_valid_float32(speed) or not is_valid_float32(steering_angle):
         raise ValueError('speed and steering_angle must be finite float32 values')
     if enable not in (0, 1):
         raise ValueError('enable must be 0 or 1')
-    return struct.pack(PACKET_FORMAT, speed, steering_angle, enable)
+    if autonomous_enable not in (0, 1):
+        raise ValueError('autonomous_enable must be 0 or 1')
+    return struct.pack(
+        PACKET_FORMAT,
+        speed,
+        steering_angle,
+        enable,
+        autonomous_enable,
+    )
 
 
 @dataclass(frozen=True)
