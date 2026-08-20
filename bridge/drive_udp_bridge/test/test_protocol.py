@@ -6,6 +6,7 @@ import math
 import struct
 
 from drive_udp_bridge.protocol import (
+    AutonomousStateWatchdog,
     CommandSnapshot,
     CommandWatchdog,
     pack_command,
@@ -68,3 +69,27 @@ def test_negative_clock_age_fails_closed():
     assert watchdog.update(3.0, 0.1, received_at=10.0)
 
     assert watchdog.snapshot() == CommandSnapshot(0.0, 0.0, 0)
+
+
+def test_autonomous_state_requires_recent_enabled_state():
+    now = [10.0]
+    watchdog = AutonomousStateWatchdog(0.5, clock=lambda: now[0])
+
+    assert not watchdog.enabled()
+    assert watchdog.update(True)
+    assert watchdog.enabled()
+
+    now[0] = 10.5
+    assert watchdog.enabled()
+
+    now[0] = 10.500001
+    assert not watchdog.enabled()
+
+
+def test_autonomous_off_state_disables_immediately():
+    watchdog = AutonomousStateWatchdog(0.5, clock=lambda: 10.0)
+
+    assert watchdog.update(True)
+    assert watchdog.enabled()
+    assert watchdog.update(False)
+    assert not watchdog.enabled()

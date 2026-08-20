@@ -1,6 +1,7 @@
 drive_udp_bridge:
   ros__parameters:
     command_topic: /vehicle/cmd
+    auto_state_topic: /vehicle/as_state
 
     # Required Speedgoat destination. The node fails fast until these are set.
     ecu_ip: ""
@@ -12,3 +13,4 @@ drive_udp_bridge:
 
     send_rate_hz: 100.0
     command_timeout_sec: 0.2
+    auto_state_timeout_sec: 0.5

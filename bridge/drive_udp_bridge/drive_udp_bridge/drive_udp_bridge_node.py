@@ -10,8 +10,13 @@ from typing import Optional
 
 from ackermann_msgs.msg import AckermannDriveStamped
 from drive_udp_bridge.config import BridgeConfig, validate_config
-from drive_udp_bridge.protocol import CommandWatchdog, pack_command
+from drive_udp_bridge.protocol import (
+    AutonomousStateWatchdog,
+    CommandWatchdog,
+    pack_command,
+)
 from drive_udp_bridge.udp_sender import UdpSender
+from hyu_msgs.msg import CanState
 import rclpy
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
@@ -28,15 +33,20 @@ class DriveUdpBridge(Node):
         )
 
         self.declare_parameter('command_topic', '/vehicle/cmd')
+        self.declare_parameter('auto_state_topic', '/vehicle/as_state')
         self.declare_parameter('ecu_ip', '')
         self.declare_parameter('ecu_port', 0)
         self.declare_parameter('local_bind_ip', '0.0.0.0')
         self.declare_parameter('local_bind_port', 0)
         self.declare_parameter('send_rate_hz', 100.0)
         self.declare_parameter('command_timeout_sec', 0.2)
+        self.declare_parameter('auto_state_timeout_sec', 0.5)
 
         self._config = BridgeConfig(
             command_topic=str(self.get_parameter('command_topic').value).strip(),
+            auto_state_topic=str(
+                self.get_parameter('auto_state_topic').value
+            ).strip(),
             ecu_ip=str(self.get_parameter('ecu_ip').value).strip(),
             ecu_port=int(self.get_parameter('ecu_port').value),
             local_bind_ip=str(self.get_parameter('local_bind_ip').value).strip(),
@@ -45,11 +55,17 @@ class DriveUdpBridge(Node):
             command_timeout_sec=float(
                 self.get_parameter('command_timeout_sec').value
             ),
+            auto_state_timeout_sec=float(
+                self.get_parameter('auto_state_timeout_sec').value
+            ),
         )
         validate_config(self._config)
 
         self._lock = threading.Lock()
         self._watchdog = CommandWatchdog(self._config.command_timeout_sec)
+        self._auto_state_watchdog = AutonomousStateWatchdog(
+            self._config.auto_state_timeout_sec
+        )
         self._sender: Optional[UdpSender] = UdpSender(
             ecu_ip=self._config.ecu_ip,
             ecu_port=self._config.ecu_port,
@@ -68,6 +84,16 @@ class DriveUdpBridge(Node):
             qos,
         )
 
+        state_qos = QoSProfile(depth=5)
+        state_qos.reliability = ReliabilityPolicy.BEST_EFFORT
+        state_qos.durability = DurabilityPolicy.VOLATILE
+        self._auto_state_subscription = self.create_subscription(
+            CanState,
+            self._config.auto_state_topic,
+            self._on_auto_state,
+            state_qos,
+        )
+
         self._steady_clock = Clock(clock_type=ClockType.STEADY_TIME)
         self._send_timer = self.create_timer(
             1.0 / self._config.send_rate_hz,
@@ -77,15 +103,19 @@ class DriveUdpBridge(Node):
 
         local_endpoint = self._sender.local_endpoint
         self.get_logger().info(
-            'Sending %s -> %s:%d at %.3f Hz; local UDP bind %s:%d; timeout %.3f s'
+            'Sending %s -> %s:%d at %.3f Hz; auto state %s; '
+            'local UDP bind %s:%d; command timeout %.3f s; '
+            'auto-state timeout %.3f s'
             % (
                 self._config.command_topic,
                 self._config.ecu_ip,
                 self._config.ecu_port,
                 self._config.send_rate_hz,
+                self._config.auto_state_topic,
                 local_endpoint[0],
                 local_endpoint[1],
                 self._config.command_timeout_sec,
+                self._config.auto_state_timeout_sec,
             )
         )
 
@@ -100,14 +130,24 @@ class DriveUdpBridge(Node):
                 'Rejected non-finite or out-of-range command; sending disabled zeros'
             )
 
+    def _on_auto_state(self, message: CanState) -> None:
+        auto_enabled = message.as_state == CanState.AS_DRIVING
+        with self._lock:
+            self._auto_state_watchdog.update(auto_enabled)
+
     def _on_send_timer(self) -> None:
         with self._lock:
             command = self._watchdog.snapshot()
+            auto_enabled = self._auto_state_watchdog.enabled()
+
+        effective_enable = int(auto_enabled and command.enable == 1)
+        speed = command.speed if effective_enable else 0.0
+        steering_angle = command.steering_angle if effective_enable else 0.0
 
         packet = pack_command(
-            command.speed,
-            command.steering_angle,
-            command.enable,
+            speed,
+            steering_angle,
+            effective_enable,
         )
         try:
             if self._sender is not None:

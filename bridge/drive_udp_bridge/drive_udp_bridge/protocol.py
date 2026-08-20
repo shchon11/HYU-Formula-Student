@@ -89,3 +89,51 @@ class CommandWatchdog:
             return CommandSnapshot(*SAFE_COMMAND)
 
         return CommandSnapshot(speed, steering_angle, 1)
+
+
+class AutonomousStateWatchdog:
+    """Fail closed unless a recent vehicle state says autonomous driving."""
+
+    def __init__(
+        self,
+        timeout_sec: float,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if not math.isfinite(timeout_sec) or timeout_sec <= 0.0:
+            raise ValueError(
+                'auto_state_timeout_sec must be finite and greater than zero'
+            )
+        self._timeout_sec = timeout_sec
+        self._clock = clock
+        self._latest: Optional[Tuple[bool, float]] = None
+
+    def update(
+        self,
+        enabled: bool,
+        received_at: Optional[float] = None,
+    ) -> bool:
+        """Store the latest autonomous switch state and receive time."""
+        timestamp = self._clock() if received_at is None else received_at
+        if not math.isfinite(timestamp):
+            self.invalidate()
+            return False
+
+        self._latest = (bool(enabled), float(timestamp))
+        return True
+
+    def invalidate(self) -> None:
+        """Clear the state so autonomous mode is disabled."""
+        self._latest = None
+
+    def enabled(self, now: Optional[float] = None) -> bool:
+        """Return true only for a fresh autonomous-on state."""
+        if self._latest is None:
+            return False
+
+        current_time = self._clock() if now is None else now
+        enabled, received_at = self._latest
+        age_sec = current_time - received_at
+        if not math.isfinite(age_sec) or age_sec < 0.0 or age_sec > self._timeout_sec:
+            return False
+
+        return enabled

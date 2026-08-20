@@ -9,6 +9,7 @@ Speedgoat ECU에 전달하는 독립 ROS 2 Humble 패키지입니다. 제어기 
 | 구분 | 이름 | 타입 | 기본값 |
 |---|---|---|---|
 | 입력 토픽 | `command_topic` | `ackermann_msgs/msg/AckermannDriveStamped` | `/vehicle/cmd` |
+| 입력 토픽 | `auto_state_topic` | `hyu_msgs/msg/CanState` | `/vehicle/as_state` |
 | 노드 | — | — | `drive_udp_bridge` |
 | 실행 파일 | — | — | `drive_udp_bridge` |
 
@@ -27,22 +28,25 @@ Python `struct` 형식은 `<ffB`이고 항상 Little Endian, 총 9 bytes입니�
 |---:|---:|---|---|
 | 0–3 | 4 bytes | IEEE-754 float32 | `speed` |
 | 4–7 | 4 bytes | IEEE-754 float32 | `steering_angle` |
-| 8 | 1 byte | uint8 | `enable` |
+| 8 (9번째 byte) | 1 byte | uint8 | `autonomous_enable` |
 
 동일한 패킷을 만드는 Python 예시는 다음과 같습니다.
 
 ```python
-packet = struct.pack('<ffB', speed, steering_angle, enable)
+packet = struct.pack('<ffB', speed, steering_angle, autonomous_enable)
 ```
 
-정상적인 최신 명령은 `enable=1`로 전송합니다. 다음 경우에는 차량 명령을 유지하지
-않고 `speed=0.0`, `steering_angle=0.0`, `enable=0`을 계속 전송합니다.
+최신 `/vehicle/as_state`가 `AS_DRIVING`이고 주행 명령도 정상적으로 최신일 때만
+`autonomous_enable=1`로 전송합니다. 다음 경우에는 차량 명령을 유지하지 않고
+`speed=0.0`, `steering_angle=0.0`, `autonomous_enable=0`을 계속 전송합니다.
 
+- AS 상태를 한 번도 받지 못했거나 `AS_DRIVING`이 아닌 경우
+- 마지막 AS 상태 수신 후 `auto_state_timeout_sec`를 초과한 경우
 - 노드 시작 후 명령을 한 번도 받지 못한 경우
 - 마지막 명령 수신 후 `command_timeout_sec`를 초과한 경우
 - NaN, Inf 또는 float32 범위를 벗어난 명령을 받은 경우
 
-timeout은 ROS 메시지의 `header.stamp`가 아니라 이 컴퓨터에서 명령을 받은 monotonic
+두 timeout은 ROS 메시지 시각이 아니라 이 컴퓨터에서 각 토픽을 받은 monotonic
 시각으로 계산합니다. `/clock`이 멈춰도 Ethernet watchdog 송신은 계속됩니다.
 
 ## 파라미터
@@ -52,12 +56,14 @@ timeout은 ROS 메시지의 `header.stamp`가 아니라 이 컴퓨터에서 명�
 | 파라미터 | 기본값 | 의미 |
 |---|---:|---|
 | `command_topic` | `/vehicle/cmd` | 최종 제어 명령 토픽 |
+| `auto_state_topic` | `/vehicle/as_state` | 자율주행 상태 토픽 (`AS_DRIVING`이면 ON) |
 | `ecu_ip` | `""` | Speedgoat IPv4 주소. 필수 |
 | `ecu_port` | `0` | Speedgoat 수신 UDP 포트. 1–65535 필수 |
 | `local_bind_ip` | `0.0.0.0` | 송신에 사용할 로컬 IPv4 인터페이스 |
 | `local_bind_port` | `0` | 송신 source port. 0이면 OS가 임시 포트 선택 |
 | `send_rate_hz` | `100.0` | Timer UDP 송신 주기, Hz |
 | `command_timeout_sec` | `0.2` | 명령 수신 watchdog, s |
+| `auto_state_timeout_sec` | `0.5` | 자율주행 상태 수신 watchdog, s |
 
 기본 `ecu_ip`와 `ecu_port`는 의도적으로 사용할 수 없는 값입니다. 실제 ECU 주소를
 입력하지 않으면 노드는 오류를 출력하고 종료하므로 잘못된 장비로 송신하지 않습니다.

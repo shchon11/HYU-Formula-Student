@@ -14,12 +14,14 @@ class BridgeConfig:
     """Fully resolved ROS parameters used by the bridge."""
 
     command_topic: str
+    auto_state_topic: str
     ecu_ip: str
     ecu_port: int
     local_bind_ip: str
     local_bind_port: int
     send_rate_hz: float
     command_timeout_sec: float
+    auto_state_timeout_sec: float
 
 
 def _validate_ipv4(value: str, parameter_name: str) -> None:
@@ -35,6 +37,8 @@ def validate_config(config: BridgeConfig) -> None:
     """Raise ValueError when a bridge parameter is unsafe or malformed."""
     if not config.command_topic.strip():
         raise ValueError('command_topic must not be empty')
+    if not config.auto_state_topic.strip():
+        raise ValueError('auto_state_topic must not be empty')
 
     _validate_ipv4(config.ecu_ip.strip(), 'ecu_ip')
     _validate_ipv4(config.local_bind_ip.strip(), 'local_bind_ip')
@@ -51,4 +55,11 @@ def validate_config(config: BridgeConfig) -> None:
     ):
         raise ValueError(
             'command_timeout_sec must be finite and greater than zero'
+        )
+    if (
+        not math.isfinite(config.auto_state_timeout_sec)
+        or config.auto_state_timeout_sec <= 0.0
+    ):
+        raise ValueError(
+            'auto_state_timeout_sec must be finite and greater than zero'
         )
