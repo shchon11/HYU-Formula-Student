@@ -143,8 +143,9 @@ SbgRawEkfNode::SbgRawEkfNode()
   p.mode_yaw_sig = deg2rad(declare_parameter<double>("mode_yaw_sig_deg", rad2deg(p.mode_yaw_sig)));
   // Late-measurement buffer: receiver epochs arrive ~90 ms (p50) / 113 ms
   // (p90) after the IMU frame of the same device time.
-  const double history_sec = declare_parameter<double>("oosm_history_sec", 1.0);
-  ekf_ = std::make_unique<RawGnssEkf>(p, history_sec);
+  history_sec_ = declare_parameter<double>("oosm_history_sec", 1.0);
+  ekf_params_ = p;
+  ekf_ = std::make_unique<RawGnssEkf>(ekf_params_, history_sec_);
 
   // --- I/O --------------------------------------------------------------------
   car_state_pub_ = create_publisher<hyu_msgs::msg::CarState>(car_state_topic_, 10);
@@ -203,10 +204,29 @@ bool SbgRawEkfNode::imuStale() const
   return (now().seconds() - last_imu_ros_t_) > imu_timeout_;
 }
 
+void SbgRawEkfNode::restart(const char * why)
+{
+  RCLCPP_WARN(get_logger(), "%s: restarting the filter from scratch", why);
+  ekf_ = std::make_unique<RawGnssEkf>(ekf_params_, history_sec_);
+  dev_clock_ = sbg_raw::DeviceClock();
+  off_init_ = false;
+  have_last_imu_ = false;
+  blind_gap_ = false;
+  announced_init_ = false;
+  last_pub_t_ = -std::numeric_limits<double>::infinity();
+  last_fix_valid_ = false;
+}
+
 void SbgRawEkfNode::onImu(const sbg_driver::msg::SbgImuData::SharedPtr msg)
 {
-  const double t = dev_clock_.toSeconds(msg->time_stamp);
   const double hdr_t = rclcpp::Time(msg->header.stamp).seconds();
+  // Time running backwards by more than a second is a replay loop / sim
+  // reset, not jitter: every buffer (device clock, OOSM events, publish
+  // guard) would otherwise wait for the old stamps to come round again.
+  if (have_last_imu_ && hdr_t < last_imu_ros_t_ - 1.0) {
+    restart("imu stamp jumped backwards (bag loop or sim reset?)");
+  }
+  const double t = dev_clock_.toSeconds(msg->time_stamp);
   // ROS <-> device clock offset: low-pass over the IMU stream (wire jitter
   // is a few ms); re-anchor on a jump (driver restart / bag loop).
   if (!off_init_) {

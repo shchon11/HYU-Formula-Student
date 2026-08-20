@@ -60,7 +60,16 @@ positive_int() {
 }
 
 svc() {  # svc <service> <type> [yaml]
-  ros2 service call "$1" "$2" ${3:+"$3"} 2>&1
+  # `ros2 service call` can hang forever when its request beats the server's
+  # discovery of the client (the response is then never delivered -- seen
+  # 2026-08-21 on /graph_slam/reset: the server answered an rclpy client in
+  # 2 ms while the CLI sat for minutes). Bound every call and retry once.
+  local out
+  out="$(timeout 8 ros2 service call "$1" "$2" ${3:+"$3"} 2>&1)"
+  if ! echo "$out" | grep -q "response:"; then
+    out="$(timeout 8 ros2 service call "$1" "$2" ${3:+"$3"} 2>&1)"
+  fi
+  echo "$out"
 }
 
 topic_once() {  # topic_once <topic> [timeout]

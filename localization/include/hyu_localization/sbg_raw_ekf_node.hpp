@@ -72,6 +72,8 @@ private:
   builtin_interfaces::msg::Time rosStamp(
     double t_dev, const builtin_interfaces::msg::Time & fallback) const;
   bool imuStale() const;
+  /// Drop every buffer and start over (replay loop / sim reset).
+  void restart(const char * why);
   struct StateStyle
   {
     float r, g, b;
@@ -95,6 +97,8 @@ private:
 
   // State.
   LocalProjection proj_;
+  RawGnssEkfParams ekf_params_;
+  double history_sec_ = 1.0;
   std::unique_ptr<RawGnssEkf> ekf_;
   sbg_raw::DeviceClock dev_clock_;
   bool off_init_ = false;
