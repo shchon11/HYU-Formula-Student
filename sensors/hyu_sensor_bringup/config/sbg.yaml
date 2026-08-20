@@ -279,13 +279,15 @@
       # Includes roll, pitch, yaw and their accuracies on each axis
       log_ekf_euler: 8
       # Includes the 4 quaternions values
-      log_ekf_quat: 8
+      # 0: the device has ekfQuat off on comA and nothing subscribes -- a
+      # non-zero value here only advertises a topic that never carries data.
+      log_ekf_quat: 0
       # Position and velocities in NED coordinates with the accuracies on each axis
       log_ekf_nav: 8
       # Velocity expressed in the INS body/vehicle frame
       log_ekf_vel_body: 0
       # Rotations rate and accelerations in the INS body/vehicle frame
-      log_ekf_rot_accel_body: 0
+      log_ekf_rot_accel_body: 8
       # Rotations rate and accelerations in North, East, Down (NED) navigation frame
       log_ekf_rot_accel_ned: 0
       # Heave, surge and sway and accelerations on each axis for up to 4 points
@@ -303,7 +305,8 @@
       # GPS true heading from dual antenna system
       log_gps1_hdt: 10001
       # GPS 1 raw data for post processing.
-      log_gps1_raw: 10001
+      # 0: gps1Raw is off on the device (post-processing log we do not record).
+      log_gps1_raw: 0
       # Provides odometer velocity
       log_odo_vel: 0
       # Event A/B/C/D Event markers sent when events are detected on a sync in pin
@@ -314,11 +317,12 @@
       # Air data
       log_air_data: 0
       # Short IMU data
-      log_imu_short: 8
+      # 0: imuShort is off on the device; imu_data (40 ms) is the one we read.
+      log_imu_short: 0
 
     rtcm:
       # Should ros driver subscribe to RTCM topic
-      subscribe: false
+      subscribe: true
       # Topic on which RTCM is published
       topic_name: rtcm
       # Namespace where topic is published

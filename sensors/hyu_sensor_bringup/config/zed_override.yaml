@@ -1,9 +1,35 @@
 # fsg_sensors ZED wrapper param override (applied on top of zed.yaml + common_stereo.yaml)
-# - publish at full grab rate (grab_frame_rate=30; default pub cap was 15)
-# - left/right rectified topics for stereo-triangulated ChArUco calibration
+#
+# The pipeline consumes exactly four camera topics (docs/topic_contract.md,
+# perception.yaml, bagplay.sh, bag.sh):
+#     /sensors/zed/{left,right}/color/rect/image             raw, perception + calib
+#     /sensors/zed/{left,right}/color/rect/image/compressed  what bag.sh records
+#     /sensors/zed/{left,right}/color/rect/camera_info
+# Everything else the wrapper can advertise is switched off here so it cannot
+# be subscribed by accident (image_transport encoders are lazy -- a theora or
+# rgb subscriber is what switches them on; the 0801 recordings lost the camera
+# to exactly that, see bag.sh).
+#
+# - pub_frame_rate 30: publish at full grab rate (default cap was 15)
+# - publish_left_right: the stereo pair (also for ChArUco stereo calibration)
+# - publish_rgb false: rgb is a byte-identical copy of left
+# - publish_status false: /status/health, /status/heartbeat
+# - publish_depth_map false: depth_mode is NONE, only its camera_info was left
+# - enable_pub_plugins: image_transport plugin whitelist per image topic --
+#   compressed only, no theora. (The wrapper declares this parameter itself,
+#   see zed_camera_component_video_depth.cpp set_transport_plugins; the
+#   override is honoured. Param name = topic below the node NAMESPACE (/sensors,
+#   so it starts with the node name "zed") with
+#   '/' -> '.'.)
 /**:
     ros__parameters:
         general:
             pub_frame_rate: 30.0
+            publish_status: false
         video:
             publish_left_right: true
+            publish_rgb: false
+        depth:
+            publish_depth_map: false
+        zed.left.color.rect.image.enable_pub_plugins: ["image_transport/compressed"]
+        zed.right.color.rect.image.enable_pub_plugins: ["image_transport/compressed"]

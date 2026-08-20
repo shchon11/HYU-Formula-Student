@@ -17,18 +17,34 @@ extra copy of a 30 Hz raw image. camera_name stays 'zed' because it names the
 TF frames too (zed_left_camera_optical_frame), which must match the simulator.
 
 TF:
-    base_footprint -> rslidar                        config/vehicle_mount.yaml
-    base_footprint -> zed_left_camera_optical_frame  mount o extrinsic^-1
+    base_footprint -> zed_left_camera_optical_frame  the extrinsic's `ground`
+                                                     block (camera height / tilt
+                                                     over the ground plane)
+    base_footprint -> rslidar                        camera o extrinsic
+    base_footprint -> zed_camera_link                the SAME camera pose
+                                                     re-expressed at the ZED
+                                                     URDF's root, so the wrapper's
+                                                     own frames (right camera
+                                                     included) hang off the car
+                                                     instead of floating
 
-The camera pose is COMPOSED, never configured: the mount yaml anchors the
-LiDAR, the calibration says where the camera is relative to it. That is why
-the ZED wrapper's own TF publishing is off here — two parents for the camera
+base_footprint is DEFINED by the camera: the point on the ground directly
+below the ZED's stereo centre, +x = camera forward projected onto the ground,
++z = ground normal. It is NOT the rear axle. Nothing here is a tape measure:
+solve_mount.py reads the ground plane out of the LiDAR through the extrinsic
+and stores height/roll/pitch next to it (calib.sh does this after every
+solve), and the LiDAR pose is composed from that plus the extrinsic. Re-mount
+the LiDAR -> re-calibrate -> everything follows. An extrinsic without a
+`ground` block (pre-2026-08 files) falls back to config/vehicle_mount.yaml.
+
+The ZED wrapper's own TF publishing is off here — two parents for the camera
 frame would be a silent, drifting conflict.
 
 Usage:
     ros2 launch hyu_sensor_bringup sensors.launch.py
     ros2 launch hyu_sensor_bringup sensors.launch.py tf:=false     # calib capture
     ros2 launch hyu_sensor_bringup sensors.launch.py extrinsic:=/path/to.yaml
+    ros2 launch hyu_sensor_bringup sensors.launch.py ntrip:=true   # + RTK
 """
 import math
 import os
@@ -114,84 +130,244 @@ def _static_tf(name, parent, child, xyz, quat, use_sim_time='false'):
                    '--frame-id', parent, '--child-frame-id', child])
 
 
+# ROS body (x fwd, y left, z up) -> optical (x right, y down, z fwd): the ZED
+# URDF's *_camera_frame -> *_camera_frame_optical joint, rpy (-pi/2, 0, -pi/2).
+R_BODY_OPT = [[0.0, 0.0, 1.0],
+              [-1.0, 0.0, 0.0],
+              [0.0, -1.0, 0.0]]
+
+
+def _compose(r_a, t_a, r_b, t_b):
+    """(a o b): apply b, then a."""
+    return (_matmul(r_a, r_b),
+            [t_a[i] + sum(r_a[i][k] * t_b[k] for k in range(3)) for i in range(3)])
+
+
+def _invert(r, t):
+    rt = [[r[j][i] for j in range(3)] for i in range(3)]
+    return rt, [-sum(rt[i][k] * t[k] for k in range(3)) for i in range(3)]
+
+
+def _camera_over_ground(context, ext, ext_path):
+    """(height, roll, pitch, where-from) of the left optical frame over the ground.
+
+    Preferred source is the `ground` block solve_mount.py stores IN the
+    extrinsic: the plane is expressed through that exact R,t, so the two can
+    only ever be switched together (calib -e). config/vehicle_mount.yaml is the
+    fallback for extrinsics that predate the block -- tape values, and it says
+    so in the log.
+    """
+    import yaml
+    g = ext.get('ground') or {}
+    if 'camera_height_m' in g:
+        return (float(g['camera_height_m']),
+                math.radians(float(g.get('camera_roll_deg', 0.0))),
+                math.radians(float(g.get('camera_pitch_deg', 0.0))),
+                f"{os.path.basename(ext_path)} ground block "
+                f"({g.get('source', '?')}, {g.get('n_frames', '?')} frames, "
+                f"std {g.get('height_std_mm', '?')} mm)")
+    mount_path = context.launch_configurations['mount']
+    with open(mount_path) as f:
+        cam = (yaml.safe_load(f) or {}).get('camera') or {}
+    if 'height' not in cam:
+        raise ValueError(f'{mount_path} has no camera.height')
+    return (float(cam['height']),
+            math.radians(float(cam.get('roll_deg', 0.0))),
+            math.radians(float(cam.get('pitch_deg', 0.0))),
+            f"{os.path.basename(mount_path)} FALLBACK -- the extrinsic has no "
+            f"ground block; run solve_mount.py --write to measure it")
+
+
 def _tf_actions(context, share):
-    """base->rslidar from the mount, base->camera composed with the extrinsic."""
+    """base_footprint below the camera; the LiDAR composed with the extrinsic."""
     import yaml
 
-    if context.launch_configurations['tf'].lower() not in ('true', '1'):
+    lc = context.launch_configurations
+    if lc['tf'].lower() not in ('true', '1'):
         return [LogInfo(msg='[sensors] tf:=false — no TF published '
                             '(calibration capture mode).')]
 
-    mount_path = context.launch_configurations['mount']
-    with open(mount_path) as f:
-        lidar = (yaml.safe_load(f) or {})['lidar']
-    lx, ly, lz = float(lidar['x']), float(lidar['y']), float(lidar['z'])
-    lr = math.radians(float(lidar.get('roll_deg', 0.0)))
-    lp = math.radians(float(lidar.get('pitch_deg', 0.0)))
-    lyaw = math.radians(float(lidar.get('yaw_deg', 0.0)))
-
-    actions = [
-        LogInfo(msg=f'[sensors] mount {os.path.basename(mount_path)}: '
-                    f'lidar xyz=({lx:.3f}, {ly:.3f}, {lz:.3f}) '
-                    f'yaw={math.degrees(lyaw):+.2f}deg'),
-        _static_tf('mount_tf_lidar', 'base_footprint', 'rslidar',
-                   (lx, ly, lz), _rpy_to_quat(lr, lp, lyaw),
-                   context.launch_configurations['use_sim_time']),
-    ]
-
-    ext_path = context.launch_configurations['extrinsic']
-    if not os.path.exists(ext_path):
-        actions.append(LogInfo(msg=(
-            f'[sensors] extrinsic not found: {ext_path} — camera TF NOT '
-            f'published. Perception will not project. Run ./calib.sh, or pass '
-            f'extrinsic:=<yaml>.')))
-        return actions
-
-    with open(ext_path) as f:
-        ext = yaml.safe_load(f) or {}
-    # camera_to_lidar is the camera-frame pose OF the lidar; we need the
-    # lidar-frame pose of the camera, i.e. rslidar -> camera, which is exactly
-    # the stored lidar_to_camera block (parent camera, child rslidar) inverted
-    # once more — the file already carries both, so read the one we need.
-    c2l = ext.get('camera_to_lidar') or {}
+    ext_path = lc['extrinsic']
+    ext = {}
+    if os.path.exists(ext_path):
+        with open(ext_path) as f:
+            ext = yaml.safe_load(f) or {}
     l2c = ext.get('lidar_to_camera') or {}
-    if not l2c:
-        actions.append(LogInfo(msg=f'[sensors] {ext_path} has no '
-                                   f'lidar_to_camera block — camera TF skipped.'))
-        return actions
 
-    # lidar_to_camera: camera_point = R * lidar_point + t, i.e. the transform
-    # that takes lidar coords to camera coords. As a POSE that is camera->lidar,
-    # so the lidar-frame pose of the camera is its inverse: R^T, -R^T t.
-    R = l2c['R']
-    t = l2c['t']
-    Rt = [[R[j][i] for j in range(3)] for i in range(3)]
-    cam_in_lidar = [-sum(Rt[i][k] * t[k] for k in range(3)) for i in range(3)]
+    try:
+        h, roll, pitch, origin = _camera_over_ground(context, ext, ext_path)
+    except (OSError, ValueError, KeyError) as exc:
+        return [LogInfo(msg=(f'[sensors] no camera height available ({exc}) — '
+                             f'NO TF published. Run ./calib.sh (solve_mount.py '
+                             f'writes it) or fill config/vehicle_mount.yaml.'))]
 
-    # base -> camera = (base -> rslidar) o (rslidar -> camera)
-    Rm = _mat_from_rpy(lr, lp, lyaw)
-    Rbc = _matmul(Rm, Rt)
-    tbc = [lx, ly, lz]
-    for i in range(3):
-        tbc[i] += sum(Rm[i][k] * cam_in_lidar[k] for k in range(3))
+    # base -> left optical, with the LEFT lens on the plumb line for now.
+    r_bopt = _matmul(_mat_from_rpy(roll, pitch, 0.0), R_BODY_OPT)
+    t_bopt = [0.0, 0.0, h]
 
-    cam_frame = context.launch_configurations['camera_frame']
-    stored_parent = l2c.get('parent_frame', '?')
-    if stored_parent != cam_frame:
-        actions.append(LogInfo(msg=(
-            f"[sensors] NOTE: extrinsic names the camera frame "
-            f"'{stored_parent}' but the stack uses '{cam_frame}'. Publishing "
-            f"as '{cam_frame}' so TF resolves; fix the yaml to stop the drift.")))
+    # Slide base so the STEREO CENTRE, not the left lens, is what sits above
+    # it. Pure horizontal shift; the height stays that of the left optical
+    # centre (the two differ by ~1 mm through the roll).
+    actions = []
+    geom = _zed_geometry(context)
+    if geom is None:
+        below = 'LEFT lens (ZED URDF not resolved; stereo centre is baseline/2 to its right)'
+    else:
+        below = 'stereo centre'
+        _, t_center = _compose(r_bopt, t_bopt, *_invert(*geom['center_to_opt']))
+        t_bopt[0] -= t_center[0]
+        t_bopt[1] -= t_center[1]
 
+    cam_frame = lc['camera_frame']
     actions.append(_static_tf('mount_tf_camera', 'base_footprint', cam_frame,
-                              tbc, _quat_from_mat(Rbc),
-                              context.launch_configurations['use_sim_time']))
+                              t_bopt, _quat_from_mat(r_bopt), lc['use_sim_time']))
     actions.append(LogInfo(msg=(
-        f'[sensors] camera TF from {os.path.basename(ext_path)}: '
-        f'base_footprint -> {cam_frame} '
-        f't=({tbc[0]:+.3f}, {tbc[1]:+.3f}, {tbc[2]:+.3f}) '
-        f"metrics: plane={(ext.get('metrics') or {}).get('rmse_plane_mm', '-')}mm")))
+        f'[sensors] base_footprint := ground below the {below}; camera '
+        f'{h:.3f} m up, roll {math.degrees(roll):+.2f} pitch '
+        f'{math.degrees(pitch):+.2f} deg  <- {origin}')))
+
+    # LiDAR: the extrinsic block IS the camera->rslidar pose (camera_point =
+    # R lidar_point + t), so base -> rslidar = (base -> camera) o (R, t).
+    if not l2c:
+        actions.append(LogInfo(msg=(
+            f'[sensors] extrinsic {ext_path} missing or without lidar_to_camera '
+            f'— rslidar TF NOT published. Perception cannot place the cloud. '
+            f'Run ./calib.sh, or pass extrinsic:=<yaml>.')))
+    else:
+        if l2c.get('parent_frame', cam_frame) != cam_frame:
+            actions.append(LogInfo(msg=(
+                f"[sensors] NOTE: extrinsic names the camera frame "
+                f"'{l2c.get('parent_frame')}' but the stack uses '{cam_frame}'. "
+                f"Publishing as '{cam_frame}' so TF resolves.")))
+        r_bl, t_bl = _compose(r_bopt, t_bopt, l2c['R'], l2c['t'])
+        actions.append(_static_tf('mount_tf_lidar', 'base_footprint', 'rslidar',
+                                  t_bl, _quat_from_mat(r_bl), lc['use_sim_time']))
+        actions.append(LogInfo(msg=(
+            f'[sensors] rslidar from {os.path.basename(ext_path)}: '
+            f'base_footprint -> rslidar t=({t_bl[0]:+.3f}, {t_bl[1]:+.3f}, '
+            f'{t_bl[2]:+.3f}) yaw={math.degrees(math.atan2(r_bl[1][0], r_bl[0][0])):+.2f}deg '
+            f"plane={(ext.get('metrics') or {}).get('rmse_plane_mm', '-')}mm  "
+            f'(nose LiDAR ~1.7 m ahead of the hoop camera; z should match '
+            f"ground.lidar_height_m={(ext.get('ground') or {}).get('lidar_height_m', '-')})")))
+
+    if geom is not None:
+        # Graft the wrapper's URDF island onto the car: base -> zed_camera_link
+        # = (base -> left optical) o (zed_camera_link -> left optical)^-1.
+        r_root, t_root = _compose(r_bopt, t_bopt, *_invert(*geom['link_to_opt']))
+        actions.append(_static_tf('mount_tf_zed_urdf', 'base_footprint',
+                                  geom['root_link'], t_root,
+                                  _quat_from_mat(r_root), lc['use_sim_time']))
+        actions.append(LogInfo(msg=(
+            f"[sensors] ZED URDF anchored: base_footprint -> {geom['root_link']} "
+            f't=({t_root[0]:+.3f}, {t_root[1]:+.3f}, {t_root[2]:+.3f})')))
     return actions
+
+
+def _zed_geometry(context):
+    """Fixed poses inside the ZED URDF, or None if it cannot be resolved.
+
+    The wrapper's robot_state_publisher emits zed_camera_link -> ... ->
+    zed_left/right_camera_frame_optical as a FLOATING ISLAND: its root has no
+    parent here, because the calibrated camera pose lands on a different frame
+    name (zed_left_camera_optical_frame). Two things are read out of the same
+    xacro the wrapper loads (so a camera_model change follows automatically):
+
+        center_to_opt   zed_camera_center -> left optical   (baseline/2 etc.)
+        link_to_opt     zed_camera_link   -> left optical   (URDF root)
+
+    The first puts base_footprint under the stereo centre, the second anchors
+    the island so the URDF's own left optical frame lands EXACTLY on the
+    calibrated one. Neither adds geometry; both only re-express it.
+
+    Anything unexpected returns None and the caller degrades: an unparented
+    subtree is untidy, a wrongly parented one lies.
+    """
+    import xml.etree.ElementTree as ET
+
+    # Deliberately NOT gated on camera:=off: base_footprint's definition must
+    # not depend on whether the driver runs (bagplay replays with camera:=off).
+    # 'zed' is the camera_name handed to the wrapper below; it prefixes every
+    # frame in the URDF, so the two must not drift apart.
+    lc = context.launch_configurations
+    name, model = 'zed', lc['camera_model']
+    root_link, center, leaf = (f'{name}_camera_link', f'{name}_camera_center',
+                               f'{name}_left_camera_frame_optical')
+    try:
+        import xacro
+        doc = xacro.process_file(
+            os.path.join(get_package_share_directory('zed_wrapper'), 'urdf',
+                         'zed_descr.urdf.xacro'),
+            mappings={'camera_name': name, 'camera_model': model})
+        urdf = ET.fromstring(doc.toxml())
+        by_child = {}
+        for j in urdf.findall('joint'):
+            org = j.find('origin')
+            by_child[j.find('child').get('link')] = (
+                j.find('parent').get('link'),
+                [float(v) for v in (org.get('xyz') or '0 0 0').split()],
+                [float(v) for v in (org.get('rpy') or '0 0 0').split()])
+
+        chain, node = [], leaf                  # leaf -> root, one joint each
+        while node != root_link:
+            parent, xyz, rpy = by_child[node]   # KeyError = not our tree
+            chain.append((parent, xyz, rpy))
+            node = parent
+        if not any(p == center for p, _, _ in chain):
+            raise KeyError(center)
+    except Exception as exc:                    # noqa: BLE001 - fail soft
+        print(f'[sensors] ZED URDF not resolved ({exc})')
+        return None
+
+    def pose_from(start):
+        rot = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        trans = [0.0, 0.0, 0.0]
+        below = list(reversed(chain))
+        idx = next(i for i, (p, _, _) in enumerate(below) if p == start)
+        for _, xyz, rpy in below[idx:]:
+            rot, trans = _compose(rot, trans, _mat_from_rpy(*rpy), xyz)
+        return rot, trans
+
+    return {'root_link': root_link,
+            'link_to_opt': pose_from(root_link),
+            'center_to_opt': pose_from(center)}
+
+def _ntrip_actions(context):
+    """RTK corrections, opt-in with ntrip:=true.
+
+    Three things must line up or this is a no-op, and only one of them is here:
+      1. this node, fetching RTCM into /ntrip_client/rtcm      <- ntrip:=true
+      2. config/sbg.yaml  rtcm.subscribe: true                  (driver forwards
+         the bytes to the device over the same serial link)
+      3. the DEVICE's aiding/diffCorr/source = comA             (flash config,
+         set with sbgEComApi -- see localization/docs/sbg_commands.md)
+
+    Defaults are the NGII network-RTK values verified 2026-07-24 (RTS1, not
+    RTS2: RTS2 returns 401 for this account, and its mountpoint differs).
+    VRS mounts send nothing until the rover uplinks a GGA, so send_gga stays
+    on and the initial lat/lon seed the first one before any fix exists.
+    """
+    lc = context.launch_configurations
+    if lc['ntrip'].lower() not in ('true', '1'):
+        return []
+
+    return [
+        Node(package='sbg_driver', executable='ntrip_client',
+             name='ntrip_client', output='screen',
+             parameters=[{
+                 'host': lc['ntrip_host'],
+                 'port': int(lc['ntrip_port']),
+                 'mountpoint': lc['ntrip_mountpoint'],
+                 'username': lc['ntrip_user'],
+                 'password': lc['ntrip_pass'],
+                 'send_gga': True,
+                 'initial_latitude': float(lc['ntrip_lat']),
+                 'initial_longitude': float(lc['ntrip_lon']),
+             }]),
+        LogInfo(msg=(f"[sensors] NTRIP {lc['ntrip_host']}:{lc['ntrip_port']}/"
+                     f"{lc['ntrip_mountpoint']} -> /ntrip_client/rtcm "
+                     f"(check: ros2 topic hz /ntrip_client/rtcm, then "
+                     f"/sbg/gps_pos status.type 6=RTK float 7=RTK fixed)")),
+    ]
 
 
 def _setup(context, *_args, **_kwargs):
@@ -247,6 +423,7 @@ def _setup(context, *_args, **_kwargs):
                 package='sbg_driver', executable='sbg_device',
                 name='gnss_driver', output='screen',
                 parameters=[sbg_cfg]))
+            actions.extend(_ntrip_actions(context))
         else:
             actions.append(LogInfo(msg=(
                 f'[sensors] GNSS not connected ({port} absent) — skipping '
@@ -289,15 +466,38 @@ def generate_launch_description():
                               choices=['auto', 'on', 'off'],
                               description='auto = start only if the serial '
                                           'port exists'),
+        # RTK is on by default: the car wants a fixed solution, and a GNSS
+        # bringup that silently runs single-point is the failure we keep
+        # rediscovering. Costs a warn every reconnect_delay (5 s) when there
+        # is no network -- 'ntrip:=false' for a bench run without one.
+        DeclareLaunchArgument('ntrip', default_value='true',
+                              choices=['true', 'false'],
+                              description='fetch RTCM corrections for RTK'),
+        DeclareLaunchArgument('ntrip_host', default_value='RTS1.ngii.go.kr'),
+        DeclareLaunchArgument('ntrip_port', default_value='2101'),
+        DeclareLaunchArgument('ntrip_mountpoint', default_value='VRS-RTCM31'),
+        DeclareLaunchArgument('ntrip_user', default_value='shchon11'),
+        DeclareLaunchArgument('ntrip_pass', default_value='ngii'),
+        # No seed by default: a VRS caster hands out a virtual base AT the
+        # position you uplink, so a stale one (the device's localParam still
+        # says Gwangju) picks a reference station hundreds of km away. Left
+        # NaN, the client simply waits for the receiver's own first fix --
+        # seconds outdoors. Pass both to prime it before any fix exists.
+        DeclareLaunchArgument('ntrip_lat', default_value='nan',
+                              description='seeds the first VRS GGA (deg)'),
+        DeclareLaunchArgument('ntrip_lon', default_value='nan'),
         DeclareLaunchArgument('tf', default_value='true',
                               description='false = sensors only, no TF '
                                           '(calibration capture)'),
         DeclareLaunchArgument('mount',
                               default_value=os.path.join(share, 'config',
                                                          'vehicle_mount.yaml'),
-                              description='base_footprint -> rslidar geometry'),
+                              description='camera height/tilt FALLBACK, used '
+                                          'only when the extrinsic has no '
+                                          'ground block'),
         DeclareLaunchArgument('extrinsic', default_value=DEFAULT_EXTRINSIC,
-                              description='lidar<->camera calibration yaml'),
+                              description='lidar<->camera calibration yaml '
+                                          '(+ ground block from solve_mount.py)'),
         DeclareLaunchArgument('camera_frame',
                               default_value='zed_left_camera_optical_frame',
                               description='must match hyu_perception camera_frame'),

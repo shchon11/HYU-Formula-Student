@@ -1,43 +1,35 @@
-# Vehicle sensor mount geometry — base_footprint -> rslidar.
+# Camera over ground — FALLBACK ONLY.
 #
-# RECOVERED 2026-07-28. The original lived in the pre-merge fsg_sensors tree
-# and was lost when this repo replaced it; the values below come from the
-# 2026-07-26 vehicle bringup notes, not from a surviving file. Re-measure
-# before trusting anything marked BENCH.
+# base_footprint is DEFINED by the camera since 2026-08-17: the point on the
+# ground directly below the ZED's stereo centre, +x = camera forward projected
+# onto the ground, +z = ground normal. It is NOT the rear axle any more.
 #
-# This file is the ANCHOR of the vehicle TF chain. sensors.launch.py publishes
-#   base_footprint -> rslidar                        directly from here
-#   base_footprint -> zed_left_camera_optical_frame  composed with the extrinsic
-# so the camera pose is never independently guessed — it always follows the
-# calibration. Change the mount, re-measure here; change the rig, re-calibrate.
-
-lidar:
-  # Forward of base_footprint (rear-axle centre, ground plane), metres.
-  x: 0.81          # MEASURED on the car (2026-07-26)
-  y: 0.00          # MEASURED — lidar is on the centreline
-  z: 0.428         # MEASURED from the data, 2026-07-28. The previous 0.75 was
-                   # a bench guess and put base_footprint 0.32 m UNDERGROUND:
-                   # every cone rendered below the ground plane in RViz.
-                   # Derived by fitting the ground return in the LiDAR frame
-                   # over 5 frames of bag/0726_cone detection test (3-12 m
-                   # ahead, |y| < 4 m): ground sits at z = -0.428 +/- 0.004,
-                   # so the sensor is 0.428 m up. Re-derive after any re-mount:
-                   #   python3 - <<'EOF'  (see git log for the full snippet)
-                   # A tape measure to the sensor's optical centre still beats
-                   # this; it is only as good as the ground being flat there.
-                   # Rule of thumb when setting the ROI: z_min = -z + 0.2.
-
-  # The RS-16 is mounted TWISTED on the car. This yaw was back-solved from the
-  # 2026-07-26 calibration (extrinsics/2026-07-26_0223.yaml) assuming the
-  # camera looks straight ahead and level.
-  roll_deg: 0.0    # ~+1.6 deg measured but indistinguishable from camera tilt
-  pitch_deg: 0.0   # ~+1.2 deg, same reason — kept at 0 deliberately
-  yaw_deg: -48.26  # twisted ~48 deg to the right
-
-# Cross-check when this changes: a cone ~5 m straight ahead of the car must
-# land at y ~= 0 in the BEV. If the whole scene appears rotated, this yaw is
-# stale relative to the active extrinsic.
+# The three numbers below are normally NOT read from here. solve_mount.py
+# measures them (LiDAR ground plane, carried into the camera through the
+# extrinsic) and stores them as a `ground:` block INSIDE the extrinsic yaml;
+# calib.sh runs it right after every solve, and sensors.launch.py reads that
+# block. They live with the extrinsic on purpose: the plane is expressed
+# through that exact R,t, so switching extrinsics (calib -e) switches both.
 #
-# NOTE: hyu_perception's LiDAR crop uses an azimuth wedge whose centre must be
-# the NEGATED lidar yaw (+48.26 here). Changing yaw_deg without changing that
-# centre silently crops the wrong side of the track.
+# This file is used only when the active extrinsic has no `ground` block
+# (files older than 2026-08). The launch says so in its log when that happens.
+# Fix it properly with
+#   ros2 run hyu_sensor_bringup solve_mount.py --pcd captures/<session> --write
+# on the capture session that produced the extrinsic (a bag works too).
+#
+# The old anchor (base_footprint -> rslidar: x 0.81, z 0.428, yaw -83.20 and
+# a re-solve of the yaw after every calibration) is gone. The LiDAR pose is
+# now composed, camera o extrinsic, and needs no number here at all.
+
+camera:
+  height: 0.946    # left optical centre above the ground [m]. Tape it, or
+                   # take it from a fresh solve_mount.py run — this is the
+                   # 2026-08-01 value (captures/20260801_145355, std 2 mm).
+  roll_deg: 0.0    # camera body vs the ground normal, ROS body rpy. 0 = assume
+  pitch_deg: 0.0   # the camera is level. Measured 2026-08-01: -1.64 / -0.33.
+
+# Cross-check when anything here or in the extrinsic changes: on a bag or the
+# car, the ground must sit at z ~= 0 in base_footprint and a cone straight
+# ahead of the CAMERA at y ~= 0. The launch prints base_footprint -> rslidar;
+# its z should equal ground.lidar_height_m of the extrinsic (~0.54 m) and its
+# yaw is whatever the LiDAR was bolted at (~ -83 deg, twisted mount).
