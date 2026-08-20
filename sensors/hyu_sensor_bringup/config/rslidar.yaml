@@ -2,6 +2,13 @@
 # Copy of the vendor config/config.yaml with topics moved under /sensors.
 # Timestamps: host clock (use_lidar_clock: false), header = LAST point
 # (ts_first_point: false); per-point `timestamp` field enables deskewing.
+# Frame seam: split_angle 180 puts the start/end of every frame at the
+# unit's rear (azimuth measured clockwise from the lidar +x, which is the
+# car's front once the unit is mounted facing forward). With the default 0
+# the seam sat dead ahead: the first and last points of a frame -- 100 ms
+# apart -- both looked at the cones in front, so any deskew error split a
+# front cone in two. The header (last point) is therefore the rear-facing
+# instant; perception deskews every point to it, so nothing downstream cares.
 common:
   msg_source: 1                         # 1: packets from online Lidar
   send_packet_ros: false
@@ -19,6 +26,8 @@ lidar:
       use_lidar_clock: false
       dense_points: false
       ts_first_point: false
+      split_frame_mode: 1                 # 1 = split by angle
+      split_angle: 180                    # seam behind the car (see header)
       start_angle: 0
       end_angle: 360
       pcap_repeat: true

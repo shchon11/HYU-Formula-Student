@@ -126,6 +126,13 @@ perception_node:
     deskew_twist_topic: /localization/wheel_odom
     deskew_twist_fallback_topic: /localization/ins_odom
     deskew_twist_timeout: 0.5
+    # Per-point time on RoboSense clouds: auto = sweep-geometry model (steady
+    # clockwise spin from the lidar +x; seam and period read from the frame's
+    # own stamps) whenever it fits, else the driver's host-clock stamps. The
+    # host stamps carry 2-3 ms rms jitter and occasional ~30 ms UDP-batching
+    # steps (2026-08-01) -- 8 cm at 2.7 m/s; the geometry has neither.
+    # 'timestamp' forces the stamps, 'azimuth' warns when the model fails.
+    deskew_time_source: auto
     # base_footprint moved 2026-08-17: it is now the ground point below the
     # ZED's stereo centre (main hoop), not the rear axle -- see
     # hyu_sensor_bringup/config/vehicle_mount.yaml. Old base -> new base is

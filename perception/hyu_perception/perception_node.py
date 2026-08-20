@@ -258,6 +258,7 @@ class PerceptionNode(Node):
         self._twist_primary = None
         self._twist_fallback = None
         self._twist_source = None
+        self._deskew_time_mode = None
         if self.deskew_enabled:
             self.create_subscription(
                 CarState, self.deskew_twist_topic,
@@ -339,6 +340,18 @@ class PerceptionNode(Node):
         self.declare_parameter(
             "deskew_twist_fallback_topic", "/localization/ins_odom")
         self.declare_parameter("deskew_twist_timeout", 0.5)
+        # Per-point time for the de-skew on RoboSense clouds (the sim's 'time'
+        # field is exact by construction and is always used as is):
+        #   timestamp  the driver's per-point host-clock stamp, as is;
+        #   azimuth    from the sweep geometry: the unit spins at a very
+        #              uniform 600 rpm, so tau = -(degrees still to sweep
+        #              until the frame seam) / 360 * period, with the seam and
+        #              the period read off the frame's own stamps. Immune to
+        #              the host-stamp jitter measured 2026-08-01 (2-3 ms rms,
+        #              occasional ~30 ms UDP-batching steps = 8 cm at 2.7 m/s);
+        #   auto       azimuth whenever the sweep model fits the stamps
+        #              (residual < 15 ms rms, period 50-200 ms), else stamps.
+        self.declare_parameter("deskew_time_source", "auto")
         self.declare_parameter("roi_min_x", 0.5)
         self.declare_parameter("roi_max_x", 30.0)
         self.declare_parameter("roi_abs_y", 15.0)
@@ -459,10 +472,16 @@ class PerceptionNode(Node):
         for name in (
             "pointcloud_topic", "bbox_topic", "camera_info_topic",
             "deskew_twist_topic", "deskew_twist_fallback_topic", "ground_method",
+            "deskew_time_source",
             "left_image_topic", "right_image_topic", "output_cones_topic",
             "output_frame", "camera_frame",
         ):
             setattr(self, name, str(g(name)))
+        self.deskew_time_source = self.deskew_time_source.strip().lower()
+        if self.deskew_time_source not in ("auto", "timestamp", "azimuth"):
+            raise ValueError(
+                "deskew_time_source must be auto, timestamp or azimuth "
+                f"(got {self.deskew_time_source!r})")
         self.debug_prefix = str(g("debug_prefix")).rstrip("/")
         self.motion_compensation_frame = str(g("motion_compensation_frame")).strip()
         self.max_uncompensated_gap_sec = float(g("max_uncompensated_gap_sec"))
@@ -868,8 +887,87 @@ class PerceptionNode(Node):
                         f"stamp (offsets {times.min():.2f}..{times.max():.2f} s); "
                         "ignoring it for de-skew (check rslidar use_lidar_clock)")
                     times = None
+                if times is not None and self.deskew_time_source != "timestamp":
+                    times = self._azimuth_times(xyz, times)
             return xyz, times, intensity
-        return empty, None, None  # pragma: no cover - malformed cloud
+
+    # RoboSense sweep geometry: azimuth grows CLOCKWISE from the lidar +x
+    # (x = d cos(az), y = -d sin(az)); a frame runs from the seam
+    # (split_angle) once around to the seam, the header is the last point.
+    _AZ_MODEL_MIN_POINTS = 200
+    _AZ_MODEL_MIN_BINS = 180
+    _AZ_MODEL_MAX_RESID_SEC = 0.005
+    _AZ_MODEL_PERIOD_SEC = (0.05, 0.20)
+
+    def _azimuth_times(self, xyz: np.ndarray, tau_ts: np.ndarray) -> np.ndarray:
+        """Per-point offsets from the sweep geometry instead of the host stamps.
+
+        tau = -(degrees still to sweep until the seam) / 360 * period. Host
+        stamps are only ever LATE (UDP batching stamps a burst of packets at
+        its end), so the earliest stamp in each 1-degree azimuth bin is a
+        clean estimate of that bin's true time. The seam is the bin boundary
+        where those bin minima drop by a whole period (the frame wraps
+        there), the period the least-squares slope of bin minimum vs
+        degrees-to-seam, and the fit residual the model check: a frame that
+        does not spin clockwise from +x at a steady rate keeps the stamps.
+        Points straddling the seam are snapped to the stamp's revolution.
+        Tiny clouds keep the stamps too. Mode changes are logged.
+        """
+        n = tau_ts.size
+        if n < self._AZ_MODEL_MIN_POINTS:
+            return tau_ts
+        az = np.degrees(np.arctan2(-xyz[:, 1], xyz[:, 0])) % 360.0
+        bins = np.minimum(az.astype(np.int64), 359)
+        bin_min = np.full(360, np.inf)
+        np.minimum.at(bin_min, bins, tau_ts)
+        filled = np.flatnonzero(np.isfinite(bin_min))
+        fits = False
+        refined = tau_ts
+        if filled.size >= self._AZ_MODEL_MIN_BINS:
+            vals = bin_min[filled]
+            # cyclic differences between consecutive filled bins; the frame
+            # wraps where the stamp drops by ~period
+            drop = np.roll(vals, -1) - vals
+            j = int(np.argmin(drop))
+            seam = float(filled[(j + 1) % filled.size])  # start angle of the first bin after the seam
+            u_bins = (seam - (filled + 0.5)) % 360.0     # bin centres, degrees to seam
+            um, tm = u_bins.mean(), vals.mean()
+            du = u_bins - um
+            var = float(np.dot(du, du))
+            if var > 0.0:
+                slope = float(np.dot(du, vals - tm)) / var  # s/deg, < 0 for cw
+                period = -slope * 360.0
+                resid = vals - (slope * du + tm)
+                rms = float(np.sqrt(np.mean(resid * resid)))
+                lo, hi = self._AZ_MODEL_PERIOD_SEC
+                if (lo <= period <= hi and rms <= self._AZ_MODEL_MAX_RESID_SEC
+                        and -drop[j] > 0.5 * period):
+                    u = (seam - az) % 360.0
+                    refined = -u / 360.0 * period
+                    # The driver splits frames on the BLOCK azimuth while a
+                    # point's geometric azimuth (channel offset, laser origin
+                    # offset) can fall a fraction of a degree on the other
+                    # side of the seam: the model would then put it a whole
+                    # period off. The stamps, late by at most tens of ms, say
+                    # which revolution cycle a point belongs to -- snap to it.
+                    refined -= np.rint((refined - tau_ts) / period) * period
+                    np.clip(refined, -period, 0.0, out=refined)
+                    fits = True
+        mode = "azimuth" if fits else "timestamp"
+        if mode != self._deskew_time_mode:
+            self._deskew_time_mode = mode
+            if fits:
+                self.get_logger().info(
+                    "de-skew point times: sweep model (clockwise from +x, "
+                    f"period {period * 1e3:.1f} ms, seam {seam:.0f} deg, stamp "
+                    f"residual {rms * 1e3:.2f} ms rms)")
+            else:
+                level = (self.get_logger().warning
+                         if self.deskew_time_source == "azimuth"
+                         else self.get_logger().info)
+                level("de-skew point times: driver stamps (sweep model "
+                      "does not fit this cloud)")
+        return refined
 
     _SEG_FIELDS = None  # built lazily: [x, y, z, intensity] float32
 
@@ -940,19 +1038,28 @@ class PerceptionNode(Node):
         msg: PointCloud2,
         lidar_to_base,
     ) -> np.ndarray:
-        """Undo the LiDAR bridge's motion distortion, point by point.
+        """Undo the LiDAR's motion distortion, point by point.
 
-        The bridge expresses each point at its own measurement time,
-        p' = R(-w*tau) @ (p - v_sensor*tau) with tau in (-period, 0] under cw
-        spin and end stamping, and publishes tau in the 'time' field. The
-        exact inverse, p = R(w*tau) @ p' + v_sensor*tau, restores the whole
-        cloud to the stamp instant — the contract every downstream stage
-        (single-transform to base, bbox pairing, projection) already assumes.
-        The bridge's own contract: a correct deskew recovers the ideal cloud.
+        Each point was measured at its own instant tau in (-period, 0] before
+        the header stamp, from a sensor that was then at a different pose:
+        p' = R(-w*tau) @ (p - v_sensor*tau) under a constant body twist. The
+        inverse, p = R(w*tau) @ p' + v_sensor*tau, restores the whole cloud to
+        the stamp instant -- the contract every downstream stage (single
+        transform to base, bbox pairing, projection) assumes, and the one the
+        sim bridge's contract test pins (a correct deskew recovers the ideal
+        cloud).
 
-        v_sensor is the body twist at the mount lever arm, mirroring the
-        bridge (sensor yaw ~ 0). The twist comes from odometry, never ground
-        truth: this code path must behave identically on the real car.
+        The twist is a BASE quantity (body x forward, y left, yaw rate about
+        base z) and the sensor may sit at any yaw/pitch/roll -- the 2026-08
+        nose unit was mounted at yaw -83 deg, and applying the base-oriented
+        velocity straight onto lidar-frame coordinates (the old "sensor yaw
+        ~ 0" shortcut) pushed the points sideways: 20-40 cm of residual at
+        2.7 m/s, worse than no deskew when driving straight. So: rotate the
+        cloud into base ORIENTATION (rotation only), deskew there with the
+        sensor velocity v_sensor = v + w x r (r = mount lever arm), rotate
+        back. The caller's lidar->base transform stays the one place that
+        moves the cloud into the output frame. The twist comes from odometry,
+        never ground truth: this code path is identical on the real car.
         """
         if not self.deskew_enabled or times is None or points.shape[0] == 0:
             return points
@@ -967,19 +1074,21 @@ class PerceptionNode(Node):
         vx, vy, wz = twist[0], twist[1], twist[2]
         if abs(vx) < 1e-3 and abs(vy) < 1e-3 and abs(wz) < 1e-3:
             return points
-        # lidar_to_base is the 4x4 sensor-pose matrix in the output frame;
-        # its translation column is the mount lever arm the bridge used.
+        # lidar_to_base: 4x4 sensor pose in the output frame. Its translation
+        # is the mount lever arm, its rotation the mount attitude.
+        rot = np.asarray(lidar_to_base[:3, :3], dtype=np.float64)
         mount_x = float(lidar_to_base[0, 3])
         mount_y = float(lidar_to_base[1, 3])
         v_sx = vx - wz * mount_y
         v_sy = vy + wz * mount_x
+        q = points @ rot.T  # lidar frame -> base orientation (no translation)
         theta = wz * times
         cos_t, sin_t = np.cos(theta), np.sin(theta)
-        px, py = points[:, 0], points[:, 1]
-        out = points.copy()
-        out[:, 0] = cos_t * px - sin_t * py + v_sx * times
-        out[:, 1] = sin_t * px + cos_t * py + v_sy * times
-        return out
+        qx, qy = q[:, 0], q[:, 1]
+        out = q.copy()
+        out[:, 0] = cos_t * qx - sin_t * qy + v_sx * times
+        out[:, 1] = sin_t * qx + cos_t * qy + v_sy * times
+        return out @ rot  # back to the lidar frame
 
     def _roi_mask(self, points_base: np.ndarray) -> np.ndarray:
         x, y, z = points_base[:, 0], points_base[:, 1], points_base[:, 2]

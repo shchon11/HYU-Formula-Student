@@ -46,6 +46,8 @@ def _node(**overrides):
     # No deskew twist cached: the speed-proportional timing variance term
     # contributes zero, keeping the covariance assertions exact.
     node._twist = None
+    node.deskew_time_source = "auto"
+    node._deskew_time_mode = None
     node.lidar_timing_sigma_per_mps = 0.02
     node.cluster_range_bias_m = 0.0
     # 0.0 = uncapped, the declare_parameter default; the shipped config caps
@@ -530,6 +532,138 @@ class CloudDecodeTest(unittest.TestCase):
         self.assertEqual(xyz.shape[0], 1)
         np.testing.assert_allclose(inten, [2.0])
         np.testing.assert_allclose(times, [0.0], atol=1e-6)
+
+
+def _pose(yaw_deg, pitch_deg, roll_deg, t):
+    """4x4 lidar->base (ROS rpy, applied roll, pitch, yaw about base axes)."""
+    y, p, r = map(math.radians, (yaw_deg, pitch_deg, roll_deg))
+    cy, sy, cp, sp, cr, sr = math.cos(y), math.sin(y), math.cos(p), math.sin(p), math.cos(r), math.sin(r)
+    rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1.0]])
+    ry = np.array([[cp, 0, sp], [0, 1.0, 0], [-sp, 0, cp]])
+    rx = np.array([[1.0, 0, 0], [0, cr, -sr], [0, sr, cr]])
+    m = np.eye(4)
+    m[:3, :3] = rz @ ry @ rx
+    m[:3, 3] = t
+    return m
+
+
+class DeskewMountTest(unittest.TestCase):
+    """The deskew must recover the ideal cloud for ANY mount attitude: the
+    twist is a base quantity, the spin axis base z, and the sensor may be
+    yawed (the 2026-08 nose unit sat at -83 deg), pitched and rolled. The
+    forward model is the same first-order constant-twist warp the sim bridge
+    applies, expressed at the sensor (lever arm included), so the inverse is
+    exact and the check can be tight."""
+
+    VX, VY, WZ, T = 2.7, 0.2, 0.9, 0.1
+
+    def _run(self, yaw, pitch, roll):
+        from sensor_msgs.msg import PointCloud2
+        lidar_to_base = _pose(yaw, pitch, roll, [1.73, -0.09, 0.53])
+        rot, t = lidar_to_base[:3, :3], lidar_to_base[:3, 3]
+        rng = np.random.default_rng(3)
+        n = 3000
+        ideal_base = np.c_[rng.uniform(-20, 20, n), rng.uniform(-20, 20, n),
+                           rng.uniform(-0.5, 0.5, n)]
+        tau = rng.uniform(-self.T, 0.0, n)
+        # sensor velocity = v + w x r, in base orientation
+        v_s = np.array([self.VX - self.WZ * t[1], self.VY + self.WZ * t[0], 0.0])
+        s = ideal_base - t                    # sensor-centred, base-oriented
+        c, si = np.cos(-self.WZ * tau), np.sin(-self.WZ * tau)
+        d = s - np.outer(tau, v_s)
+        skewed = np.c_[c * d[:, 0] - si * d[:, 1], si * d[:, 0] + c * d[:, 1], d[:, 2]]
+        skewed_lidar = skewed @ rot           # R^T applied to row vectors
+        node = _node(deskew_enabled=True, deskew_twist_timeout=0.5)
+        node._twist = (self.VX, self.VY, self.WZ, 100.0)
+        msg = PointCloud2()
+        msg.header.stamp.sec = 100
+        fixed = node._deskew_points(skewed_lidar, tau, msg, lidar_to_base)
+        back_in_base = fixed @ rot.T + t
+        return np.abs(back_in_base - ideal_base).max()
+
+    def test_level_forward_mount(self):
+        self.assertLess(self._run(0.0, 0.0, 0.0), 1e-6)
+
+    def test_the_2026_08_nose_mount_yawed_83_deg(self):
+        self.assertLess(self._run(-83.2, 2.9, -0.9), 1e-6)
+
+    def test_backwards_and_tilted_mount(self):
+        self.assertLess(self._run(180.0, -5.0, 3.0), 1e-6)
+
+    def test_old_shortcut_would_have_failed_when_yawed(self):
+        # Same data, base-oriented velocity dumped onto lidar coordinates.
+        lidar_to_base = _pose(-83.2, 0.0, 0.0, [1.73, -0.09, 0.53])
+        rot, t = lidar_to_base[:3, :3], lidar_to_base[:3, 3]
+        n = 2000
+        rng = np.random.default_rng(4)
+        ideal = np.c_[rng.uniform(-20, 20, n), rng.uniform(-20, 20, n), np.zeros(n)]
+        tau = rng.uniform(-self.T, 0.0, n)
+        v_s = np.array([self.VX - self.WZ * t[1], self.VY + self.WZ * t[0], 0.0])
+        s = ideal - t
+        c, si = np.cos(-self.WZ * tau), np.sin(-self.WZ * tau)
+        d = s - np.outer(tau, v_s)
+        skewed = np.c_[c * d[:, 0] - si * d[:, 1], si * d[:, 0] + c * d[:, 1], d[:, 2]] @ rot
+        th = self.WZ * tau
+        old = skewed.copy()
+        old[:, 0] = np.cos(th) * skewed[:, 0] - np.sin(th) * skewed[:, 1] + v_s[0] * tau
+        old[:, 1] = np.sin(th) * skewed[:, 0] + np.cos(th) * skewed[:, 1] + v_s[1] * tau
+        err = np.linalg.norm((old @ rot.T + t - ideal)[:, :2], axis=1)
+        self.assertGreater(err.max(), 0.2)  # decimetres, i.e. the bug was real
+
+
+class _QuietLog:
+    def info(self, *_):
+        pass
+
+    def warning(self, *_):
+        pass
+
+
+class AzimuthTimeTest(unittest.TestCase):
+    """Per-point times from the sweep geometry: clockwise from the lidar +x,
+    seam wherever the driver splits the frame, period from the stamps."""
+
+    @staticmethod
+    def _sweep(seam_deg, period, n=6000, cw=True, seed=0):
+        rng = np.random.default_rng(seed)
+        az = rng.uniform(0.0, 360.0, n)
+        r = rng.uniform(2.0, 20.0, n)
+        sign = -1.0 if cw else 1.0
+        xyz = np.c_[r * np.cos(np.radians(az)), sign * r * np.sin(np.radians(az)),
+                    rng.uniform(-1, 1, n)]
+        u = (seam_deg - az) % 360.0
+        tau = -u / 360.0 * period
+        # host-stamp jitter: late by 0-8 ms, 10 % of points late by 30 ms
+        jitter = rng.uniform(0.0, 0.008, n) + (rng.uniform(0, 1, n) < 0.1) * 0.03
+        stamps = tau + jitter
+        stamps -= stamps.max()  # header = latest stamp
+        return xyz, tau, stamps
+
+    def _node(self, source="auto"):
+        node = _node(deskew_time_source=source)
+        node.get_logger = lambda: _QuietLog()
+        return node
+
+    def test_recovers_true_times_through_the_jitter_for_any_seam(self):
+        for seam in (0.0, 180.0, 37.0):
+            xyz, tau, stamps = self._sweep(seam, 0.0995)
+            node = self._node()
+            got = node._azimuth_times(xyz, stamps)
+            self.assertLess(np.abs(got - tau).max(), 0.0015, msg=f"seam {seam}")
+            self.assertGreater(np.abs(stamps - tau).max(), 0.02)  # the stamps were worse
+            self.assertEqual(node._deskew_time_mode, "azimuth")
+
+    def test_non_clockwise_sweep_keeps_the_stamps(self):
+        xyz, tau, stamps = self._sweep(0.0, 0.1, cw=False)
+        node = self._node()
+        got = node._azimuth_times(xyz, stamps)
+        np.testing.assert_array_equal(got, stamps)
+        self.assertEqual(node._deskew_time_mode, "timestamp")
+
+    def test_tiny_clouds_keep_the_stamps(self):
+        xyz, tau, stamps = self._sweep(0.0, 0.1, n=50)
+        node = self._node()
+        np.testing.assert_array_equal(node._azimuth_times(xyz, stamps), stamps)
 
 
 if __name__ == "__main__":
