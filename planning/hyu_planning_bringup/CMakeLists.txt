@@ -9,6 +9,7 @@ install(PROGRAMS
   scripts/skidpad_director.py
   scripts/dssi_state.py
   scripts/inspection_mission.py
+  scripts/vehicle_state.py
   DESTINATION lib/${PROJECT_NAME})
 
 ament_package()

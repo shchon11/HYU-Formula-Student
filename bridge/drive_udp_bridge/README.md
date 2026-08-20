@@ -41,6 +41,13 @@ packet = struct.pack('<ffBB', speed, steering_angle, 1, autonomous_enable)
 `autonomous_enable=0`으로 전송합니다. 이 마지막 바이트는 자율주행 스위치 상태만
 나타내며 주행 명령 watchdog과 독립적입니다.
 
+스위치 **OFF→ON 전환**에서는 먼저 SLAM 지도를 초기화하고(`map_reset_service`,
+기본 `/graph_slam/reset`, `std_srvs/Trigger`) 그 응답이 `success`일 때에만
+`autonomous_enable=1`로 올립니다 — 버튼을 누르는 순간 깨끗한 지도에서 주행이
+시작되도록. 응답이 없거나 실패하면 0을 유지하며 `map_reset_timeout_sec`마다
+재시도합니다(로그 ERROR). **ON→OFF 전환은 즉시** 0입니다. SLAM 없이 벤치에서
+쓸 때는 `require_map_reset: false`로 즉시 1이 되게 할 수 있습니다.
+
 다음 경우에는 `speed=0.0`, `steering_angle=0.0`을 전송합니다.
 
 - 자율주행 스위치가 OFF인 경우
@@ -71,6 +78,9 @@ AS 상태를 받지 못했거나 `auto_state_timeout_sec`를 초과하면 스위
 | `send_rate_hz` | `100.0` | Timer UDP 송신 주기, Hz |
 | `command_timeout_sec` | `0.2` | 명령 수신 watchdog, s |
 | `auto_state_timeout_sec` | `0.5` | 자율주행 상태 수신 watchdog, s |
+| `map_reset_service` | `/graph_slam/reset` | OFF→ON 전환 시 먼저 호출하는 지도 초기화 서비스 (`std_srvs/Trigger`) |
+| `map_reset_timeout_sec` | `5.0` | 초기화 응답 대기/재시도 주기, s |
+| `require_map_reset` | `true` | false면 초기화 없이 즉시 1 (벤치용) |
 
 기본 `ecu_ip`와 `ecu_port`는 의도적으로 사용할 수 없는 값입니다. 실제 ECU 주소를
 입력하지 않으면 노드는 오류를 출력하고 종료하므로 잘못된 장비로 송신하지 않습니다.

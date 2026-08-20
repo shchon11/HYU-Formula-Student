@@ -44,6 +44,7 @@ def test_command_timeout_zeros_motion_but_keeps_autonomous_switch_on():
             Parameter('send_rate_hz', value=100.0),
             Parameter('command_timeout_sec', value=0.15),
             Parameter('auto_state_timeout_sec', value=1.0),
+            Parameter('require_map_reset', value=False),
         ]
     )
 
@@ -99,6 +100,7 @@ def test_non_driving_state_gates_fresh_command():
             Parameter('send_rate_hz', value=100.0),
             Parameter('command_timeout_sec', value=1.0),
             Parameter('auto_state_timeout_sec', value=1.0),
+            Parameter('require_map_reset', value=False),
         ]
     )
 
@@ -150,6 +152,7 @@ def test_driving_state_sets_switch_byte_without_command():
             Parameter('send_rate_hz', value=100.0),
             Parameter('command_timeout_sec', value=1.0),
             Parameter('auto_state_timeout_sec', value=1.0),
+            Parameter('require_map_reset', value=False),
         ]
     )
 
@@ -166,3 +169,130 @@ def test_driving_state_sets_switch_byte_without_command():
     assert packets
     assert all(struct.unpack('<ffBB', packet) == (0.0, 0.0, 1, 1)
                for packet in packets)
+
+
+class _FakeSlam:
+    """A /graph_slam/reset stand-in that records calls and answers on request."""
+
+    def __init__(self, success=True):
+        from rclpy.node import Node
+        from std_srvs.srv import Trigger
+        self.node = Node('fake_graph_slam')
+        self.calls = 0
+        self.success = success
+        self.node.create_service(Trigger, '/graph_slam/reset', self._handle)
+
+    def _handle(self, request, response):
+        self.calls += 1
+        response.success = self.success
+        response.message = 'fake reset'
+        return response
+
+
+def _collect_with(nodes, receiver, duration_sec):
+    packets = []
+    deadline = time.monotonic() + duration_sec
+    while time.monotonic() < deadline:
+        for node in nodes:
+            rclpy.spin_once(node, timeout_sec=0.005)
+        while True:
+            try:
+                packet, _ = receiver.recvfrom(64)
+                packets.append(packet)
+            except BlockingIOError:
+                break
+    return packets
+
+
+def _gated_bridge(receiver_port, timeout=0.3):
+    return DriveUdpBridge(
+        parameter_overrides=[
+            Parameter('ecu_ip', value='127.0.0.1'),
+            Parameter('ecu_port', value=receiver_port),
+            Parameter('local_bind_ip', value='127.0.0.1'),
+            Parameter('local_bind_port', value=0),
+            Parameter('send_rate_hz', value=100.0),
+            Parameter('command_timeout_sec', value=1.0),
+            Parameter('auto_state_timeout_sec', value=1.0),
+            Parameter('require_map_reset', value=True),
+            Parameter('map_reset_timeout_sec', value=timeout),
+        ]
+    )
+
+
+def test_switch_on_raises_autonomous_only_after_map_reset_and_off_drops_at_once():
+    receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    receiver.bind(('127.0.0.1', 0))
+    receiver.setblocking(False)
+    receiver_port = receiver.getsockname()[1]
+
+    rclpy.init()
+    slam = _FakeSlam(success=True)
+    node = _gated_bridge(receiver_port)
+    try:
+        # let the client discover the service
+        _collect_with([node, slam.node], receiver, 0.3)
+        state = CanState()
+        state.as_state = CanState.AS_DRIVING
+        node._on_auto_state(state)
+        packets = _collect_with([node, slam.node], receiver, 0.3)
+        # ON -> OFF: immediate
+        state.as_state = CanState.AS_READY
+        node._on_auto_state(state)
+        off_packets = _collect_with([node, slam.node], receiver, 0.05)
+    finally:
+        node.destroy_node()
+        slam.node.destroy_node()
+        rclpy.shutdown()
+        receiver.close()
+
+    assert slam.calls == 1, 'one reset per OFF->ON edge'
+    flags = [struct.unpack('<ffBB', p)[3] for p in packets]
+    assert flags[0] == 0, 'no enable before the reset answered'
+    assert flags[-1] == 1, 'enable once the reset succeeded'
+    # monotone: 0...0 then 1...1
+    first_on = flags.index(1)
+    assert all(f == 0 for f in flags[:first_on]) and all(f == 1 for f in flags[first_on:])
+    assert off_packets and all(struct.unpack('<ffBB', p)[3] == 0 for p in off_packets)
+
+
+def test_switch_on_stays_disabled_while_reset_is_refused_or_absent():
+    receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    receiver.bind(('127.0.0.1', 0))
+    receiver.setblocking(False)
+    receiver_port = receiver.getsockname()[1]
+
+    rclpy.init()
+    slam = _FakeSlam(success=False)
+    node = _gated_bridge(receiver_port, timeout=0.1)
+    try:
+        _collect_with([node, slam.node], receiver, 0.2)
+        state = CanState()
+        state.as_state = CanState.AS_DRIVING
+        node._on_auto_state(state)
+        packets = _collect_with([node, slam.node], receiver, 0.8)
+    finally:
+        node.destroy_node()
+        slam.node.destroy_node()
+        rclpy.shutdown()
+        receiver.close()
+
+    assert slam.calls >= 2, 'refused resets are retried'
+    assert packets and all(struct.unpack('<ffBB', p)[3] == 0 for p in packets)
+
+    # No service at all: still 0, no exception.
+    receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    receiver.bind(('127.0.0.1', 0))
+    receiver.setblocking(False)
+    rclpy.init()
+    node = _gated_bridge(receiver.getsockname()[1], timeout=0.1)
+    try:
+        state = CanState()
+        state.as_state = CanState.AS_DRIVING
+        node._on_auto_state(state)
+        packets = _collect_with([node], receiver, 0.3)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+        receiver.close()
+    assert packets and all(struct.unpack('<ffBB', p)[3] == 0 for p in packets)

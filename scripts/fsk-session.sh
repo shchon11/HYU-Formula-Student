@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # fsk-session.sh — shared tmux-session plumbing for the 3-step run flow.
 #
-# Sourced by race.sh (step 1, sim), fsk.sh (step 1, vehicle), stack.sh
-# (step 2) and mission.sh (step 3). All four drive ONE tmux session
+# Sourced by sim.sh (step 1, sim), fsk.sh (step 1, vehicle), stack.sh
+# (step 2), mission.sh (step 3) and race.sh (vehicle, all three). All drive ONE tmux session
 # ($SESSION); this file owns everything they must agree on: the session
 # name, the environment line every pane starts with, the wait snippets,
 # and the tmux-environment variables that carry state between the steps:
@@ -77,7 +77,7 @@ fsk_session_exists() { tmux has-session -t "$SESSION" 2>/dev/null; }
 
 fsk_require_session() {
   if ! fsk_session_exists; then
-    echo "fsk: no '$SESSION' session — run step 1 first: 'race <track> sim' (sim) or 'fsk' (vehicle)." >&2
+    echo "fsk: no '$SESSION' session — run step 1 first: 'sim <track>' (sim), 'fsk' (vehicle), or 'race <mission>' for the whole vehicle pipeline." >&2
     exit 1
   fi
 }

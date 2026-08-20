@@ -11,6 +11,7 @@
 
   <exec_depend>ackermann_msgs</exec_depend>
   <exec_depend>hyu_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>rclpy</exec_depend>

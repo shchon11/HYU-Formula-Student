@@ -16,15 +16,30 @@
 
 ## ⚡ Quick Start — 3단계 실행
 
-실행은 **환경 → 스택 → 미션** 세 단계입니다. 실차 절차와 sim 절차가 1단계만 다르고
-2·3단계는 동일합니다. **3단계 전에는 차가 물리적으로 못 움직입니다** —
-`mission`만이 `/vehicle/set_mission`을 호출해 AS_DRIVING으로 만듭니다.
+**실차는 한 줄**입니다:
+
+```bash
+race trackdrive 10        # 센서+perception → vehicle state + ECU 브리지 → INS+SLAM+planning+control → 미션 ARM
+race skidpad 2 | race acceleration | race autocross | race dlc | race inspection
+mission go | mission halt # AS 버튼 대용 (물리 버튼 드라이버가 붙기 전까지) — ON이면 SLAM 지도 초기화 후 ECU enable, OFF는 즉시 해제
+race status | race attach | race stop
+```
+
+이 뒤로 `/vehicle/cmd`에는 진짜 주행 명령이 흐르고, **실제로 움직일지는 ECU가 브리지의
+autonomous-enable 바이트로 판단**합니다: `/vehicle/as_state`가 AS_DRIVING(= AS 버튼 ON)일 때만 1이고,
+OFF→ON마다 브리지가 먼저 `/graph_slam/reset`으로 지도를 비운 뒤에야 1을 올립니다(ON→OFF는 즉시 0).
+`/vehicle/as_state`·`/vehicle/set_mission`·`reset`·`ebs`는 실차에서 `vehicle_state.py`(hyu_planning_bringup)가
+제공합니다 — sim의 race-car 플러그인과 같은 계약.
+
+단계별로는 **환경 → 스택 → 미션** 세 단계입니다(`race <미션>`이 이 셋을 순서대로 실행). 실차와 sim은
+1단계만 다르고 2·3단계는 동일합니다. **3단계 전에는 차가 못 움직입니다** —
+`mission`만이 `/vehicle/set_mission`을 호출해 미션을 고르고, 실차는 거기에 AS 버튼이 더해집니다.
 
 ```bash
 # ① 환경 — 하나만 선택
-race                      # sim: small_track + YOLO+LiDAR perception (기본)
-race small_track sim      # sim: Gazebo ground-truth 콘 (YOLO 없음 — 가볍고 빠름)
-race skidpad real         # 트랙만 여기서 고름 (eufs_tracks/csv/ 이름). 미션은 ③에서
+sim                       # sim: small_track + YOLO+LiDAR perception (기본)
+sim small_track sim       # sim: Gazebo ground-truth 콘 (YOLO 없음 — 가볍고 빠름)
+sim skidpad real          # 트랙만 여기서 고름 (eufs_tracks/csv/ 이름). 미션은 ③에서
 fsk                       # 실차: 센서 드라이버 + perception (RViz는 'fsk rviz'로 opt-in)
 
 # ② 스택 — INS + SLAM + planning + control, STANDBY로 대기
@@ -43,13 +58,14 @@ mission inspection        # 제22조 검차 (잭 스탠드 위 구동/조향 시
 
 ```bash
 mission status   # state/lap/AS/DSSI 한 번에 확인
+mission go/halt  # 실차 AS 버튼 대용 (ON: 지도 초기화 → ECU enable / OFF: 즉시 해제)
 mission stop     # EBS — 긴급 제동
 mission reset    # standby 복귀: 차 원위치 + INS 재시작 + planning 재기동
-race attach      # 세션 재접속        race stop — 전부 종료 (모든 단계)
-race perception  # (독립 모드) 인지 평가 — planner 없이 teleop 주행 + provenance별 채점
+race attach      # 세션 재접속        race stop — 전부 종료 (모든 단계; sim은 'sim stop')
+sim perception   # (독립 모드) 인지 평가 — planner 없이 teleop 주행 + provenance별 채점
 ```
 
-**백그라운드 실행**: ①에 `bg`를 붙이면(`race small_track sim bg norviz` / `fsk bg`) attach 없이
+**백그라운드 실행**: ①에 `bg`를 붙이면(`sim small_track sim bg norviz` / `fsk bg` / `race trackdrive bg`) attach 없이
 세션만 만듭니다 — `stack`/`mission`은 원래 attach하지 않으므로 이후 전 과정을 터미널에서 그대로
 진행하고, 필요할 때만 `race attach`(빠져나오기 Ctrl-b d). TTY 없는 환경(nohup/CI)은 자동 detach.
 단, 완전 헤드리스에서 real perception은 GPU LiDAR 때문에 GPU X 서버(DISPLAY)가 필요합니다 —
@@ -315,12 +331,13 @@ source ~/fsk/src/scripts/fsk-shellrc
 
 | 명령 | 단계 | 역할 |
 |---|---|---|
-| `race [track] [sim\|real] [bg] [norviz]` | ① | sim + perception (tmux 세션 시작). `race stop`(전체 종료) / `race attach` |
-| `fsk [bg] [rviz]` | ① | 실차 센서 + perception — sim 대신 (드라이버 브링업은 아직 스텁) |
+| `race <mission> [laps] [step-1 args]` | ①②③ | **실차 원샷**: fsk → vehicle_state + ECU 브리지 → stack → mission ARM. `race stop`(전체 종료) / `race attach` / `race status` |
+| `sim [track] [sim\|real] [bg] [norviz]` | ① | sim + perception (tmux 세션 시작). `sim stop` / `sim attach` |
+| `fsk [bg] [rviz]` | ① | 실차 센서 + perception — sim 대신 |
 | `lidar` / `cam` / `sbg [odom]` | ①′ | **센서 드라이버 하나만** 현재 터미널에서 (Ctrl+C로 종료) — 벤치 점검용. `fsk`와 같은 `sensors.launch.py`라 토픽·TF 동일. `sbg odom`은 브리지·wheel_odometry까지, `gnss`는 SBG 대시보드. 런치 인자 통과: `cam tf:=false`, `sbg ntrip:=false` |
 | `stack [args]` | ② | INS + SLAM + planning + control, STANDBY |
-| `mission <이름> [laps]` | ③ | 미션 ARM — trackdrive/autocross/skidpad/acceleration/inspection · `stop`(EBS)/`reset`/`status` |
-| `race perception [track]` | — | 인지 평가 모드 — planner 없이 sim+perception+SLAM+teleop, provenance별 채점 |
+| `mission <이름> [laps]` | ③ | 미션 ARM — trackdrive/autocross/skidpad/acceleration/dlc/inspection · `go`/`halt`(AS 버튼 대용) · `stop`(EBS)/`reset`/`status` |
+| `sim perception [track]` | — | 인지 평가 모드 — planner 없이 sim+perception+SLAM+teleop, provenance별 채점 |
 | `fsb` / `fskcd` | — | 빌드 + 소싱 / 워크스페이스로 cd |
 | `simfull` / `pbring` / `teleop` | — | 모듈 단독: sim+perception / planning 전체 / 키보드 주행 |
 | `resetcar` / `slamreset` / `rv` | — | 차 원위치 / 매핑 재시작 / RViz |
@@ -338,9 +355,9 @@ source ~/fsk/src/scripts/fsk-shellrc
 ### 🏁 Trackdrive / Autocross
 랩 1은 local 경로로 탐험·매핑, 랩 완주 후 global 레이스라인으로 핸드오프.
 ```bash
-race                     # ① small_track, CUDA YOLO+LiDAR perception (기본)
-race peanut sim          #   다른 트랙(eufs_tracks/csv/ 이름) + Gazebo GT 콘 (YOLO 없음 — 가볍고 빠름)
-race peanut sim gazebo_gui:=true    # 트랙/모드 뒤 인자는 simulation.launch.py로 전달
+sim                      # ① small_track, CUDA YOLO+LiDAR perception (기본)
+sim peanut sim           #   다른 트랙(eufs_tracks/csv/ 이름) + Gazebo GT 콘 (YOLO 없음 — 가볍고 빠름)
+sim peanut sim gazebo_gui:=true     # 트랙/모드 뒤 인자는 simulation.launch.py로 전달
 stack                    # ② standby
 mission trackdrive 10    # ③ 10랩 주행 후 정지 (기본 10)
 mission autocross        #   또는 autocross: 1랩(지정 가능), 목표 랩에서 어떤 상태에서든 정지
@@ -354,7 +371,7 @@ mission autocross        #   또는 autocross: 1랩(지정 가능), 목표 랩�
 없이 local planner만, skidpad_director가 미션 단계(진입→우측 원×N→좌측 원×N→탈출→정지)별로
 콘 피드를 게이트.
 ```bash
-race skidpad_kase2026        # ① 넓은 버전 (KASE 2026). 좁은 표준은 'race skidpad'
+sim skidpad_kase2026         # ① 넓은 버전 (KASE 2026). 좁은 표준은 'sim skidpad'
 stack                        # ②
 mission skidpad 2            # ③ 원별 바퀴 수 (우×2 → 좌×2)
 ```
@@ -376,7 +393,7 @@ mission skidpad 2            # ③ 원별 바퀴 수 (우×2 → 좌×2)
 `brake_acceleration_mps2`로 자동 제동해 braking zone 안에서 멈춥니다. dlc_track 같은
 열린 코리도 트랙도 같은 프로필로 달립니다.
 ```bash
-race accel               # ① 'acceleration' 트랙 (accel 약칭 허용)
+sim accel                # ① 'acceleration' 트랙 (accel 약칭 허용)
 stack                    # ②
 mission acceleration     # ③ 콘 끝나면 제동, 정지 확인 후 Finished 보고
 ```
@@ -402,7 +419,7 @@ x=+20에서 끝나고 경로는 그 1 m쯤 뒤에서 무효화되므로, 하드 
 ### 🔬 Perception 평가 (per-provenance 채점)
 
 ```bash
-race perception [track]     # planner/controller 없음 — pane ③ teleop으로 직접 주행
+sim perception [track]      # planner/controller 없음 — pane ③ teleop으로 직접 주행
 ```
 
 pane 5개: ①sim+perception(provenance 마커 on) ②graph_slam ③teleop(AMI_MANUAL 자동 ARM)
@@ -421,10 +438,10 @@ RTF 보정 불필요).
 센서와 차량이 공유하므로 **포인트 클라우드에 보이는 범프가 곧 차가 넘는 범프**입니다.
 
 ```bash
-race small_track sim terrain:=true                     # 기본 ~2 cm 노면 요철
-race small_track sim terrain:=true terrain_height_mean:=0.05   # 지면 제거(RANSAC) 스트레스
-race small_track sim terrain:=true terrain_seed:=11    # 다른 노면 (시드만 바꾸면 됨)
-race small_track sim road_noise:=false                 # 노면 진동 노이즈 끄기
+sim small_track sim terrain:=true                      # 기본 ~2 cm 노면 요철
+sim small_track sim terrain:=true terrain_height_mean:=0.05   # 지면 제거(RANSAC) 스트레스
+sim small_track sim terrain:=true terrain_seed:=11    # 다른 노면 (시드만 바꾸면 됨)
+sim small_track sim road_noise:=false                 # 노면 진동 노이즈 끄기
 ```
 
 | 인자 | 뜻 | 기본 |

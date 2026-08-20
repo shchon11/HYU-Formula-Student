@@ -11,6 +11,10 @@
 #   mission inspection            # 제22조 검차: axle spin + steering sine on
 #                                 # jacks; brake test via /inspection/brake_test
 #
+#   mission go | halt             # AS button stand-in (until the physical
+#                                 # toggle is wired): go = ON -> the ECU bridge
+#                                 # resets the SLAM map, then enables; halt =
+#                                 # OFF -> enable drops at once
 #   mission stop                  # EBS — emergency-brake the run
 #   mission reset                 # back to standby: clear mission, reset car
 #                                 # pose, respawn the planning graph fresh
@@ -33,7 +37,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/fsk-session.sh"
 
-usage() { sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 CMD="${1:-}"
 ARG="${2:-}"
@@ -230,6 +234,16 @@ case "$CMD" in
   inspection|insp)
     arm "inspection" 16 inspection \
       "제22조: axle slow-spin + steering sine 25-30 s on jack stands. DSB check: 'ros2 service call /inspection/brake_test std_srvs/srv/Trigger'. Afterwards: 'mission reset'."
+    ;;
+  go|on)
+    out="$(svc /vehicle/set_as_button std_srvs/srv/SetBool "{data: true}")"
+    echo "$out" | grep -q "success=True" && echo "mission: AS button ON — bridge resets the map, then enables the ECU." \
+      || { echo "mission: could not set the AS button — is vehicle_state up? ($out)" >&2; exit 1; }
+    ;;
+  halt|off)
+    out="$(svc /vehicle/set_as_button std_srvs/srv/SetBool "{data: false}")"
+    echo "$out" | grep -q "success=True" && echo "mission: AS button OFF — ECU autonomous enable dropped." \
+      || { echo "mission: could not clear the AS button — is vehicle_state up? ($out)" >&2; exit 1; }
     ;;
   stop|ebs)
     require_stack

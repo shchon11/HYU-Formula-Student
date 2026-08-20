@@ -14,3 +14,12 @@ drive_udp_bridge:
     send_rate_hz: 100.0
     command_timeout_sec: 0.2
     auto_state_timeout_sec: 0.5
+
+    # OFF->ON edge of the autonomous switch (/vehicle/as_state -> AS_DRIVING):
+    # reset the SLAM map first, raise the autonomous-enable byte only after the
+    # service answered success (retried every map_reset_timeout_sec while the
+    # switch stays ON). ON->OFF drops the byte immediately. require_map_reset
+    # false = raise at once (bench without SLAM).
+    map_reset_service: /graph_slam/reset
+    map_reset_timeout_sec: 5.0
+    require_map_reset: true

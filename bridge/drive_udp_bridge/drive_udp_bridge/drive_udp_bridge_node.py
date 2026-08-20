@@ -21,6 +21,7 @@ import rclpy
 from rclpy.clock import Clock, ClockType
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from std_srvs.srv import Trigger
 
 
 class DriveUdpBridge(Node):
@@ -41,6 +42,14 @@ class DriveUdpBridge(Node):
         self.declare_parameter('send_rate_hz', 100.0)
         self.declare_parameter('command_timeout_sec', 0.2)
         self.declare_parameter('auto_state_timeout_sec', 0.5)
+        # OFF->ON edge of the autonomous switch: reset the SLAM map first and
+        # raise the autonomous-enable byte only once that succeeded, so every
+        # run starts from a clean map the instant the car is released. ON->OFF
+        # drops the byte immediately, no service involved. require_map_reset
+        # false = raise immediately (bench, no SLAM running).
+        self.declare_parameter('map_reset_service', '/graph_slam/reset')
+        self.declare_parameter('map_reset_timeout_sec', 5.0)
+        self.declare_parameter('require_map_reset', True)
 
         self._config = BridgeConfig(
             command_topic=str(self.get_parameter('command_topic').value).strip(),
@@ -60,8 +69,31 @@ class DriveUdpBridge(Node):
             ),
         )
         validate_config(self._config)
+        self._map_reset_service = str(
+            self.get_parameter('map_reset_service').value
+        ).strip()
+        self._map_reset_timeout_sec = float(
+            self.get_parameter('map_reset_timeout_sec').value
+        )
+        self._require_map_reset = bool(
+            self.get_parameter('require_map_reset').value
+        )
+        if self._require_map_reset and not self._map_reset_service:
+            raise ValueError('map_reset_service must not be empty when require_map_reset')
+        if self._map_reset_timeout_sec <= 0.0:
+            raise ValueError('map_reset_timeout_sec must be greater than zero')
 
         self._lock = threading.Lock()
+        # Autonomous-enable byte actually sent: follows the switch down at
+        # once, follows it up only through a successful map reset.
+        self._autonomous_armed = False
+        self._reset_future = None
+        self._reset_requested_at = float('-inf')
+        self._reset_client = (
+            self.create_client(Trigger, self._map_reset_service)
+            if self._require_map_reset else None
+        )
+        self._last_reset_log_time = float('-inf')
         self._watchdog = CommandWatchdog(self._config.command_timeout_sec)
         self._auto_state_watchdog = AutonomousStateWatchdog(
             self._config.auto_state_timeout_sec
@@ -105,7 +137,7 @@ class DriveUdpBridge(Node):
         self.get_logger().info(
             'Sending %s -> %s:%d at %.3f Hz; auto state %s; '
             'local UDP bind %s:%d; command timeout %.3f s; '
-            'auto-state timeout %.3f s'
+            'auto-state timeout %.3f s; autonomous enable on OFF->ON %s'
             % (
                 self._config.command_topic,
                 self._config.ecu_ip,
@@ -116,6 +148,9 @@ class DriveUdpBridge(Node):
                 local_endpoint[1],
                 self._config.command_timeout_sec,
                 self._config.auto_state_timeout_sec,
+                ('after %s succeeds (timeout %.1f s)'
+                 % (self._map_reset_service, self._map_reset_timeout_sec))
+                if self._require_map_reset else 'immediately (no map reset)',
             )
         )
 
@@ -135,11 +170,89 @@ class DriveUdpBridge(Node):
         with self._lock:
             self._auto_state_watchdog.update(auto_enabled)
 
+    def _log_reset(self, level: str, message: str, period_sec: float = 2.0) -> None:
+        now = time.monotonic()
+        if now - self._last_reset_log_time < period_sec:
+            return
+        self._last_reset_log_time = now
+        getattr(self.get_logger(), level)(message)
+
+    def _autonomous_byte(self, switch_on: bool) -> bool:
+        """Autonomous-enable to send for the current switch state.
+
+        Switch OFF (or stale): drop immediately and forget any pending reset.
+        Switch ON: already armed -> stay armed; else arm only once the SLAM map
+        reset service answered success (retried after map_reset_timeout_sec
+        while the switch stays ON), or at once when require_map_reset is off.
+        """
+        if not switch_on:
+            if self._autonomous_armed:
+                self.get_logger().info('autonomous switch OFF -> autonomous enable 0')
+            self._autonomous_armed = False
+            self._reset_future = None
+            return False
+        if self._autonomous_armed:
+            return True
+        if not self._require_map_reset:
+            self._autonomous_armed = True
+            self.get_logger().info('autonomous switch ON -> autonomous enable 1 (no map reset)')
+            return True
+
+        now = time.monotonic()
+        if self._reset_future is not None:
+            if self._reset_future.done():
+                response = None
+                try:
+                    response = self._reset_future.result()
+                except Exception as error:  # noqa: BLE001 - report and retry
+                    self._log_reset('error', 'map reset call failed: %s' % error)
+                self._reset_future = None
+                if response is not None and response.success:
+                    self._autonomous_armed = True
+                    self.get_logger().info(
+                        'autonomous switch ON: map reset OK (%s) -> autonomous enable 1'
+                        % (response.message or self._map_reset_service)
+                    )
+                    return True
+                if response is not None:
+                    self._log_reset(
+                        'error',
+                        'map reset refused (%s); autonomous enable stays 0, retrying'
+                        % response.message,
+                    )
+            elif now - self._reset_requested_at > self._map_reset_timeout_sec:
+                self._log_reset(
+                    'error',
+                    'map reset %s not answered within %.1f s; autonomous enable '
+                    'stays 0, retrying' % (self._map_reset_service, self._map_reset_timeout_sec),
+                )
+                self._reset_future = None
+            else:
+                return False
+        if self._reset_future is None and now - self._reset_requested_at > 0.5:
+            # (re)issue the reset
+            self._reset_requested_at = now
+            if self._reset_client.service_is_ready():
+                self._reset_future = self._reset_client.call_async(Trigger.Request())
+                self.get_logger().info(
+                    'autonomous switch ON: resetting the SLAM map (%s) before enabling'
+                    % self._map_reset_service
+                )
+            else:
+                self._log_reset(
+                    'error',
+                    'autonomous switch ON but %s is not available; autonomous enable '
+                    'stays 0 (is graph SLAM up? require_map_reset:=false to bypass)'
+                    % self._map_reset_service,
+                )
+        return False
+
     def _on_send_timer(self) -> None:
         with self._lock:
             command = self._watchdog.snapshot()
-            auto_enabled = self._auto_state_watchdog.enabled()
+            switch_on = self._auto_state_watchdog.enabled()
 
+        auto_enabled = self._autonomous_byte(switch_on)
         autonomous_enable = int(auto_enabled)
         motion_command_valid = auto_enabled and command.enable == 1
         speed = command.speed if motion_command_valid else 0.0

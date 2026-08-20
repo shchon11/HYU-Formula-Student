@@ -3,8 +3,9 @@
 #
 #   fsk [bg] [rviz] [sensor args...] [extra perception args...]
 #   fsk stop | attach        # same session as the sim flow
+# ('race <mission>' runs this plus steps 2/3 in one go.)
 #
-# Vehicle counterpart of 'race <track> sim' — same session name, so steps 2/3
+# Vehicle counterpart of 'sim <track>' — same session name, so steps 2/3
 # ('stack', 'mission …') work identically on top of either. RViz is OFF by
 # default here (pit laptop opt-in: 'fsk rviz'); background with 'bg'.
 #

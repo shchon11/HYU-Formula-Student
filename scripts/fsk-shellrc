@@ -167,16 +167,21 @@ rbp() { ros2 bag play "$@"; }
 bagrestamp() { python3 "$EUFS_MASTER/src/scripts/bagrestamp.py" "$@"; }
 
 # --- run: the 3-step flow ------------------------------------------------------
-# Nothing drives until step 3 — the vehicle ignores commands until a mission
-# is armed.
-#   step 1  race [track] [sim|real] [bg] [norviz]   sim + perception
+# Vehicle, one shot:  race <mission> [laps] [step-1 args]   sensors+perception ->
+#   vehicle state + ECU bridge -> INS+SLAM+planning+control -> mission ARMED.
+#   The car moves only while the AS button is ON (ECU gate); the bridge resets
+#   the SLAM map on every OFF->ON before raising the enable byte.
+#   'mission go' / 'mission halt' stand in for the button until it is wired.
+# Step by step (vehicle or sim) — nothing drives until step 3:
+#   step 1  sim [track] [sim|real] [bg] [norviz]    sim + perception
 #           fsk [bg] [rviz]                         vehicle sensors + perception
 #   step 2  stack [args]                            INS+SLAM+planning+control (standby)
 #   step 3  mission trackdrive [laps=10] | autocross [laps=1]
-#           mission skidpad [laps-per-circle=2] | acceleration
-#           mission stop (EBS) | reset | status
-# Stop everything: race stop | re-attach: race attach
+#           mission skidpad [laps-per-circle=2] | acceleration | dlc | inspection
+#           mission go | halt (AS button) | stop (EBS) | reset | status
+# Stop everything: race stop (or sim stop) | re-attach: race attach
 race()    { "$EUFS_MASTER/src/scripts/race.sh" "$@"; }
+sim()     { "$EUFS_MASTER/src/scripts/sim.sh" "$@"; }
 fsk()     { "$EUFS_MASTER/src/scripts/fsk.sh" "$@"; }
 # One sensor driver at a time, in THIS terminal (Ctrl+C stops it) -- for
 # bench checks and bringup without the whole step 1. Same sensors.launch.py as
