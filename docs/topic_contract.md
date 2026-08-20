@@ -36,13 +36,18 @@ upstream 기본값을 유지한다. 디버그/시각화는 `<subsystem>/debug/*`
 
 | 변환 | 출처 |
 |---|---|
-| `base_footprint -> rslidar` | `config/vehicle_mount.yaml` (마운트 실측) |
-| `base_footprint -> zed_left_camera_optical_frame` | 위 마운트 ∘ 활성 extrinsic의 역변환 |
+| `base_footprint -> zed_left_camera_optical_frame` | 활성 extrinsic의 `ground:` 블록 (카메라 높이/롤/피치, `solve_mount.py`가 캘리 세션의 라이다 지면에서 산출) |
+| `base_footprint -> rslidar` | 위 카메라 포즈 ∘ 활성 extrinsic |
+| `base_footprint -> zed_camera_link` | 같은 카메라 포즈를 ZED URDF 루트에서 재표현 (오른쪽 캠 등 wrapper 프레임 접합) |
 
-카메라 위치는 **설정하지 않고 합성한다** — 마운트가 라이다를 앵커하고,
-캘리브레이션이 그 라이다 기준 카메라 위치를 준다. 그래서 ZED wrapper의 자체 TF
-발행은 꺼둔다(같은 프레임에 부모가 둘이면 조용히 어긋난다). 라이다는 노즈,
-카메라는 메인후프라 둘은 ~1.7 m 떨어져 있다.
+**`base_footprint`는 카메라로 정의한다**(2026-08-17~): ZED 스테레오 중심 바로
+아래 지면점, +x = 카메라 정면을 지면에 투영, +z = 지면 법선. **후축이 아니다.**
+줄자 값이 하나도 없다 — 캘리브레이션(extrinsic)과 같은 캡처의 라이다 지면
+평면만 입력이다. 라이다를 옮기면 → 재캘리 → 전부 따라온다. `ground:` 블록이
+없는 옛 extrinsic은 `config/vehicle_mount.yaml`(줄자 폴백)을 쓰고 로그에
+FALLBACK 이라 찍힌다. ZED wrapper의 자체 TF 발행은 꺼둔다(같은 프레임에
+부모가 둘이면 조용히 어긋난다). 라이다는 노즈(x≈+1.72, z≈0.54, yaw≈-83°),
+카메라는 메인후프(x=0, z≈0.95).
 
 ## Perception (`/perception`)
 
@@ -72,7 +77,8 @@ upstream 기본값을 유지한다. 디버그/시각화는 `<subsystem>/debug/*`
 | `/localization/gnss_odom` | nav_msgs/Odometry | sbg_odometry_bridge | **없음** (아래 주 참조) | Reliable |
 | `/localization/wheel_odom` | hyu_msgs/CarState | wheel_odometry | hyu_localization, perception(deskew), tmpc_state_bridge | Reliable |
 | `/initialpose` | PoseWithCovarianceStamped | RViz(수동 재국지화) | hyu_localization | 표준 |
-| `/localization/ins_odom` | hyu_msgs/CarState | sbg_odometry_bridge | graph_slam 모션 입력 (기본 `slam_motion_topic`) | Reliable |
+| `/localization/ins_odom` | hyu_msgs/CarState | sbg_odometry_bridge | graph_slam 모션 입력 (기본 `slam_motion_topic`). pose.covariance[0/7/35]가 단(tier)별 σ; σ≥`odom_invalid_sigma`(10 m)는 "포즈 무효 선언"(hold·블라인드 갭 첫 메시지) | Reliable |
+| `/sbg_bridge/status` | diagnostic_msgs/DiagnosticArray | sbg_odometry_bridge | **실차에서는 없음** (sim rqt GUI만). `motion_source` 키 = ekf/raw_gnss_rtk/raw_gnss_doppler/wheels/zupt/hold/fault, ERROR 레벨 = FAULT. 주행 억제/EBS 게이트가 이걸 읽어야 하지만 아직 소비자 없음 | Reliable |
 | `/localization/drift_odom` | hyu_msgs/CarState | drift_odom(평가 도구) | evaluate_slam | 도구 |
 | `/localization/debug/{markers,path,status_overlay,gnss_markers,gnss_overlay}` | Marker/Path/Overlay | hyu_localization·sbg_bridge | RViz/HUD | 디버그 |
 

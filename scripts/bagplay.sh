@@ -20,14 +20,35 @@
 #     /sensors/camera/{left,right}/*        decompressed to the raw topics
 #                                           perception subscribes
 #
-# What is FAKED (both stationary, which is what these bags actually are):
-#     /vehicle/wheel_speeds                 zeros. No encoder is fitted.
-#     /sbg/ekf_nav, ekf_euler,              a NAV_POSITION fix at a fixed
-#     ekf_rot_accel_body                    anchor. The recorded SBG is NOT
-#                                           replayed: it is VERTICAL_GYRO for
-#                                           all 3643 messages, never once an
-#                                           absolute fix, so the bridge refuses
-#                                           it and SLAM gets no motion input.
+# The INS is either REPLAYED or FAKED, decided per bag (override with ins:=).
+#
+#   ins:=real        replay the bag's own /sbg/* -- the car moves exactly as it
+#                    did on the day, which is the only way step 2 and step 3 get
+#                    a meaningful workout. Needs an absolute fix in the
+#                    recording: ekf_nav solution_mode >= 3 (NAV_VELOCITY /
+#                    NAV_POSITION). The 0801 17:xx bags are solution_mode 4 with
+#                    gps_pos type 7 (RTK fixed) throughout.
+#   ins:=stationary  synthesise a NAV_POSITION fix at a fixed anchor and zero
+#                    wheel speeds. For bags whose SBG never leaves
+#                    VERTICAL_GYRO (solution_mode 1) -- the odometry bridge
+#                    correctly refuses those, so replaying them leaves SLAM with
+#                    no motion input at all and the map never builds.
+#   ins:=auto        (default) sample the bag's ekf_nav and pick.
+#
+# gnss:=off below turns off the sbg_driver only. sbg_odometry_bridge and
+# wheel_odometry come up with the 'odometry' arg regardless, so replayed /sbg/*
+# is consumed and /localization/ins_odom appears exactly as on the car.
+#
+# No encoder is fitted, so /vehicle/wheel_speeds is synthesised either way:
+# zeros in stationary mode, and in real mode back-computed from the replayed
+# INS by sbg_wheels.py (wheels:=off to leave the topic silent). Zeros on a
+# moving car are the worst of the three -- perception's LiDAR deskew reads
+# /localization/wheel_odom and would smear every sweep taken in a corner.
+#
+# What real-mode wheels cannot do: wheel_odometry fuses them with the same INS
+# they were derived from, so /localization/wheel_odom is no longer independent
+# of the INS. Good enough for deskew, useless for judging the dead-reckoning
+# fallback -- when the INS drops out here, its fallback drops out with it.
 #
 # What is NOT replayed: the bag's own /perception/* topics. Perception runs
 # live here -- that is the point -- and two publishers on /perception/cones
@@ -35,7 +56,7 @@
 #
 # The bag's TF is skipped too. It carries the ZED's internal chain rooted at
 # zed_camera_link, and this flow publishes base_footprint -> camera directly
-# from the mount and the calibration; replaying both would give one frame two
+# from the calibration (its ground block); replaying both would give one frame two
 # parents, which TF resolves silently and wrongly.
 #
 # Frames: bags recorded before the 2026-07 merge name the camera optical frame
@@ -56,16 +77,23 @@ case "${1:-start}" in
     exec tmux attach -t "$SESSION" ;;
 esac
 
-BAG=""; BG=0; RATE=1.0; LOOP=1; EXTRA=""
+BAG=""; BG=0; RATE=1.0; LOOP=1; LOOP_SET=0; EXTRA=""; INS_MODE=auto; WHEELS=on
 for tok in "$@"; do
   case "$tok" in
     bg|headless) BG=1 ;;
     rate:=*)     RATE="${tok#rate:=}" ;;
-    loop:=false|once) LOOP=0 ;;
+    loop:=false|once) LOOP=0; LOOP_SET=1 ;;
+    loop:=true)  LOOP=1; LOOP_SET=1 ;;
+    ins:=*)      INS_MODE="${tok#ins:=}" ;;
+    wheels:=*)   WHEELS="${tok#wheels:=}" ;;
     *:=*)        EXTRA="$EXTRA $tok" ;;
     *)           [ -z "$BAG" ] && BAG="$tok" || EXTRA="$EXTRA $tok" ;;
   esac
 done
+case "$INS_MODE" in
+  auto|real|stationary) ;;
+  *) echo "bagplay: ins:= must be auto, real or stationary (got '$INS_MODE')" >&2; exit 1 ;;
+esac
 
 # Default to the newest bag under $EUFS_MASTER/bag.
 if [ -z "$BAG" ]; then
@@ -103,11 +131,56 @@ if [ -n "$CAM_COMPRESSED" ]; then
   [ -n "$CAM_INFO" ] && { PLAY_TOPICS+=("$CAM_INFO")
     REMAPS+=("$CAM_INFO:=/sensors/zed/left/color/rect/camera_info"); }
 fi
-# The INS is SYNTHESISED, not replayed -- see pane 3. Recorded SBG is skipped
-# even when the bag has plenty of it, because what these bags have is
-# solution_mode 1 (VERTICAL_GYRO) from end to end: no absolute fix, which the
-# odometry bridge correctly refuses, so nothing downstream ever moves.
 [ ${#PLAY_TOPICS[@]} -gt 0 ] || { echo "bagplay: no usable sensor topics in $BAG" >&2; exit 1; }
+
+# --- INS: replay the recording, or synthesise a stationary one ----------------
+# Only the raw driver topics. /sbg_bridge/status and /localization/* are the
+# bridge's OWN output and are regenerated live; replaying them would put two
+# publishers on one topic and hide whether the bridge actually still works.
+SBG_ALL=(/sbg/ekf_nav /sbg/ekf_euler /sbg/ekf_rot_accel_body /sbg/imu_data \
+         /sbg/gps_pos /sbg/gps_vel /sbg/gps_hdt /sbg/status /sbg/utc_time)
+SBG_TOPICS=()
+for t in "${SBG_ALL[@]}"; do has "$t" && SBG_TOPICS+=("$t"); done
+
+if [ "$INS_MODE" = auto ]; then
+  INS_MODE=stationary
+  if has /sbg/ekf_nav; then
+    # solution_mode >= 3 means the EKF reached an absolute solution at least
+    # once. Sample rather than scan: a 25 GB bag takes minutes to walk, and the
+    # mode climbs early and stays there.
+    mode="$(timeout 180 python3 - "$BAG" <<'PY' 2>/dev/null
+import sys, rosbag2_py
+from rclpy.serialization import deserialize_message
+from sbg_driver.msg import SbgEkfNav
+r = rosbag2_py.SequentialReader()
+r.open(rosbag2_py.StorageOptions(uri=sys.argv[1], storage_id="sqlite3"),
+       rosbag2_py.ConverterOptions("cdr", "cdr"))
+r.set_filter(rosbag2_py.StorageFilter(topics=["/sbg/ekf_nav"]))
+best = n = 0
+while r.has_next() and n < 4000:
+    _, data, _ = r.read_next(); n += 1
+    best = max(best, deserialize_message(data, SbgEkfNav).status.solution_mode)
+    if best >= 3: break
+print(best)
+PY
+)"
+    if [ -n "$mode" ] && [ "$mode" -ge 3 ] 2>/dev/null; then INS_MODE=real; fi
+    echo "bagplay: ekf_nav solution_mode reaches ${mode:-?} -> ins:=$INS_MODE"
+  fi
+fi
+
+if [ "$INS_MODE" = real ]; then
+  [ ${#SBG_TOPICS[@]} -gt 0 ] || {
+    echo "bagplay: ins:=real but this bag has no /sbg/* topics" >&2; exit 1; }
+  PLAY_TOPICS+=("${SBG_TOPICS[@]}")
+  # Looping a replayed INS teleports the car back to the start line every wrap.
+  # A stationary INS does not care, a real one puts SLAM through a step change
+  # it has no way to model, so single-pass unless the caller insists.
+  if [ "$LOOP_SET" = 0 ] && [ "$LOOP" = 1 ]; then
+    LOOP=0
+    echo "bagplay: ins:=real -> single pass (loop:=true to override)"
+  fi
+fi
 
 # Camera optical frame, straight from the recorded image header.
 CAM_FRAME="zed_left_camera_optical_frame"
@@ -132,6 +205,12 @@ LOOP_FLAG=""; [ "$LOOP" = 1 ] && LOOP_FLAG=" --loop"
 echo "bagplay: STEP 1 — $(basename "$BAG")  (rate $RATE, $([ "$LOOP" = 1 ] && echo looping || echo 'single pass'))"
 echo "  topics: ${PLAY_TOPICS[*]}"
 echo "  camera optical frame: $CAM_FRAME"
+if [ "$INS_MODE" = real ]; then
+  echo "  INS: real (recorded /sbg/*, bridge live)"
+  echo "  wheels: $([ "$WHEELS" = off ] && echo 'off (topic silent)' || echo 'synthesised from the INS -- wheel_odom is not independent of it')"
+else
+  echo "  INS: stationary (synthesised fix, zero wheels -- car stays parked)"
+fi
 
 tmux new-session -d -s "$SESSION" -n FSK
 
@@ -153,11 +232,21 @@ if [ -n "$CAM_COMPRESSED" ]; then
     "$SRC echo '[② DECOMPRESS $CAM_COMPRESSED -> raw]'; ros2 run image_transport republish compressed raw --ros-args -r in/compressed:=$CAM_COMPRESSED -r out:=/sensors/zed/left/color/rect/image" C-m
 fi
 
-# (3) TF from the mount and the active extrinsic, plus the stopped-car encoder.
+# (3) TF from the active extrinsic (camera over ground + lidar), plus the stopped-car encoder.
 # Drivers off — the bag is the sensor.
 P_TF=$(tmux split-window -v -t "$P_BAG" -P -F '#{pane_id}')
+if [ "$INS_MODE" = stationary ]; then
+  TF_LABEL='[③ TF + stopped INS/encoder]'
+  TF_FAKES=" & sleep 3; ros2 run hyu_sensor_bringup stationary_ins.py --ros-args -p use_sim_time:=true & ros2 run hyu_sensor_bringup stationary_wheels.py --ros-args -p use_sim_time:=true"
+elif [ "$WHEELS" = off ]; then
+  TF_LABEL='[③ TF + recorded INS, no encoder]'
+  TF_FAKES=""
+else
+  TF_LABEL='[③ TF + recorded INS + encoder from INS]'
+  TF_FAKES=" & sleep 3; ros2 run hyu_sensor_bringup sbg_wheels.py --ros-args -p use_sim_time:=true"
+fi
 tmux send-keys -t "$P_TF" \
-  "$SRC echo '[③ TF + stopped INS/encoder]'; ros2 launch hyu_sensor_bringup sensors.launch.py lidar:=off camera:=off gnss:=off use_sim_time:=true camera_frame:=$CAM_FRAME & sleep 3; ros2 run hyu_sensor_bringup stationary_ins.py --ros-args -p use_sim_time:=true & ros2 run hyu_sensor_bringup stationary_wheels.py --ros-args -p use_sim_time:=true" C-m
+  "$SRC echo '$TF_LABEL'; ros2 launch hyu_sensor_bringup sensors.launch.py lidar:=off camera:=off gnss:=off use_sim_time:=true camera_frame:=$CAM_FRAME$TF_FAKES" C-m
 
 # (4) Perception, live, on the replayed sensors.
 # motion_compensation_frame:=base_footprint, not the default 'map'. map only

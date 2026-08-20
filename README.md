@@ -317,6 +317,7 @@ source ~/fsk/src/scripts/fsk-shellrc
 |---|---|---|
 | `race [track] [sim\|real] [bg] [norviz]` | ① | sim + perception (tmux 세션 시작). `race stop`(전체 종료) / `race attach` |
 | `fsk [bg] [rviz]` | ① | 실차 센서 + perception — sim 대신 (드라이버 브링업은 아직 스텁) |
+| `lidar` / `cam` / `sbg [odom]` | ①′ | **센서 드라이버 하나만** 현재 터미널에서 (Ctrl+C로 종료) — 벤치 점검용. `fsk`와 같은 `sensors.launch.py`라 토픽·TF 동일. `sbg odom`은 브리지·wheel_odometry까지, `gnss`는 SBG 대시보드. 런치 인자 통과: `cam tf:=false`, `sbg ntrip:=false` |
 | `stack [args]` | ② | INS + SLAM + planning + control, STANDBY |
 | `mission <이름> [laps]` | ③ | 미션 ARM — trackdrive/autocross/skidpad/acceleration/inspection · `stop`(EBS)/`reset`/`status` |
 | `race perception [track]` | — | 인지 평가 모드 — planner 없이 sim+perception+SLAM+teleop, provenance별 채점 |

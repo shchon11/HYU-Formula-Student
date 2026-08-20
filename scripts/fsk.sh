@@ -9,16 +9,21 @@
 # default here (pit laptop opt-in: 'fsk rviz'); background with 'bg'.
 #
 # Pane ① is hyu_sensor_bringup: RS-16 + ZED + SBG published under /sensors,
-# and the TF chain (base_footprint -> rslidar from config/vehicle_mount.yaml,
-# -> camera composed with the active extrinsic). Args of the form lidar:=,
-# camera:=, gnss:=, tf:=, mount:=, extrinsic:=, camera_frame:= are routed
-# there; anything else goes to perception in pane ②. Examples:
+# and the TF chain. base_footprint is the ground point below the ZED's stereo
+# centre (+x = camera forward); the camera pose comes from the `ground` block
+# of the active extrinsic (calib.sh writes it), and base_footprint -> rslidar
+# is composed from that plus the extrinsic. Args of the form lidar:=,
+# camera:=, gnss:=, tf:=, mount:=, extrinsic:=, camera_frame:=, ntrip:= (and
+# ntrip_*:=) are routed there; anything else goes to perception in pane ②.
+# Examples:
 #   fsk extrinsic:=~/fsk/extrinsics/2026-07-26_0223.yaml
 #   fsk gnss:=off camera:=off          # lidar-only smoke test
+#   fsk ntrip:=true                    # + RTK corrections (NGII defaults)
 #
-# Pane ① prints the composed base_footprint -> camera pose on startup: the
-# LiDAR sits on the nose and the camera on the main hoop ~1.7 m behind it, so
-# eyeball that number against the car after any re-mount or re-calibration.
+# Pane ① prints the composed base_footprint -> rslidar pose on startup: the
+# LiDAR sits on the nose ~1.7 m ahead of the hoop camera at x = 0, ~0.54 m up,
+# yaw ~ -83 deg (twisted mount) -- eyeball that after any re-mount or
+# re-calibration. If it says "FALLBACK", the extrinsic has no ground block.
 
 set -o pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,6 +48,9 @@ for tok in "$@"; do
     rviz) RVIZ="true" ;;
     # Sensor-side knobs go to pane ①; everything else is a perception arg.
     lidar:=*|camera:=*|camera_model:=*|gnss:=*|tf:=*|mount:=*|extrinsic:=*|camera_frame:=*)
+      SENSOR_EXTRA="$SENSOR_EXTRA $tok" ;;
+    # ntrip:= and every ntrip_* credential/override belong to the SBG driver.
+    ntrip:=*|ntrip_*:=*)
       SENSOR_EXTRA="$SENSOR_EXTRA $tok" ;;
     *) EXTRA="$EXTRA $tok" ;;
   esac

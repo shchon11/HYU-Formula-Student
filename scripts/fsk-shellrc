@@ -151,7 +151,20 @@ tfe() { ros2 run tf2_ros tf2_echo "$@"; }
 tfv() { cd "$EUFS_MASTER" && ros2 run tf2_tools view_frames; }
 # Bags land in $EUFS_MASTER/bag so they are not scattered over the home dir.
 rbr() { mkdir -p "$EUFS_MASTER/bag" && cd "$EUFS_MASTER/bag" && ros2 bag record "$@"; }
+# The one to actually use: records everything EXCEPT the raw and theora image
+# topics. Recording those is what dragged the camera from 30 Hz to 3.3 Hz --
+# image_transport only encodes when something subscribes, so rosbag2 asking for
+# theora is what switches the encoders on. See bag.sh for the measurements.
+#   bag | bag <name> | bag <name> slim | bag -d 60
+bag()     { "$EUFS_MASTER/src/scripts/bag.sh" "$@"; }
 rbp() { ros2 bag play "$@"; }
+# Copy of a bag re-timed by header.stamp instead of recorder receive time, so
+# rqt_bag's timeline (and ros2 bag play) show when frames were CAPTURED. The
+# original is untouched; the copy lands next to it as <bag>_hdr. --sensors
+# keeps only the driving-pipeline sensor topics (lidar, zed left/right
+# compressed + camera_info, raw /sbg/*) -- the 0801 25 GB bag becomes ~1 GB.
+#   bagrestamp bag/rosbag2_2026_08_17-19_47_41 [-o out] [--sensors] [--max-skew 5]
+bagrestamp() { python3 "$EUFS_MASTER/src/scripts/bagrestamp.py" "$@"; }
 
 # --- run: the 3-step flow ------------------------------------------------------
 # Nothing drives until step 3 — the vehicle ignores commands until a mission
@@ -165,6 +178,27 @@ rbp() { ros2 bag play "$@"; }
 # Stop everything: race stop | re-attach: race attach
 race()    { "$EUFS_MASTER/src/scripts/race.sh" "$@"; }
 fsk()     { "$EUFS_MASTER/src/scripts/fsk.sh" "$@"; }
+# One sensor driver at a time, in THIS terminal (Ctrl+C stops it) -- for
+# bench checks and bringup without the whole step 1. Same sensors.launch.py as
+# fsk, everything else switched off, so topics/frames/TF come out identical:
+#   lidar            RoboSense only         -> /sensors/lidar/points (+ mount TF)
+#   cam              ZED only               -> /sensors/zed/*         (+ mount TF)
+#   sbg              SBG Ellipse-D only     -> /sbg/* (+ NTRIP; no bridge/odometry)
+#   sbg odom         SBG + wheel_odometry + sbg_odometry_bridge (-> /localization/ins_odom)
+# Extra launch args pass through:  cam tf:=false | sbg ntrip:=false | lidar extrinsic:=<yaml>
+# ('gnss' is the live SBG dashboard, see below -- open it next to 'sbg'.)
+_sensor_only() {  # <lidar on|off> <camera on|off> <gnss on|off> <odometry true|false> [args...]
+  local l="$1" c="$2" g="$3" o="$4"; shift 4
+  ros2 launch hyu_sensor_bringup sensors.launch.py \
+    lidar:="$l" camera:="$c" gnss:="$g" odometry:="$o" use_sim_time:=false "$@"
+}
+lidar() { _sensor_only on  off off false "$@"; }
+cam()   { _sensor_only off on  off false "$@"; }
+sbg()   {
+  local odom=false
+  [ "${1:-}" = odom ] && { odom=true; shift; }
+  _sensor_only off off on "$odom" "$@"
+}
 stack()   { "$EUFS_MASTER/src/scripts/stack.sh" "$@"; }
 mission() { "$EUFS_MASTER/src/scripts/mission.sh" "$@"; }
 # LiDAR<->camera calibration: capture -> solve -> verify -> apply in one go.
@@ -196,6 +230,14 @@ fskcheck() {
     else echo missing; fi
   done
 }
+# Live SBG Ellipse-D dashboard, ~2 Hz: solution mode, fix quality, dual-antenna
+# heading + MEASURED baseline against the configured one, raw IMU sanity, per-log
+# rates, aiding flags, RTCM presence. This is the panel to have open while
+# waiting for a fix or checking a lever-arm change. Ctrl+C to quit.
+#   gnss
+gnss() { ros2 run hyu_localization status_monitor "$@"; }
+# Same idea for the SLAM side: absolute trajectory error against the GNSS anchor.
+ate()  { ros2 run hyu_localization ate_monitor "$@"; }
 resetcar() { ros2 service call /vehicle/reset_vehicle_pos std_srvs/srv/Trigger; }
 slamreset(){ ros2 service call /graph_slam/start_mapping std_srvs/srv/Trigger; }
 # use_sim_time follows the session: bag replay stamps everything with the

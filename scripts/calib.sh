@@ -15,6 +15,12 @@
 #  결과는 <워크스페이스>/extrinsics/<날짜_시각>.yaml 로 저장되고 active 가
 #  그쪽을 가리킨다.
 #
+#  솔브 직후 같은 캡처 세션으로 지면(ground) 도 푼다 — 라이다가 본 바닥면을
+#  extrinsic 으로 카메라 프레임에 옮겨 카메라 높이/롤/피치를 구해 같은 yaml
+#  의 ground: 블록에 넣는다. base_footprint 는 그 값으로 정의된다(스테레오
+#  중심 바로 아래 지면, +x = 카메라 정면). 마운트 yaml 을 손볼 일이 없다.
+#  캡처 자리 바닥이 평평해야 한다(경사면이면 base 가 기운다).
+#
 #  실행은 3-스텝 흐름:  fsk → stack → mission
 #  (센서 브링업이 extrinsics/active 를 읽는다. 한 번만 다른 값으로 띄우려면
 #   calib -e 로 바꾸지 말고  fsk extrinsic:=<경로>.yaml)
@@ -181,6 +187,22 @@ print(f"  t = ({t[0]:+.4f}, {t[1]:+.4f}, {t[2]:+.4f}) m")
 print(f"  metrics: plane={m.get('rmse_plane_mm','-')}mm  normal={m.get('normal_deg_rms','-')}deg"
       f"  poses={m.get('n_poses','-')}  cond={m.get('translation_condition','-')}")
 PY
+  do_ground "$EXT_DIR/$tag.yaml" "$@"
+}
+
+# ── 지면 → base_footprint (카메라 높이/롤/피치를 extrinsic 에 기록) ──
+do_ground() {                  # do_ground <extrinsic.yaml> <세션…>
+  local ext="$1"; shift
+  echo
+  echo "▶ 지면 솔브 (같은 세션의 라이다 → base_footprint):"
+  if ros2 run hyu_sensor_bringup solve_mount.py --extrinsic "$ext" --pcd "$@" --write \
+       | sed 's/^/  /' | grep -vE '^\s+[0-9]{4}\.pcd'; then
+    return 0
+  fi
+  echo "  ⚠ 지면 솔브 실패 — $ext 에 ground 블록이 없어 sensors.launch 는"
+  echo "    config/vehicle_mount.yaml 의 (줄자) 값으로 대신 띄운다. 라이다가 바닥을"
+  echo "    보는 자리에서 다시:  ros2 run hyu_sensor_bringup solve_mount.py --pcd <세션> --write"
+  return 0
 }
 
 # ── 검증 (라이다 → 이미지 투영) ────────────────────────────
@@ -233,17 +255,20 @@ for f in sorted(os.listdir(d)):
         continue
     t = (e.get('lidar_to_camera') or {}).get('t') or [0, 0, 0]
     m = e.get('metrics') or {}
-    rows.append(('*' if os.path.realpath(p) == active else ' ', f[:-5], t, m))
+    g = e.get('ground') or {}
+    rows.append(('*' if os.path.realpath(p) == active else ' ', f[:-5], t, m, g))
 if not rows:
     print('  (없음 — ./calib.sh 먼저)')
     sys.exit(0)
 w = max(len(r[1]) for r in rows)
-print(f"    {'이름'.ljust(w)}   {'t = (x, y, z) [m]':<30} {'plane':>8} {'poses':>6}")
-for mark, name, t, m in rows:
+print(f"    {'이름'.ljust(w)}   {'t = (x, y, z) [m]':<30} {'plane':>8} {'poses':>6} {'cam_h':>7}")
+for mark, name, t, m, g in rows:
     tt = f"({t[0]:+.3f}, {t[1]:+.3f}, {t[2]:+.3f})"
     r = m.get('rmse_plane_mm')
     r = f"{r:.1f}mm" if isinstance(r, (int, float)) else '-'
-    print(f"  {mark} {name.ljust(w)}   {tt:<30} {r:>8} {str(m.get('n_poses','-')):>6}")
+    h = g.get('camera_height_m')
+    h = f"{h:.3f}" if isinstance(h, (int, float)) else 'mount'   # 'mount' = ground 블록 없음 → vehicle_mount.yaml 폴백
+    print(f"  {mark} {name.ljust(w)}   {tt:<30} {r:>8} {str(m.get('n_poses','-')):>6} {h:>7}")
 PY
 }
 
