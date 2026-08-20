@@ -53,6 +53,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import rclpy
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2
@@ -77,6 +78,7 @@ from hyu_perception.fusion_core import (
     camera_point_from_depth,
     monocular_depth_from_bbox,
     monocular_relative_depth_sigma,
+    remove_ground_polar_grid,
     remove_ground_ransac,
     stereo_relative_depth_sigma,
     zncc_disparity,
@@ -193,12 +195,27 @@ class PerceptionNode(Node):
         self._zncc_stats = [0, 0]            # [attempted, confirmed]
 
         self.tf_buffer = tf2_ros.Buffer()
-        # spin_thread: the lookups below take a timeout, and a timeout is a
-        # deadlock without this — the listener's subscription would be served
-        # by the same single-threaded executor that is blocked inside the cone
-        # callback, so the transform being waited for can never arrive.
-        self.tf_listener = tf2_ros.TransformListener(
-            self.tf_buffer, self, spin_thread=True)
+        # NOT spin_thread=True. On Humble that flag does the opposite of what
+        # its name promises: the "dedicated" thread runs
+        #     executor.add_node(self.node)   <- the WHOLE node, not just /tf
+        # so a second SingleThreadedExecutor takes ownership of every callback
+        # this node has, main()'s rclpy.spin() then finds the node already
+        # owned and spins nothing, and cloud processing ends up sharing ONE
+        # thread with the /tf subscription again. Measured 2026-08-01: the
+        # cloud callback saturated that thread (272% CPU across the process)
+        # and perception's TF buffer FROZE -- 'latest data' stuck at one
+        # timestamp for minutes while /tf itself ran at 49 Hz and an
+        # independent listener read map->base_footprint 0.04 s fresh. Static
+        # transforms kept working (latched on /tf_static, received once), so
+        # ROI and ground removal looked healthy while every projection into
+        # the image failed on an extrapolation error and the whole run
+        # published uncoloured cones.
+        #
+        # The listener puts its own subscriptions in a ReentrantCallbackGroup;
+        # main() spins a MultiThreadedExecutor so that group runs on a
+        # different thread from the cone callback, which is what keeps the
+        # lookup timeouts below from deadlocking.
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
         qos = QoSProfile(history=HistoryPolicy.KEEP_LAST,
                          depth=self.sync_queue_size,
@@ -209,6 +226,18 @@ class PerceptionNode(Node):
             MarkerArray, self.output_cones_topic.rstrip("/") + "/viz", 10)
         self.provenance_pub = self.create_publisher(
             MarkerArray, self.debug_prefix + "/cone_provenance", 10)
+        # Segmented LiDAR cloud for RViz: what the backbone kept (ROI and
+        # non-ground, intensity preserved -> colour by intensity) and what it
+        # removed (ground / outside the ROI / on the car -> draw grey). Built
+        # only while something is subscribed.
+        self.cloud_kept_pub = self.cloud_removed_pub = None
+        if self.publish_segmented_cloud:
+            cloud_qos = QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=1,
+                                   reliability=ReliabilityPolicy.BEST_EFFORT)
+            self.cloud_kept_pub = self.create_publisher(
+                PointCloud2, self.debug_prefix + "/cloud_kept", cloud_qos)
+            self.cloud_removed_pub = self.create_publisher(
+                PointCloud2, self.debug_prefix + "/cloud_removed", cloud_qos)
 
         self.create_subscription(
             CameraInfo, self.camera_info_topic, self._camera_info_callback, qos)
@@ -219,10 +248,25 @@ class PerceptionNode(Node):
                 Image, self.left_image_topic, self._left_image_callback, qos)
             self.create_subscription(
                 Image, self.right_image_topic, self._right_image_callback, qos)
+        # Ego twist for de-skew and the speed-proportional covariance term.
+        # Two sources, freshest-preferred: the primary (wheel odometry) when
+        # it is flowing, else the fallback (the SBG bridge's fused odometry,
+        # which carries a body twist through every one of its rungs). The car
+        # has no wheel encoder wired today, so without the fallback the
+        # primary is silent and every cloud goes out skewed.
         self._twist = None
+        self._twist_primary = None
+        self._twist_fallback = None
+        self._twist_source = None
         if self.deskew_enabled:
             self.create_subscription(
-                CarState, self.deskew_twist_topic, self._twist_callback, qos)
+                CarState, self.deskew_twist_topic,
+                lambda msg: self._twist_callback(msg, primary=True), qos)
+            if (self.deskew_twist_fallback_topic
+                    and self.deskew_twist_fallback_topic != self.deskew_twist_topic):
+                self.create_subscription(
+                    CarState, self.deskew_twist_fallback_topic,
+                    lambda msg: self._twist_callback(msg, primary=False), qos)
         # Last: the output path, so the first cloud can find a bbox to colour by.
         self.create_subscription(
             PointCloud2, self.pointcloud_topic, self._cloud_callback, qos)
@@ -231,8 +275,11 @@ class PerceptionNode(Node):
             f"Perception: LiDAR backbone {self.pointcloud_topic}, colour and "
             f"vision fallback {self.bbox_topic}, vision depth by ZNCC stereo "
             f"{'on' if self.zncc_enabled else 'OFF -- no vision cones at all'} "
-            f"(monocular depth is never published); publishing "
-            f"{self.output_cones_topic} on every LiDAR cloud")
+            f"(monocular depth is never published); de-skew twist "
+            f"{self.deskew_twist_topic}"
+            + (f" -> {self.deskew_twist_fallback_topic} when stale"
+               if self.deskew_twist_fallback_topic else "")
+            + f"; publishing {self.output_cones_topic} on every LiDAR cloud")
 
     # ---------------------------------------------------------------- params
 
@@ -280,9 +327,17 @@ class PerceptionNode(Node):
         # from odometry, never ground truth, because the real car has no GT.
         # Uncorrected, cones bias along the travel direction by v*|tau|
         # (~0.3 m at 6 m/s ahead, 2x that to the left under cw spin).
+        # RViz: the deskewed cloud split into kept (ROI + non-ground, with
+        # intensity) and removed (ground / ROI / self-mask) point clouds on
+        # <debug_prefix>/cloud_kept and /cloud_removed, in output_frame.
+        self.declare_parameter("publish_segmented_cloud", True)
         self.declare_parameter("deskew_enabled", True)
         self.declare_parameter(
             "deskew_twist_topic", "/localization/wheel_odom")
+        # Second twist source, used whenever the primary has not been heard
+        # from within deskew_twist_timeout. "" disables it.
+        self.declare_parameter(
+            "deskew_twist_fallback_topic", "/localization/ins_odom")
         self.declare_parameter("deskew_twist_timeout", 0.5)
         self.declare_parameter("roi_min_x", 0.5)
         self.declare_parameter("roi_max_x", 30.0)
@@ -290,6 +345,13 @@ class PerceptionNode(Node):
         self.declare_parameter("roi_min_z", -0.2)
         self.declare_parameter("roi_max_z", 1.5)
         self.declare_parameter("ground_min_z", 0.05)
+        # "polar_grid" (local floor per polar cell, default) or "ransac"
+        # (one global plane, the pre-2026-08-17 method); see perception.yaml.
+        self.declare_parameter("ground_method", "polar_grid")
+        self.declare_parameter("ground_cell_range_m", 1.0)
+        self.declare_parameter("ground_cell_angle_deg", 5.0)
+        self.declare_parameter("ground_height_margin_m", 0.05)
+        self.declare_parameter("ground_height_slope_per_m", 0.004)
         self.declare_parameter("ground_ransac_enabled", True)
         self.declare_parameter("ground_ransac_distance_threshold", 0.03)
         self.declare_parameter("ground_ransac_max_iterations", 200)
@@ -396,7 +458,7 @@ class PerceptionNode(Node):
         g = lambda name: self.get_parameter(name).value  # noqa: E731
         for name in (
             "pointcloud_topic", "bbox_topic", "camera_info_topic",
-            "deskew_twist_topic",
+            "deskew_twist_topic", "deskew_twist_fallback_topic", "ground_method",
             "left_image_topic", "right_image_topic", "output_cones_topic",
             "output_frame", "camera_frame",
         ):
@@ -406,7 +468,7 @@ class PerceptionNode(Node):
         self.max_uncompensated_gap_sec = float(g("max_uncompensated_gap_sec"))
         self.projection_model = str(g("projection_model"))
         self.bbox_coordinates = str(g("bbox_coordinates")).upper()
-        for name in ("deskew_enabled",
+        for name in ("deskew_enabled", "publish_segmented_cloud",
                      "publish_debug", "ground_ransac_enabled", "self_mask_enabled",
                      "pair_split_enabled",
                      "sparse_enabled", "monocular_enabled", "zncc_enabled"):
@@ -423,6 +485,8 @@ class PerceptionNode(Node):
             "tf_timeout_sec", "min_bbox_probability", "min_project_depth",
             "roi_min_x", "roi_max_x", "roi_abs_y", "roi_min_z", "roi_max_z",
             "ground_min_z", "ground_ransac_distance_threshold",
+            "ground_cell_range_m", "ground_cell_angle_deg",
+            "ground_height_margin_m", "ground_height_slope_per_m",
             "ground_ransac_max_tilt_degrees", "self_mask_min_x",
             "self_mask_max_x", "self_mask_abs_y", "self_mask_min_z",
             "self_mask_max_z", "cluster_eps", "cluster_min_height",
@@ -555,7 +619,7 @@ class PerceptionNode(Node):
             return
         t = self._stage_timer()
         self._gray_cache.clear()
-        points, point_times = self._pointcloud_to_xyz_time(msg)
+        points, point_times, intensity = self._decode_cloud(msg)
         t("deserialise")
         frame = ClusterFrame(stamp=msg.header.stamp, frame_id=msg.header.frame_id)
         if points.shape[0]:
@@ -575,6 +639,7 @@ class PerceptionNode(Node):
             t("tf+transform")
             keep = self._roi_mask(points_base) & self._non_ground_mask(points_base)
             t("roi+ground")
+            self._publish_segmented_cloud(msg.header.stamp, points_base, keep, intensity)
             frame.points_lidar = points[keep]
             frame.cluster_indices = self._cluster(points_base[keep])
             t("cluster")
@@ -746,37 +811,127 @@ class PerceptionNode(Node):
     # -------------------------------------------------------------- backbone
 
     def _pointcloud_to_xyz_time(self, msg: PointCloud2):
-        """Decode xyz (+ per-point time when the realism bridge provides it),
-        vectorised. This used to be a per-point Python loop, which is
-        affordable at the cloud's rate and at nothing faster. Ideal/legacy
-        clouds have no 'time' field and return times=None."""
-        try:
-            structured = point_cloud2.read_points(
-                msg, field_names=("x", "y", "z", "time"), skip_nans=True)
-            array = np.asarray(structured)
-            if array.size and array.dtype.names:
-                xyz = np.column_stack(
-                    [array["x"], array["y"], array["z"]]).astype(np.float64)
-                return xyz, np.asarray(array["time"], dtype=np.float64)
-        except Exception:
-            pass  # no 'time' field -> xyz-only path below
-        try:
-            structured = point_cloud2.read_points(
-                msg, field_names=("x", "y", "z"), skip_nans=True)
-        except Exception:  # pragma: no cover - malformed cloud
-            return np.empty((0, 3), dtype=np.float64), None
-        array = np.asarray(structured)
-        if array.size == 0:
-            return np.empty((0, 3), dtype=np.float64), None
-        if array.dtype.names:
-            return np.column_stack(
-                [array["x"], array["y"], array["z"]]).astype(np.float64), None
-        return np.asarray(array, dtype=np.float64).reshape(-1, 3), None
+        """Decode xyz (+ per-point time offset), vectorised; see _decode_cloud."""
+        xyz, times, _ = self._decode_cloud(msg)
+        return xyz, times
 
-    def _twist_callback(self, msg: CarState) -> None:
+    def _decode_cloud(self, msg: PointCloud2):
+        """Decode (xyz, per-point time offset or None, intensity or None).
+
+        One read_points call over ONE field set, so every returned array is
+        aligned (skip_nans drops the same rows from all of them). Two
+        per-point time contracts are understood:
+          * ``time``       -- the sim realism bridge: offset from the header
+                              stamp, in (-period, 0] under end stamping;
+          * ``timestamp``  -- the RoboSense driver (rslidar.yaml: host clock,
+                              header = LAST point): ABSOLUTE seconds per
+                              point, so the offset is timestamp - header.
+        Until 2026-08-17 only 'time' was read, so on the real LiDAR the
+        de-skew silently never ran (times=None) -- every outing's clouds went
+        out skewed. Ideal/legacy clouds have neither and return times=None.
+        Vectorised: this used to be a per-point Python loop.
+        """
+        empty = np.empty((0, 3), dtype=np.float64)
+        header_sec = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        for fields in (("x", "y", "z", "intensity", "time"),
+                       ("x", "y", "z", "intensity", "timestamp"),
+                       ("x", "y", "z", "time"),
+                       ("x", "y", "z", "timestamp"),
+                       ("x", "y", "z", "intensity"),
+                       ("x", "y", "z")):
+            try:
+                structured = point_cloud2.read_points(
+                    msg, field_names=fields, skip_nans=True)
+            except Exception:
+                continue  # a field in this set is absent -> next contract
+            array = np.asarray(structured)
+            if array.size == 0:
+                return empty, None, None
+            if not array.dtype.names:  # pragma: no cover - plain xyz array
+                return np.asarray(array, dtype=np.float64).reshape(-1, 3), None, None
+            xyz = np.column_stack(
+                [array["x"], array["y"], array["z"]]).astype(np.float64)
+            intensity = (np.asarray(array["intensity"], dtype=np.float32)
+                         if "intensity" in fields else None)
+            times = None
+            if "time" in fields:
+                times = np.asarray(array["time"], dtype=np.float64)
+            elif "timestamp" in fields:
+                times = np.asarray(array["timestamp"], dtype=np.float64) - header_sec
+                # Guard the contract: with a lidar-clock/host-clock mismatch
+                # the offsets are seconds off, and "correcting" with them
+                # would smear the cloud far worse than leaving it skewed.
+                if times.size and (np.abs(times).max() > 1.0):
+                    self._warn_throttled(
+                        "cloud_timestamp",
+                        "per-point 'timestamp' is not within 1 s of the header "
+                        f"stamp (offsets {times.min():.2f}..{times.max():.2f} s); "
+                        "ignoring it for de-skew (check rslidar use_lidar_clock)")
+                    times = None
+            return xyz, times, intensity
+        return empty, None, None  # pragma: no cover - malformed cloud
+
+    _SEG_FIELDS = None  # built lazily: [x, y, z, intensity] float32
+
+    def _publish_segmented_cloud(self, stamp, points_base, keep, intensity) -> None:
+        """Publish the kept / removed halves of the (deskewed) cloud in
+        output_frame. Cheap when nobody listens; ~1 ms per cloud otherwise
+        (numpy pack, no per-point Python)."""
+        pubs = (self.cloud_kept_pub, self.cloud_removed_pub)
+        if pubs[0] is None:
+            return
+        wanted = [pub.get_subscription_count() > 0 for pub in pubs]
+        if not any(wanted):
+            return
+        if PerceptionNode._SEG_FIELDS is None:
+            from sensor_msgs.msg import PointField
+            PerceptionNode._SEG_FIELDS = [
+                PointField(name=n, offset=4 * i, datatype=PointField.FLOAT32, count=1)
+                for i, n in enumerate(("x", "y", "z", "intensity"))]
+        n = points_base.shape[0]
+        inten = (intensity if intensity is not None and intensity.shape[0] == n
+                 else np.zeros(n, dtype=np.float32))
+        packed = np.empty((n, 4), dtype=np.float32)
+        packed[:, :3] = points_base
+        packed[:, 3] = inten
+        for pub, want, mask in zip(pubs, wanted, (keep, ~keep)):
+            if not want:
+                continue
+            sel = packed[mask]
+            cloud = PointCloud2()
+            cloud.header.stamp = stamp
+            cloud.header.frame_id = self.output_frame
+            cloud.height = 1
+            cloud.width = int(sel.shape[0])
+            cloud.fields = PerceptionNode._SEG_FIELDS
+            cloud.is_bigendian = False
+            cloud.point_step = 16
+            cloud.row_step = 16 * cloud.width
+            cloud.is_dense = True
+            cloud.data = sel.tobytes()
+            pub.publish(cloud)
+
+    def _twist_callback(self, msg: CarState, primary: bool = True) -> None:
         tw = msg.twist.twist
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-        self._twist = (tw.linear.x, tw.linear.y, tw.angular.z, stamp)
+        twist = (tw.linear.x, tw.linear.y, tw.angular.z, stamp)
+        if primary:
+            self._twist_primary = twist
+        else:
+            self._twist_fallback = twist
+            # The fallback only speaks while the primary is silent: a primary
+            # sample within the timeout of THIS stamp keeps precedence.
+            prim = self._twist_primary
+            if prim is not None and abs(stamp - prim[3]) <= self.deskew_twist_timeout:
+                return
+        self._twist = twist
+        source = "primary" if primary else "fallback"
+        if source != self._twist_source:
+            self._twist_source = source
+            topic = (self.deskew_twist_topic if primary
+                     else self.deskew_twist_fallback_topic)
+            self.get_logger().info(
+                f"de-skew twist source: {source} ({topic})")
 
     def _deskew_points(
         self,
@@ -846,10 +1001,25 @@ class PerceptionNode(Node):
     def _non_ground_mask(self, points_base: np.ndarray) -> np.ndarray:
         """Drop the ground, failing SAFE to a flat cut.
 
-        A missed plane must not delete the cones, so an unusable RANSAC result
-        falls back to a height cut rather than rejecting everything.
+        Default is the local polar-grid floor (remove_ground_polar_grid):
+        real ground is not one plane and a global RANSAC plane kept 12-48 %
+        ground in the 2026-08-01 clouds. ``ground_method: ransac`` restores
+        the single-plane method. A missed plane must not delete the cones,
+        so an unusable RANSAC result falls back to a height cut rather than
+        rejecting everything.
         """
-        if not self.ground_ransac_enabled or points_base.shape[0] == 0:
+        if points_base.shape[0] == 0:
+            return points_base[:, 2] >= self.ground_min_z
+        if self.ground_method == "polar_grid":
+            return remove_ground_polar_grid(
+                points_base,
+                cell_range_m=self.ground_cell_range_m,
+                cell_angle_deg=self.ground_cell_angle_deg,
+                height_margin_m=self.ground_height_margin_m,
+                height_slope_per_m=self.ground_height_slope_per_m,
+                max_range_m=max(self.roi_max_x, self.roi_abs_y) * 1.5,
+            )
+        if not self.ground_ransac_enabled:
             return points_base[:, 2] >= self.ground_min_z
         result = remove_ground_ransac(
             points_base,
@@ -1968,7 +2138,16 @@ def main(args=None):
     node = None
     try:
         node = PerceptionNode()
-        rclpy.spin(node)
+        # Multi-threaded, so the TF listener's ReentrantCallbackGroup is served
+        # while the cone callback is busy. The sensor callbacks stay in the
+        # node's default (mutually exclusive) group and so still serialise with
+        # each other -- only /tf and /tf_static gain a thread of their own.
+        executor = MultiThreadedExecutor()
+        executor.add_node(node)
+        try:
+            executor.spin()
+        finally:
+            executor.shutdown()
     except KeyboardInterrupt:
         pass
     finally:

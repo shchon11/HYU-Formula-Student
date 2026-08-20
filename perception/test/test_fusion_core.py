@@ -4,6 +4,7 @@ import unittest
 import numpy as np
 
 from hyu_perception.fusion_core import (
+    remove_ground_polar_grid,
     bbox_height_disparity_prior,
     bearing_aligned_covariance,
     camera_point_from_depth,
@@ -278,3 +279,58 @@ class ZnccDisparityTest(unittest.TestCase):
         self.assertIsNone(zncc_disparity(left, right, bbox, -1.0, 8.0))
         self.assertIsNone(zncc_disparity(left, right, bbox, 8.0, 2.0))
         self.assertIsNone(zncc_disparity(left, right, (5, 5, 5, 5), 0, 8))
+
+
+class PolarGridGroundTest(unittest.TestCase):
+    """Local per-cell floor: ground that is not one plane (slope, undulation,
+    body roll) is removed everywhere, cones on it survive."""
+
+    @staticmethod
+    def _ground(fn, n=6000, seed=0):
+        rng = np.random.default_rng(seed)
+        r = rng.uniform(1.5, 30.0, n)
+        th = rng.uniform(-math.pi / 2, math.pi / 2, n)
+        x, y = r * np.cos(th), r * np.sin(th)
+        z = fn(x, y) + rng.normal(0.0, 0.01, n)
+        return np.column_stack([x, y, z])
+
+    @staticmethod
+    def _cone(cx, cy, ground_z, n=12, seed=1):
+        rng = np.random.default_rng(seed)
+        h = rng.uniform(0.02, 0.32, n)
+        rad = 0.11 * (1.0 - h / 0.32)
+        ang = rng.uniform(0, 2 * math.pi, n)
+        return np.column_stack([cx + rad * np.cos(ang), cy + rad * np.sin(ang), ground_z + h])
+
+    def _check(self, ground_fn):
+        ground = self._ground(ground_fn)
+        cones = [self._cone(6.0, 1.5, ground_fn(6.0, 1.5)),
+                 self._cone(15.0, -3.0, ground_fn(15.0, -3.0), seed=2),
+                 self._cone(24.0, 4.0, ground_fn(24.0, 4.0), seed=3)]
+        pts = np.vstack([ground] + cones)
+        mask = remove_ground_polar_grid(pts, cell_range_m=1.0, cell_angle_deg=5.0,
+                                        height_margin_m=0.05, height_slope_per_m=0.004)
+        n_ground = ground.shape[0]
+        ground_kept = mask[:n_ground].mean()
+        self.assertLess(ground_kept, 0.02, f"ground leaked: {ground_kept:.3f}")
+        off = n_ground
+        for cone in cones:
+            kept = mask[off:off + cone.shape[0]]
+            tall = cone[:, 2] - ground_fn(cone[0, 0], cone[0, 1]) > 0.14  # above margin at 30 m
+            self.assertTrue(kept[tall].all(), "cone body removed")
+            self.assertGreaterEqual(kept.sum(), 4)
+            off += cone.shape[0]
+
+    def test_sloped_and_undulating_ground(self):
+        # 1.5 deg pitch + 2 deg roll + a 10 cm swell every 12 m: a single plane
+        # cannot fit this; the RANSAC slab left 5-25 cm of it "non-ground".
+        self._check(lambda x, y: 0.026 * x + 0.035 * y + 0.10 * np.sin(x / 12.0 * 2 * math.pi))
+
+    def test_flat_ground(self):
+        self._check(lambda x, y: np.zeros_like(x) if isinstance(x, np.ndarray) else 0.0)
+
+    def test_empty_and_degenerate_inputs(self):
+        self.assertEqual(remove_ground_polar_grid(np.empty((0, 3))).shape, (0,))
+        one = remove_ground_polar_grid(np.array([[3.0, 0.0, 0.2]]))
+        self.assertEqual(one.shape, (1,))
+        self.assertFalse(one[0])  # alone in its cell it IS the floor

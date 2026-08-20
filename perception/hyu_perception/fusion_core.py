@@ -30,6 +30,64 @@ class GroundRemovalResult:
     non_ground_mask: np.ndarray
 
 
+def remove_ground_polar_grid(
+    points,
+    cell_range_m: float = 1.0,
+    cell_angle_deg: float = 5.0,
+    height_margin_m: float = 0.05,
+    height_slope_per_m: float = 0.004,
+    max_range_m: float = 40.0,
+) -> np.ndarray:
+    """
+    Non-ground mask from a LOCAL ground model on a polar grid.
+
+    A single RANSAC plane over 30 m of real ground fails in a way that is
+    hard to see and cheap to measure: the lot slopes and undulates, the car
+    rolls and pitches in corners (1 deg = 26 cm at 15 m), so the plane snaps
+    to the densest 3 cm slab near the car and the ground 5-30 m out sits
+    5-25 cm below it -> "not ground" -> kept. On the 2026-08-01 outing 12-48 %
+    of the points passed to clustering were ground (measured offline on
+    rosbag2_2026_08_01-17_47_09), and RViz showed asphalt everywhere.
+
+    Here the ground height is decided per small polar cell (``cell_range_m``
+    x ``cell_angle_deg``, ~1 m x 1.6 m at 15 m) as the LOWEST z in that
+    cell -- ground is under everything, so the lowest return in a cell that
+    small is ground, and a cell that small is flat regardless of slope, roll
+    or pitch. A point is non-ground when it rises more than
+    ``height_margin_m + height_slope_per_m * range`` above its cell's floor
+    (the slope term covers range-growing LiDAR noise). Thin objects like cones
+    (0.23 m base) cannot hide the floor of a 1 m cell, so their upper points
+    survive; only their bottom few cm go with the ground. Vectorised: one
+    argsort plus a per-cell minimum, no per-point Python. Empty input -> empty
+    mask; the caller decides what to do about it.
+    """
+    array = np.asarray(points, dtype=np.float64)
+    if array.ndim != 2 or array.shape[1] < 3 or array.shape[0] == 0:
+        return np.ones(array.shape[0] if array.ndim == 2 else 0, dtype=bool)
+    x, y, z = array[:, 0], array[:, 1], array[:, 2]
+    rng = np.hypot(x, y)
+    finite = np.isfinite(rng) & np.isfinite(z)
+    cell_range = max(float(cell_range_m), 1e-3)
+    cell_angle = max(math.radians(float(cell_angle_deg)), 1e-4)
+    n_angle = int(math.ceil(2.0 * math.pi / cell_angle)) + 1
+    ri = np.floor(
+        np.clip(np.where(finite, rng, 0.0), 0.0, max_range_m) / cell_range).astype(np.int64)
+    ti = np.floor((np.arctan2(y, x) + math.pi) / cell_angle).astype(np.int64)
+    key = ri * n_angle + np.clip(ti, 0, n_angle - 1)
+    order = np.argsort(key, kind="stable")
+    sorted_key = key[order]
+    sorted_z = np.where(finite, z, np.inf)[order]
+    uniq, first = np.unique(sorted_key, return_index=True)
+    cell_floor = np.minimum.reduceat(sorted_z, first)
+    # Map every point back to its cell's floor via the sorted position.
+    cell_of_sorted = np.repeat(np.arange(uniq.size), np.diff(np.append(first, sorted_key.size)))
+    floor_per_point = np.empty(array.shape[0], dtype=np.float64)
+    floor_per_point[order] = cell_floor[cell_of_sorted]
+    margin = float(height_margin_m) + float(height_slope_per_m) * rng
+    mask = z > floor_per_point + margin
+    return mask & finite
+
+
 def remove_ground_ransac(
     points,
     distance_threshold: float = 0.03,

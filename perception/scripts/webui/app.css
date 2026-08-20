@@ -1,0 +1,180 @@
+:root {
+  --bg: #16171a;
+  --panel: #1e2024;
+  --line: #2e3238;
+  --fg: #e6e8ea;
+  --dim: #939aa3;
+  --accent: #4c9aff;
+  --danger: #ff5c47;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+/* Overlays below set display, which would otherwise beat the UA rule for [hidden]. */
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+}
+
+button, select, input {
+  font: inherit;
+  color: var(--fg);
+  background: #262a30;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 4px 9px;
+}
+button { cursor: pointer; }
+button:hover { background: #313741; }
+button.danger { border-color: #5a2a24; color: #ff9c8c; }
+button.danger:hover { background: #40211c; }
+
+/* ---- gate ---- */
+
+#gate, #modal {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(10, 11, 13, .82);
+  z-index: 20;
+}
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 22px 24px;
+  width: min(460px, 90vw);
+  max-height: 80vh;
+  overflow: auto;
+}
+.card h1 { margin: 0 0 8px; font-size: 17px; }
+.card p { color: var(--dim); margin: 0 0 14px; }
+.card input { width: 100%; margin-bottom: 12px; padding: 7px 10px; }
+.card button { width: 100%; padding: 8px; background: var(--accent); border-color: var(--accent); color: #08131f; font-weight: 600; }
+.card button:hover { filter: brightness(1.1); background: var(--accent); }
+.err { color: var(--danger); min-height: 1em; margin: 10px 0 0; }
+#modal .card { width: min(560px, 90vw); }
+#modal .card button { margin-top: 14px; }
+#modal-body table { width: 100%; border-collapse: collapse; }
+#modal-body td { padding: 3px 0; }
+#modal-body td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+#modal-body h2 { font-size: 14px; margin: 16px 0 6px; }
+
+/* ---- layout ---- */
+
+#app {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 1fr 268px;
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas: "head head" "main side" "foot foot";
+}
+header {
+  grid-area: head;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+header .grow { flex: 1; }
+header .sep { width: 1px; height: 20px; background: var(--line); }
+header .who { font-weight: 600; color: var(--accent); }
+header .progress { color: var(--dim); font-variant-numeric: tabular-nums; }
+
+main { grid-area: main; position: relative; overflow: hidden; }
+canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+
+aside {
+  grid-area: side;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  display: grid;
+  grid-template-rows: 1fr auto;
+  min-height: 0;
+}
+
+footer {
+  grid-area: foot;
+  padding: 5px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+footer b { color: var(--fg); font-weight: 600; }
+footer .warn { color: #ffcc66; }
+
+/* ---- frame list ---- */
+
+#list { overflow-y: auto; position: relative; }
+#list-inner { position: relative; }
+.row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 22px;
+  padding: 2px 8px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  cursor: pointer;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.row:hover { background: #262a30; }
+.row.on { background: #2b3a52; }
+.row .mark { width: 15px; color: var(--dim); font-size: 11px; }
+.row.done .mark { color: #5fd08a; }
+.row .name { overflow: hidden; text-overflow: ellipsis; flex: 1; }
+.row .n { color: var(--dim); font-size: 11px; }
+.row .held { color: #ffcc66; font-size: 11px; }
+
+/* ---- legend ---- */
+
+#legend { border-top: 1px solid var(--line); padding: 8px; }
+#legend .cls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+#legend .cls:hover { background: #262a30; }
+#legend .cls.on { background: #2b3a52; }
+#legend .key { color: var(--dim); width: 12px; }
+#legend .swatch { width: 12px; height: 12px; border-radius: 3px; }
+#legend .name { flex: 1; }
+#legend .count { color: var(--dim); font-variant-numeric: tabular-nums; }
+
+/* ---- help ---- */
+
+#help {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  background: rgba(12, 13, 16, .95);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 18px;
+  max-width: 560px;
+}
+#help table { border-collapse: collapse; }
+#help th { text-align: left; color: var(--accent); padding-right: 14px; font-weight: 600; vertical-align: top; }
+#help td:first-of-type { color: var(--fg); padding-right: 14px; white-space: nowrap; }
+#help td { color: var(--dim); padding: 1px 0; }
+#help p { color: var(--dim); margin: 12px 0 0; max-width: 46em; }
+#help b { color: var(--fg); }

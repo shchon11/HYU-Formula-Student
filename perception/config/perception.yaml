@@ -22,7 +22,20 @@ perception_node:
     camera_frame: zed_left_camera_optical_frame
     debug_prefix: /perception/debug
     publish_debug: true
-    sync_queue_size: 10
+    # RViz clouds: <debug_prefix>/cloud_kept (ROI + non-ground, intensity kept
+    # -> colour by intensity) and /cloud_removed (ground / outside ROI / on
+    # the car -> grey), deskewed, in output_frame. Only built while RViz (or
+    # anyone) is subscribed, so it costs nothing on the car otherwise.
+    publish_segmented_cloud: true
+    # 2, not 10: this is the subscription QoS depth, so it is also how many
+    # LiDAR periods of BACKLOG the node will hold. At depth 10 the queue fills
+    # once and never drains -- measured 463 ms mean / 583 ms max age on cones
+    # while the node kept up with the input at 10 Hz. That age then broke
+    # fusion twice over: the newest bbox sat 0.45 s from the cloud (past
+    # max_cluster_age_sec) and the map->odom transform at the cloud stamp had
+    # already left graph_slam's TF buffer, so every frame published uncoloured.
+    # A stale cloud is worth less than a fresh one -- drop it, do not queue it.
+    sync_queue_size: 2
     # Periodic "now - header.stamp" for /perception/cones. The header carries the bbox
     # capture time, so this is the whole pipeline's age as the planner sees it.
     # 0 disables.
@@ -100,14 +113,57 @@ perception_node:
     # measured on the ideal cloud; the realism pipeline reads +0.076 lon with
     # causes entangled, so no constant is honest right now.
     deskew_enabled: true
+    # Twist sources, freshest-preferred: the primary while it is flowing, the
+    # fallback whenever the primary has not been heard from within
+    # deskew_twist_timeout. Primary = wheel odometry (encoder + INS yaw rate,
+    # independent of GNSS). Fallback = the SBG bridge's fused odometry, whose
+    # body twist is filled on every rung (EKF velocity / raw GNSS Doppler +
+    # gyro during an EKF reset / wheels / zero at a ZUPT standstill). The car
+    # has NO wheel encoder wired yet (no CAN bridge), so on the vehicle the
+    # primary is silent and the fallback is what actually de-skews; on the
+    # 2026-08-01 outings every cloud went out skewed for that reason. Set the
+    # fallback to "" to require the primary.
     deskew_twist_topic: /localization/wheel_odom
+    deskew_twist_fallback_topic: /localization/ins_odom
     deskew_twist_timeout: 0.5
-    roi_min_x: 0.5
+    # base_footprint moved 2026-08-17: it is now the ground point below the
+    # ZED's stereo centre (main hoop), not the rear axle -- see
+    # hyu_sensor_bringup/config/vehicle_mount.yaml. Old base -> new base is
+    # (+0.91, -0.05) m, so every x bound below that describes the CAR (roi_min_x,
+    # self_mask_*_x) was shifted by +0.91 to keep the same physical line. The
+    # LiDAR now sits at x ~ +1.72 (nose), the camera at x = 0.
+    roi_min_x: 1.4
     roi_max_x: 30.0
     roi_abs_y: 15.0
     roi_min_z: -0.2
     roi_max_z: 1.5
     ground_min_z: 0.05
+    # --- Ground removal ------------------------------------------------------
+    # polar_grid (default since 2026-08-17): the ground height is decided per
+    # polar cell (ground_cell_range_m x ground_cell_angle_deg, ~1 x 1.6 m at
+    # 15 m) as the lowest return in that cell; a point is kept when it rises
+    # more than ground_height_margin_m + ground_height_slope_per_m * range
+    # above its cell floor. Real ground is NOT one plane -- lot slope and
+    # undulation plus body roll/pitch (1 deg = 26 cm at 15 m) -- and the
+    # single RANSAC plane snapped to the densest 3 cm slab near the car,
+    # leaving the ground 5-30 m out 5-25 cm below it and therefore KEPT:
+    # measured on rosbag2_2026_08_01-17_47_09, 12-48 % of the points handed
+    # to clustering were ground (RViz showed asphalt everywhere; cluster
+    # stage 16 -> 70 ms). Same clouds with polar_grid (h 0.05, 0.004/m, 5
+    # deg): ground among kept points 12-48 % -> 0-3 %, cone-adjacent points
+    # 60-85 % retained (the loss is the ground beside the cones and the
+    # bottom ~5-10 cm of each cone). 5 deg, not 8: a 2 deg body roll puts
+    # 14 cm of floor variation across an 8 deg cell at 30 m (synthetic test
+    # leaked 5.6 %); at 5 deg it is 0.5 %. Thin objects cannot hide a 1 m
+    # cell's floor, so cones survive; a wall can, and is dropped -- fine, it
+    # is not a cone. Lower the margin toward 0.04 if far cones (20 m+) fall
+    # under cluster_min_points; raise it if ground still leaks in corners.
+    # "ransac" restores the single global plane (parameters below).
+    ground_method: polar_grid
+    ground_cell_range_m: 1.0
+    ground_cell_angle_deg: 5.0
+    ground_height_margin_m: 0.05
+    ground_height_slope_per_m: 0.004
     ground_ransac_enabled: true
     ground_ransac_distance_threshold: 0.03
     # 50, not 200. MEASURED: the loop is linear in iterations -- 32.9 / 17.2 /
@@ -131,8 +187,8 @@ perception_node:
     ground_ransac_min_inliers: 20
     ground_ransac_seed: 7
     self_mask_enabled: true
-    self_mask_min_x: -1.5
-    self_mask_max_x: 1.8
+    self_mask_min_x: -0.6     # was -1.5 / 1.8 about the rear axle; same box,
+    self_mask_max_x: 2.7      # re-expressed about the camera (+0.91)
     self_mask_abs_y: 0.8
     self_mask_min_z: -0.4
     self_mask_max_z: 1.4
@@ -251,7 +307,14 @@ perception_node:
     # window below. Cost of failing closed, measured: every stale-pair event
     # (48 in a 100 s lap, caused by the detector's ~0.21 s latency against
     # max_image_age_sec) now deletes a cone that used to be published.
-    zncc_enabled: true
+    # OFF 2026-08-01 by request. Consequence, stated plainly: this does not
+    # switch vision depth to another method -- there is no other method, the
+    # monocular tier having been deleted for the reason above. With this false
+    # the node stops subscribing to the left/right images entirely and EVERY
+    # vision-only cone is dropped. Colour still comes from the bboxes, so the
+    # LiDAR cones keep their blue/yellow/orange labels; what is lost is the
+    # cones the LiDAR never saw (last measured: 79 of 111 ZNCC-confirmed).
+    zncc_enabled: false
     stereo_baseline_m: 0.12
     zncc_min_score: 0.5
     # Window around the prior. The prior is centred on the fitted curve's depth

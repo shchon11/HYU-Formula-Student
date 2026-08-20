@@ -426,5 +426,111 @@ class ConeHeightTest(unittest.TestCase):
         self.assertIsNone(node._cone_height_m("unknown"))
 
 
+class _Log:
+    def info(self, *_a, **_k):
+        pass
+
+
+def _car_state(t, vx):
+    from hyu_msgs.msg import CarState
+    msg = CarState()
+    msg.header.stamp.sec = int(t)
+    msg.header.stamp.nanosec = int(round((t - int(t)) * 1e9))
+    msg.twist.twist.linear.x = vx
+    return msg
+
+
+class DeskewTwistSourceTest(unittest.TestCase):
+    """Two twist sources, freshest-preferred: the primary (wheel odometry)
+    while it is flowing, the fallback (SBG bridge ins_odom) whenever the
+    primary has not been heard from within deskew_twist_timeout. On the car
+    there is no encoder, so the fallback is the only twist there is."""
+
+    def _twist_node(self):
+        node = _node(deskew_twist_timeout=0.5,
+                     deskew_twist_topic="/localization/wheel_odom",
+                     deskew_twist_fallback_topic="/localization/ins_odom")
+        node._twist_primary = node._twist_fallback = node._twist_source = None
+        node.get_logger = lambda: _Log()
+        return node
+
+    def test_fallback_serves_while_primary_is_silent(self):
+        node = self._twist_node()
+        node._twist_callback(_car_state(100.0, 3.0), primary=False)
+        self.assertEqual(node._twist[0], 3.0)
+        self.assertEqual(node._twist_source, "fallback")
+
+    def test_primary_takes_precedence_when_fresh(self):
+        node = self._twist_node()
+        node._twist_callback(_car_state(100.0, 2.0), primary=True)
+        node._twist_callback(_car_state(100.1, 3.0), primary=False)
+        self.assertEqual(node._twist[0], 2.0)  # fallback did not override
+        self.assertEqual(node._twist_source, "primary")
+
+    def test_fallback_takes_over_when_primary_goes_stale_and_hands_back(self):
+        node = self._twist_node()
+        node._twist_callback(_car_state(100.0, 2.0), primary=True)
+        node._twist_callback(_car_state(101.0, 3.0), primary=False)  # 1 s > timeout
+        self.assertEqual(node._twist[0], 3.0)
+        self.assertEqual(node._twist_source, "fallback")
+        node._twist_callback(_car_state(101.2, 2.5), primary=True)
+        self.assertEqual(node._twist[0], 2.5)
+        self.assertEqual(node._twist_source, "primary")
+
+
+class CloudDecodeTest(unittest.TestCase):
+    """The RoboSense driver stamps every point with an ABSOLUTE 'timestamp'
+    (host clock, header = last point); the sim bridge publishes a relative
+    'time'. Both must yield the same de-skew offsets, and intensity must stay
+    aligned with xyz after NaN skipping."""
+
+    @staticmethod
+    def _cloud(fields, rows, header_sec):
+        from sensor_msgs.msg import PointField
+        from sensor_msgs_py import point_cloud2
+        from std_msgs.msg import Header
+        pf = [PointField(name=n, offset=4 * i if n != "timestamp" else 4 * i,
+                         datatype=(PointField.FLOAT64 if n == "timestamp"
+                                   else PointField.FLOAT32), count=1)
+              for i, n in enumerate(fields)]
+        header = Header()
+        header.stamp.sec = int(header_sec)
+        header.stamp.nanosec = int(round((header_sec - int(header_sec)) * 1e9))
+        return point_cloud2.create_cloud(header, pf, rows)
+
+    def test_rslidar_timestamp_becomes_offset_from_header(self):
+        node = _node()
+        node._warned = {}
+        h = 1000.5
+        cloud = self._cloud(("x", "y", "z", "intensity", "timestamp"),
+                            [(1.0, 0.0, 0.0, 7.0, h - 0.10),
+                             (2.0, 0.0, 0.0, 8.0, h - 0.05),
+                             (3.0, 0.0, 0.0, 9.0, h)], h)
+        xyz, times, inten = node._decode_cloud(cloud)
+        self.assertEqual(xyz.shape, (3, 3))
+        np.testing.assert_allclose(times, [-0.10, -0.05, 0.0], atol=1e-6)
+        np.testing.assert_allclose(inten, [7.0, 8.0, 9.0])
+
+    def test_sim_time_field_is_used_as_is(self):
+        node = _node()
+        cloud = self._cloud(("x", "y", "z", "time"),
+                            [(1.0, 0.0, 0.0, -0.08), (2.0, 0.0, 0.0, 0.0)], 5.0)
+        xyz, times, inten = node._decode_cloud(cloud)
+        np.testing.assert_allclose(times, [-0.08, 0.0])
+        self.assertIsNone(inten)
+
+    def test_nan_rows_drop_from_every_column(self):
+        node = _node()
+        node._warned = {}
+        h = 10.0
+        cloud = self._cloud(("x", "y", "z", "intensity", "timestamp"),
+                            [(float("nan"), 0.0, 0.0, 1.0, h - 0.1),
+                             (2.0, 0.0, 0.0, 2.0, h)], h)
+        xyz, times, inten = node._decode_cloud(cloud)
+        self.assertEqual(xyz.shape[0], 1)
+        np.testing.assert_allclose(inten, [2.0])
+        np.testing.assert_allclose(times, [0.0], atol=1e-6)
+
+
 if __name__ == "__main__":
     unittest.main()

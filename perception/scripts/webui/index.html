@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cone labeler</title>
+<link rel="stylesheet" href="/ui/app.css">
+
+<div id="gate">
+  <div class="card">
+    <h1>cone labeler</h1>
+    <p>Your name goes on every frame you review, so the team can tell whose pass a
+       label came from.</p>
+    <input id="who" placeholder="name (e.g. sojun)" autocomplete="off" spellcheck="false">
+    <button id="enter">start labeling</button>
+    <p class="err" id="gate-err"></p>
+  </div>
+</div>
+
+<div id="app" hidden>
+  <header>
+    <span class="who" id="me"></span>
+    <select id="filter"></select>
+    <span class="sep"></span>
+    <button data-act="prev" title="A">◀</button>
+    <button data-act="next" title="D">▶</button>
+    <button data-act="confirm" title="Space">confirm ▶</button>
+    <button data-act="claim" title="N">next unreviewed</button>
+    <span class="sep"></span>
+    <button data-act="autolabel-none" hidden></button>
+    <button data-act="delete" class="danger" title="Delete">delete image</button>
+    <button data-act="undo" title="Ctrl+Z">undo</button>
+    <span class="grow"></span>
+    <span class="progress" id="progress"></span>
+    <button data-act="stats">stats</button>
+    <button data-act="help" title="H">?</button>
+  </header>
+
+  <main>
+    <canvas id="canvas"></canvas>
+    <div id="help" hidden>
+      <table>
+        <tr><th>navigate</th><td>D / →</td><td>next frame</td></tr>
+        <tr><th></th><td>A / ←</td><td>previous frame</td></tr>
+        <tr><th></th><td>Space</td><td>mark reviewed + next</td></tr>
+        <tr><th></th><td>N</td><td>claim the next unreviewed frame nobody is on</td></tr>
+        <tr><th></th><td>G</td><td>go to a frame number</td></tr>
+        <tr><th>boxes</th><td>drag</td><td>draw a box in the current class</td></tr>
+        <tr><th></th><td>click / ctrl+click</td><td>select / add to selection</td></tr>
+        <tr><th></th><td>ctrl+A · Tab</td><td>select all · cycle selection</td></tr>
+        <tr><th></th><td>drag inside / handle</td><td>move / resize</td></tr>
+        <tr><th></th><td>1 … 9</td><td>set class of the selected boxes</td></tr>
+        <tr><th></th><td>Backspace / right-click</td><td>delete selected box(es)</td></tr>
+        <tr><th></th><td>ctrl+C / ctrl+V</td><td>copy / paste every box of a frame</td></tr>
+        <tr><th>image</th><td>Delete</td><td>send the image to _trash (ctrl+Z restores)</td></tr>
+        <tr><th></th><td>ctrl+Z</td><td>undo boxes and deletes</td></tr>
+        <tr><th></th><td>S</td><td>save now (saving is automatic on navigation)</td></tr>
+        <tr><th>view</th><td>wheel / + −</td><td>zoom</td></tr>
+        <tr><th></th><td>middle-drag</td><td>pan</td></tr>
+        <tr><th></th><td>0 · L</td><td>fit · toggle class labels</td></tr>
+      </table>
+      <p>Everyone works on the same files. A frame you open is held in your name for
+         three minutes, so <b>next unreviewed</b> never hands two people the same frame.</p>
+    </div>
+  </main>
+
+  <aside>
+    <div id="list"><div id="list-inner"></div></div>
+    <div id="legend"></div>
+  </aside>
+
+  <footer id="status"></footer>
+</div>
+
+<div id="modal" hidden><div class="card"><div id="modal-body"></div>
+  <button id="modal-close">close</button></div></div>
+
+<script src="/ui/app.js"></script>
