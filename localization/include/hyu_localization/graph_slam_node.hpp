@@ -515,6 +515,18 @@ private:
   bool use_odom_covariance_;
   double latest_odom_sigma_trans_;
   double latest_odom_sigma_yaw_;
+  // A reported translation sigma at/above this means the motion source has
+  // DECLARED its pose invalid (the SBG bridge publishes 1e3 m while it holds
+  // a frozen pose through a source gap and on the first message after a
+  // blind gap). Such a message may not mint a zero-motion keyframe (the
+  // frozen pose is not a place the car is known to be) and cone frames
+  // taken while it is the latest input are dropped (their pose is unknown).
+  double odom_invalid_sigma_{10.0};
+  // Live odometry-dropout reporting: onOptimizeTimer republishes the
+  // lifecycle diagnostics whenever the motion input goes stale or comes
+  // back, so odometry_dropout is observable while it happens (the other
+  // publish sites are all lifecycle events that do not fire mid-outage).
+  bool odom_dropout_reported_{false};
   // Distance-proportional floor on the keyframe edge sigma: reported
   // covariance is per-sample, not per-edge (see addKeyframe). 0 disables.
   double odom_edge_sigma_per_meter_{0.0};

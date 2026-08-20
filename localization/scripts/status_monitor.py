@@ -34,7 +34,12 @@ def yn(b): return c(GRN,"YES") if b else c(RED,"no")
 def deg(r): return r*57.29578
 MODE={0:"UNINIT",1:"VERT_GYRO",2:"AHRS",3:"NAV_VEL",4:"NAV_POS"}
 FIX={0:"NO_SOL",1:"UNKNOWN",2:"SINGLE",3:"PSRDIFF",4:"SBAS",5:"OMNISTAR",6:"RTK_FLOAT",7:"RTK_FIXED",8:"PPP_FLOAT",9:"PPP_FIXED",10:"FIXED"}
-BASELINE_CFG=1.219
+# Antenna baseline the DEVICE is configured for: |leverArmSecondary - leverArmPrimary|
+# from /api/v1/settings/aiding/gnss1. The measured baseline is compared against
+# it, so a stale value here reads as a lever-arm error that is not there.
+# 1.2567 = |[-1.07,0,0.13] - [0.18,0,0]|, written to flash 2026-08-01.
+# Override without editing:  gnss --ros-args -p baseline_cfg:=<metres>
+BASELINE_CFG=1.2567
 
 class Track:
     def __init__(self): self.n=0; self.t0=time.time(); self.last=0.0; self.msg=None; self._hz=0.0
@@ -49,6 +54,9 @@ class Track:
 class Monitor(Node):
     def __init__(self):
         super().__init__("status_monitor")
+        global BASELINE_CFG
+        BASELINE_CFG = float(
+            self.declare_parameter("baseline_cfg", BASELINE_CFG).value)
         q=QoSProfile(depth=10); q.reliability=ReliabilityPolicy.BEST_EFFORT
         self.tr={}
         def sub(t,ty): self.tr[t]=Track(); self.create_subscription(ty,t,lambda m,k=t:self.tr[k].hit(m),q)

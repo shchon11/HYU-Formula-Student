@@ -135,6 +135,9 @@ if(BUILD_TESTING)
   ament_add_pytest_test(sbg_bridge_fallback_tests test/test_sbg_bridge_fallback.py
     TIMEOUT 120
   )
+  ament_add_pytest_test(sbg_bridge_raw_gnss_tests test/test_sbg_bridge_raw_gnss.py
+    TIMEOUT 120
+  )
 
   ament_add_gtest(loop_confirmation_test
     test/loop_confirmation_test.cpp)

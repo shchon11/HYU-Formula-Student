@@ -19,8 +19,12 @@ here is the fault-transition contract that used to kill SLAM:
   * the dead-reckoning tier must report itself: sigma widens to
     odom_sigma_mode2 so the graph downweights the edges, and health degrades
     to WARN, not ERROR;
-  * with no usable fallback (stale wheels, or mode <= 1 where the heading
-    itself drifts) the bridge faults exactly as before: publication stops.
+  * with no usable fallback (stale wheels, or mode <= 1 where the EKF heading
+    itself drifts and no HDT/gyro heading is available) the bridge faults
+    exactly as before: publication stops.
+
+The raw-GNSS rung (mode <= 1 bridged by gps_pos/gps_vel/gps_hdt/imu) and the
+hold time limit live in test_sbg_bridge_raw_gnss.py.
 """
 import importlib.util
 import math
@@ -120,6 +124,37 @@ def _reset(node):
     node._holdoff_until = None
     node._last_marker_t = None
     node._last_board_t = None
+    # Hold / blind-gap bookkeeping.
+    node._last_car_state_t = None
+    node._held_since = None
+    node._blind_gap = False
+    node._last_body_vx = 0.0
+    # Fallback heading (HDT/gyro) and raw-GNSS rung state.
+    node._yaw_dr = None
+    node._yaw_dr_stamp = None
+    node._yaw_dr_abs_t = None
+    node._yaw_dr_abs_sigma = node.default_heading_sigma
+    node._hdt_offset = None
+    node._hdt_offset_vec = None
+    node._hdt_offset_n = 0
+    node._hdt_yaw_enu_raw = None
+    node._hdt_stamp = None
+    node._hdt_sigma = None
+    node._gyro_wz = 0.0
+    node._gyro_stamp = None
+    node._dev_anchor = None
+    node._raw_vel_enu = None
+    node._raw_vel_stamp = None
+    node._raw_vel_acc = None
+    node._raw_fix_stamp = None
+    node._raw_fix_enu = None
+    node._raw_fix_rtk = False
+    node._raw_chain_ref = None
+    node._raw_dr_pos = [0.0, 0.0]
+    node._raw_dr_hist.clear()
+    node._raw_active = False
+    node._nav_hdt_used = False
+    node._nav_mode = 0
     node.car_state_pub = _StubPub()
     node.gnss_odom_pub = _StubPub()
     node.health_pub = _StubPub()

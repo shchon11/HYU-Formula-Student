@@ -320,6 +320,8 @@ GraphSlamNode::GraphSlamNode()
     lap_origin_capture_distance_);
   use_odom_covariance_ =
     declare_parameter<bool>("use_odom_covariance", use_odom_covariance_);
+  odom_invalid_sigma_ = std::max(
+    1.0, declare_parameter<double>("odom_invalid_sigma", odom_invalid_sigma_));
   odom_edge_sigma_per_meter_ = std::max(
     0.0, declare_parameter<double>(
       "odom_edge_sigma_per_meter", odom_edge_sigma_per_meter_));
@@ -586,9 +588,13 @@ void GraphSlamNode::stateCallback(const hyu_msgs::msg::CarState::SharedPtr msg)
   last_odom_stamp_sec_ = stamp.seconds();
 
   // Motion-source trust and twist passthrough (see the member comments).
-  latest_odom_sigma_trans_ =
-    std::sqrt(std::max(0.0, std::max(msg->pose.covariance[0], msg->pose.covariance[7])));
-  latest_odom_sigma_yaw_ = std::sqrt(std::max(0.0, msg->pose.covariance[35]));
+  // A non-finite covariance is "not reported" (falls back to the config
+  // sigma), never "zero" (which would read as maximally confident).
+  const auto sigma_from_var =
+    [](double var) {return std::isfinite(var) ? std::sqrt(std::max(0.0, var)) : 0.0;};
+  latest_odom_sigma_trans_ = std::max(
+    sigma_from_var(msg->pose.covariance[0]), sigma_from_var(msg->pose.covariance[7]));
+  latest_odom_sigma_yaw_ = sigma_from_var(msg->pose.covariance[35]);
   latest_twist_vx_.store(msg->twist.twist.linear.x);
   latest_twist_vy_.store(msg->twist.twist.linear.y);
   latest_twist_wz_.store(msg->twist.twist.angular.z);
@@ -960,6 +966,26 @@ void GraphSlamNode::onOptimizeTimer()
 {
   std::lock_guard<std::mutex> lock(graph_mutex_);
   maybeOptimize();
+  // Odometry dropout is otherwise invisible while it happens: every other
+  // diagnostics publish is a lifecycle event (convergence, reset, save/load)
+  // and ego_odom simply goes silent. Report the transition both ways.
+  if (!poses_.empty() && last_odom_stamp_sec_ >= 0.0) {
+    const bool dropout =
+      classifyMappingStopState() == MappingStopReason::OdometryDropout;
+    if (dropout != odom_dropout_reported_) {
+      odom_dropout_reported_ = dropout;
+      if (dropout) {
+        RCLCPP_WARN(
+          get_logger(),
+          "Motion input stale (%.1f s since last CarState): ego_odom/TF frozen, "
+          "cone frames dropped until it returns",
+          get_clock()->now().seconds() - last_odom_stamp_sec_);
+      } else {
+        RCLCPP_INFO(get_logger(), "Motion input back after dropout");
+      }
+      publishLifecycleDiagnostics();
+    }
+  }
 }
 
 g2o::SE2 GraphSlamNode::poseFromCarState(const hyu_msgs::msg::CarState & msg) const
@@ -995,9 +1021,17 @@ bool GraphSlamNode::shouldCreateKeyframe(
   const double yaw = std::abs(normalizeAngle(delta.rotation().angle()));
   const double dt = (stamp - previous.stamp).seconds();
 
+  // A frozen pose from a source that declares itself invalid (see
+  // odom_invalid_sigma_) is not a place the car is known to be: minting a
+  // keyframe on it every keyframe_max_dt would stack coincident vertices with
+  // free edges under a car that may be moving. Real motion (a delta) still
+  // mints -- that first post-gap keyframe carries the huge sigma on purpose.
+  const bool frozen_invalid =
+    latest_odom_sigma_trans_ >= odom_invalid_sigma_ && distance < 1e-3 && yaw < 1e-3;
+
   return distance >= keyframe_distance_ ||
          yaw >= keyframe_yaw_ ||
-         (keyframe_max_dt_ > 0.0 && dt >= keyframe_max_dt_);
+         (keyframe_max_dt_ > 0.0 && dt >= keyframe_max_dt_ && !frozen_invalid);
 }
 
 bool GraphSlamNode::maybeCsmRegister(
@@ -1424,7 +1458,12 @@ void GraphSlamNode::addKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & 
   // being believed at the config sigma. Config sigmas act as the floor and a
   // zero/absent covariance falls back to them entirely.
   Eigen::Matrix3d information = odom_information_;
-  if (use_odom_covariance_ && latest_odom_sigma_trans_ > 1e-6) {
+  // Either reported sigma engages the branch: a source may report a tight
+  // translation with a stale-heading (huge) yaw sigma, and skipping the
+  // branch on the translation alone would trust that heading at the floor.
+  if (use_odom_covariance_ &&
+    (latest_odom_sigma_trans_ > 1e-6 || latest_odom_sigma_yaw_ > 1e-6))
+  {
     // The source reports PER-SAMPLE noise; a keyframe edge integrates many
     // samples plus unmodelled correlated error (slip, yaw leverage), so its
     // honest sigma grows with the distance covered. Believing the per-sample
@@ -1434,7 +1473,7 @@ void GraphSlamNode::addKeyframe(const g2o::SE2 & raw_odom, const rclcpp::Time & 
     const double edge_distance = odom_delta.translation().norm();
     const double sigma_t = std::clamp(
       std::max(
-        latest_odom_sigma_trans_,
+        latest_odom_sigma_trans_ > 1e-6 ? latest_odom_sigma_trans_ : odom_translation_sigma_,
         odom_edge_sigma_per_meter_ * edge_distance),
       odom_translation_sigma_, 50.0);
     const double sigma_y = std::clamp(
@@ -1507,6 +1546,17 @@ GraphSlamNode::ObservationUpdate GraphSlamNode::addConeObservations(
       get_logger(),
       "Skipping duplicate cone graph edges for pose %d; updating landmark deletion state",
       pose.graph_id);
+  }
+
+  // The latest motion input declares its pose invalid (held through a source
+  // gap, or the first message after a blind gap): the pose this frame would
+  // attach to is unknown, so its cones cannot be placed. Drop the frame.
+  if (use_odom_covariance_ && latest_odom_sigma_trans_ >= odom_invalid_sigma_) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "Dropping cone frame: motion input declares its pose invalid (sigma %.0f m)",
+      latest_odom_sigma_trans_);
+    return ObservationUpdate{0U, 0U, 0U, 0U};
   }
 
   const std::vector<ConeObservation> observations = extractConeObservations(msg);

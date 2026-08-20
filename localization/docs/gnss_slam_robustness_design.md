@@ -122,7 +122,8 @@ velocity σ = 모션 입력의 유일 SLAM-직결 레버.
 
 **B-모션. GNSS-free 열화 사다리 (직교 튜플)**:
 ```
-motion_src ∈ {ins_fused(mode≥3), wheel_ahrs_DR(mode2), dead(GNSS-free 모션B: 휠+자이로)}
+motion_src ∈ {ins_fused(mode≥3), raw_gnss(RTK 델타+Doppler, HDT/자이로 헤딩 — EKF 리셋 대비, 2026-08-17 구현),
+              wheel_DR(휠+EKF/HDT/자이로 헤딩), dead(GNSS-free 모션B: 휠+자이로)}
 perception ∈ {ok, sparse, lost}
 정지: ZUPT 동결(브리지 구현; RTK bag서도 유령 1.8m 잔존→유효)
 ```
