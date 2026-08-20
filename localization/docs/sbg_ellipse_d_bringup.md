@@ -1,7 +1,9 @@
 # SBG Ellipse-D INS — 브링업 & 검증 런북
 
 실차 GNSS/INS(**SBG Ellipse-D**) 연결·설정·검증 절차. SLAM 스택은 이 장치를
-`localization/scripts/sbg_odometry_bridge.py`를 통해 `hyu_msgs/CarState`로 받는다.
+`sbg_raw_ekf`(C++, `localization/src/sbg_raw_ekf_node.cpp`)를 통해 `hyu_msgs/CarState`로 받는다.
+2026-08-21부터 장치 EKF(`ekf_nav`/`ekf_euler`)는 쓰지 않고 raw `imu_data`·`gps_pos`·`gps_vel`·`gps_hdt`만 융합한다
+(아래 본문의 `sbg_odometry_bridge`·`ekf_nav` 언급은 그 이전 기록).
 
 > 기록: 2026-07-22 실내 브링업. 장치 SN 68336.
 
@@ -187,10 +189,12 @@ $API -s /dev/ttyUSB0 -r 115200 /api/v1/settings/output/comA/messages/utcTime  -p
 
 ---
 
-## 7. SLAM 브리지 요약
+## 7. SLAM 입력 노드 요약 (2026-08-21: `sbg_raw_ekf`)
 
-`localization/scripts/sbg_odometry_bridge.py`:
-- **구독**: `/sbg/ekf_nav`, `/sbg/ekf_euler`, `/vehicle/wheel_speeds`
-- **발행**: `/localization/ins_odom` (CarState, 상대 오도메트리), `/localization/gnss_odom` (전역 앵커), `/sbg_bridge/status`
+`localization/src/sbg_raw_ekf_node.cpp` (옛 `sbg_odometry_bridge.py` 폐기):
+- **구독**: `/sbg/imu_data`, `/sbg/gps_pos`, `/sbg/gps_vel`, `/sbg/gps_hdt` — 장치 EKF 토픽은 구독하지 않음
+- **발행**: `/localization/ins_odom` (CarState, 25 Hz), `/localization/gnss_odom` (raw fix ENU), `/sbg_bridge/status`, HUD 오버레이
+- 듀얼안테나 헤딩 오프셋 `hdt_offset_deg` 180 (안테나 순서), 상세는 `localization/README.md`
+- 포즈는 base_footprint 기준: 주안테나 위치를 `hyu_sensor_bringup/config/vehicle_mount.yaml` `sbg:`(카메라 기준 IMU 위치 + 이 문서 옆 `sbg_ellipse_d_settings_bringup.json`의 `aiding/gnss1/leverArmPrimary`)에서 런치가 합성 → `antenna_offset_x/y`. 커미셔닝 뒤 settings JSON을 꼭 재저장할 것(lever arm의 진본)
 - `frame_convention` 기본 `ned`가 장치 `use_enu:false`와 일치(한쪽만 바꾸면 좌표계 붕괴).
 - 실내 mode 1에선 정상적으로 `WAITING FOR FIX` 대기.

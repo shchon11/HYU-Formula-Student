@@ -21,6 +21,7 @@ TF:
                                                      block (camera height / tilt
                                                      over the ground plane)
     base_footprint -> rslidar                        camera o extrinsic
+    base_footprint -> sbg_imu, gnss_primary/secondary  vehicle_mount.yaml sbg: (+ device lever arms)
     base_footprint -> zed_camera_link                the SAME camera pose
                                                      re-expressed at the ZED
                                                      URDF's root, so the wrapper's
@@ -46,6 +47,7 @@ Usage:
     ros2 launch hyu_sensor_bringup sensors.launch.py extrinsic:=/path/to.yaml
     ros2 launch hyu_sensor_bringup sensors.launch.py ntrip:=true   # + RTK
 """
+import json
 import math
 import os
 
@@ -178,28 +180,20 @@ def _camera_over_ground(context, ext, ext_path):
             f"ground block; run solve_mount.py --write to measure it")
 
 
-def _tf_actions(context, share):
-    """base_footprint below the camera; the LiDAR composed with the extrinsic."""
+def _camera_pose(context):
+    """base_footprint -> left optical (R, t) and the pieces the log lines want.
+
+    Raises OSError/ValueError/KeyError when no camera height is available.
+    """
     import yaml
 
     lc = context.launch_configurations
-    if lc['tf'].lower() not in ('true', '1'):
-        return [LogInfo(msg='[sensors] tf:=false — no TF published '
-                            '(calibration capture mode).')]
-
     ext_path = lc['extrinsic']
     ext = {}
     if os.path.exists(ext_path):
         with open(ext_path) as f:
             ext = yaml.safe_load(f) or {}
-    l2c = ext.get('lidar_to_camera') or {}
-
-    try:
-        h, roll, pitch, origin = _camera_over_ground(context, ext, ext_path)
-    except (OSError, ValueError, KeyError) as exc:
-        return [LogInfo(msg=(f'[sensors] no camera height available ({exc}) — '
-                             f'NO TF published. Run ./calib.sh (solve_mount.py '
-                             f'writes it) or fill config/vehicle_mount.yaml.'))]
+    h, roll, pitch, origin = _camera_over_ground(context, ext, ext_path)
 
     # base -> left optical, with the LEFT lens on the plumb line for now.
     r_bopt = _matmul(_mat_from_rpy(roll, pitch, 0.0), R_BODY_OPT)
@@ -208,7 +202,6 @@ def _tf_actions(context, share):
     # Slide base so the STEREO CENTRE, not the left lens, is what sits above
     # it. Pure horizontal shift; the height stays that of the left optical
     # centre (the two differ by ~1 mm through the roll).
-    actions = []
     geom = _zed_geometry(context)
     if geom is None:
         below = 'LEFT lens (ZED URDF not resolved; stereo centre is baseline/2 to its right)'
@@ -217,6 +210,114 @@ def _tf_actions(context, share):
         _, t_center = _compose(r_bopt, t_bopt, *_invert(*geom['center_to_opt']))
         t_bopt[0] -= t_center[0]
         t_bopt[1] -= t_center[1]
+    return {'ext': ext, 'ext_path': ext_path, 'h': h, 'roll': roll, 'pitch': pitch,
+            'origin': origin, 'r_bopt': r_bopt, 't_bopt': t_bopt, 'geom': geom,
+            'below': below}
+
+
+def _sbg_lever_arms(sbg):
+    """(primary, secondary, source): GNSS antenna lever arms in the IMU frame
+    (SBG convention: X forward, Y right, Z down), metres.
+
+    The DEVICE settings are the truth (the driver yaml's lever arms are 0 and
+    not applied, see docs/sbg_ellipse_d_bringup.md): read them from the
+    saved settings JSON (`sbg.settings_json`, what sbgEComApi
+    GET /api/v1/settings/aiding/gnss1 returns, stored under localization/docs
+    at every commissioning), else from explicit `lever_arm_primary/secondary`
+    values copied into vehicle_mount.yaml.
+    """
+    path = sbg.get('settings_json')
+    if path:
+        path = os.path.expandvars(os.path.expanduser(str(path)))
+        if not os.path.isabs(path):
+            root = os.environ.get('EUFS_MASTER', os.path.expanduser('~/fsk'))
+            path = os.path.join(root, path)
+        if os.path.exists(path):
+            with open(path) as f:
+                gnss1 = json.load(f)['aiding']['gnss1']
+            return (list(map(float, gnss1['leverArmPrimary'])),
+                    list(map(float, gnss1['leverArmSecondary'])), path)
+    if 'lever_arm_primary' in sbg:
+        return (list(map(float, sbg['lever_arm_primary'])),
+                list(map(float, sbg.get('lever_arm_secondary', [0.0, 0.0, 0.0]))),
+                'vehicle_mount.yaml')
+    raise ValueError('sbg: neither a readable settings_json nor lever_arm_primary')
+
+
+def _sbg_mount(context, cam):
+    """SBG IMU and GNSS antennas in base_footprint from the mount yaml.
+
+    vehicle_mount.yaml `sbg:` gives the IMU body origin relative to the ZED
+    LEFT lens (camera body axes: x forward, y left, z up) and where the
+    antenna lever arms come from. Returns (actions, (ax, ay)) where (ax, ay)
+    is the PRIMARY antenna in base_footprint -- what sbg_raw_ekf needs to
+    publish base_footprint's pose instead of the antenna's. A wrong value
+    shows only in turns: every cone re-observed from a new heading lands
+    R(yaw)*error away (2026-08-21 diagnosis, 1.25 m -> the map broke). No
+    `sbg:` block -> (log, None): the node keeps its own default.
+    """
+    import yaml
+
+    lc = context.launch_configurations
+    mount_path = lc['mount']
+    with open(mount_path) as f:
+        mount = yaml.safe_load(f) or {}
+    sbg = mount.get('sbg')
+    if not sbg or 'imu_from_camera' not in sbg:
+        return ([LogInfo(msg=(f'[sensors] {os.path.basename(mount_path)} has no sbg.imu_from_camera: '
+                              f'no IMU/antenna TF, sbg_raw_ekf keeps its own antenna_offset '
+                              f'default (measure and fill it in!).'))], None)
+    v = [float(x) for x in sbg['imu_from_camera']]
+    imu_yaw = math.radians(float(sbg.get('imu_yaw_deg', 0.0)))
+    lever_p, lever_s, source = _sbg_lever_arms(sbg)
+    # camera BODY frame (x fwd, y left, z up) at the left optical centre
+    r_bcam = _mat_from_rpy(cam['roll'], cam['pitch'], 0.0)
+    t_bcam = cam['t_bopt']
+    r_imu, t_imu = _compose(r_bcam, t_bcam, _mat_from_rpy(0.0, 0.0, imu_yaw), v)
+    # SBG lever arms are IMU X fwd / Y right / Z down -> ROS body (y, z flipped)
+    ant = {}
+    for name, l in (('gnss_primary', lever_p), ('gnss_secondary', lever_s)):
+        _, t_ant = _compose(r_imu, t_imu, [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                            [l[0], -l[1], -l[2]])
+        ant[name] = t_ant
+    ust = lc['use_sim_time']
+    actions = [
+        _static_tf('mount_tf_sbg_imu', 'base_footprint', 'sbg_imu', t_imu,
+                   _quat_from_mat(r_imu), ust),
+        _static_tf('mount_tf_gnss_primary', 'base_footprint', 'gnss_primary',
+                   ant['gnss_primary'], (0.0, 0.0, 0.0, 1.0), ust),
+        _static_tf('mount_tf_gnss_secondary', 'base_footprint', 'gnss_secondary',
+                   ant['gnss_secondary'], (0.0, 0.0, 0.0, 1.0), ust),
+        LogInfo(msg=(
+            f'[sensors] SBG IMU at ({t_imu[0]:+.3f}, {t_imu[1]:+.3f}, {t_imu[2]:+.3f}) in '
+            f'base_footprint (mount yaml sbg.imu_from_camera); lever arms primary '
+            f'{lever_p} secondary {lever_s} <- {os.path.basename(source)}; PRIMARY '
+            f'ANTENNA at ({ant["gnss_primary"][0]:+.3f}, {ant["gnss_primary"][1]:+.3f}) '
+            f'-> sbg_raw_ekf antenna_offset; baseline '
+            f'{math.dist(ant["gnss_primary"], ant["gnss_secondary"]):.3f} m '
+            f'(gps_hdt.baseline must agree)')),
+    ]
+    return actions, (ant['gnss_primary'][0], ant['gnss_primary'][1])
+
+
+def _tf_actions(context, share):
+    """base_footprint below the camera; the LiDAR composed with the extrinsic."""
+    lc = context.launch_configurations
+    if lc['tf'].lower() not in ('true', '1'):
+        return [LogInfo(msg='[sensors] tf:=false — no TF published '
+                            '(calibration capture mode).')]
+
+    try:
+        cam = _camera_pose(context)
+    except (OSError, ValueError, KeyError) as exc:
+        return [LogInfo(msg=(f'[sensors] no camera height available ({exc}) — '
+                             f'NO TF published. Run ./calib.sh (solve_mount.py '
+                             f'writes it) or fill config/vehicle_mount.yaml.'))]
+    ext, ext_path = cam['ext'], cam['ext_path']
+    l2c = ext.get('lidar_to_camera') or {}
+    h, roll, pitch, origin = cam['h'], cam['roll'], cam['pitch'], cam['origin']
+    r_bopt, t_bopt, geom, below = cam['r_bopt'], cam['t_bopt'], cam['geom'], cam['below']
+    actions = []
 
     cam_frame = lc['camera_frame']
     actions.append(_static_tf('mount_tf_camera', 'base_footprint', cam_frame,
@@ -415,7 +516,7 @@ def _setup(context, *_args, **_kwargs):
         if gnss == 'on' or os.path.exists(port):
             # NOT namespaced. The driver publishes relative topics (sbg/ekf_nav,
             # imu/data, ...), so a 'sensors' namespace would put them on
-            # /sensors/sbg/* while hyu_localization's sbg_odometry_bridge and
+            # /sensors/sbg/* while hyu_localization's sbg_raw_ekf and
             # wheel_odometry both subscribe /sbg/* -- the INS chain would sit
             # silent with the driver visibly running. docs/topic_contract.md
             # lists /sbg/* as the driver default; keep it that way.
@@ -433,24 +534,40 @@ def _setup(context, *_args, **_kwargs):
     # Raw driver output -> odometry. These live here, not in step 2's INS
     # pipeline, because every input they read is a step-1 topic:
     #   wheel_odometry      /vehicle/wheel_speeds, /sbg/ekf_nav, /sbg/ekf_rot_accel_body
-    #   sbg_odometry_bridge /sbg/ekf_nav, /sbg/ekf_euler
+    #   sbg_raw_ekf         /sbg/imu_data, /sbg/gps_pos, /sbg/gps_vel, /sbg/gps_hdt
     # and because perception's LiDAR deskew subscribes /localization/wheel_odom.
     # Started in step 2 it arrived a whole step late and perception ran the
     # entire of step 1 with the scan uncorrected.
+    # SBG IMU / antenna placement (vehicle_mount.yaml sbg:) -- the static TFs
+    # and, more importantly, the primary antenna's position in base_footprint
+    # that sbg_raw_ekf needs to publish the VEHICLE pose, not the antenna's.
+    sbg_actions, antenna_xy = [], None
+    if context.launch_configurations['tf'].lower() in ('true', '1'):
+        try:
+            sbg_actions, antenna_xy = _sbg_mount(context, _camera_pose(context))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            sbg_actions = [LogInfo(msg=(
+                f'[sensors] SBG mount not resolved ({exc}); sbg_raw_ekf keeps its '
+                f'own antenna_offset default. Fill vehicle_mount.yaml sbg:.'))]
+
     if context.launch_configurations['odometry'].lower() not in ('false', '0'):
         use_sim_time = context.launch_configurations['use_sim_time'].lower() in ('true', '1')
         actions.append(Node(
             package='hyu_localization', executable='wheel_odometry',
             name='wheel_odometry', output='screen',
             parameters=[{'use_sim_time': use_sim_time}]))
+        ekf_params = {'use_sim_time': use_sim_time,
+                      'car_state_topic': context.launch_configurations['ins_odom_topic']}
+        if antenna_xy is not None:
+            ekf_params['antenna_offset_x'] = float(antenna_xy[0])
+            ekf_params['antenna_offset_y'] = float(antenna_xy[1])
         actions.append(Node(
-            package='hyu_localization', executable='sbg_odometry_bridge',
-            name='sbg_odometry_bridge', output='screen',
-            parameters=[{'use_sim_time': use_sim_time,
-                         'car_state_topic':
-                             context.launch_configurations['ins_odom_topic']}]))
+            package='hyu_localization', executable='sbg_raw_ekf',
+            name='sbg_raw_ekf', output='screen',
+            parameters=[ekf_params]))
 
     actions.extend(_tf_actions(context, share))
+    actions.extend(sbg_actions)
     return actions
 
 
@@ -505,7 +622,7 @@ def generate_launch_description():
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument('odometry', default_value='true',
                               description='Start wheel_odometry and '
-                                          'sbg_odometry_bridge. Step 2 must be '
+                                          'sbg_raw_ekf. Step 2 must be '
                                           'told odometry:=false when this is on, '
                                           'or both run twice.'),
         DeclareLaunchArgument('ins_odom_topic',

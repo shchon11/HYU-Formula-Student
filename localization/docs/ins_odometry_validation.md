@@ -1,5 +1,9 @@
 # INS 오도메트리 파이프라인 — 검증 현황
 
+> **2026-08-21 갱신**: 아래의 모션 A(`ekf_nav`+`ekf_euler` → `sbg_odometry_bridge.py`)는 폐기되었고,
+> raw `imu_data`·`gps_pos`·`gps_vel`·`gps_hdt`만 쓰는 `sbg_raw_ekf`(C++)로 교체되었다. 이 문서는 그 이전 기록이며,
+> 현행 구조·검증 수치는 `localization/README.md`의 "INS 체인" 절 참조.
+
 SBG Ellipse-D 기반 localization 파이프라인의 구조·검증 결과·개선 여지 기록.
 브링업 절차는 [`sbg_ellipse_d_bringup.md`](./sbg_ellipse_d_bringup.md) 참조.
 

@@ -119,7 +119,7 @@ flowchart LR
     CAM -->|image| YOLO
     LID -->|points| FUSE
     FUSE -->|"/perception/cones"| GS
-    SBG -->|"SBG 브리지 → ins_odom (실차 모션 입력)"| GS
+    SBG -->|"sbg_raw_ekf → ins_odom (실차 모션 입력)"| GS
     ENC -->|car_state| GS
 
     GS -->|"cone_map + ego_odom"| LP

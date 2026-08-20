@@ -21,11 +21,13 @@
   <depend>std_srvs</depend>
   <depend>tf2_ros</depend>
   <depend>visualization_msgs</depend>
+  <!-- raw GNSS/IMU odometry EKF node + bag eval tool -->
+  <depend>diagnostic_msgs</depend>
+  <depend>sbg_driver</depend>
+  <depend>rosbag2_cpp</depend>
+  <depend>rosbag2_storage</depend>
 
   <exec_depend>eigen</exec_depend>
-  <!-- Runtime-only deps of the SBG bridge / simulated Ellipse-D scripts. -->
-  <exec_depend>diagnostic_msgs</exec_depend>
-  <exec_depend>sbg_driver</exec_depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_lint_auto</test_depend>

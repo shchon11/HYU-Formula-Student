@@ -2,7 +2,7 @@
 # Copyright 2026 shchon11
 #
 # Runs a full headless graph SLAM experiment on the real sensor chain:
-#   Gazebo (small_track) + sim Ellipse-D INS + SBG bridge (/localization/gnss_odom anchor)
+#   Gazebo (small_track) + sim Ellipse-D INS + sbg_raw_ekf (/localization/gnss_odom anchor)
 #   + wheel odometry (SLAM motion input) + graph SLAM + scripted driver
 #   + evaluator, then tears everything down and leaves a JSON report.
 #
@@ -65,7 +65,7 @@ kill_harness() {
     pkill -9 -f "scripts/evaluate_slam.py" 2>/dev/null
     pkill -9 -f "scripts/drive_track.py" 2>/dev/null
     pkill -9 -f "sim_ellipse_d" 2>/dev/null
-    pkill -9 -f "sbg_odometry_bridge" 2>/dev/null
+    pkill -9 -f "sbg_raw_ekf" 2>/dev/null
     pkill -9 -f "hyu_localization/wheel_odometry" 2>/dev/null
     pkill -9 -x gzserver 2>/dev/null
     pkill -9 -f spawner.py 2>/dev/null

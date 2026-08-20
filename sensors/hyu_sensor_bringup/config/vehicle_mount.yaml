@@ -33,3 +33,31 @@ camera:
 # ahead of the CAMERA at y ~= 0. The launch prints base_footprint -> rslidar;
 # its z should equal ground.lidar_height_m of the extrinsic (~0.54 m) and its
 # yaw is whatever the LiDAR was bolted at (~ -83 deg, twisted mount).
+
+# SBG Ellipse-D (IMU) and its GNSS antennas. The receiver's position/velocity
+# are the PRIMARY ANTENNA's; sbg_raw_ekf moves them to base_footprint with the
+# antenna's position in base_footprint, which the launch composes from the
+# numbers below (base -> camera -> IMU -> antenna) and logs. Get this wrong
+# and the map breaks in every turn: a cone re-observed from a new heading
+# lands R(yaw)*error away from where it was (2026-08-21: 1.25 m of it).
+sbg:
+  # IMU body origin relative to the ZED LEFT lens (left optical centre), in
+  # camera BODY axes: x forward, y left, z up [m]. Tape-measure it.
+  #   x: ESTIMATED 2026-08-21 from the 0801 bags (primary antenna at +1.25 m
+  #      ahead of base_footprint by cone re-observation consistency, minus the
+  #      0.18 m primary lever arm) -- replace with a measurement.
+  #   z: PLACEHOLDER (does not enter the 2D odometry; only the sbg_imu TF).
+  #   y: the left lens sits baseline/2 (~6 cm) LEFT of the car centreline;
+  #      an IMU on the centreline is therefore ~-0.06 from it.
+  imu_from_camera: [1.07, -0.06, -0.40]
+  imu_yaw_deg: 0.0      # IMU x vs vehicle forward after the device's imuAlignment (normally 0)
+  # Antenna lever arms, IMU frame (SBG: X fwd, Y right, Z down) [m]. The
+  # DEVICE settings are the truth -- read from the saved settings JSON
+  # (sbgEComApi GET /api/v1/settings/aiding/gnss1 -> leverArmPrimary/
+  # leverArmSecondary; re-save it under localization/docs after every
+  # commissioning). Path is absolute, or relative to $EUFS_MASTER (~/fsk).
+  settings_json: src/localization/docs/sbg_ellipse_d_settings_bringup.json
+  # Fallback when the JSON is missing: copy the values from the device.
+  # 2026-08-01 flash: primary [0.18, 0, 0], secondary [-1.07, 0, 0.13].
+  lever_arm_primary: [0.18, 0.0, 0.0]
+  lever_arm_secondary: [-1.07, 0.0, 0.13]

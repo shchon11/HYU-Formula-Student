@@ -135,7 +135,7 @@ fsk_ins_cmd() {
   # use_sim_time to share the bag's clock domain, but it is still a real INS
   # chain -- and eufs_sensors (the simulated Ellipse-D) does not exist on the
   # vehicle compute, so keying off the clock would kill the whole pipeline.
-  # odometry conditioning (sbg_odometry_bridge + wheel_odometry) belongs to
+  # odometry conditioning (sbg_raw_ekf + wheel_odometry) belongs to
   # whoever owns the sensors. On the car and on a bag, step 1's sensor bringup
   # runs it -- perception's LiDAR deskew reads /localization/wheel_odom and
   # would otherwise sit uncorrected for the whole of step 1. The simulator has

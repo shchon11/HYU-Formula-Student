@@ -240,7 +240,7 @@ class StackHud(Node):
         # Board sits BELOW the top-centre banner (v_dist 8, height 44 -> y8..52).
         # On a narrow viewport the centred banner slides left over this left
         # board; clearing it vertically keeps the banner readable. GNSS HUD
-        # (sbg_odometry_bridge.py) is pinned just under this board's bottom, so
+        # (sbg_raw_ekf) is pinned just under this board's bottom, so
         # keep the two in sync when moving either.
         self._publish(
             self.hud_pub, "\n".join(lines),

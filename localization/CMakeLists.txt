@@ -21,6 +21,12 @@ find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(visualization_msgs REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
+find_package(sbg_driver REQUIRED)
+# Optional: RViz HUD overlay for the raw EKF node, and the bag eval tool.
+find_package(rviz_2d_overlay_msgs QUIET)
+find_package(rosbag2_cpp QUIET)
+find_package(rosbag2_storage QUIET)
 
 find_package(g2o QUIET CONFIG)
 if(NOT g2o_FOUND)
@@ -95,6 +101,46 @@ target_link_libraries(graph_slam_node
 install(TARGETS graph_slam_node
   DESTINATION lib/${PROJECT_NAME})
 
+# --- raw GNSS/IMU odometry EKF (replaces sbg_odometry_bridge.py) -----------
+# Core filter as a library so the node, the bag eval tool and the gtest share
+# one implementation (port of the offline reference my_ekf.py).
+add_library(raw_gnss_ekf STATIC src/raw_gnss_ekf.cpp)
+target_include_directories(raw_gnss_ekf PUBLIC
+  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+  "$<INSTALL_INTERFACE:include>")
+target_link_libraries(raw_gnss_ekf PUBLIC Eigen3::Eigen)
+
+add_executable(sbg_raw_ekf
+  src/sbg_raw_ekf_node.cpp
+  src/sbg_raw_ekf_main.cpp)
+ament_target_dependencies(sbg_raw_ekf
+  diagnostic_msgs
+  hyu_msgs
+  nav_msgs
+  rclcpp
+  sbg_driver)
+target_link_libraries(sbg_raw_ekf raw_gnss_ekf)
+if(rviz_2d_overlay_msgs_FOUND)
+  ament_target_dependencies(sbg_raw_ekf rviz_2d_overlay_msgs)
+  target_compile_definitions(sbg_raw_ekf PRIVATE HYU_HAVE_RVIZ_OVERLAY=1)
+endif()
+install(TARGETS sbg_raw_ekf
+  DESTINATION lib/${PROJECT_NAME})
+
+if(rosbag2_cpp_FOUND AND rosbag2_storage_FOUND)
+  add_executable(sbg_raw_ekf_bag_eval src/sbg_raw_ekf_bag_eval.cpp)
+  ament_target_dependencies(sbg_raw_ekf_bag_eval
+    rclcpp
+    rosbag2_cpp
+    rosbag2_storage
+    sbg_driver)
+  target_link_libraries(sbg_raw_ekf_bag_eval raw_gnss_ekf)
+  install(TARGETS sbg_raw_ekf_bag_eval
+    DESTINATION lib/${PROJECT_NAME})
+else()
+  message(STATUS "rosbag2_cpp not found: sbg_raw_ekf_bag_eval is not built")
+endif()
+
 install(PROGRAMS scripts/slam_gui.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME slam_gui)
@@ -106,10 +152,6 @@ install(PROGRAMS scripts/ate_monitor.py
 install(PROGRAMS scripts/wheel_odometry.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME wheel_odometry)
-
-install(PROGRAMS scripts/sbg_odometry_bridge.py
-  DESTINATION lib/${PROJECT_NAME}
-  RENAME sbg_odometry_bridge)
 
 install(PROGRAMS scripts/status_monitor.py
   DESTINATION lib/${PROJECT_NAME}
@@ -132,12 +174,11 @@ if(BUILD_TESTING)
   ament_add_pytest_test(wheel_odometry_tests test/test_wheel_odometry.py
     TIMEOUT 120
   )
-  ament_add_pytest_test(sbg_bridge_fallback_tests test/test_sbg_bridge_fallback.py
-    TIMEOUT 120
-  )
-  ament_add_pytest_test(sbg_bridge_raw_gnss_tests test/test_sbg_bridge_raw_gnss.py
-    TIMEOUT 120
-  )
+
+  ament_add_gtest(raw_gnss_ekf_test
+    test/raw_gnss_ekf_test.cpp)
+  target_link_libraries(raw_gnss_ekf_test raw_gnss_ekf)
+  ament_target_dependencies(raw_gnss_ekf_test sbg_driver)
 
   ament_add_gtest(loop_confirmation_test
     test/loop_confirmation_test.cpp)

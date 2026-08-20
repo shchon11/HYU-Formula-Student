@@ -8,10 +8,9 @@ flowchart LR
     CONES["/perception/cones<br/>(base_footprint)"] --> GS
     ODOM["/localization/wheel_odom<br/>또는 /localization/ins_odom"] --> GS
 
-    subgraph BRIDGE["INS/SBG 브리지 (실차 체인)"]
-        SBG["🛰 /sbg/ekf_nav · ekf_euler"] --> BR["sbg_odometry_bridge"]
-        WS["⚙️ /vehicle/wheel_speeds"] --> BR
-        BR -->|"ins_odom (상대, 점프 없음)"| GS
+    subgraph BRIDGE["INS 체인 (실차)"]
+        SBG["🛰 /sbg/imu_data · gps_pos · gps_vel · gps_hdt"] --> BR["sbg_raw_ekf (C++ 8-상태 EKF)"]
+        BR -->|"ins_odom (25 Hz, ENU)"| GS
     end
 
     GS["graph_slam<br/>g2o 포즈그래프 + CSM 보정"]
@@ -69,40 +68,47 @@ flowchart LR
 big-orange 출발 게이트 4개의 고유한 배치에서 드리프트와 무관하게 절대 SE2 포즈를
 복원합니다(gate anchor). 좌우·180° 모호성은 시야 내 전체 콘의 지도 정합 수로 해소합니다.
 
-## INS/SBG 브리지 (실차 측위 체인)
+## INS 체인 (실차 측위): `sbg_raw_ekf`
 
-`ins_pipeline.launch.py`가 SBG Ellipse-D → `sbg_odometry_bridge` → graph_slam 체인을 띄웁니다.
-브리지의 설계 원칙은 **"끊기보다 열화"** — 적분기는 하나, 모션 소스만 틱마다 사다리에서 고릅니다:
+`ins_pipeline.launch.py`(sim) / `sensors.launch.py`(실차·bag)가 SBG Ellipse-D → `sbg_raw_ekf` → graph_slam 체인을 띄웁니다.
+**장치 내부 EKF(`/sbg/ekf_nav`·`ekf_euler`)는 쓰지 않습니다** — 2026-08-01 실차에서 주행 중 세 번 재초기화(mode 4→0/1, 각 ~30 s)되는
+동안 수신기 raw 출력(RTK 위치·Doppler 속도·듀얼안테나 헤딩)은 멀쩡했고, raw만으로 만든 오프라인 EKF(`my_ekf.py`)가 장치 EKF 기반
+브리지보다 성능이 좋아 2026-08-21에 그 알고리즘을 C++로 옮겨 옛 `sbg_odometry_bridge.py`를 폐기했습니다.
 
-| 단 | 소스 | 조건 | σ |
-|---|---|---|---|
-| A | EKF nav 속도 + EKF 헤딩 | solution_mode ≥ 3, velocity_valid | 0.05 (mode 4) / 0.20 (mode 3) |
-| C | **raw GNSS** — RTK 에폭 델타 + Doppler 속도, 헤딩은 dual-antenna HDT + 자이로 | `/sbg/gps_pos` RTK(≥float)·`/sbg/gps_vel`·`/sbg/gps_hdt` 살아 있음 (EKF 상태 무관) | 0.10 |
-| B | 휠속 × 헤딩 (EKF 또는 HDT/자이로) | `/vehicle/wheel_speeds` 신선 | 0.20 |
-| C' | raw GNSS Doppler만 (single-point) | gps_vel 살아 있음 | 0.20 |
-| hold | 포즈 동결, σ=1e3 | 위 전부 불가, `held_max_sec`(0.5 s)까지만 | 1e3 |
-| FAULT | 발행 중단 → SLAM은 스냅샷 관성 주행, PP는 0.5 s 뒤 제동 | 그 이후 | — |
+구독은 raw 네 토픽뿐: `/sbg/imu_data`(25 Hz), `/sbg/gps_pos`·`gps_vel`·`gps_hdt`(5 Hz). 내부는 NED 2D EKF
+(`include/hyu_localization/raw_gnss_ekf.hpp`, 상태 `[pN, pE, vN, vE, ψ, b_gz, b_ax, b_ay]`):
 
-**C단이 생긴 이유 (2026-08-01 실측)**: 세 번의 주행 bag(17:40/17:47/17:50)에서 Ellipse EKF가 주행 중
-재초기화(mode 4→0/1, 각 ~30 s, 그동안 48–72 m 주행)됐는데, 그 사이 수신기 자체는 RTK_INT 위치(1 cm)·
-Doppler 속도·듀얼안테나 헤딩(0.4°)을 5 Hz로 멀쩡히 내고 있었습니다. 기존 사다리는 solution_mode만 보므로
-mode 1 = FAULT → `ins_odom` 30 s 침묵 → 재진입 시 SLAM 포즈가 실차보다 50–70 m 뒤(지도 오염).
-C단은 `/sbg/gps_pos`·`gps_vel`·`gps_hdt`·`imu_data`를 직접 읽어 EKF 리셋을 SLAM에게 보이지 않게 합니다
-(`scripts/bridge_bag_eval.py`로 실측: 세 outage 모두 발행 공백 ≤0.08 s, outage 종료 시 상대 오도 오차 0.06–0.25 m).
-HDT는 안테나 순서에 따른 설치 오프셋(현재 차: 180°)이 있어 EKF가 정상일 때 온라인으로 학습하며(`hdt_yaw_offset_deg`
-NaN), 고정하면 EKF 정렬 전 raw 시작도 가능합니다. 실차에는 아직 휠속 소스가 없어(CAN 브리지 미구현) 실제 사다리는
-A → C → hold입니다. Hold는 시간 제한이 있고(동결 포즈가 계속 흐르면 하류 워치독이 못 봄), 블라인드 갭 뒤 첫 메시지는
-σ=1e3로 나가 그래프가 갭을 가로지르는 델타를 믿지 않습니다.
+| 단계 | 내용 |
+|---|---|
+| 예측 | IMU마다 gyro.z→ψ, body accel x/y를 ψ로 회전→속도→위치. `b_ax/b_ay`가 마운트 기울기·중력 누설, `b_gz`가 자이로 바이어스 흡수. Q는 연속시간 백색잡음(`sig_acc` 0.3 m/s²/√Hz, `sig_gyro` 0.3°/s/√Hz)+바이어스 random walk |
+| 보정 | `gps_pos`(N,E; R=σ²+0.02²+(v·5 ms)²), `gps_vel`(vN,vE; R=σ²+0.03²), `gps_hdt`(ψ=heading+`hdt_offset_deg`(180°), R=max(σ,0.2°)²), HDT가 3 s 이상 없고 v>1 m/s면 `gps_vel.course` 폴백 |
+| 게이팅 | Mahalanobis χ²(pos/vel 20, hdt 12); 연속 기각 10회(hdt 25회)면 R×9로 받아들임(soft re-acquire) |
+| ZUPT | IMU 0.5 s 창이 정지(gyro std<0.2°/s, \|mean\|<0.5°/s, 수평 accel std<0.06) + GPS 속도≈0 → 매 IMU마다 v=0(σ 2 cm/s)·ZARU(gyro.z=b_gz) 관측 |
+| 모드 | 200 OK / 201 NO_HDT(헤딩 미관측: 자이로+course) / 202 COAST(GNSS 위치 1 s 이상 없음) |
+| 지연 처리 | 수신기 에폭은 같은 device time의 IMU보다 ~90 ms(p50)/113 ms(p90) 늦게 도착 → 1 s 이벤트 버퍼로 되감기·재생(OOSM). 출력 지연 없이 시간순 입력과 같은 필터 상태 |
 
-출력은 두 갈래: `/localization/ins_odom`(점프 없는 상대 오도메트리 — SLAM 입력)과
-`/localization/gnss_odom`(절대 ENU 앵커 — HUD·진단용). GNSS 재획득 직후 3초는
-공분산 바닥을 깔아 "자신만만하지만 틀린" prior를 막습니다(refix holdoff).
-`/sbg_bridge/status`의 `motion_source` 키(ekf/raw_gnss_rtk/raw_gnss_doppler/wheels/zupt/hold/fault)가 현재 단입니다.
+출력은 옛 브리지와 같은 계약: `/localization/ins_odom`(CarState, ENU: x=E, y=N, yaw 0=East; **base_footprint의 포즈** — 수신기 해는 주안테나의 것이라 `antenna_offset_x/y`(기본 +1.25/0 m, base 기준 x 전방)로 옮김; IMU마다 25 Hz, body twist 포함 —
+정지(ZUPT) 중엔 twist 0), `/localization/gnss_odom`(raw fix 절대 ENU + 보고 σ), `/sbg_bridge/status`(DiagnosticArray: `mode`,
+`motion_source`=raw_ekf/zupt/raw_ekf_no_hdt/coast/fault, `pos_age`, `hdt_age`, σ, 채택/기각 카운트, OOSM 통계),
+RViz HUD `/localization/debug/gnss_overlay`. `pose.covariance[0/7]`는 σ_t=max(모드 티어 `odom_sigma_ok` 0.05 / `odom_sigma_degraded` 0.20,
+EKF 위치 σ)² — coast 중엔 EKF σ가 자라 솔직하게 넓어지고, IMU 공백(`blind_gap_sec` 0.5 s) 뒤 첫 메시지는 σ=1e3(graph_slam의 "포즈 무효" 마커).
+`pose.covariance[35]`는 EKF yaw 분산. 좌표는 WGS84 접평면(datum = 첫 유효 fix 또는 `datum_latitude/longitude`).
 
-> ⚠️ **EKF 리셋의 원인은 별개 문제**입니다. 세 번 모두 저속(≈2 m/s)·급선회(요레이트 ~35°/s) 중이었고 직전
+**검증(2026-08-21)**: `sbg_raw_ekf_bag_eval`로 0801 bag 세 개(17:40/17:47/17:50)를 돌리면 python 기준(`my_ekf.py`)과 전 구간
+1e-6 이내 일치(모드·ZUPT 불일치 0). 수치: RTK 에폭 대비 위치 RMS 1.2–1.7 cm(p95 2.3–3.4 cm), HDT 대비 yaw std 0.29–0.40°,
+coast 0 %, NO_HDT ≤1.4 %. 수신 순서(OOSM)로 돌려도 최종 상태·카운트 동일(행별 차이 ≤12 cm는 아직 안 온 ≤160 ms 에폭분).
+
+> ⚠️ **기준점(2026-08-21 발견)**: 오도메트리 점이 base_footprint가 아니면 SLAM은 base 기준 콘을 엉뚱한 점의 자취에 붙입니다 —
+> 같은 콘이 헤딩에 따라 `R(ψ)·r`만큼 다른 곳에 놓여(U턴이면 2|r|) 정차·직진은 멀쩡하고 **선회하면 지도가 붕괴**합니다. 0801 bag의 콘
+> 재관측 일치도로 추정한 주안테나 위치 r=(+1.25, 0.00) m(일치도 3.0→0.9 cm). 옛 브리지(IMU 점, 안테나 0.69 m 뒤)도 같은 문제였음.
+> 실차에선 `vehicle_mount.yaml`의 `sbg.imu_from_camera`(ZED 왼쪽 렌즈 기준 IMU 위치, 줄자)와 장치 설정 JSON의 lever arm으로 런치가 합성합니다 —
+> 재장착 시 `imu_from_camera`를 다시 재고, 안테나를 옮겼으면 장치 lever arm을 다시 커미셔닝·JSON 재저장할 것.
+
+> ⚠️ **EKF 리셋의 원인은 별개 문제**로 남아 있습니다. 세 번 모두 저속(≈2 m/s)·급선회(요레이트 ~35°/s) 중이었고 직전
 > 수 초간 `gps1_hdt_used=0`(듀얼안테나 헤딩 거부)이었습니다. 08-01 bag의 실측 baseline은 1.50 m인데 flash된
 > `leverArmPrimary/Secondary`(0.18/−1.07 m → 1.25 m)와 다르고, `leverArms/cog`=0이라 automotive 프로파일의
-> 비홀로노믹 구속이 IMU 위치에 걸립니다(선회 중 course−heading 차 ~11°). 안테나 이설 후 lever arm 재설정을 권장합니다.
+> 비홀로노믹 구속이 IMU 위치에 걸립니다(선회 중 course−heading 차 ~11°). 이제 장치 EKF는 안 쓰지만 안테나 이설 후
+> lever arm 재설정은 여전히 권장합니다(`gps_hdt` 자체 품질).
 
 ## 실행 · 서비스 · 맵
 
@@ -131,10 +137,12 @@ ros2 service call /graph_slam/reset         std_srvs/srv/Trigger
 | `association_max_distance` / `_gate_chi2` | 1.5 / 5.991 | 관측↔랜드마크 매칭 게이트 |
 | `csm_track_window_m` / `csm_loop_window_m` | 2.0 / 10.0 | CSM 탐색 창 — loop 창은 랩 드리프트를 덮어야 함 |
 | `lap_returns_to_freeze` | 1 | 몇 번째 복귀에 지도를 얼릴지 |
-| `odom_sigma_mode3/2` (브리지) | 0.20 | 열화 모드 오도메트리 불신 정도 — **0.5로 올리면 지도가 휨** |
-| `odom_sigma_raw_rtk/doppler` (브리지) | 0.10 / 0.20 | raw GNSS 단(C/C')의 오도메트리 σ |
-| `held_max_sec` (브리지) | 0.5 | hold(동결 포즈) 허용 시간 — 넘으면 FAULT(발행 중단) |
-| `hdt_yaw_offset_deg` (브리지) | NaN | 듀얼안테나 HDT→차량 헤딩 오프셋. NaN=EKF 정상 시 온라인 학습(현재 차 ≈180°) |
+| `odom_sigma_ok` / `odom_sigma_degraded` (sbg_raw_ekf) | 0.05 / 0.20 | ins_odom 공분산의 모드별 σ 바닥(EKF σ와 max) — **0.5로 올리면 지도가 휨** |
+| `hdt_offset_deg` (sbg_raw_ekf) | 180 | 듀얼안테나 HDT→차량 헤딩 오프셋(안테나 순서; 현재 차 180°) |
+| `antenna_offset_x/y` (sbg_raw_ekf) | 1.25 / 0 (노드 기본) | 주안테나의 base_footprint 기준 위치 [m] — 포즈·twist를 base로 옮김. **틀리면 선회 시 지도 붕괴**. 실차 런치는 `hyu_sensor_bringup/config/vehicle_mount.yaml`의 `sbg:` 블록(카메라 기준 IMU 위치 + 장치 설정 JSON의 lever arm)에서 합성해 넘김 |
+| `sig_acc` / `sig_gyro_dps` (sbg_raw_ekf) | 0.3 / 0.3 | 예측 잡음 밀도 — 키우면 GNSS를 더 믿고 IMU 관성 주행이 빨리 풀림 |
+| `zupt_gyro_std_dps` / `zupt_acc_std` (sbg_raw_ekf) | 0.2 / 0.06 | 정지 판정 임계 — 느슨하면 서행을 정지로 오판 |
+| `blind_gap_sec` (sbg_raw_ekf) | 0.5 | 이보다 긴 IMU 공백 뒤 첫 메시지는 σ=1e3 |
 | `odom_invalid_sigma` (graph_slam) | 10 m | 이 이상 σ의 모션 입력은 "무효 선언": 동결 입력에 키프레임 안 찍고 그동안 콘 프레임 폐기 |
 
 ## 평가
@@ -143,14 +151,14 @@ ros2 service call /graph_slam/reset         std_srvs/srv/Trigger
 association 회귀를 숨깁니다. ATE·지도 품질 하네스는 `scripts/evaluate_slam.py`,
 라이브 모니터는 `ate_monitor`(HUD `GNSS` 줄)입니다.
 
-브리지의 폴백 사다리는 실측 bag으로 오프라인 채점합니다 — 엔코더가 없으므로 휠속은 raw Doppler에서 합성:
+INS 체인은 실측 bag으로 오프라인 채점합니다(C++ 코어를 bag에 직접 먹임; 10 GB bag도 수 초):
 
 ```bash
-# 기록된 /sbg/*를 브리지 콜백에 그대로 먹여 RTK 대비 상대 오도 오차를 outage별로 출력
-python3 src/localization/scripts/bridge_bag_eval.py bag/0801_outdoor/rosbag2_2026_08_01-17_47_09           # 실차 상태(A→C→hold)
-python3 src/localization/scripts/bridge_bag_eval.py <bag> --raw heading --wheels doppler                  # 휠 단(B) 검증
-python3 src/localization/scripts/bridge_bag_eval.py <bag> --bridge <다른 버전의 bridge.py>                 # A/B 비교
+# device-time 순서(= my_ekf.py와 동일) — RTK 에폭 대비 위치 RMS/p95, HDT 대비 yaw std, 모드 비율 출력
+ros2 run hyu_localization sbg_raw_ekf_bag_eval bag/0801_sensors/rosbag2_2026_08_01-17_47_09 --out /tmp/ekf.csv
+ros2 run hyu_localization sbg_raw_ekf_bag_eval <bag> --order receipt      # 실차 수신 순서(OOSM 래퍼) — 노드가 보는 그대로
+ros2 run hyu_localization sbg_raw_ekf_bag_eval <bag> --sphere             # 구면 투영: python 기준(my_ekf.py)과 비트 단위 비교용
 ```
 
-단위 테스트: `test/test_sbg_bridge_fallback.py`(휠 DR·hold·refix) + `test/test_sbg_bridge_raw_gnss.py`(raw GNSS 단·
-HDT 오프셋 학습·자이로 헤딩·hold 타임아웃·블라인드 갭).
+단위 테스트: `test/raw_gnss_ekf_test.cpp`(정지 수렴·ZUPT, 원 궤적 추적·바이어스, 지연 에폭 재생 = 시간순 결과, 모드 전이,
+device 클럭 wrap, 투영 왕복).

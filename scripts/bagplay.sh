@@ -24,20 +24,21 @@
 #
 #   ins:=real        replay the bag's own /sbg/* -- the car moves exactly as it
 #                    did on the day, which is the only way step 2 and step 3 get
-#                    a meaningful workout. Needs an absolute fix in the
-#                    recording: ekf_nav solution_mode >= 3 (NAV_VELOCITY /
-#                    NAV_POSITION). The 0801 17:xx bags are solution_mode 4 with
+#                    a meaningful workout. Needs a receiver fix in the
+#                    recording: gps_pos status SOL_COMPUTED, type >= SINGLE
+#                    (what sbg_raw_ekf initialises on). The 0801 17:xx bags are
 #                    gps_pos type 7 (RTK fixed) throughout.
-#   ins:=stationary  synthesise a NAV_POSITION fix at a fixed anchor and zero
-#                    wheel speeds. For bags whose SBG never leaves
-#                    VERTICAL_GYRO (solution_mode 1) -- the odometry bridge
-#                    correctly refuses those, so replaying them leaves SLAM with
-#                    no motion input at all and the map never builds.
-#   ins:=auto        (default) sample the bag's ekf_nav and pick.
+#   ins:=stationary  synthesise a stationary RTK fix (raw gps_pos/vel/hdt +
+#                    imu_data, plus the EKF topics) at a fixed anchor and zero
+#                    wheel speeds. For bags whose receiver never got a fix --
+#                    sbg_raw_ekf correctly waits on those, so replaying them
+#                    leaves SLAM with no motion input and the map never builds.
+#   ins:=auto        (default) sample the bag's gps_pos (ekf_nav on older bags
+#                    without it) and pick.
 #
-# gnss:=off below turns off the sbg_driver only. sbg_odometry_bridge and
-# wheel_odometry come up with the 'odometry' arg regardless, so replayed /sbg/*
-# is consumed and /localization/ins_odom appears exactly as on the car.
+# gnss:=off below turns off the sbg_driver only. sbg_raw_ekf and wheel_odometry
+# come up with the 'odometry' arg regardless, so replayed /sbg/* is consumed
+# and /localization/ins_odom appears exactly as on the car.
 #
 # No encoder is fitted, so /vehicle/wheel_speeds is synthesised either way:
 # zeros in stationary mode, and in real mode back-computed from the replayed
@@ -144,28 +145,38 @@ for t in "${SBG_ALL[@]}"; do has "$t" && SBG_TOPICS+=("$t"); done
 
 if [ "$INS_MODE" = auto ]; then
   INS_MODE=stationary
-  if has /sbg/ekf_nav; then
-    # solution_mode >= 3 means the EKF reached an absolute solution at least
-    # once. Sample rather than scan: a 25 GB bag takes minutes to walk, and the
-    # mode climbs early and stays there.
-    mode="$(timeout 180 python3 - "$BAG" <<'PY' 2>/dev/null
+  if has /sbg/gps_pos || has /sbg/ekf_nav; then
+    # A usable recording has a receiver fix: gps_pos SOL_COMPUTED with type >=
+    # SINGLE, which is what sbg_raw_ekf initialises on. Older bags without
+    # gps_pos fall back to the EKF's solution_mode >= 3. Sample rather than
+    # scan: a 25 GB bag takes minutes to walk, and the fix comes early and
+    # stays.
+    fix="$(timeout 180 python3 - "$BAG" <<'PY' 2>/dev/null
 import sys, rosbag2_py
 from rclpy.serialization import deserialize_message
-from sbg_driver.msg import SbgEkfNav
+from sbg_driver.msg import SbgEkfNav, SbgGpsPos
 r = rosbag2_py.SequentialReader()
 r.open(rosbag2_py.StorageOptions(uri=sys.argv[1], storage_id="sqlite3"),
        rosbag2_py.ConverterOptions("cdr", "cdr"))
-r.set_filter(rosbag2_py.StorageFilter(topics=["/sbg/ekf_nav"]))
-best = n = 0
+topics = {t.name for t in r.get_all_topics_and_types()}
+want = "/sbg/gps_pos" if "/sbg/gps_pos" in topics else "/sbg/ekf_nav"
+r.set_filter(rosbag2_py.StorageFilter(topics=[want]))
+ok = n = 0
 while r.has_next() and n < 4000:
     _, data, _ = r.read_next(); n += 1
-    best = max(best, deserialize_message(data, SbgEkfNav).status.solution_mode)
-    if best >= 3: break
-print(best)
+    if want == "/sbg/gps_pos":
+        m = deserialize_message(data, SbgGpsPos)
+        good = (m.status.status == 0 and m.status.type >= 2
+                and not (m.latitude == 0 and m.longitude == 0))
+    else:
+        good = deserialize_message(data, SbgEkfNav).status.solution_mode >= 3
+    if good:
+        ok = 1; break
+print(f"{want} {ok}")
 PY
 )"
-    if [ -n "$mode" ] && [ "$mode" -ge 3 ] 2>/dev/null; then INS_MODE=real; fi
-    echo "bagplay: ekf_nav solution_mode reaches ${mode:-?} -> ins:=$INS_MODE"
+    if [ "${fix##* }" = 1 ] 2>/dev/null; then INS_MODE=real; fi
+    echo "bagplay: ${fix% *} fix $([ "${fix##* }" = 1 ] && echo found || echo 'not found') -> ins:=$INS_MODE"
   fi
 fi
 
@@ -206,7 +217,7 @@ echo "bagplay: STEP 1 — $(basename "$BAG")  (rate $RATE, $([ "$LOOP" = 1 ] && 
 echo "  topics: ${PLAY_TOPICS[*]}"
 echo "  camera optical frame: $CAM_FRAME"
 if [ "$INS_MODE" = real ]; then
-  echo "  INS: real (recorded /sbg/*, bridge live)"
+  echo "  INS: real (recorded /sbg/*, sbg_raw_ekf live)"
   echo "  wheels: $([ "$WHEELS" = off ] && echo 'off (topic silent)' || echo 'synthesised from the INS -- wheel_odom is not independent of it')"
 else
   echo "  INS: stationary (synthesised fix, zero wheels -- car stays parked)"

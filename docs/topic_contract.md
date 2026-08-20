@@ -74,13 +74,13 @@ FALLBACK 이라 찍힌다. ZED wrapper의 자체 TF 발행은 꺼둔다(같은 �
 | `/localization/map` | hyu_msgs/ConeArrayWithCovariance | hyu_localization | planning, 도구 | Reliable(TransientLocal 후보) |
 | `/localization/map_converged` | std_msgs/Bool | hyu_localization | planning | Reliable |
 | `/localization/status` | (기존 graph_slam/status 타입) | hyu_localization | planning, HUD | Reliable |
-| `/localization/gnss_odom` | nav_msgs/Odometry | sbg_odometry_bridge | **없음** (아래 주 참조) | Reliable |
+| `/localization/gnss_odom` | nav_msgs/Odometry | sbg_raw_ekf | **없음** (아래 주 참조) | Reliable |
 | `/localization/wheel_odom` | hyu_msgs/CarState | wheel_odometry | hyu_localization, perception(deskew), tmpc_state_bridge | Reliable |
 | `/initialpose` | PoseWithCovarianceStamped | RViz(수동 재국지화) | hyu_localization | 표준 |
-| `/localization/ins_odom` | hyu_msgs/CarState | sbg_odometry_bridge | graph_slam 모션 입력 (기본 `slam_motion_topic`). pose.covariance[0/7/35]가 단(tier)별 σ; σ≥`odom_invalid_sigma`(10 m)는 "포즈 무효 선언"(hold·블라인드 갭 첫 메시지) | Reliable |
-| `/sbg_bridge/status` | diagnostic_msgs/DiagnosticArray | sbg_odometry_bridge | **실차에서는 없음** (sim rqt GUI만). `motion_source` 키 = ekf/raw_gnss_rtk/raw_gnss_doppler/wheels/zupt/hold/fault, ERROR 레벨 = FAULT. 주행 억제/EBS 게이트가 이걸 읽어야 하지만 아직 소비자 없음 | Reliable |
+| `/localization/ins_odom` | hyu_msgs/CarState | sbg_raw_ekf (raw `/sbg/imu_data`·`gps_pos`·`gps_vel`·`gps_hdt`만 구독, 장치 EKF 미사용) | graph_slam 모션 입력 (기본 `slam_motion_topic`). ENU, **base_footprint의 포즈**(안테나 해를 `antenna_offset_x/y`로 이동), IMU마다 25 Hz, body twist 포함. pose.covariance[0/7]=max(모드 티어 0.05/0.20, EKF σ)², [35]=EKF yaw 분산; σ≥`odom_invalid_sigma`(10 m)는 "포즈 무효 선언"(IMU 공백 뒤 첫 메시지) | Reliable |
+| `/sbg_bridge/status` | diagnostic_msgs/DiagnosticArray | sbg_raw_ekf | **실차에서는 없음** (sim rqt GUI만). `mode` 200/201/202, `motion_source` 키 = raw_ekf/zupt/raw_ekf_no_hdt/coast/fault/none, ERROR 레벨 = IMU 끊김 또는 5 s 이상 coast. 주행 억제/EBS 게이트가 이걸 읽어야 하지만 아직 소비자 없음 | Reliable |
 | `/localization/drift_odom` | hyu_msgs/CarState | drift_odom(평가 도구) | evaluate_slam | 도구 |
-| `/localization/debug/{markers,path,status_overlay,gnss_markers,gnss_overlay}` | Marker/Path/Overlay | hyu_localization·sbg_bridge | RViz/HUD | 디버그 |
+| `/localization/debug/{markers,path,status_overlay,gnss_overlay}` | Marker/Path/Overlay | hyu_localization·sbg_raw_ekf | RViz/HUD | 디버그 |
 
 TF: `map→odom`, `odom→base_footprint`는 hyu_localization이 발행.
 센서 마운트 TF는 robot_state_publisher(URDF).

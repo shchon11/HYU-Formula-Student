@@ -4,11 +4,15 @@
 # license that can be found in the LICENSE file or at
 # https://opensource.org/licenses/MIT.
 """
-Simulated Ellipse-D INS pipeline: sim INS -> SBG bridge -> graph SLAM.
+Ellipse-D INS pipeline: raw SBG topics -> sbg_raw_ekf -> graph SLAM.
 
-One-command harness for running the real-hardware GNSS/INS pipeline against
-the EUFS simulator. The bridge publishes its INS odometry on
-/localization/ins_odom and the GNSS anchor on /localization/gnss_odom. The simulator
+One-command harness for the GNSS/INS pipeline. sbg_raw_ekf (C++) fuses the
+receiver's raw outputs (/sbg/imu_data, gps_pos, gps_vel, gps_hdt) -- the
+device EKF (ekf_nav / ekf_euler) is not used -- and publishes the INS
+odometry on /localization/ins_odom and the raw fix on /localization/gnss_odom.
+NOTE: the simulated Ellipse-D (sim_ellipse_d) still emits only ekf_nav /
+ekf_euler, so with sim_ins:=true the odometry stays silent until it grows
+raw gps_pos/gps_vel/gps_hdt/imu_data outputs. The simulator
 race-car plugin's synthetic localisation car state is disabled in the robot
 xacro (publishLocalisationCarState=false) — this pipeline plus wheel
 odometry is the only state-estimation source, in sim and on the car alike.
@@ -50,7 +54,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "ins_odom_topic",
                 default_value="/localization/ins_odom",
-                description="INS odometry topic published by the SBG bridge.",
+                description="INS odometry topic published by sbg_raw_ekf.",
             ),
             DeclareLaunchArgument(
                 "mode_schedule",
@@ -81,7 +85,7 @@ def generate_launch_description():
                 "odometry",
                 default_value="true",
                 description="Start the odometry conditioning nodes "
-                            "(sbg_odometry_bridge + wheel_odometry). Set false "
+                            "(sbg_raw_ekf + wheel_odometry). Set false "
                             "when step 1's sensor bringup already runs them, "
                             "which is the vehicle and bag-replay case.",
             ),
@@ -104,7 +108,7 @@ def generate_launch_description():
             # of the Gazebo simulator and is not built on the vehicle compute
             # (no arm64 gazebo exists at all). Unconditional, it took the whole
             # INS pipeline down on the car with "package 'eufs_sensors' not
-            # found" -- and with it sbg_odometry_bringup, so /localization/
+            # found" -- and with it the INS odometry, so /localization/
             # ins_odom stayed silent and SLAM never got a motion input while
             # the real SBG topics were arriving at 25 Hz. Gate it on the clock:
             # a simulated INS is only ever meaningful against a simulated one.
@@ -138,14 +142,14 @@ def generate_launch_description():
                 ],
             ),
             # Sensor conditioning, not SLAM: every input is a step-1 driver
-            # topic (/sbg/ekf_nav, /sbg/ekf_euler). On the car the sensor
-            # bringup owns it so it is up in step 1, where perception's deskew
-            # can already see /localization/wheel_odom; the simulator has no
-            # sensor bringup, so there it stays here with sim_ellipse_d.
+            # topic (/sbg/imu_data, gps_pos, gps_vel, gps_hdt). On the car the
+            # sensor bringup owns it so it is up in step 1, where perception's
+            # deskew can already see /localization/wheel_odom; the simulator
+            # has no sensor bringup, so there it stays here with sim_ellipse_d.
             Node(
                 package="hyu_localization",
-                executable="sbg_odometry_bridge",
-                name="sbg_odometry_bridge",
+                executable="sbg_raw_ekf",
+                name="sbg_raw_ekf",
                 output="screen",
                 condition=IfCondition(LaunchConfiguration("odometry")),
                 parameters=[
@@ -167,13 +171,13 @@ def generate_launch_description():
                 ),
                 launch_arguments={
                     "use_sim_time": use_sim_time,
-                    # SLAM motion input: the bridge's mode-managed fused INS
-                    # odometry (RTK-fused yaw, DR fallback tiers with honest
-                    # per-tier sigmas). The always-DR wheel odometry carried a
+                    # SLAM motion input: sbg_raw_ekf's raw-GNSS/IMU odometry
+                    # (RTK position + dual-antenna yaw, IMU between epochs,
+                    # honest per-mode sigmas). The always-DR wheel odometry carried a
                     # constant ~1.1 deg initial-heading error that fought the
                     # mm-grade GNSS anchors inside the graph (2026-07-18
-                    # error-budget decomposition); wheel odometry remains the
-                    # bridge's own fallback tier, and slam_motion_topic:=
+                    # error-budget decomposition); wheel odometry is a separate
+                    # GNSS-free source, and slam_motion_topic:=
                     # /localization/wheel_odom restores the old wiring.
                     "car_state_topic": LaunchConfiguration("slam_motion_topic"),
                     "wheel_odometry": LaunchConfiguration("odometry"),
