@@ -22,10 +22,14 @@ AS state, in priority order:
     AS_READY            mission selected, button OFF
     AS_OFF              no mission selected
 
-The AS button is the physical toggle on the car (0/1). Its driver publishes
-/vehicle/as_button (std_msgs/Bool; a latched state, the last value wins) -- not
-wired yet, so 'mission go' / 'mission halt' flip it through the service for
-now. drive_udp_bridge turns AS_DRIVING into the autonomous-enable byte for the
+The AS button is the physical momentary button on the car; as_button.py
+(hyu_sensor_bringup, header pin 31) toggles ON/OFF on every press and
+publishes /vehicle/as_button (std_msgs/Bool) at 20 Hz. The default is OFF:
+the car boots in manual, and the button stream must stay FRESH -- when it
+stops for as_button_timeout_sec (driver dead, wire off) the button reads OFF
+again, so a crashed driver can never leave the car armed. 'mission go' /
+'mission halt' set the same switch through the service (bench use, latched).
+drive_udp_bridge turns AS_DRIVING into the autonomous-enable byte for the
 ECU and, on the OFF->ON edge, resets the SLAM map before raising it.
 
     ros2 run hyu_planning_bringup vehicle_state.py
@@ -75,6 +79,12 @@ class VehicleState(Node):
         # override is possible (-p as_button_initial:=true) but never the
         # default -- the car must not come up armed.
         self.button_on = bool(p("as_button_initial", False).value)
+        # The GPIO driver publishes its state at 20 Hz; silence longer than
+        # this means the driver (or its wire) is gone -> button OFF.
+        self.button_timeout = float(p("as_button_timeout_sec", 1.0).value)
+        self.button_source = "initial"   # 'topic' (watched) | 'service' (latched)
+        self.button_topic_t = None
+        self._button_stale_warned = False
 
         self.ami = CanState.AMI_NOT_SELECTED
         self.ebs = False
@@ -104,7 +114,17 @@ class VehicleState(Node):
 
     # --- inputs ------------------------------------------------------------
     def _on_button(self, msg: Bool):
+        self.button_topic_t = self.get_clock().now().nanoseconds * 1e-9
+        self.button_source = "topic"
+        self._button_stale_warned = False
         self._set_button(bool(msg.data), "topic")
+
+    def _button_fresh(self) -> bool:
+        """Topic-sourced button must be fresh; the bench service is latched."""
+        if self.button_source != "topic":
+            return True
+        age = self.get_clock().now().nanoseconds * 1e-9 - (self.button_topic_t or 0.0)
+        return age <= self.button_timeout
 
     def _set_button(self, on: bool, source: str):
         if on == self.button_on:
@@ -162,6 +182,7 @@ class VehicleState(Node):
         return res
 
     def _srv_set_button(self, req, res):
+        self.button_source = "service"
         self._set_button(bool(req.data), "service")
         res.success = True
         res.message = f"AS button {'ON' if self.button_on else 'OFF'}"
@@ -175,6 +196,13 @@ class VehicleState(Node):
             return CanState.AS_FINISHED
         if self.ami == CanState.AMI_NOT_SELECTED:
             return CanState.AS_OFF
+        if self.button_on and not self._button_fresh():
+            if not self._button_stale_warned:
+                self._button_stale_warned = True
+                self.get_logger().error(
+                    f"AS button stream silent for > {self.button_timeout:.1f} s -- treating the "
+                    "button as OFF (driver/wire down?)")
+            return CanState.AS_READY
         return CanState.AS_DRIVING if self.button_on else CanState.AS_READY
 
     def _tick(self):

@@ -22,6 +22,7 @@ TF:
                                                      over the ground plane)
     base_footprint -> rslidar                        camera o extrinsic
     base_footprint -> sbg_imu, gnss_primary/secondary  vehicle_mount.yaml sbg: (+ device lever arms)
+    /vehicle/as_button                               AS button on the 40-pin header (as_button.py)
     base_footprint -> zed_camera_link                the SAME camera pose
                                                      re-expressed at the ZED
                                                      URDF's root, so the wrapper's
@@ -566,6 +567,29 @@ def _setup(context, *_args, **_kwargs):
             name='sbg_raw_ekf', output='screen',
             parameters=[ekf_params]))
 
+    # --- AS button (Jetson 40-pin header) -> /vehicle/as_button ---------------
+    # The physical autonomous switch; vehicle_state.py turns it into
+    # /vehicle/as_state and the ECU bridge into the autonomous-enable byte.
+    # auto = start when Jetson.GPIO is importable (i.e. on the Jetson); bag
+    # replay passes as_button:=off so a bench button cannot arm a rehearsal.
+    as_button = context.launch_configurations['as_button'].lower()
+    if as_button != 'off':
+        try:
+            import Jetson.GPIO  # noqa: F401
+            have_gpio = True
+        except Exception:
+            have_gpio = False
+        if as_button == 'on' or have_gpio:
+            actions.append(Node(
+                package='hyu_sensor_bringup', executable='as_button.py',
+                name='as_button', output='screen',
+                parameters=[{'pin': int(context.launch_configurations['as_button_pin']),
+                             'active_low': context.launch_configurations['as_button_active_low'].lower() in ('true', '1'),
+                             'mode': context.launch_configurations['as_button_mode']}]))
+        else:
+            actions.append(LogInfo(msg='[sensors] no Jetson.GPIO here — AS button driver not started '
+                                       '(use mission go/halt); force with as_button:=on'))
+
     actions.extend(_tf_actions(context, share))
     actions.extend(sbg_actions)
     return actions
@@ -620,6 +644,17 @@ def generate_launch_description():
                               description='must match hyu_perception camera_frame'),
         # Bag replay drives every stamp off /clock; on the car this stays false.
         DeclareLaunchArgument('use_sim_time', default_value='false'),
+        DeclareLaunchArgument('as_button', default_value='auto',
+                              choices=['auto', 'on', 'off'],
+                              description='AS button GPIO driver -> /vehicle/as_button '
+                                          '(auto = when Jetson.GPIO is available)'),
+        DeclareLaunchArgument('as_button_pin', default_value='31',
+                              description='Jetson 40-pin header pin (BOARD numbering); 31/32/33 have built-in pull-ups, 15 does not'),
+        DeclareLaunchArgument('as_button_active_low', default_value='true',
+                              description='pressed reads 0 (button to GND with a pull-up)'),
+        DeclareLaunchArgument('as_button_mode', default_value='toggle',
+                              choices=['toggle', 'level'],
+                              description='toggle = each press flips AS; level = switch position'),
         DeclareLaunchArgument('odometry', default_value='true',
                               description='Start wheel_odometry and '
                                           'sbg_raw_ekf. Step 2 must be '

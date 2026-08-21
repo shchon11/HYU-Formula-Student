@@ -10,6 +10,7 @@ install(PROGRAMS
   scripts/stationary_wheels.py
   scripts/stationary_ins.py
   scripts/sbg_wheels.py
+  scripts/as_button.py
   DESTINATION lib/${PROJECT_NAME})
 
 ament_package()
