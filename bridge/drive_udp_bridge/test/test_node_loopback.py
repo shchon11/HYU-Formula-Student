@@ -318,7 +318,7 @@ def test_switch_on_stays_disabled_while_reset_is_refused_or_absent():
     assert packets and all(struct.unpack('<ffBB', p)[3] == 0 for p in packets)
 
 
-def test_encoder_feedback_publishes_four_wheel_speeds_in_mps():
+def test_rpm_feedback_publishes_four_wheel_speeds_in_mps():
     command_receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     command_receiver.bind(('127.0.0.1', 0))
     feedback_port = _unused_udp_port()
@@ -335,7 +335,7 @@ def test_encoder_feedback_publishes_four_wheel_speeds_in_mps():
             Parameter('feedback_port', value=feedback_port),
             Parameter('feedback_poll_rate_hz', value=500.0),
             Parameter('feedback_timeout_sec', value=0.5),
-            Parameter('encoder_counts_per_revolution', value=1000),
+            # pi * D = 1 m per revolution: 60 RPM -> 1 m/s.
             Parameter('tire_diameter_m', value=1.0 / 3.141592653589793),
             Parameter('max_wheel_speed_mps', value=0.0),
             Parameter('wheel_speeds_topic', value='/test/wheel_speeds'),
@@ -353,13 +353,9 @@ def test_encoder_feedback_publishes_four_wheel_speeds_in_mps():
     )
 
     try:
+        # RPM is instantaneous: a single datagram is enough to publish.
         feedback_sender.sendto(
-            struct.pack('<IIII', 0, 0, 0, 0),
-            ('127.0.0.1', feedback_port),
-        )
-        _spin_nodes((node, observer), 0.04)
-        feedback_sender.sendto(
-            struct.pack('<IIII', 100, 200, 300, 400),
+            struct.pack('<ffff', 60.0, 120.0, -180.0, 240.0),
             ('127.0.0.1', feedback_port),
         )
         _spin_nodes((node, observer), 0.08)
@@ -373,19 +369,45 @@ def test_encoder_feedback_publishes_four_wheel_speeds_in_mps():
     assert wheel_speeds
     message = wheel_speeds[-1]
     assert message.header.frame_id == 'base_footprint'
-    assert message.speeds.lf_speed > 0.0
-    assert message.speeds.rf_speed == pytest.approx(
-        2.0 * message.speeds.lf_speed,
-        rel=1.0e-5,
-    )
-    assert message.speeds.lb_speed == pytest.approx(
-        3.0 * message.speeds.lf_speed,
-        rel=1.0e-5,
-    )
-    assert message.speeds.rb_speed == pytest.approx(
-        4.0 * message.speeds.lf_speed,
-        rel=1.0e-5,
-    )
+    assert message.speeds.lf_speed == pytest.approx(1.0, rel=1.0e-5)
+    assert message.speeds.rf_speed == pytest.approx(2.0, rel=1.0e-5)
+    assert message.speeds.lb_speed == pytest.approx(-3.0, rel=1.0e-5)
+    assert message.speeds.rb_speed == pytest.approx(4.0, rel=1.0e-5)
+
+
+def test_feedback_value_type_float64_and_wrong_size_is_dropped():
+    command_receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    command_receiver.bind(('127.0.0.1', 0))
+    feedback_port = _unused_udp_port()
+    feedback_sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    rclpy.init()
+    node = _feedback_bridge(
+        command_receiver.getsockname()[1], feedback_port,
+        feedback_value_type='float64')
+    observer = rclpy.create_node('drive_udp_bridge_wheel_speed_observer')
+    wheel_speeds = []
+    observer.create_subscription(
+        WheelSpeedsStamped, '/test/wheel_speeds', wheel_speeds.append, 10)
+    try:
+        # 16-byte float32 datagram under a float64 contract: rejected, no output.
+        feedback_sender.sendto(
+            struct.pack('<ffff', 60.0, 60.0, 60.0, 60.0), ('127.0.0.1', feedback_port))
+        _spin_nodes((node, observer), 0.06)
+        assert wheel_speeds == []
+        feedback_sender.sendto(
+            struct.pack('<dddd', 60.0, 120.0, 180.0, 240.0), ('127.0.0.1', feedback_port))
+        _spin_nodes((node, observer), 0.08)
+    finally:
+        observer.destroy_node()
+        node.destroy_node()
+        rclpy.shutdown()
+        feedback_sender.close()
+        command_receiver.close()
+
+    assert wheel_speeds
+    assert wheel_speeds[-1].speeds.lf_speed == pytest.approx(1.0, rel=1.0e-5)
+    assert wheel_speeds[-1].speeds.rb_speed == pytest.approx(4.0, rel=1.0e-5)
 
 
 def _feedback_bridge(command_port, feedback_port, **extra):
@@ -397,7 +419,6 @@ def _feedback_bridge(command_port, feedback_port, **extra):
         Parameter('feedback_port', value=feedback_port),
         Parameter('feedback_poll_rate_hz', value=500.0),
         Parameter('feedback_timeout_sec', value=0.5),
-        Parameter('encoder_counts_per_revolution', value=1000),
         Parameter('tire_diameter_m', value=1.0 / 3.141592653589793),
         Parameter('max_wheel_speed_mps', value=0.0),
         Parameter('wheel_speeds_topic', value='/test/wheel_speeds'),
@@ -408,7 +429,7 @@ def _feedback_bridge(command_port, feedback_port, **extra):
 
 
 def _run_feedback_pair(feedback_source_ip):
-    """Feed two count packets from 127.0.0.1; return the published messages."""
+    """Feed one RPM packet from 127.0.0.1; return the published messages."""
     command_receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     command_receiver.bind(('127.0.0.1', 0))
     feedback_port = _unused_udp_port()
@@ -424,10 +445,7 @@ def _run_feedback_pair(feedback_source_ip):
         WheelSpeedsStamped, '/test/wheel_speeds', wheel_speeds.append, 10)
     try:
         feedback_sender.sendto(
-            struct.pack('<IIII', 0, 0, 0, 0), ('127.0.0.1', feedback_port))
-        _spin_nodes((node, observer), 0.04)
-        feedback_sender.sendto(
-            struct.pack('<IIII', 100, 200, 300, 400), ('127.0.0.1', feedback_port))
+            struct.pack('<ffff', 60.0, 120.0, 180.0, 240.0), ('127.0.0.1', feedback_port))
         _spin_nodes((node, observer), 0.08)
         now = node.get_clock().now().nanoseconds * 1.0e-9
     finally:

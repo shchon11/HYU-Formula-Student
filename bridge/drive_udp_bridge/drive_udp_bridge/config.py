@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import ipaddress
 import math
 
+from drive_udp_bridge.protocol import FEEDBACK_VALUE_TYPES
+
 
 @dataclass(frozen=True)
 class BridgeConfig:
@@ -28,7 +30,13 @@ class BridgeConfig:
     feedback_port: int
     feedback_poll_rate_hz: float
     feedback_timeout_sec: float
-    encoder_counts_per_revolution: int
+    # Element type of the four RPM values in each feedback datagram, one of
+    # protocol.FEEDBACK_VALUE_TYPES (float32, float64, int16, uint16, int32,
+    # uint32) -- whatever the Speedgoat UDP Send block emits.
+    feedback_value_type: str
+    # ECU revolutions per tire revolution: 1.0 = wheel-side RPM as sent,
+    # >1.0 = motor-side RPM divided down.
+    rpm_gear_ratio: float
     tire_diameter_m: float
     max_wheel_speed_mps: float
     wheel_speeds_topic: str
@@ -41,18 +49,6 @@ class BridgeConfig:
     def feedback_enabled(self) -> bool:
         """Return whether the ECU feedback endpoint was configured."""
         return bool(self.feedback_bind_ip.strip()) and self.feedback_port != 0
-
-    @property
-    def feedback_ready(self) -> bool:
-        """
-        Return whether feedback can actually be decoded (scale known).
-
-        The endpoint is ours to pick and can be configured ahead of time; the
-        counts-per-revolution comes from the ECU team. Until it is filled the
-        node runs with feedback off (and says so) rather than refusing to
-        start -- the command path must never depend on it.
-        """
-        return self.feedback_enabled and self.encoder_counts_per_revolution > 0
 
     @property
     def feedback_source_filter(self):
@@ -138,9 +134,13 @@ def validate_config(config: BridgeConfig) -> None:
         raise ValueError(
             'feedback_timeout_sec must be finite and greater than zero'
         )
-    # 0 = not known yet (feedback stays off, see feedback_ready); negative is a typo.
-    if config.encoder_counts_per_revolution < 0:
-        raise ValueError('encoder_counts_per_revolution must not be negative')
+    if config.feedback_value_type.strip() not in FEEDBACK_VALUE_TYPES:
+        raise ValueError(
+            'feedback_value_type must be one of '
+            + ', '.join(sorted(FEEDBACK_VALUE_TYPES))
+        )
+    if not math.isfinite(config.rpm_gear_ratio) or config.rpm_gear_ratio <= 0.0:
+        raise ValueError('rpm_gear_ratio must be finite and greater than zero')
     if not math.isfinite(config.tire_diameter_m) or config.tire_diameter_m <= 0.0:
         raise ValueError('tire_diameter_m must be finite and greater than zero')
     if (

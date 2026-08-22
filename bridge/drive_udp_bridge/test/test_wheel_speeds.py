@@ -5,19 +5,15 @@
 import math
 
 from drive_udp_bridge.protocol import EncoderFeedback
-from drive_udp_bridge.wheel_speeds import (
-    encoder_count_delta,
-    WheelSpeedConfig,
-    WheelSpeedConverter,
-)
+from drive_udp_bridge.wheel_speeds import WheelSpeedConfig, WheelSpeedConverter
 import pytest
 
 
 def _config(**overrides):
     values = {
-        'encoder_counts_per_revolution': 1000,
+        # pi * D = 1 m per revolution -> 60 RPM = 1 m/s at gear ratio 1.
         'tire_diameter_m': 1.0 / math.pi,
-        'feedback_timeout_sec': 1.0,
+        'rpm_gear_ratio': 1.0,
         'max_wheel_speed_mps': 100.0,
     }
     values.update(overrides)
@@ -28,51 +24,62 @@ def _feedback(fl, fr, rl, rr):
     return EncoderFeedback(fl, fr, rl, rr)
 
 
-def test_four_encoder_deltas_become_four_independent_mps_values():
+def test_four_rpm_values_become_four_independent_mps_values():
     converter = WheelSpeedConverter(_config())
 
-    assert converter.update(_feedback(0, 0, 0, 0), 10.0) is None
-    estimate = converter.update(_feedback(1000, 2000, 3000, 4000), 11.0)
+    estimate = converter.convert(_feedback(60.0, 120.0, 180.0, 240.0))
 
+    assert converter.mps_per_rpm == pytest.approx(1.0 / 60.0)
     assert estimate.front_left_mps == pytest.approx(1.0)
     assert estimate.front_right_mps == pytest.approx(2.0)
     assert estimate.rear_left_mps == pytest.approx(3.0)
     assert estimate.rear_right_mps == pytest.approx(4.0)
 
 
-def test_reverse_counts_produce_negative_speeds():
+def test_negative_rpm_produces_negative_speeds():
     converter = WheelSpeedConverter(_config())
-    converter.update(_feedback(5000, 5000, 5000, 5000), 20.0)
 
-    estimate = converter.update(_feedback(4000, 4000, 4000, 4000), 21.0)
+    estimate = converter.convert(_feedback(-60.0, -60.0, -60.0, -60.0))
 
     assert estimate.front_left_mps == pytest.approx(-1.0)
-    assert estimate.front_right_mps == pytest.approx(-1.0)
-    assert estimate.rear_left_mps == pytest.approx(-1.0)
     assert estimate.rear_right_mps == pytest.approx(-1.0)
 
 
-def test_uint32_counter_rollover_and_reverse_are_unwrapped():
-    assert encoder_count_delta(0, 0xFFFFFFFF) == 1
-    assert encoder_count_delta(0xFFFFFFFF, 0) == -1
+def test_gear_ratio_divides_motor_rpm_down_to_wheel_speed():
+    converter = WheelSpeedConverter(_config(rpm_gear_ratio=4.0))
 
-
-def test_timeout_rebaselines_without_reporting_gap_speed():
-    converter = WheelSpeedConverter(_config(feedback_timeout_sec=0.2))
-    converter.update(_feedback(0, 0, 0, 0), 30.0)
-
-    assert converter.update(_feedback(1000, 1000, 1000, 1000), 31.0) is None
-    estimate = converter.update(_feedback(1100, 1100, 1100, 1100), 31.1)
+    estimate = converter.convert(_feedback(240.0, 240.0, 240.0, 240.0))
 
     assert estimate.front_left_mps == pytest.approx(1.0)
 
 
-def test_impossible_encoder_jump_is_rejected_then_uses_new_baseline():
+def test_real_tire_scale_matches_pi_d_over_60():
+    converter = WheelSpeedConverter(_config(tire_diameter_m=0.4572))
+
+    assert converter.mps_per_rpm == pytest.approx(math.pi * 0.4572 / 60.0)
+
+
+def test_impossible_rpm_is_rejected_without_state():
     converter = WheelSpeedConverter(_config(max_wheel_speed_mps=2.0))
-    converter.update(_feedback(0, 0, 0, 0), 40.0)
 
     with pytest.raises(ValueError, match='max_wheel_speed_mps'):
-        converter.update(_feedback(1000, 1000, 1000, 1000), 40.1)
+        converter.convert(_feedback(600.0, 0.0, 0.0, 0.0))
 
-    estimate = converter.update(_feedback(1100, 1100, 1100, 1100), 40.2)
+    # Stateless: the next plausible sample converts normally.
+    estimate = converter.convert(_feedback(60.0, 60.0, 60.0, 60.0))
     assert estimate.front_left_mps == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize(
+    'field,value,error_text',
+    [
+        ('tire_diameter_m', 0.0, 'tire_diameter_m'),
+        ('tire_diameter_m', float('nan'), 'tire_diameter_m'),
+        ('rpm_gear_ratio', 0.0, 'rpm_gear_ratio'),
+        ('rpm_gear_ratio', float('inf'), 'rpm_gear_ratio'),
+        ('max_wheel_speed_mps', -1.0, 'max_wheel_speed_mps'),
+    ],
+)
+def test_invalid_scale_is_rejected(field, value, error_text):
+    with pytest.raises(ValueError, match=error_text):
+        WheelSpeedConverter(_config(**{field: value}))

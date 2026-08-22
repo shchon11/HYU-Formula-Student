@@ -2,7 +2,7 @@
 #
 # Licensed under the MIT License.
 
-"""Bidirectional ROS 2 command and wheel-encoder Speedgoat UDP bridge."""
+"""Bidirectional ROS 2 command and wheel-RPM Speedgoat UDP bridge."""
 
 from pathlib import Path
 import threading
@@ -15,6 +15,8 @@ from drive_udp_bridge.config import BridgeConfig, validate_config
 from drive_udp_bridge.protocol import (
     AutonomousStateWatchdog,
     CommandWatchdog,
+    DEFAULT_FEEDBACK_VALUE_TYPE,
+    feedback_format,
     pack_command,
     unpack_encoder_feedback,
 )
@@ -76,7 +78,11 @@ class DriveUdpBridge(Node):
         self.declare_parameter('feedback_port', 0)
         self.declare_parameter('feedback_poll_rate_hz', 200.0)
         self.declare_parameter('feedback_timeout_sec', 0.2)
-        self.declare_parameter('encoder_counts_per_revolution', 0)
+        # Four per-wheel RPM values per datagram; element type as the ECU
+        # sends it (float32/float64/int16/uint16/int32/uint32).
+        self.declare_parameter('feedback_value_type', DEFAULT_FEEDBACK_VALUE_TYPE)
+        # ECU revolutions per tire revolution (1.0 = wheel-side RPM).
+        self.declare_parameter('rpm_gear_ratio', 1.0)
         self.declare_parameter('tire_diameter_m', 0.4572)
         self.declare_parameter('max_wheel_speed_mps', 50.0)
         self.declare_parameter('wheel_speeds_topic', '/vehicle/wheel_speeds')
@@ -125,9 +131,10 @@ class DriveUdpBridge(Node):
             feedback_timeout_sec=float(
                 self.get_parameter('feedback_timeout_sec').value
             ),
-            encoder_counts_per_revolution=int(
-                self.get_parameter('encoder_counts_per_revolution').value
-            ),
+            feedback_value_type=str(
+                self.get_parameter('feedback_value_type').value
+            ).strip(),
+            rpm_gear_ratio=float(self.get_parameter('rpm_gear_ratio').value),
             tire_diameter_m=float(
                 self.get_parameter('tire_diameter_m').value
             ),
@@ -200,7 +207,7 @@ class DriveUdpBridge(Node):
                 local_bind_ip=self._config.local_bind_ip,
                 local_bind_port=self._config.local_bind_port,
             )
-            if self._config.feedback_ready:
+            if self._config.feedback_enabled:
                 self._receiver = UdpReceiver(
                     self._config.feedback_bind_ip,
                     self._config.feedback_port,
@@ -242,11 +249,8 @@ class DriveUdpBridge(Node):
         if self._receiver is not None:
             self._wheel_speed_converter = WheelSpeedConverter(
                 WheelSpeedConfig(
-                    encoder_counts_per_revolution=(
-                        self._config.encoder_counts_per_revolution
-                    ),
                     tire_diameter_m=self._config.tire_diameter_m,
-                    feedback_timeout_sec=self._config.feedback_timeout_sec,
+                    rpm_gear_ratio=self._config.rpm_gear_ratio,
                     max_wheel_speed_mps=self._config.max_wheel_speed_mps,
                 )
             )
@@ -284,33 +288,7 @@ class DriveUdpBridge(Node):
                 if self._require_map_reset else 'immediately (no map reset)',
             )
         )
-        self.get_logger().info(
-            'Loaded steering calibration %s: bicycle input [%.6f, %.6f] rad '
-            '<-> steering wheel [%.3f, %.3f] deg; active input [%.6f, %.6f] '
-            'rad -> UDP steering-wheel limit +/-%.6f rad (+/-%.3f deg)'
-            % (
-                self._steering_converter.calibration_path,
-                self._steering_converter.calibration_minimum_input_rad,
-                self._steering_converter.calibration_maximum_input_rad,
-                self._steering_converter.calibration_minimum_wheel_angle_deg,
-                self._steering_converter.calibration_maximum_wheel_angle_deg,
-                self._steering_converter.negative_input_limit_rad,
-                self._steering_converter.positive_input_limit_rad,
-                self._steering_converter.maximum_output_rad,
-                self._steering_converter.max_steering_wheel_angle_deg,
-            )
-        )
-        if self._receiver is None and self._config.feedback_enabled:
-            # Endpoint chosen, scale not yet known: run without feedback rather
-            # than refuse to start -- the command path must not depend on it.
-            self.get_logger().error(
-                'ECU encoder feedback endpoint %s:%d is configured but '
-                'encoder_counts_per_revolution is 0 (wheel-side counts per '
-                'tire revolution, from the ECU team); wheel-speed publication '
-                'is OFF until it is filled in. Command sending is unaffected.'
-                % (self._config.feedback_bind_ip, self._config.feedback_port)
-            )
-        elif self._receiver is None:
+        if self._receiver is None:
             self.get_logger().warning(
                 'ECU encoder feedback is disabled; set feedback_bind_ip and '
                 'feedback_port to enable wheel-speed publication'
@@ -319,17 +297,20 @@ class DriveUdpBridge(Node):
             feedback_endpoint = self._receiver.local_endpoint
             source_filter = self._config.feedback_source_filter
             self.get_logger().info(
-                'Receiving <IIII encoder feedback on %s:%d from %s; '
-                'publishing four wheel speeds in m/s on %s '
-                '(%.6f m/count = pi * %.4f m / %d counts; receive times from %s)'
+                'Receiving %s wheel-RPM feedback (FL FR RL RR, 4 x %s) on %s:%d '
+                'from %s; publishing four wheel speeds in m/s on %s '
+                '(%.6f m/s per RPM = pi * %.4f m / 60 / gear ratio %.3f; '
+                'receive times from %s)'
                 % (
+                    feedback_format(self._config.feedback_value_type),
+                    self._config.feedback_value_type,
                     feedback_endpoint[0],
                     feedback_endpoint[1],
                     source_filter if source_filter is not None else 'any source',
                     self._config.wheel_speeds_topic,
-                    self._wheel_speed_converter.meters_per_count,
+                    self._wheel_speed_converter.mps_per_rpm,
                     self._config.tire_diameter_m,
-                    self._config.encoder_counts_per_revolution,
+                    self._config.rpm_gear_ratio,
                     'kernel arrival timestamps'
                     if self._receiver.kernel_timestamps else 'poll time',
                 )
@@ -501,15 +482,15 @@ class DriveUdpBridge(Node):
                 continue
             expected_datagrams.append((packet, received_at))
 
-        # Counts are cumulative. Use the newest queued datagram so a burst of
-        # packets cannot create nearly-zero receive intervals and false spikes.
+        # RPM is instantaneous: the newest queued datagram is the current
+        # state, anything older in the queue is already stale.
         if expected_datagrams:
             packet, received_at = expected_datagrams[-1]
             try:
-                feedback = unpack_encoder_feedback(packet)
-                estimate = self._wheel_speed_converter.update(
-                    feedback, received_at
+                feedback = unpack_encoder_feedback(
+                    packet, self._config.feedback_value_type
                 )
+                estimate = self._wheel_speed_converter.convert(feedback)
             except ValueError as error:
                 self._feedback_warning('Rejected ECU feedback: %s' % error)
             else:
@@ -517,8 +498,7 @@ class DriveUdpBridge(Node):
                 if self._feedback_timed_out:
                     self.get_logger().info('ECU encoder feedback restored')
                     self._feedback_timed_out = False
-                if estimate is not None:
-                    self._publish_wheel_speeds(estimate, received_at)
+                self._publish_wheel_speeds(estimate, received_at)
 
         now = time.monotonic()
         last_receive = self._last_feedback_receive_time
@@ -530,7 +510,6 @@ class DriveUdpBridge(Node):
             not self._feedback_timed_out
             and now - reference_time > self._config.feedback_timeout_sec
         ):
-            self._wheel_speed_converter.reset_timing()
             self._feedback_timed_out = True
             self._feedback_warning(
                 'ECU encoder feedback timed out; wheel-speed publication paused'
@@ -542,7 +521,7 @@ class DriveUdpBridge(Node):
         received_at: float,
     ) -> None:
         """
-        Publish four encoder-derived wheel speeds in metres per second.
+        Publish four RPM-derived wheel speeds in metres per second.
 
         The header stamp is the datagram's arrival time expressed on the node
         clock (now minus the monotonic age of the sample), not the poll-timer

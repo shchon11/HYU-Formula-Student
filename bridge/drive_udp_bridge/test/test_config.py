@@ -26,7 +26,8 @@ def valid_config():
         feedback_port=0,
         feedback_poll_rate_hz=200.0,
         feedback_timeout_sec=0.2,
-        encoder_counts_per_revolution=0,
+        feedback_value_type='float32',
+        rpm_gear_ratio=1.0,
         tire_diameter_m=0.0,
         max_wheel_speed_mps=50.0,
         wheel_speeds_topic='/vehicle/wheel_speeds',
@@ -87,7 +88,6 @@ def test_valid_feedback_config_is_accepted(valid_config):
         valid_config,
         feedback_bind_ip='127.0.0.1',
         feedback_port=5006,
-        encoder_counts_per_revolution=4096,
         tire_diameter_m=0.4572,
     )
 
@@ -101,7 +101,10 @@ def test_valid_feedback_config_is_accepted(valid_config):
         ('feedback_port', 65536, 'feedback_port'),
         ('feedback_poll_rate_hz', 0.0, 'feedback_poll_rate_hz'),
         ('feedback_timeout_sec', 0.0, 'feedback_timeout_sec'),
-        ('encoder_counts_per_revolution', -1, 'encoder_counts_per_revolution'),
+        ('feedback_value_type', 'double', 'feedback_value_type'),
+        ('feedback_value_type', '', 'feedback_value_type'),
+        ('rpm_gear_ratio', 0.0, 'rpm_gear_ratio'),
+        ('rpm_gear_ratio', float('nan'), 'rpm_gear_ratio'),
         ('tire_diameter_m', 0.0, 'tire_diameter_m'),
         ('max_wheel_speed_mps', -1.0, 'max_wheel_speed_mps'),
         ('wheel_speeds_topic', '', 'wheel_speeds_topic'),
@@ -115,7 +118,6 @@ def test_invalid_feedback_config_is_rejected(
         valid_config,
         feedback_bind_ip='127.0.0.1',
         feedback_port=5006,
-        encoder_counts_per_revolution=4096,
         tire_diameter_m=0.4572,
     )
 
@@ -128,7 +130,6 @@ def test_feedback_source_defaults_to_ecu_ip_and_can_be_overridden(valid_config):
         valid_config,
         feedback_bind_ip='127.0.0.1',
         feedback_port=6000,
-        encoder_counts_per_revolution=1000,
         tire_diameter_m=0.4572,
     )
     validate_config(enabled)
@@ -146,18 +147,15 @@ def test_feedback_source_defaults_to_ecu_ip_and_can_be_overridden(valid_config):
         validate_config(replace(enabled, feedback_source_ip='ecu'))
 
 
-def test_unknown_counts_per_revolution_keeps_endpoint_but_not_ready(valid_config):
-    # The endpoint is ours to pick ahead of time; the scale comes from the ECU
-    # team. Until it is filled the bridge must start (commands!) with feedback
-    # simply off -- so 0 validates, and only feedback_ready is false.
-    waiting = replace(
+def test_every_feedback_value_type_validates(valid_config):
+    # RPM needs no ECU-side scale, so the endpoint alone enables feedback; the
+    # element type is the only per-ECU pick and every listed one must pass.
+    enabled = replace(
         valid_config,
         feedback_bind_ip='0.0.0.0',
         feedback_port=5001,
-        encoder_counts_per_revolution=0,
         tire_diameter_m=0.4572,
     )
-    validate_config(waiting)
-    assert waiting.feedback_enabled
-    assert not waiting.feedback_ready
-    assert replace(waiting, encoder_counts_per_revolution=1000).feedback_ready
+    for value_type in ('float32', 'float64', 'int16', 'uint16', 'int32', 'uint32'):
+        validate_config(replace(enabled, feedback_value_type=value_type))
+    assert enabled.feedback_enabled

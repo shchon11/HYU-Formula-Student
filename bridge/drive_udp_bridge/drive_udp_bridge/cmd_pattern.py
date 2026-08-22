@@ -67,7 +67,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument('--rate', type=float, default=50.0, help='publish rate, Hz')
     parser.add_argument('--frame-id', default='base_footprint', help='header.frame_id')
     parser.add_argument(
-        '--steer-amp', type=float, default=0.3,
+        '--steer-amp', type=float, default=1.0,
         help='steering sine amplitude, rad (vehicle lock is 0.52)',
     )
     parser.add_argument(

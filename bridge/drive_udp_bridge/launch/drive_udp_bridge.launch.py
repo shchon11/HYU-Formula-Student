@@ -16,8 +16,8 @@ stack: the AS button driver (Jetson header pin 31, when Jetson.GPIO is
 available) -> vehicle_state (a mission pre-selected, so the button alone
 reaches AS_DRIVING) -> this bridge with require_map_reset off (no SLAM on the
 bench). Pressing the button then flips the autonomous-enable byte 0 -> 1 on
-the wire, and encoder feedback (once encoder_counts_per_revolution is set)
-shows up on /vehicle/wheel_speeds.
+the wire, and the ECU's wheel-RPM feedback shows up as m/s on
+/vehicle/wheel_speeds.
 
 Without a button: ros2 service call /vehicle/set_as_button std_srvs/srv/SetBool "{data: true}"
 """

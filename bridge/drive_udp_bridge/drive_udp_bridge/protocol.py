@@ -13,8 +13,19 @@ from typing import Callable, Optional, Tuple
 
 PACKET_FORMAT = '<ffBB'
 PACKET_SIZE = struct.calcsize(PACKET_FORMAT)
-ENCODER_FEEDBACK_FORMAT = '<IIII'
-ENCODER_FEEDBACK_SIZE = struct.calcsize(ENCODER_FEEDBACK_FORMAT)
+# ECU -> AGX feedback: four per-wheel RPM values (FL FR RL RR), little endian.
+# The element type is whatever the Speedgoat UDP Send block emits; pick it with
+# feedback_value_type. float32 mirrors the single-precision command packet.
+FEEDBACK_VALUE_TYPES = {
+    'float32': 'f',
+    'float64': 'd',
+    'int16': 'h',
+    'uint16': 'H',
+    'int32': 'i',
+    'uint32': 'I',
+}
+DEFAULT_FEEDBACK_VALUE_TYPE = 'float32'
+FEEDBACK_WHEEL_COUNT = 4
 FLOAT32_MAX = 3.4028234663852886e38
 SAFE_COMMAND = (0.0, 0.0, 0)
 
@@ -48,30 +59,56 @@ def pack_command(
     )
 
 
+def feedback_format(value_type: str = DEFAULT_FEEDBACK_VALUE_TYPE) -> str:
+    """Return the struct format of one four-wheel RPM datagram."""
+    try:
+        code = FEEDBACK_VALUE_TYPES[value_type]
+    except KeyError:
+        raise ValueError(
+            'feedback_value_type must be one of '
+            + ', '.join(sorted(FEEDBACK_VALUE_TYPES))
+            + f', got {value_type!r}'
+        ) from None
+    return '<' + code * FEEDBACK_WHEEL_COUNT
+
+
+def feedback_size(value_type: str = DEFAULT_FEEDBACK_VALUE_TYPE) -> int:
+    """Return the byte length of one four-wheel RPM datagram."""
+    return struct.calcsize(feedback_format(value_type))
+
+
 @dataclass(frozen=True)
 class EncoderFeedback:
-    """One provisional ECU cumulative wheel-encoder datagram."""
+    """One ECU wheel-encoder datagram: four wheel RPM readings."""
 
-    front_left_count: int
-    front_right_count: int
-    rear_left_count: int
-    rear_right_count: int
+    front_left_rpm: float
+    front_right_rpm: float
+    rear_left_rpm: float
+    rear_right_rpm: float
 
 
-def unpack_encoder_feedback(packet: bytes) -> EncoderFeedback:
-    """Decode one 16-byte little-endian cumulative encoder datagram."""
-    if len(packet) != ENCODER_FEEDBACK_SIZE:
+def unpack_encoder_feedback(
+    packet: bytes,
+    value_type: str = DEFAULT_FEEDBACK_VALUE_TYPE,
+) -> EncoderFeedback:
+    """Decode one little-endian FL FR RL RR RPM datagram of the given element type."""
+    fmt = feedback_format(value_type)
+    size = struct.calcsize(fmt)
+    if len(packet) != size:
         raise ValueError(
-            'encoder feedback packet must be exactly '
-            f'{ENCODER_FEEDBACK_SIZE} bytes, got {len(packet)}'
+            f'encoder feedback packet must be exactly {size} bytes '
+            f'for feedback_value_type {value_type} (4 x {value_type}), '
+            f'got {len(packet)}'
         )
 
-    values = struct.unpack(ENCODER_FEEDBACK_FORMAT, packet)
+    values = tuple(float(value) for value in struct.unpack(fmt, packet))
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError('encoder feedback RPM values must be finite')
     return EncoderFeedback(
-        front_left_count=int(values[0]),
-        front_right_count=int(values[1]),
-        rear_left_count=int(values[2]),
-        rear_right_count=int(values[3]),
+        front_left_rpm=values[0],
+        front_right_rpm=values[1],
+        rear_left_rpm=values[2],
+        rear_right_rpm=values[3],
     )
 
 

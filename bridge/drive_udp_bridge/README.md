@@ -2,7 +2,7 @@
 
 AGX와 Speedgoat ECU 사이의 양방향 UDP 통신을 담당하는 독립 ROS 2 Humble
 패키지입니다. `/vehicle/cmd`의 최신 Ackermann 주행 명령을 ECU에 전달하고, ECU의
-누적 wheel encoder count를 바퀴별 선속도(m/s)로 변환해
+ECU가 보내는 바퀴별 RPM을 바퀴별 선속도(m/s)로 변환해
 `/vehicle/wheel_speeds`로 발행합니다.
 
 ## ROS 인터페이스
@@ -80,27 +80,30 @@ AS 상태를 받지 못했거나 `auto_state_timeout_sec`를 초과하면 스위
 
 ## ECU → AGX encoder feedback
 
-feedback UDP datagram을 Little Endian `<IIII>`, 총 16 bytes로 해석합니다. 실제
-Speedgoat 모델에 연결하기 전에 ECU 팀과 형식 및 필드 순서를 동일하게 확정해야 합니다.
+ECU는 바퀴별 **RPM**을 보냅니다. feedback UDP datagram 하나 = 네 바퀴 RPM 값
+(FL FR RL RR 순, Little Endian). 값의 타입은 Speedgoat UDP Send 블록이 내보내는
+그대로 `feedback_value_type`으로 고릅니다(기본 `float32` — 명령 패킷과 같은 single).
 
-| Byte offset | 크기 | 타입 | 필드 |
-|---:|---:|---|---|
-| 0–3 | 4 bytes | uint32 | front-left 누적 encoder count |
-| 4–7 | 4 bytes | uint32 | front-right 누적 encoder count |
-| 8–11 | 4 bytes | uint32 | rear-left 누적 encoder count |
-| 12–15 | 4 bytes | uint32 | rear-right 누적 encoder count |
+| `feedback_value_type` | 포맷 | datagram 크기 |
+|---|---|---:|
+| `float32` (기본) | `<ffff` | 16 bytes |
+| `float64` | `<dddd` | 32 bytes |
+| `int16` / `uint16` | `<hhhh` / `<HHHH` | 8 bytes |
+| `int32` / `uint32` | `<iiii` / `<IIII` | 16 bytes |
 
-각 count는 motor encoder 원시값이 아니라 정방향에서 증가하고 후진에서 감소하는
-wheel-side 누적 counter로 가정합니다. `encoder_counts_per_revolution`에는 encoder
-resolution, quadrature, 기어비를 모두 반영한 **타이어 1회전당 실제 count**를
-입력해야 합니다. uint32 rollover와 역회전은 bridge가 signed delta로 보정합니다.
+| Byte offset (float32) | 타입 | 필드 |
+|---:|---|---|
+| 0–3 | float32 | front-left RPM |
+| 4–7 | float32 | front-right RPM |
+| 8–11 | float32 | rear-left RPM |
+| 12–15 | float32 | rear-right RPM |
 
-연속된 두 feedback packet 사이에서 각 바퀴를 독립적으로 계산합니다.
+각 RPM은 wheel-side(타이어 회전수)로 가정합니다(`rpm_gear_ratio` 1.0). ECU가 모터축
+RPM을 보내면 모터→휠 기어비를 `rpm_gear_ratio`에 넣습니다. 부호는 정방향 +, 후진 −
+(정수 unsigned 타입이면 후진 표현 불가 — ECU팀과 확인).
 
 ```text
-delta_count = unwrap(current_count - previous_count)
-wheel_distance_m = delta_count / counts_per_revolution * (pi * tire_diameter_m)
-wheel_speed_mps = wheel_distance_m / delta_time
+wheel_speed_mps = rpm / rpm_gear_ratio / 60 * (pi * tire_diameter_m)
 ```
 
 계산 결과는 다음 네 필드만 채워 발행합니다.
@@ -114,41 +117,35 @@ wheel_speed_mps = wheel_distance_m / delta_time
 ```
 
 bridge는 wheel odometry, `x`, `y`, `yaw`, `CarState`를 만들거나 발행하지 않습니다.
-첫 packet은 count와 시간 기준점으로만 저장하고 두 번째 packet부터 발행합니다. 잘못된
-크기, 허용 속도 초과, 다른 source IP의 packet은 폐기합니다(`feedback_source_ip`,
+RPM은 순시값이라 첫 packet부터 바로 발행합니다. 크기가 맞지 않는 packet(→ 경고에
+기대 크기와 `feedback_value_type`이 찍힘 — 타입을 잘못 골랐다는 신호), 비유한값,
+`max_wheel_speed_mps` 초과, 다른 source IP의 packet은 폐기합니다(`feedback_source_ip`,
 기본은 `ecu_ip`; `0.0.0.0`이면 소스 검사 없음). feedback timeout 이후에는 마지막
-속도를 반복하거나 0을 임의 발행하지 않고 출력을 멈춘 뒤 다음 정상 packet을 새
-기준점으로 사용합니다.
+속도를 반복하거나 0을 임의 발행하지 않고 출력을 멈춥니다.
 
-`delta_time`은 폴링 주기가 아니라 **datagram 도착 시각** 차이입니다. Linux에서는
-커널 수신 타임스탬프(`SO_TIMESTAMPNS`)를 monotonic 시계로 환산해 쓰므로 200 Hz 폴
-타이머의 양자화·지터가 속도에 섞이지 않습니다(옵션을 못 켜면 drain 시각으로 대체,
-시작 로그에 표시). 발행 메시지의 `header.stamp`도 같은 도착 시각을 노드 시계로 옮긴
-값입니다(now − 샘플 나이). 속도 분해능은 count 하나당
-`pi * tire_diameter_m / encoder_counts_per_revolution / delta_time`이므로 ECU 송신
-주기와 CPR이 정해지면 이 값을 확인하고, 너무 거칠면 ECU 송신 주기를 낮추거나 ECU측
-타임스탬프 필드 추가를 검토합니다. 한 틱에 여러 datagram이 쌓여 있으면 가장 최신
-것만 사용합니다(누적 count라 손실 없음).
+발행 메시지의 `header.stamp`는 **datagram 도착 시각**을 노드 시계로 옮긴 값입니다
+(now − 샘플 나이). Linux에서는 커널 수신 타임스탬프(`SO_TIMESTAMPNS`)를 monotonic
+시계로 환산해 쓰므로 200 Hz 폴 타이머의 양자화·지터가 stamp에 섞이지 않습니다(옵션을
+못 켜면 drain 시각으로 대체, 시작 로그에 표시). 한 틱에 여러 datagram이 쌓여 있으면
+가장 최신 것만 씁니다(순시값이라 이전 것은 이미 낡은 상태).
 
 **누가 뭘 정하나.** `feedback_bind_ip`/`feedback_port`는 우리 쪽 값이다(기본 `0.0.0.0:5001`
 → ECU 모델의 feedback 목적지를 "AGX의 192.168.9.x 주소:5001"로 잡아 달라고 전달).
-`encoder_counts_per_revolution`만 ECU/드라이브트레인 쪽 값이며, 확정 전(0)에는 노드가
-feedback만 끈 채 정상 기동한다. 데이터시트로 계산하기 애매하면(모터축/휠축, 엣지 ×4,
-기어비 반영 여부) 직접 재는 게 확실하다 — 브리지를 끄고 count만 찍어 보면서 차를 타이어
-정확히 한 바퀴 밀면 된다:
+ECU 쪽에서 오는 정보는 값 타입(`feedback_value_type`)과 RPM이 휠축인지 모터축인지
+(`rpm_gear_ratio`) 둘뿐이다. 확실치 않으면 브리지를 끄고 원시 패킷을 찍어 보면 된다 —
+크기로 타입이 갈리고(16 B면 float32 또는 int32), 차를 타이어 정확히 한 바퀴/초로 밀면
+휠축 RPM은 60 근처여야 한다:
 
 ```bash
 python3 - <<'EOF'
 import socket, struct
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind(("0.0.0.0", 5001))
-print("FL FR RL RR  (Ctrl+C to stop)")
+print("bytes  FL FR RL RR as float32  (Ctrl+C to stop)")
 while True:
-    print(*struct.unpack("<IIII", s.recv(64)), end="\r")
+    p = s.recv(64)
+    print(len(p), struct.unpack("<ffff", p) if len(p) == 16 else p.hex(), end="      \r")
 EOF
 ```
-
-한 바퀴 전후의 차이가 `encoder_counts_per_revolution`이다(네 바퀴가 같아야 정상; 후진 시
-감소해야 signed delta 가정이 맞는다).
 
 ## 벤치 구동 테스트 패턴 (`cmd_pattern`)
 
@@ -223,11 +220,12 @@ ECU는 AS 버튼이 ON(`AS_DRIVING`)일 때만 이 명령을 받습니다 — �
 | `feedback_bind_ip` | `0.0.0.0` | feedback을 받을 로컬 IPv4 (**우리가 정하는 값**). `0.0.0.0`=모든 인터페이스. port와 함께 설정 |
 | `feedback_port` | `5001` | ECU가 feedback을 보낼 AGX UDP port (**우리가 정하는 값** → ECU팀에 "AGX IP:5001"로 전달). IP와 함께 설정 |
 | `feedback_poll_rate_hz` | `200.0` | non-blocking UDP receive queue 확인 주기 |
-| `feedback_timeout_sec` | `0.2` | feedback 단절 판단 및 속도 계산 최대 dt, s |
+| `feedback_timeout_sec` | `0.2` | feedback 단절 판단(발행 중단 경고), s |
 | `feedback_source_ip` | `""` | feedback을 받아들일 source IPv4. 빈 값이면 `ecu_ip`, `0.0.0.0`이면 아무 소스나 허용(벤치) |
-| `encoder_counts_per_revolution` | `0` | 타이어 1회전당 ECU count 증가량 (**ECU팀/데이터시트 값**: 엔코더 PPR × 쿼드러처 ×4 여부 × 기어비 — 최종값은 Speedgoat 모델이 뭘 누적하느냐에 따름). `0`=미확정 → feedback만 꺼지고 노드는 정상 기동 |
+| `feedback_value_type` | `float32` | feedback datagram의 RPM 값 타입 (**ECU Send 블록이 내보내는 타입**): `float32`/`float64`/`int16`/`uint16`/`int32`/`uint32`. 크기가 안 맞는 packet은 경고와 함께 폐기 |
+| `rpm_gear_ratio` | `1.0` | 타이어 1회전당 ECU RPM 회전수. `1.0`=휠축 RPM 그대로, 모터축 RPM이면 모터→휠 기어비 |
 | `tire_diameter_m` | `0.4572` | 타이어 지름, m (Hoosier PAC02 UNLOADED_RADIUS 0.2286 × 2) |
-| `max_wheel_speed_mps` | `50.0` | 비정상 count jump 거부 한계. 0이면 검사 비활성화 |
+| `max_wheel_speed_mps` | `50.0` | RPM 환산 속도가 이 값을 넘는 packet 거부. 0이면 검사 비활성화 |
 | `wheel_speeds_topic` | `/vehicle/wheel_speeds` | 네 바퀴 m/s 출력 토픽 |
 | `wheel_speeds_frame_id` | `base_footprint` | 출력 Header frame |
 | `map_reset_service` | `/graph_slam/reset` | OFF→ON 전환 시 먼저 호출하는 지도 초기화 서비스 (`std_srvs/Trigger`) |
@@ -292,7 +290,7 @@ bridge as_button:=off                    # 버튼 미배선 벤치: GPIO 드라�
 ros2 service call /vehicle/set_as_button std_srvs/srv/SetBool "{data: true}"    # ON  -> (0,0,1,1)
 ros2 service call /vehicle/set_as_button std_srvs/srv/SetBool "{data: false}"   # OFF -> (0,0,1,0)
 ros2 topic echo /vehicle/as_state_str          # OFF / READY / DRIVING
-ros2 topic echo /vehicle/wheel_speeds          # ECU count 피드백 (encoder_counts_per_revolution 기입 후)
+ros2 topic echo /vehicle/wheel_speeds          # ECU RPM 피드백 → m/s (feedback_value_type이 ECU와 맞아야 함)
 ```
 
 기본값(`bench:=false`)은 브리지 노드 하나만 띄우며 `race.sh`가 쓰는 형태입니다
@@ -319,6 +317,6 @@ colcon test --packages-select drive_udp_bridge
 colcon test-result --verbose
 ```
 
-테스트는 CSV 역보간과 90 deg 포화, command/feedback 패킷 endian과 크기, watchdog,
-parameter 검증, uint32 rollover, 역회전, encoder-to-m/s 변환, UDP loopback, ROS topic
-발행 및 실제 Timer의 반복 송신과 timeout 전환을 확인합니다.
+테스트는 CSV 역보간과 90 deg 포화, command/feedback 패킷 endian과 크기, 값 타입별
+feedback 포맷, watchdog, parameter 검증, 역회전(음수 RPM), RPM-to-m/s 변환, UDP
+loopback, ROS topic 발행 및 실제 Timer의 반복 송신과 timeout 전환을 확인합니다.
