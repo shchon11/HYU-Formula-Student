@@ -4,11 +4,13 @@
 
 """Bidirectional ROS 2 command and wheel-encoder Speedgoat UDP bridge."""
 
+from pathlib import Path
 import threading
 import time
 from typing import Optional
 
 from ackermann_msgs.msg import AckermannDriveStamped
+from ament_index_python.packages import get_package_share_directory
 from drive_udp_bridge.config import BridgeConfig, validate_config
 from drive_udp_bridge.protocol import (
     AutonomousStateWatchdog,
@@ -16,6 +18,7 @@ from drive_udp_bridge.protocol import (
     pack_command,
     unpack_encoder_feedback,
 )
+from drive_udp_bridge.steering_conversion import SteeringWheelConverter
 from drive_udp_bridge.udp_receiver import UdpReceiver
 from drive_udp_bridge.udp_sender import UdpSender
 from drive_udp_bridge.wheel_speeds import (
@@ -30,6 +33,20 @@ from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_srvs.srv import Trigger
+
+
+def _resolve_steering_calibration_path(configured_path: str) -> Path:
+    """Resolve relative calibration names below the installed config folder."""
+    path = Path(configured_path).expanduser()
+    if path.is_absolute():
+        return path
+    try:
+        package_share = get_package_share_directory('drive_udp_bridge')
+    except LookupError as error:
+        raise ValueError(
+            'cannot locate the installed drive_udp_bridge package share'
+        ) from error
+    return Path(package_share) / 'config' / path
 
 
 class DriveUdpBridge(Node):
@@ -50,6 +67,11 @@ class DriveUdpBridge(Node):
         self.declare_parameter('send_rate_hz', 100.0)
         self.declare_parameter('command_timeout_sec', 0.2)
         self.declare_parameter('auto_state_timeout_sec', 0.5)
+        self.declare_parameter(
+            'steering_calibration_csv',
+            'steering_kinematics.csv',
+        )
+        self.declare_parameter('max_steering_wheel_angle_deg', 90.0)
         self.declare_parameter('feedback_bind_ip', '')
         self.declare_parameter('feedback_port', 0)
         self.declare_parameter('feedback_poll_rate_hz', 200.0)
@@ -86,6 +108,12 @@ class DriveUdpBridge(Node):
             ),
             auto_state_timeout_sec=float(
                 self.get_parameter('auto_state_timeout_sec').value
+            ),
+            steering_calibration_csv=str(
+                self.get_parameter('steering_calibration_csv').value
+            ).strip(),
+            max_steering_wheel_angle_deg=float(
+                self.get_parameter('max_steering_wheel_angle_deg').value
             ),
             feedback_bind_ip=str(
                 self.get_parameter('feedback_bind_ip').value
@@ -131,6 +159,14 @@ class DriveUdpBridge(Node):
         if self._map_reset_timeout_sec <= 0.0:
             raise ValueError('map_reset_timeout_sec must be greater than zero')
 
+        calibration_path = _resolve_steering_calibration_path(
+            self._config.steering_calibration_csv
+        )
+        self._steering_converter = SteeringWheelConverter.from_csv(
+            calibration_path,
+            self._config.max_steering_wheel_angle_deg,
+        )
+
         self._lock = threading.Lock()
         # Autonomous-enable byte actually sent: follows the switch down at
         # once, follows it up only through a successful map reset.
@@ -151,6 +187,7 @@ class DriveUdpBridge(Node):
         self._wheel_speed_converter: Optional[WheelSpeedConverter] = None
         self._wheel_speeds_publisher = None
         self._last_send_error_log_time = float('-inf')
+        self._last_steering_clip_log_time = float('-inf')
         self._last_feedback_error_log_time = float('-inf')
         self._feedback_started_at = time.monotonic()
         self._last_feedback_receive_time = None
@@ -245,6 +282,22 @@ class DriveUdpBridge(Node):
                 ('after %s succeeds (timeout %.1f s)'
                  % (self._map_reset_service, self._map_reset_timeout_sec))
                 if self._require_map_reset else 'immediately (no map reset)',
+            )
+        )
+        self.get_logger().info(
+            'Loaded steering calibration %s: bicycle input [%.6f, %.6f] rad '
+            '<-> steering wheel [%.3f, %.3f] deg; active input [%.6f, %.6f] '
+            'rad -> UDP steering-wheel limit +/-%.6f rad (+/-%.3f deg)'
+            % (
+                self._steering_converter.calibration_path,
+                self._steering_converter.calibration_minimum_input_rad,
+                self._steering_converter.calibration_maximum_input_rad,
+                self._steering_converter.calibration_minimum_wheel_angle_deg,
+                self._steering_converter.calibration_maximum_wheel_angle_deg,
+                self._steering_converter.negative_input_limit_rad,
+                self._steering_converter.positive_input_limit_rad,
+                self._steering_converter.maximum_output_rad,
+                self._steering_converter.max_steering_wheel_angle_deg,
             )
         )
         if self._receiver is None and self._config.feedback_enabled:
@@ -385,11 +438,28 @@ class DriveUdpBridge(Node):
         autonomous_enable = int(auto_enabled)
         motion_command_valid = auto_enabled and command.enable == 1
         speed = command.speed if motion_command_valid else 0.0
-        steering_angle = command.steering_angle if motion_command_valid else 0.0
+        steering_wheel_angle_rad = 0.0
+        if motion_command_valid:
+            conversion = self._steering_converter.convert(command.steering_angle)
+            steering_wheel_angle_rad = conversion.steering_wheel_angle_rad
+            if conversion.clipped:
+                now = time.monotonic()
+                if now - self._last_steering_clip_log_time >= 1.0:
+                    self.get_logger().warning(
+                        'Clipped bicycle steering %.6f rad to active input '
+                        '[%.6f, %.6f] rad; sending steering-wheel %.6f rad'
+                        % (
+                            command.steering_angle,
+                            self._steering_converter.negative_input_limit_rad,
+                            self._steering_converter.positive_input_limit_rad,
+                            steering_wheel_angle_rad,
+                        )
+                    )
+                    self._last_steering_clip_log_time = now
 
         packet = pack_command(
             speed,
-            steering_angle,
+            steering_wheel_angle_rad,
             1,
             autonomous_enable,
         )

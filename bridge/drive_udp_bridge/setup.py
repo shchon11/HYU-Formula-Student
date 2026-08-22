@@ -19,7 +19,11 @@ setup(
         ),
         ('share/' + package_name, ['package.xml', 'README.md']),
         ('share/' + package_name + '/config',
-         ['config/drive_udp_bridge.yaml', 'config/plotjuggler_drive.xml']),
+         [
+             'config/drive_udp_bridge.yaml',
+             'config/plotjuggler_drive.xml',
+             'config/steering_kinematics.csv',
+         ]),
         ('share/' + package_name + '/launch', ['launch/drive_udp_bridge.launch.py']),
     ],
     install_requires=['setuptools'],

@@ -15,12 +15,23 @@ AGX와 Speedgoat ECU 사이의 양방향 UDP 통신을 담당하는 독립 ROS 2
 | 노드 | — | — | `drive_udp_bridge` |
 | 실행 파일 | — | — | `drive_udp_bridge` |
 
-다음 두 필드만 전송합니다. 별도의 gain, clipping 또는 단위 변환은 없습니다.
+속도는 그대로 전송하고, 조향은 suspension-kinematics CSV를 이용해 자전거 모델의
+등가 앞바퀴각에서 스티어링 휠 각도로 변환해 전송합니다.
 
 | ROS 필드 | UDP 필드 | 단위와 부호 |
 |---|---|---|
 | `drive.speed` | `speed` | 목표 종방향 속도, m/s. 양수는 전진, 음수는 후진 |
-| `drive.steering_angle` | `steering_angle` | 앞차축 중앙 가상 휠 조향각, rad. 양수는 좌회전 |
+| `drive.steering_angle` | `steering_wheel_angle` | 입력은 앞차축 중앙 가상 휠 조향각(rad), UDP 출력은 스티어링 휠 각도(rad). 양수는 좌회전 |
+
+CSV의 세 열은 모두 degree이며 각 행의 자전거 모델 등가 조향각은 다음처럼 만듭니다.
+
+```text
+equivalent_angle_rad = deg2rad((toe_right_front - toe_left_front) / 2)
+```
+
+bridge는 이 단조 테이블을 역선형보간한 뒤 스티어링 휠 각도를
+`max_steering_wheel_angle_deg`로 포화하고 radian으로 바꿉니다. 기본 `90 deg` 제한은
+현재 테이블에서 자전거 모델 입력 약 `+/-0.335321 rad`, UDP 출력 `+/-pi/2 rad`입니다.
 
 ## UDP 패킷 규격
 
@@ -29,14 +40,16 @@ Python `struct` 형식은 `<ffBB`이고 항상 Little Endian, 총 10 bytes입니
 | Byte offset | 크기 | 타입 | 필드 |
 |---:|---:|---|---|
 | 0–3 | 4 bytes | IEEE-754 float32 | `speed` |
-| 4–7 | 4 bytes | IEEE-754 float32 | `steering_angle` |
+| 4–7 | 4 bytes | IEEE-754 float32 | `steering_wheel_angle`, rad |
 | 8 (9번째 byte) | 1 byte | uint8 | `enable` (항상 `1`) |
 | 9 (10번째 byte) | 1 byte | uint8 | `autonomous_enable` |
 
 동일한 패킷을 만드는 Python 예시는 다음과 같습니다.
 
 ```python
-packet = struct.pack('<ffBB', speed, steering_angle, 1, autonomous_enable)
+packet = struct.pack(
+    '<ffBB', speed, steering_wheel_angle_rad, 1, autonomous_enable
+)
 ```
 
 최신 `/vehicle/as_state`가 `AS_DRIVING`이면 `autonomous_enable=1`, 그 외에는
@@ -50,7 +63,7 @@ packet = struct.pack('<ffBB', speed, steering_angle, 1, autonomous_enable)
 재시도합니다(로그 ERROR). **ON→OFF 전환은 즉시** 0입니다. SLAM 없이 벤치에서
 쓸 때는 `require_map_reset: false`로 즉시 1이 되게 할 수 있습니다.
 
-다음 경우에는 `speed=0.0`, `steering_angle=0.0`을 전송합니다.
+다음 경우에는 `speed=0.0`, `steering_wheel_angle=0.0`을 전송합니다.
 
 - 자율주행 스위치가 OFF인 경우
 - 노드 시작 후 명령을 한 번도 받지 못한 경우
@@ -141,7 +154,8 @@ EOF
 
 스택 없이 ECU 구동만 확인할 때 `/vehicle/cmd`에 고정 패턴을 뿌리는 도구입니다.
 조향은 사인파, 속도는 0에서 선형으로 올라가다 최고속에 닿는 순간 0으로 급정지하고
-잠시 멈춘 뒤 반복합니다.
+잠시 멈춘 뒤 반복합니다. 아래 조향값은 스티어링 휠 각도가 아니라 bridge에 입력되는
+자전거 모델 등가 조향각(rad)입니다.
 
 ```text
 steer = steer_amp * sin(2*pi*t / steer_period)              rad, +좌회전
@@ -204,6 +218,8 @@ ECU는 AS 버튼이 ON(`AS_DRIVING`)일 때만 이 명령을 받습니다 — �
 | `send_rate_hz` | `100.0` | Timer UDP 송신 주기, Hz |
 | `command_timeout_sec` | `0.2` | 명령 수신 watchdog, s |
 | `auto_state_timeout_sec` | `0.5` | 자율주행 상태 수신 watchdog, s |
+| `steering_calibration_csv` | `steering_kinematics.csv` | tab-separated 조향 보정표. 상대경로는 설치된 패키지의 `config` 아래에서 찾음 |
+| `max_steering_wheel_angle_deg` | `90.0` | 좌우 공통 스티어링 휠 절댓값 제한, degree. CSV 범위 이하여야 함 |
 | `feedback_bind_ip` | `0.0.0.0` | feedback을 받을 로컬 IPv4 (**우리가 정하는 값**). `0.0.0.0`=모든 인터페이스. port와 함께 설정 |
 | `feedback_port` | `5001` | ECU가 feedback을 보낼 AGX UDP port (**우리가 정하는 값** → ECU팀에 "AGX IP:5001"로 전달). IP와 함께 설정 |
 | `feedback_poll_rate_hz` | `200.0` | non-blocking UDP receive queue 확인 주기 |
@@ -232,7 +248,8 @@ PC와 Speedgoat의 Ethernet 인터페이스를 같은 subnet의 고정 IPv4 주�
 
 Speedgoat 수신 모델에서는 10-byte `uint8` datagram을 받아 byte offset 0과 4를
 Little-Endian single로, offset 8의 `enable`과 offset 9의 `autonomous_enable`을
-각각 uint8로 해석해야 합니다.
+각각 uint8로 해석해야 합니다. offset 4의 single은 스티어링 휠 각도(rad)이며 더 이상
+자전거 모델의 앞바퀴 조향각이 아닙니다.
 
 ## 빌드 및 실행
 
@@ -302,6 +319,6 @@ colcon test --packages-select drive_udp_bridge
 colcon test-result --verbose
 ```
 
-테스트는 command/feedback 패킷 endian과 크기, watchdog, parameter 검증, uint32
-rollover, 역회전, encoder-to-m/s 변환, UDP loopback, ROS topic 발행 및 실제 Timer의
-반복 송신과 timeout 전환을 확인합니다.
+테스트는 CSV 역보간과 90 deg 포화, command/feedback 패킷 endian과 크기, watchdog,
+parameter 검증, uint32 rollover, 역회전, encoder-to-m/s 변환, UDP loopback, ROS topic
+발행 및 실제 Timer의 반복 송신과 timeout 전환을 확인합니다.

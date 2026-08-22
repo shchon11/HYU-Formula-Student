@@ -30,9 +30,11 @@ def pack_command(
     enable: int,
     autonomous_enable: int,
 ) -> bytes:
-    """Pack one 10-byte little-endian Speedgoat command datagram."""
+    """Pack speed and steering-wheel radians into one Speedgoat datagram."""
     if not is_valid_float32(speed) or not is_valid_float32(steering_angle):
-        raise ValueError('speed and steering_angle must be finite float32 values')
+        raise ValueError(
+            'speed and steering-wheel angle must be finite float32 values'
+        )
     if enable not in (0, 1):
         raise ValueError('enable must be 0 or 1')
     if autonomous_enable not in (0, 1):

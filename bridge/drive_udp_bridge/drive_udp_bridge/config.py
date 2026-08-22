@@ -22,6 +22,8 @@ class BridgeConfig:
     send_rate_hz: float
     command_timeout_sec: float
     auto_state_timeout_sec: float
+    steering_calibration_csv: str
+    max_steering_wheel_angle_deg: float
     feedback_bind_ip: str
     feedback_port: int
     feedback_poll_rate_hz: float
@@ -97,6 +99,15 @@ def validate_config(config: BridgeConfig) -> None:
     ):
         raise ValueError(
             'auto_state_timeout_sec must be finite and greater than zero'
+        )
+    if not config.steering_calibration_csv.strip():
+        raise ValueError('steering_calibration_csv must not be empty')
+    if (
+        not math.isfinite(config.max_steering_wheel_angle_deg)
+        or config.max_steering_wheel_angle_deg <= 0.0
+    ):
+        raise ValueError(
+            'max_steering_wheel_angle_deg must be finite and greater than zero'
         )
 
     feedback_ip_set = bool(config.feedback_bind_ip.strip())

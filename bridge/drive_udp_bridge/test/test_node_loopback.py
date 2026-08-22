@@ -2,6 +2,7 @@
 #
 # Licensed under the MIT License.
 
+import math
 import socket
 import struct
 import time
@@ -69,7 +70,7 @@ def test_command_timeout_zeros_motion_but_keeps_autonomous_switch_on():
 
         command = AckermannDriveStamped()
         command.drive.speed = 6.5
-        command.drive.steering_angle = -0.3
+        command.drive.steering_angle = math.radians(-12.63242)
         node._on_command(command)
         auto_state = CanState()
         auto_state.as_state = CanState.AS_DRIVING
@@ -92,7 +93,7 @@ def test_command_timeout_zeros_motion_but_keeps_autonomous_switch_on():
         '<ffBB', fresh_packets[-1]
     )
     assert speed == 6.5
-    assert steering == pytest.approx(-0.3)
+    assert steering == pytest.approx(-math.pi / 3.0)
     assert enable == 1
     assert autonomous_enable == 1
 
@@ -123,7 +124,7 @@ def test_non_driving_state_gates_fresh_command():
     try:
         command = AckermannDriveStamped()
         command.drive.speed = 4.0
-        command.drive.steering_angle = 0.2
+        command.drive.steering_angle = 0.5
         node._on_command(command)
 
         off_packets = _collect_packets(node, receiver, 0.04)
@@ -147,6 +148,9 @@ def test_non_driving_state_gates_fresh_command():
     assert on_packets
     assert all(struct.unpack('<ffBB', packet)[2:] == (1, 1)
                for packet in on_packets)
+    assert struct.unpack('<ffBB', on_packets[-1])[1] == pytest.approx(
+        math.pi / 2.0
+    )
     assert disabled_packets
     assert all(struct.unpack('<ffBB', packet) == (0.0, 0.0, 1, 0)
                for packet in disabled_packets)

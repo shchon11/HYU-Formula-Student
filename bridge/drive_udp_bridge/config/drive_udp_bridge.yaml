@@ -15,6 +15,14 @@ drive_udp_bridge:
     command_timeout_sec: 0.2
     auto_state_timeout_sec: 0.5
 
+    # /vehicle/cmd steering_angle is the bicycle-model equivalent front-wheel
+    # angle in radians. The bridge inverts this tab-separated kinematics table,
+    # clips the resulting steering-wheel angle symmetrically, converts it back
+    # to radians, and places that value in UDP bytes 4..7. Relative CSV paths
+    # are resolved below the installed package's config directory.
+    steering_calibration_csv: steering_kinematics.csv
+    max_steering_wheel_angle_deg: 90.0
+
     # ECU -> AGX cumulative wheel-encoder feedback (<IIII, 16 bytes: FL FR RL
     # RR uint32 counts). OUR side of the contract: the ECU model must send its
     # feedback datagrams to <AGX address on the Speedgoat subnet>:feedback_port

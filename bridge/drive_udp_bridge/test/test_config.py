@@ -20,6 +20,8 @@ def valid_config():
         send_rate_hz=100.0,
         command_timeout_sec=0.2,
         auto_state_timeout_sec=0.5,
+        steering_calibration_csv='steering_kinematics.csv',
+        max_steering_wheel_angle_deg=90.0,
         feedback_bind_ip='',
         feedback_port=0,
         feedback_poll_rate_hz=200.0,
@@ -55,6 +57,17 @@ def test_valid_config_is_accepted(valid_config):
         ('command_timeout_sec', float('inf'), 'command_timeout_sec'),
         ('auto_state_timeout_sec', 0.0, 'auto_state_timeout_sec'),
         ('auto_state_timeout_sec', float('inf'), 'auto_state_timeout_sec'),
+        ('steering_calibration_csv', '', 'steering_calibration_csv'),
+        (
+            'max_steering_wheel_angle_deg',
+            0.0,
+            'max_steering_wheel_angle_deg',
+        ),
+        (
+            'max_steering_wheel_angle_deg',
+            float('nan'),
+            'max_steering_wheel_angle_deg',
+        ),
     ],
 )
 def test_invalid_config_is_rejected(valid_config, field, value, error_text):
