@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
 #include "hyu_msgs/msg/car_state.hpp"
 #include "hyu_msgs/msg/wheel_speeds_stamped.hpp"
 #include "hyu_tmpc_msgs/msg/tum_vehicle_state.hpp"
@@ -35,6 +36,7 @@ bool IsFiniteQuaternion(const geometry_msgs::msg::Quaternion & quaternion)
 class TumVehicleStateBridge : public rclcpp::Node
 {
 public:
+  using AckermannDriveStamped = ackermann_msgs::msg::AckermannDriveStamped;
   using CarState = hyu_msgs::msg::CarState;
   using Odometry = nav_msgs::msg::Odometry;
   using TumVehicleState = hyu_tmpc_msgs::msg::TumVehicleState;
@@ -56,6 +58,11 @@ public:
     wheel_speeds_sub_ = create_subscription<WheelSpeedsStamped>(
       wheel_speeds_topic_, input_qos,
       std::bind(&TumVehicleStateBridge::WheelSpeedsCallback, this, std::placeholders::_1));
+    // WheelSpeeds carries per-wheel m/s only (no steering field since the
+    // ECU encoder bridge); the front-wheel angle comes from the drive command.
+    steering_sub_ = create_subscription<AckermannDriveStamped>(
+      steering_topic_, input_qos,
+      std::bind(&TumVehicleStateBridge::SteeringCallback, this, std::placeholders::_1));
     vehicle_state_pub_ = create_publisher<TumVehicleState>(
       output_topic_, rclcpp::QoS(10).reliable());
 
@@ -70,6 +77,7 @@ public:
     RCLCPP_INFO(get_logger(), "  localization: %s", localization_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  car state:    %s", car_state_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  wheel speeds: %s", wheel_speeds_topic_.c_str());
+    RCLCPP_INFO(get_logger(), "  steering:     %s", steering_topic_.c_str());
     RCLCPP_INFO(get_logger(), "  output:       %s", output_topic_.c_str());
   }
 
@@ -82,6 +90,8 @@ private:
       "hyu_tmpc_state_bridge/car_state_topic", "/localization/wheel_odom");
     wheel_speeds_topic_ = declare_parameter<std::string>(
       "hyu_tmpc_state_bridge/wheel_speeds_topic", "/vehicle/wheel_speeds");
+    steering_topic_ = declare_parameter<std::string>(
+      "hyu_tmpc_state_bridge/steering_topic", "/vehicle/cmd");
     output_topic_ = declare_parameter<std::string>(
       "hyu_tmpc_state_bridge/output_topic", "/control/tmpc/vehicle_state");
 
@@ -114,7 +124,7 @@ private:
   void ValidateConfig() const
   {
     if (localization_topic_.empty() || car_state_topic_.empty() ||
-      wheel_speeds_topic_.empty() || output_topic_.empty())
+      wheel_speeds_topic_.empty() || steering_topic_.empty() || output_topic_.empty())
     {
       throw std::invalid_argument("bridge topic names must not be empty");
     }
@@ -166,6 +176,12 @@ private:
     has_wheel_speeds_ = true;
   }
 
+  void SteeringCallback(const AckermannDriveStamped::SharedPtr msg)
+  {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    latest_steering_rad_ = msg->drive.steering_angle;
+  }
+
   bool IsFresh(const rclcpp::Time & current_time, const rclcpp::Time & received_time,
     double timeout_sec) const
   {
@@ -175,7 +191,7 @@ private:
 
   bool InputsAreFinite(
     const Odometry & localization, const CarState & car_state,
-    const WheelSpeedsStamped & wheel_speeds) const
+    double steering_rad) const
   {
     const auto & pose = localization.pose.pose;
     const auto & twist = localization.twist.twist;
@@ -184,7 +200,7 @@ private:
            IsFiniteQuaternion(pose.orientation) &&
            IsFinite(twist.linear.x) && IsFinite(twist.linear.y) &&
            IsFinite(twist.angular.z) && IsFinite(acceleration.x) &&
-           IsFinite(acceleration.y) && IsFinite(wheel_speeds.speeds.steering);
+           IsFinite(acceleration.y) && IsFinite(steering_rad);
   }
 
   bool QuaternionToYaw(const geometry_msgs::msg::Quaternion & msg, double & yaw) const
@@ -259,12 +275,14 @@ private:
     bool has_localization = false;
     bool has_car_state = false;
     bool has_wheel_speeds = false;
+    double steering_rad = 0.0;
 
     {
       std::lock_guard<std::mutex> lock(data_mutex_);
       localization = latest_localization_;
       car_state = latest_car_state_;
       wheel_speeds = latest_wheel_speeds_;
+      steering_rad = latest_steering_rad_;
       localization_received_time = localization_received_time_;
       car_state_received_time = car_state_received_time_;
       wheel_speeds_received_time = wheel_speeds_received_time_;
@@ -291,7 +309,7 @@ private:
       return;
     }
 
-    if (!InputsAreFinite(localization, car_state, wheel_speeds)) {
+    if (!InputsAreFinite(localization, car_state, steering_rad)) {
       ResetAxVelFilter();
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 1000, "Bridge input contains a non-finite value");
@@ -352,7 +370,7 @@ private:
     output.ax_mps2 = car_state.linear_acceleration.x;
     output.ay_mps2 = car_state.linear_acceleration.y;
     output.ax_vel_mps2 = ax_vel_mps2;
-    output.delta_wheel_rad = wheel_speeds.speeds.steering;
+    output.delta_wheel_rad = steering_rad;
     output.valid_imu = valid_imu_default_ && car_state_fresh;
     vehicle_state_pub_->publish(output);
   }
@@ -360,6 +378,7 @@ private:
   std::string localization_topic_;
   std::string car_state_topic_;
   std::string wheel_speeds_topic_;
+  std::string steering_topic_;
   std::string output_topic_;
   double publish_rate_hz_{100.0};
   double localization_timeout_sec_{0.2};
@@ -383,6 +402,9 @@ private:
   bool has_localization_{false};
   bool has_car_state_{false};
   bool has_wheel_speeds_{false};
+  // Latest commanded front-wheel angle [rad] from steering_topic_; 0 until
+  // the first command. Not freshness-gated (wheel_speeds_ still is).
+  double latest_steering_rad_{0.0};
 
   uint64_t processed_localization_sequence_{0U};
   bool ax_vel_initialized_{false};
@@ -393,6 +415,7 @@ private:
   rclcpp::Subscription<Odometry>::SharedPtr localization_sub_;
   rclcpp::Subscription<CarState>::SharedPtr car_state_sub_;
   rclcpp::Subscription<WheelSpeedsStamped>::SharedPtr wheel_speeds_sub_;
+  rclcpp::Subscription<AckermannDriveStamped>::SharedPtr steering_sub_;
   rclcpp::Publisher<TumVehicleState>::SharedPtr vehicle_state_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
 };

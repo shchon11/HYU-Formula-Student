@@ -2,7 +2,7 @@
 #
 # Licensed under the MIT License.
 
-"""ROS 2 node that forwards Ackermann commands to a Speedgoat ECU over UDP."""
+"""Bidirectional ROS 2 command and wheel-encoder Speedgoat UDP bridge."""
 
 import threading
 import time
@@ -14,18 +14,26 @@ from drive_udp_bridge.protocol import (
     AutonomousStateWatchdog,
     CommandWatchdog,
     pack_command,
+    unpack_encoder_feedback,
 )
+from drive_udp_bridge.udp_receiver import UdpReceiver
 from drive_udp_bridge.udp_sender import UdpSender
-from hyu_msgs.msg import CanState
+from drive_udp_bridge.wheel_speeds import (
+    WheelSpeedConfig,
+    WheelSpeedConverter,
+    WheelSpeedEstimate,
+)
+from hyu_msgs.msg import CanState, WheelSpeedsStamped
 import rclpy
 from rclpy.clock import Clock, ClockType
+from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_srvs.srv import Trigger
 
 
 class DriveUdpBridge(Node):
-    """Continuously send the newest safe Ackermann command at a fixed rate."""
+    """Send safe commands and publish ECU-derived per-wheel linear speeds."""
 
     def __init__(self, *, parameter_overrides=None) -> None:
         super().__init__(
@@ -42,6 +50,18 @@ class DriveUdpBridge(Node):
         self.declare_parameter('send_rate_hz', 100.0)
         self.declare_parameter('command_timeout_sec', 0.2)
         self.declare_parameter('auto_state_timeout_sec', 0.5)
+        self.declare_parameter('feedback_bind_ip', '')
+        self.declare_parameter('feedback_port', 0)
+        self.declare_parameter('feedback_poll_rate_hz', 200.0)
+        self.declare_parameter('feedback_timeout_sec', 0.2)
+        self.declare_parameter('encoder_counts_per_revolution', 0)
+        self.declare_parameter('tire_diameter_m', 0.4572)
+        self.declare_parameter('max_wheel_speed_mps', 50.0)
+        self.declare_parameter('wheel_speeds_topic', '/vehicle/wheel_speeds')
+        self.declare_parameter('wheel_speeds_frame_id', 'base_footprint')
+        # Feedback datagrams from any other source address are dropped.
+        # '' = ecu_ip; '0.0.0.0' = accept any source (bench with a PC sender).
+        self.declare_parameter('feedback_source_ip', '')
         # OFF->ON edge of the autonomous switch: reset the SLAM map first and
         # raise the autonomous-enable byte only once that succeeded, so every
         # run starts from a clean map the instant the car is released. ON->OFF
@@ -67,6 +87,34 @@ class DriveUdpBridge(Node):
             auto_state_timeout_sec=float(
                 self.get_parameter('auto_state_timeout_sec').value
             ),
+            feedback_bind_ip=str(
+                self.get_parameter('feedback_bind_ip').value
+            ).strip(),
+            feedback_port=int(self.get_parameter('feedback_port').value),
+            feedback_poll_rate_hz=float(
+                self.get_parameter('feedback_poll_rate_hz').value
+            ),
+            feedback_timeout_sec=float(
+                self.get_parameter('feedback_timeout_sec').value
+            ),
+            encoder_counts_per_revolution=int(
+                self.get_parameter('encoder_counts_per_revolution').value
+            ),
+            tire_diameter_m=float(
+                self.get_parameter('tire_diameter_m').value
+            ),
+            max_wheel_speed_mps=float(
+                self.get_parameter('max_wheel_speed_mps').value
+            ),
+            wheel_speeds_topic=str(
+                self.get_parameter('wheel_speeds_topic').value
+            ).strip(),
+            wheel_speeds_frame_id=str(
+                self.get_parameter('wheel_speeds_frame_id').value
+            ).strip(),
+            feedback_source_ip=str(
+                self.get_parameter('feedback_source_ip').value
+            ).strip(),
         )
         validate_config(self._config)
         self._map_reset_service = str(
@@ -98,13 +146,33 @@ class DriveUdpBridge(Node):
         self._auto_state_watchdog = AutonomousStateWatchdog(
             self._config.auto_state_timeout_sec
         )
-        self._sender: Optional[UdpSender] = UdpSender(
-            ecu_ip=self._config.ecu_ip,
-            ecu_port=self._config.ecu_port,
-            local_bind_ip=self._config.local_bind_ip,
-            local_bind_port=self._config.local_bind_port,
-        )
+        self._sender: Optional[UdpSender] = None
+        self._receiver: Optional[UdpReceiver] = None
+        self._wheel_speed_converter: Optional[WheelSpeedConverter] = None
+        self._wheel_speeds_publisher = None
         self._last_send_error_log_time = float('-inf')
+        self._last_feedback_error_log_time = float('-inf')
+        self._feedback_started_at = time.monotonic()
+        self._last_feedback_receive_time = None
+        self._feedback_timed_out = False
+
+        try:
+            self._sender = UdpSender(
+                ecu_ip=self._config.ecu_ip,
+                ecu_port=self._config.ecu_port,
+                local_bind_ip=self._config.local_bind_ip,
+                local_bind_port=self._config.local_bind_port,
+            )
+            if self._config.feedback_ready:
+                self._receiver = UdpReceiver(
+                    self._config.feedback_bind_ip,
+                    self._config.feedback_port,
+                )
+        except Exception:
+            if self._sender is not None:
+                self._sender.close()
+                self._sender = None
+            raise
 
         qos = QoSProfile(depth=10)
         qos.reliability = ReliabilityPolicy.RELIABLE
@@ -133,6 +201,32 @@ class DriveUdpBridge(Node):
             clock=self._steady_clock,
         )
 
+        self._feedback_timer = None
+        if self._receiver is not None:
+            self._wheel_speed_converter = WheelSpeedConverter(
+                WheelSpeedConfig(
+                    encoder_counts_per_revolution=(
+                        self._config.encoder_counts_per_revolution
+                    ),
+                    tire_diameter_m=self._config.tire_diameter_m,
+                    feedback_timeout_sec=self._config.feedback_timeout_sec,
+                    max_wheel_speed_mps=self._config.max_wheel_speed_mps,
+                )
+            )
+            wheel_speeds_qos = QoSProfile(depth=10)
+            wheel_speeds_qos.reliability = ReliabilityPolicy.RELIABLE
+            wheel_speeds_qos.durability = DurabilityPolicy.VOLATILE
+            self._wheel_speeds_publisher = self.create_publisher(
+                WheelSpeedsStamped,
+                self._config.wheel_speeds_topic,
+                wheel_speeds_qos,
+            )
+            self._feedback_timer = self.create_timer(
+                1.0 / self._config.feedback_poll_rate_hz,
+                self._on_feedback_timer,
+                clock=self._steady_clock,
+            )
+
         local_endpoint = self._sender.local_endpoint
         self.get_logger().info(
             'Sending %s -> %s:%d at %.3f Hz; auto state %s; '
@@ -153,6 +247,40 @@ class DriveUdpBridge(Node):
                 if self._require_map_reset else 'immediately (no map reset)',
             )
         )
+        if self._receiver is None and self._config.feedback_enabled:
+            # Endpoint chosen, scale not yet known: run without feedback rather
+            # than refuse to start -- the command path must not depend on it.
+            self.get_logger().error(
+                'ECU encoder feedback endpoint %s:%d is configured but '
+                'encoder_counts_per_revolution is 0 (wheel-side counts per '
+                'tire revolution, from the ECU team); wheel-speed publication '
+                'is OFF until it is filled in. Command sending is unaffected.'
+                % (self._config.feedback_bind_ip, self._config.feedback_port)
+            )
+        elif self._receiver is None:
+            self.get_logger().warning(
+                'ECU encoder feedback is disabled; set feedback_bind_ip and '
+                'feedback_port to enable wheel-speed publication'
+            )
+        else:
+            feedback_endpoint = self._receiver.local_endpoint
+            source_filter = self._config.feedback_source_filter
+            self.get_logger().info(
+                'Receiving <IIII encoder feedback on %s:%d from %s; '
+                'publishing four wheel speeds in m/s on %s '
+                '(%.6f m/count = pi * %.4f m / %d counts; receive times from %s)'
+                % (
+                    feedback_endpoint[0],
+                    feedback_endpoint[1],
+                    source_filter if source_filter is not None else 'any source',
+                    self._config.wheel_speeds_topic,
+                    self._wheel_speed_converter.meters_per_count,
+                    self._config.tire_diameter_m,
+                    self._config.encoder_counts_per_revolution,
+                    'kernel arrival timestamps'
+                    if self._receiver.kernel_timestamps else 'poll time',
+                )
+            )
 
     def _on_command(self, message: AckermannDriveStamped) -> None:
         speed = float(message.drive.speed)
@@ -178,7 +306,8 @@ class DriveUdpBridge(Node):
         getattr(self.get_logger(), level)(message)
 
     def _autonomous_byte(self, switch_on: bool) -> bool:
-        """Autonomous-enable to send for the current switch state.
+        """
+        Return the autonomous-enable byte for the current switch state.
 
         Switch OFF (or stale): drop immediately and forget any pending reset.
         Switch ON: already armed -> stay armed; else arm only once the SLAM map
@@ -273,8 +402,101 @@ class DriveUdpBridge(Node):
                 self.get_logger().error('UDP send failed: %s' % error)
                 self._last_send_error_log_time = now
 
+    def _feedback_warning(self, message: str) -> None:
+        """Log a feedback warning at most once per second."""
+        now = time.monotonic()
+        if now - self._last_feedback_error_log_time >= 1.0:
+            self.get_logger().warning(message)
+            self._last_feedback_error_log_time = now
+
+    def _on_feedback_timer(self) -> None:
+        if self._receiver is None or self._wheel_speed_converter is None:
+            return
+
+        try:
+            datagrams = self._receiver.receive_available()
+        except OSError as error:
+            self._feedback_warning('UDP feedback receive failed: %s' % error)
+            datagrams = []
+
+        expected_datagrams = []
+        source_filter = self._config.feedback_source_filter
+        for packet, source, received_at in datagrams:
+            if source_filter is not None and source[0] != source_filter:
+                self._feedback_warning(
+                    'Ignored ECU feedback from unexpected source %s '
+                    '(expected %s; feedback_source_ip 0.0.0.0 accepts any)'
+                    % (source[0], source_filter)
+                )
+                continue
+            expected_datagrams.append((packet, received_at))
+
+        # Counts are cumulative. Use the newest queued datagram so a burst of
+        # packets cannot create nearly-zero receive intervals and false spikes.
+        if expected_datagrams:
+            packet, received_at = expected_datagrams[-1]
+            try:
+                feedback = unpack_encoder_feedback(packet)
+                estimate = self._wheel_speed_converter.update(
+                    feedback, received_at
+                )
+            except ValueError as error:
+                self._feedback_warning('Rejected ECU feedback: %s' % error)
+            else:
+                self._last_feedback_receive_time = received_at
+                if self._feedback_timed_out:
+                    self.get_logger().info('ECU encoder feedback restored')
+                    self._feedback_timed_out = False
+                if estimate is not None:
+                    self._publish_wheel_speeds(estimate, received_at)
+
+        now = time.monotonic()
+        last_receive = self._last_feedback_receive_time
+        reference_time = (
+            self._feedback_started_at
+            if last_receive is None else last_receive
+        )
+        if (
+            not self._feedback_timed_out
+            and now - reference_time > self._config.feedback_timeout_sec
+        ):
+            self._wheel_speed_converter.reset_timing()
+            self._feedback_timed_out = True
+            self._feedback_warning(
+                'ECU encoder feedback timed out; wheel-speed publication paused'
+            )
+
+    def _publish_wheel_speeds(
+        self,
+        estimate: WheelSpeedEstimate,
+        received_at: float,
+    ) -> None:
+        """
+        Publish four encoder-derived wheel speeds in metres per second.
+
+        The header stamp is the datagram's arrival time expressed on the node
+        clock (now minus the monotonic age of the sample), not the poll-timer
+        tick, so consumers that fuse the sample by its stamp see the instant
+        the ECU reported.
+        """
+        message = WheelSpeedsStamped()
+        age_sec = max(0.0, time.monotonic() - received_at)
+        stamp = self.get_clock().now() - Duration(seconds=age_sec)
+        message.header.stamp = stamp.to_msg()
+        message.header.frame_id = self._config.wheel_speeds_frame_id
+        message.speeds.lf_speed = estimate.front_left_mps
+        message.speeds.rf_speed = estimate.front_right_mps
+        message.speeds.lb_speed = estimate.rear_left_mps
+        message.speeds.rb_speed = estimate.rear_right_mps
+
+        if self._wheel_speeds_publisher is not None:
+            self._wheel_speeds_publisher.publish(message)
+
     def destroy_node(self):
         """Close the UDP socket before releasing ROS entities."""
+        if self._receiver is not None:
+            self._receiver.close()
+            self._receiver = None
         if self._sender is not None:
             self._sender.close()
             self._sender = None

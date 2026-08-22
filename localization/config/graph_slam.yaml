@@ -4,7 +4,7 @@ graph_slam:
 
     # ==== Topics / frames (contract — rarely touched) =====================
     # publish
-    car_state_topic: /localization/wheel_odom
+    car_state_topic: /localization/ins_odom
     map_topic: /localization/cone_map
     slam_odom_topic: /localization/ego_odom
     # subscribe

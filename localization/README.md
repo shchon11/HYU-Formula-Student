@@ -6,10 +6,11 @@
 ```mermaid
 flowchart LR
     CONES["/perception/cones<br/>(base_footprint)"] --> GS
-    ODOM["/localization/wheel_odom<br/>또는 /localization/ins_odom"] --> GS
+    ODOM["/localization/ins_odom<br/>(sbg_raw_ekf 융합 오도메트리)"] --> GS
 
     subgraph BRIDGE["INS 체인 (실차)"]
         SBG["🛰 /sbg/imu_data · gps_pos · gps_vel · gps_hdt"] --> BR["sbg_raw_ekf (C++ 8-상태 EKF)"]
+        WHL["🛞 /vehicle/wheel_speeds (ECU 엔코더 → drive_udp_bridge, m/s)<br/>선택 입력 — 없으면 IMU+GNSS만"] -.-> BR
         BR -->|"ins_odom (25 Hz, ENU)"| GS
     end
 
@@ -141,6 +142,9 @@ ros2 service call /graph_slam/reset         std_srvs/srv/Trigger
 | `hdt_offset_deg` (sbg_raw_ekf) | 180 | 듀얼안테나 HDT→차량 헤딩 오프셋(안테나 순서; 현재 차 180°) |
 | `antenna_offset_x/y` (sbg_raw_ekf) | 1.25 / 0 (노드 기본) | 주안테나의 base_footprint 기준 위치 [m] — 포즈·twist를 base로 옮김. **틀리면 선회 시 지도 붕괴**. 실차 런치는 `hyu_sensor_bringup/config/vehicle_mount.yaml`의 `sbg:` 블록(카메라 기준 IMU 위치 + 장치 설정 JSON의 lever arm)에서 합성해 넘김 |
 | `sig_acc` / `sig_gyro_dps` (sbg_raw_ekf) | 0.3 / 0.3 | 예측 잡음 밀도 — 키우면 GNSS를 더 믿고 IMU 관성 주행이 빨리 풀림 |
+| `use_wheel_speeds` / `wheel_speeds_topic` (sbg_raw_ekf) | true / `/vehicle/wheel_speeds` | ECU 엔코더 휠속도(m/s) 융합. **선택 입력**: 샘플이 오면 후륜 평균을 `vN cosψ+vE sinψ` 관측으로 쓰고(25 Hz급 속도 관측 → COAST 드리프트·중력누설 억제), 안 오면(브리지 침묵) IMU+GNSS 필터 그대로. 진단 `wheel`=off/none/stale/fresh |
+| `wheel_sigma` / `wheel_sigma_per_acc` (sbg_raw_ekf) | 0.08 m/s / 0.02 s | 휠 관측 σ = √(σ₀² + (k·\|a_x\|)²) — 가·제동 슬립 구간은 덜 믿음. `gate_wheel` 12, `max_rej_wheel` 10(연속 기각 후 R×9 재획득) |
+| `wheel_scale` / `wheel_source` / `wheel_timeout` (sbg_raw_ekf) | 1.0 / rear / 0.3 s | 타이어 유효반지름 보정(RTK 속도 대비로 맞춤) / 후륜 평균 또는 4륜 평균 / 이보다 오래된 샘플은 융합 안 함. 휠이 fresh이고 \|v\|>`zupt_wheel_speed`(0.05)면 ZUPT **거부**(허용은 안 함) |
 | `zupt_gyro_std_dps` / `zupt_acc_std` (sbg_raw_ekf) | 0.2 / 0.06 | 정지 판정 임계 — 느슨하면 서행을 정지로 오판 |
 | `blind_gap_sec` (sbg_raw_ekf) | 0.5 | 이보다 긴 IMU 공백 뒤 첫 메시지는 σ=1e3 |
 | `odom_invalid_sigma` (graph_slam) | 10 m | 이 이상 σ의 모션 입력은 "무효 선언": 동결 입력에 키프레임 안 찍고 그동안 콘 프레임 폐기 |

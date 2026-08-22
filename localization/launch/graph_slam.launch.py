@@ -61,8 +61,9 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "car_state_topic",
-                default_value="/localization/wheel_odom",
-                description="CarState topic used as the graph SLAM motion input.",
+                default_value="/localization/ins_odom",
+                description="CarState topic used as the graph SLAM motion input "
+                "(sbg_raw_ekf's fused GNSS/IMU odometry).",
             ),
             DeclareLaunchArgument(
                 "map_topic",
@@ -160,29 +161,14 @@ def generate_launch_description():
                     'ROS_LOCALHOST_ONLY', default_value='1'),
                 description="Limit ROS discovery to localhost.",
             ),
-            DeclareLaunchArgument(
-                "wheel_odometry",
-                default_value="true",
-                description=(
-                    "Start the wheel+INS odometry node that publishes the "
-                    "default SLAM motion input (/localization/wheel_odom)."
-                ),
-            ),
             SetEnvironmentVariable(
                 name="ROS_LOCALHOST_ONLY",
                 value=LaunchConfiguration("ros_localhost_only"),
             ),
-            # GNSS-independent motion source: rear wheel speeds + the INS
-            # body-rate/acceleration log, identical wiring in sim and on the
-            # car. Publishes the graph_slam default car_state_topic.
-            Node(
-                package="hyu_localization",
-                executable="wheel_odometry",
-                name="wheel_odometry",
-                output="screen",
-                parameters=[{"use_sim_time": use_sim_time}],
-                condition=IfCondition(LaunchConfiguration("wheel_odometry")),
-            ),
+            # Motion input: sbg_raw_ekf's fused odometry (/localization/ins_odom),
+            # started by the sensor bringup on the car / by ins_pipeline in the
+            # sim. The old wheel_odometry node is gone (2026-08-22): wheel speeds
+            # are fused inside the EKF, not integrated into a second odometry.
             Node(
                 package="hyu_localization",
                 executable="graph_slam_node",

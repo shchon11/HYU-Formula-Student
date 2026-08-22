@@ -42,8 +42,10 @@ Run `hyu_tmpc` separately after its trajectory inputs are ready.
 /localization/wheel_odom -----------+--> latest input cache
   linear_acceleration: ax, ay              │         │
                                            │         v
-/vehicle/wheel_speeds ---------------------┘    100 Hz timer
-  speeds.steering: applied steering angle            │
+/vehicle/wheel_speeds ---------------------┤    100 Hz timer
+  (freshness gate only; per-wheel m/s)     │         │
+/vehicle/cmd ------------------------------┘         │
+  drive.steering_angle: front-wheel angle            │
                                                       ├─ freshness 검사
                                                       ├─ finite/quaternion 검사
                                                       ├─ v, beta, ax_vel 계산
@@ -73,7 +75,7 @@ Run `hyu_tmpc` separately after its trajectory inputs are ready.
 | `beta_rad` | `atan2(vy, vx)` | 차량 body sideslip 추정값 |
 | `ax_mps2`, `ay_mps2` | `CarState.linear_acceleration.x/y` | 시뮬레이터 vehicle model acceleration |
 | `ax_vel_mps2` | `v_mps` 시간 미분 후 저역통과 필터 | 속도 변화로 계산한 종방향 가속도 추정값 |
-| `delta_wheel_rad` | `WheelSpeedsStamped.speeds.steering` | 시뮬레이터에 실제 적용된 등가 전륜 조향각 |
+| `delta_wheel_rad` | `/vehicle/cmd` `drive.steering_angle` (`steering_topic`) | 명령된 등가 전륜 조향각 (WheelSpeeds에는 더 이상 steering 필드가 없음) |
 | `valid_imu` | 파라미터와 acceleration freshness | 실제 IMU health가 아닌 임시 시뮬레이션 validity |
 
 기본 출력 토픽은 `/control/tmpc/vehicle_state`이며 MPC wrapper의 기본 구독 토픽과
@@ -81,15 +83,14 @@ Run `hyu_tmpc` separately after its trajectory inputs are ready.
 
 ## delta_wheel_rad
 
-현재 시뮬레이션에서는 값이 나온다. 브리지는
-`/vehicle/wheel_speeds.speeds.steering`을 그대로 사용한다. 시뮬레이터는
-`/vehicle/cmd.drive.steering_angle`을 목표값으로 받은 뒤 steering-rate limit을 적용하고,
-현재 적용된 조향각을 wheel-speeds 메시지에 넣는다. 따라서 `/vehicle/cmd`는 요청값이고
-`delta_wheel_rad`는 적용값이다. 조향 노이즈 설정이 활성화되어 있으면 이 토픽에도
-노이즈가 포함될 수 있다.
+`hyu_msgs/WheelSpeeds`는 바퀴별 선속도(m/s)만 담고 steering 필드가 없다(실차 ECU
+엔코더 브리지 `drive_udp_bridge`가 count만 받아 m/s로 발행). 그래서 브리지는
+`steering_topic`(기본 `/vehicle/cmd`, `ackermann_msgs/AckermannDriveStamped`)의
+`drive.steering_angle`을 `delta_wheel_rad`로 내보낸다 — 즉 **명령값**이지 측정값이
+아니다. 첫 명령 전에는 0이며, `/vehicle/wheel_speeds`는 freshness 게이트로만 남는다.
 
-실제 차량으로 전환할 때는 같은 필드가 명령값이 아니라 조향 엔코더 또는 CAN에서
-측정한 실제 road-wheel angle인지 반드시 확인해야 한다.
+실차에서 조향 엔코더/CAN의 실제 road-wheel angle이 생기면 그 토픽을 구독하도록
+`steering_topic`(및 메시지 타입)을 바꿔야 한다.
 
 ## valid_imu
 
@@ -188,12 +189,13 @@ localization, acceleration, wheel-speeds 중 하나라도 아직 수신되지 �
 |---|---:|---|
 | `localization_topic` | `/localization/ego_odom` | pose, velocity, yaw-rate 입력 |
 | `car_state_topic` | `/localization/wheel_odom` | acceleration 입력 |
-| `wheel_speeds_topic` | `/vehicle/wheel_speeds` | steering 입력 |
+| `wheel_speeds_topic` | `/vehicle/wheel_speeds` | 바퀴 속도 freshness 게이트 |
+| `steering_topic` | `/vehicle/cmd` | `delta_wheel_rad` 입력 (AckermannDriveStamped 조향 명령) |
 | `output_topic` | `/control/tmpc/vehicle_state` | MPC vehicle-state 출력 |
 | `publish_rate_hz` | `100.0` | timer 발행 주기 |
 | `localization_timeout_sec` | `0.2` | localization freshness 한계 |
 | `car_state_timeout_sec` | `0.2` | acceleration freshness 한계 |
-| `wheel_speeds_timeout_sec` | `0.2` | steering freshness 한계 |
+| `wheel_speeds_timeout_sec` | `0.2` | 바퀴 속도 freshness 한계 |
 | `se_status` | `2` | `0=ERROR`, `1=WARNING`, `2=OK` |
 | `se_state` | `1` | `0=OFF`, `1=NORMAL`, `2=BYPASS`, `3=ODOM`, `4=FAIL` |
 | `valid_imu_default` | `true` | 시뮬레이션 acceleration 사용 허용 |
@@ -220,16 +222,15 @@ localization, acceleration, wheel-speeds 중 하나라도 아직 수신되지 �
    - 좌/우 선회: `dpsi`, `vy`, `beta`, `delta_wheel_rad`의 부호가 서로 일관적인지 확인
    - localization yaw와 출력은 `psi_rad=wrap(yaw_ros-pi/2)` 관계인지 확인
 
-4. 요청 조향과 적용 조향의 차이를 확인한다.
+4. 조향 입력이 그대로 전달되는지 확인한다.
 
    ```zsh
    ros2 topic echo /vehicle/cmd
-   ros2 topic echo /vehicle/wheel_speeds
    ros2 topic echo /control/tmpc/vehicle_state
    ```
 
-   조향 rate limit 때문에 빠르게 steering을 바꿀 때 `/vehicle/cmd.drive.steering_angle`보다
-   `delta_wheel_rad`가 늦게 따라오는 것이 정상이다.
+   `delta_wheel_rad`는 `/vehicle/cmd.drive.steering_angle`의 최신값이어야 한다(명령값;
+   측정 조향각 토픽이 생기면 `steering_topic`을 바꾼다).
 
 5. 직선 가감속에서 `ax_mps2`와 `ax_vel_mps2`를 비교한다. 속도 step에서 미분값이
    순간적으로 커질 수 있으므로 `ax_vel_filter_tau_sec`를 조절하면서 확인한다.

@@ -11,13 +11,6 @@ from launch_ros.substitutions import FindPackageShare
 ARGUMENTS = (
     ("use_sim_time", "true", "Use the simulator clock for every planning node."),
     ("start_graph_slam", "true", "Start graph SLAM with the planning graph."),
-    # graph_slam.launch.py also carries wheel_odometry, but that node is sensor
-    # conditioning: its inputs are all step-1 driver topics and perception's
-    # LiDAR deskew reads its output. The vehicle and bag flows start it in step
-    # 1 and pass false here; the simulator has no sensor bringup and passes
-    # true. Getting this wrong runs it twice -- two publishers interleaving on
-    # /localization/wheel_odom, which nothing errors on.
-    ("graph_slam_wheel_odometry", "true", "Start wheel_odometry with graph SLAM."),
     ("graph_slam_gui", "false", "Start the graph SLAM GUI."),
     ("graph_slam_ate_monitor", "true", "Start the path-tracking CTE monitor (HUD + /planning/cte)."),
     ("graph_slam_localization_mode", "false", "Localize against a saved graph SLAM map."),
@@ -216,7 +209,6 @@ def generate_launch_description() -> LaunchDescription:
                 ["'false' if '", local_only, "' == 'true' else 'true'"]
             ),
             "load_map_path": values["graph_slam_load_map_path"],
-            "wheel_odometry": values["graph_slam_wheel_odometry"],
             "gui": values["graph_slam_gui"],
             "ate_monitor": values["graph_slam_ate_monitor"],
             "ate_status_topic": values["graph_slam_status_topic"],

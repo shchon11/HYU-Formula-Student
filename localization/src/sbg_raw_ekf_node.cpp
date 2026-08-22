@@ -11,6 +11,7 @@
 #include <cmath>
 #include <limits>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -141,6 +142,28 @@ SbgRawEkfNode::SbgRawEkfNode()
   p.mode_pos_age = declare_parameter<double>("mode_pos_age", p.mode_pos_age);
   p.mode_hdt_age = declare_parameter<double>("mode_hdt_age", p.mode_hdt_age);
   p.mode_yaw_sig = deg2rad(declare_parameter<double>("mode_yaw_sig_deg", rad2deg(p.mode_yaw_sig)));
+  // --- wheel speeds (optional velocity aiding) ---------------------------------
+  // /vehicle/wheel_speeds from drive_udp_bridge (ECU encoder counts -> m/s).
+  // Fused only while samples keep arriving; with none the filter is exactly
+  // the IMU+GNSS one. The bridge stops publishing when the ECU feed drops, so
+  // "no fresh sample" is the whole hand-over logic.
+  use_wheel_speeds_ = declare_parameter<bool>("use_wheel_speeds", true);
+  wheel_speeds_topic_ = declare_parameter<std::string>("wheel_speeds_topic", "/vehicle/wheel_speeds");
+  wheel_source_ = declare_parameter<std::string>("wheel_source", "rear");  // rear | all
+  wheel_scale_ = declare_parameter<double>("wheel_scale", 1.0);
+  wheel_timeout_ = declare_parameter<double>("wheel_timeout", 0.3);
+  p.sig_wheel = declare_parameter<double>("wheel_sigma", p.sig_wheel);
+  p.wheel_sig_per_acc = declare_parameter<double>("wheel_sigma_per_acc", p.wheel_sig_per_acc);
+  p.gate_wheel = declare_parameter<double>("gate_wheel", p.gate_wheel);
+  p.max_rej_wheel = static_cast<int>(declare_parameter<int>("max_rej_wheel", p.max_rej_wheel));
+  p.zupt_wheel_speed = declare_parameter<double>("zupt_wheel_speed", p.zupt_wheel_speed);
+  p.zupt_wheel_age = declare_parameter<double>("zupt_wheel_age", p.zupt_wheel_age);
+  // The state velocity is the antenna's; the rear axle reports the centreline
+  // speed. They differ by w * (antenna lateral offset): ROS y-left -> NED y-right.
+  p.wheel_lever_y_right = -antenna_offset_y_;
+  if (wheel_source_ != "rear" && wheel_source_ != "all") {
+    throw std::invalid_argument("wheel_source must be 'rear' or 'all'");
+  }
   // Late-measurement buffer: receiver epochs arrive ~90 ms (p50) / 113 ms
   // (p90) after the IMU frame of the same device time.
   history_sec_ = declare_parameter<double>("oosm_history_sec", 1.0);
@@ -167,6 +190,11 @@ SbgRawEkfNode::SbgRawEkfNode()
     gps_vel_topic_, qos, std::bind(&SbgRawEkfNode::onGpsVel, this, std::placeholders::_1));
   gps_hdt_sub_ = create_subscription<sbg_driver::msg::SbgGpsHdt>(
     gps_hdt_topic_, qos, std::bind(&SbgRawEkfNode::onGpsHdt, this, std::placeholders::_1));
+  if (use_wheel_speeds_) {
+    wheel_sub_ = create_subscription<hyu_msgs::msg::WheelSpeedsStamped>(
+      wheel_speeds_topic_, rclcpp::QoS(10),
+      std::bind(&SbgRawEkfNode::onWheelSpeeds, this, std::placeholders::_1));
+  }
   status_timer_ = create_wall_timer(
     std::chrono::duration<double>(std::max(0.05, status_period_)),
     std::bind(&SbgRawEkfNode::onStatusTimer, this));
@@ -179,6 +207,16 @@ SbgRawEkfNode::SbgRawEkfNode()
     car_state_topic_.c_str(), gnss_odom_topic_.c_str(), enu_wire_ ? "enu" : "ned",
     rad2deg(p.hdt_offset), proj_.valid() ? "fixed" : "first fix",
     antenna_offset_x_, antenna_offset_y_, base_frame_.c_str());
+  if (use_wheel_speeds_) {
+    RCLCPP_INFO(
+      get_logger(),
+      "wheel speeds: %s (%s wheels, scale %.4f, sigma %.3f + %.3f*|a_x| m/s, fused while "
+      "samples are < %.2f s old; none -> IMU+GNSS only)",
+      wheel_speeds_topic_.c_str(), wheel_source_.c_str(), wheel_scale_, p.sig_wheel,
+      p.wheel_sig_per_acc, wheel_timeout_);
+  } else {
+    RCLCPP_INFO(get_logger(), "wheel speeds: off (use_wheel_speeds=false)");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -215,6 +253,8 @@ void SbgRawEkfNode::restart(const char * why)
   announced_init_ = false;
   last_pub_t_ = -std::numeric_limits<double>::infinity();
   last_fix_valid_ = false;
+  last_wheel_ros_t_ = -std::numeric_limits<double>::infinity();
+  last_wheel_mps_ = 0.0;
 }
 
 void SbgRawEkfNode::onImu(const sbg_driver::msg::SbgImuData::SharedPtr msg)
@@ -304,6 +344,44 @@ void SbgRawEkfNode::onGpsHdt(const sbg_driver::msg::SbgGpsHdt::SharedPtr msg)
   }
   const double t = dev_clock_.toSeconds(msg->time_stamp);
   ekf_->gpsHdt(sbg_raw::gpsHdtMeas(*msg, t, enu_wire_));
+}
+
+void SbgRawEkfNode::onWheelSpeeds(const hyu_msgs::msg::WheelSpeedsStamped::SharedPtr msg)
+{
+  const auto & w = msg->speeds;
+  double v;
+  if (wheel_source_ == "all") {
+    v = 0.25 * (w.lf_speed + w.rf_speed + w.lb_speed + w.rb_speed);
+  } else {
+    v = 0.5 * (w.lb_speed + w.rb_speed);  // unsteered rear axle
+  }
+  v *= wheel_scale_;
+  const double t_ros = rclcpp::Time(msg->header.stamp).seconds();
+  if (!std::isfinite(v) || !std::isfinite(t_ros)) {
+    ++wheel_dropped_;
+    return;
+  }
+  // Health bookkeeping first, so a stale stream is still reported as seen.
+  last_wheel_ros_t_ = t_ros;
+  last_wheel_mps_ = v;
+  // The filter runs on the device clock; the ROS<->device offset is anchored
+  // on the IMU stream. No IMU yet -> nothing to fuse into anyway.
+  if (!off_init_) {
+    ++wheel_dropped_;
+    return;
+  }
+  const double age = now().seconds() - t_ros;
+  if (age > wheel_timeout_) {
+    ++wheel_dropped_;
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 5000,
+      "wheel speed sample %.2f s old (> wheel_timeout %.2f s): not fused", age, wheel_timeout_);
+    return;
+  }
+  WheelMeas m;
+  m.t = t_ros - ros_minus_dev_;
+  m.v_fwd = v;
+  ekf_->wheel(m);
 }
 
 // ---------------------------------------------------------------------------
@@ -465,6 +543,26 @@ void SbgRawEkfNode::onStatusTimer()
   kv("hdt_offset_deg", fmt("%.1f", rad2deg(c.params().hdt_offset)));
   kv("antenna_offset_xy", fmt("%.2f", antenna_offset_x_) + "/" + fmt("%.2f", antenna_offset_y_));
   kv("bias_gz_dps", started ? fmt("%.3f", rad2deg(c.x()[5])) : "-");
+  // Wheel aiding: off / none yet / stale (bridge silent -> IMU+GNSS only) / fresh.
+  {
+    std::string wheel;
+    double wheel_age = std::nan("");
+    if (!use_wheel_speeds_) {
+      wheel = "off";
+    } else if (!std::isfinite(last_wheel_ros_t_)) {
+      wheel = "none";
+    } else {
+      wheel_age = now().seconds() - last_wheel_ros_t_;
+      wheel = wheel_age > wheel_timeout_ ? "stale" : "fresh";
+    }
+    kv("wheel", wheel);
+    kv("wheel_age", std::isfinite(wheel_age) ? fmt("%.2f", wheel_age) : "-");
+    kv("wheel_mps", std::isfinite(last_wheel_ros_t_) ? fmt("%.2f", last_wheel_mps_) : "-");
+    kv(
+      "accepted_rejected_wheel", std::to_string(c.accepted()[RawGnssEkfCore::WHEEL]) + "/" +
+      std::to_string(c.rejected()[RawGnssEkfCore::WHEEL]));
+    kv("wheel_dropped", std::to_string(wheel_dropped_));
+  }
   kv(
     "accepted_pos_vel_hdt_crs", std::to_string(c.accepted()[RawGnssEkfCore::POS]) + "/" +
     std::to_string(c.accepted()[RawGnssEkfCore::VEL]) + "/" +

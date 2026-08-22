@@ -113,18 +113,16 @@ perception_node:
     # measured on the ideal cloud; the realism pipeline reads +0.076 lon with
     # causes entangled, so no constant is honest right now.
     deskew_enabled: true
-    # Twist sources, freshest-preferred: the primary while it is flowing, the
-    # fallback whenever the primary has not been heard from within
-    # deskew_twist_timeout. Primary = wheel odometry (encoder + INS yaw rate,
-    # independent of GNSS). Fallback = the SBG bridge's fused odometry, whose
-    # body twist is filled on every rung (EKF velocity / raw GNSS Doppler +
-    # gyro during an EKF reset / wheels / zero at a ZUPT standstill). The car
-    # has NO wheel encoder wired yet (no CAN bridge), so on the vehicle the
-    # primary is silent and the fallback is what actually de-skews; on the
-    # 2026-08-01 outings every cloud went out skewed for that reason. Set the
-    # fallback to "" to require the primary.
-    deskew_twist_topic: /localization/wheel_odom
-    deskew_twist_fallback_topic: /localization/ins_odom
+    # Twist source: sbg_raw_ekf's fused odometry (GNSS + IMU, and the ECU
+    # wheel speeds once fused there) -- the one odometry the whole stack
+    # reads, with its body twist filled on every rung (EKF velocity / raw
+    # GNSS Doppler + gyro / zero at a ZUPT standstill). The old wheel_odometry
+    # primary + ins_odom fallback pair was retired 2026-08-22: no second wheel
+    # integrator, no encoder dependency here. A fallback topic ("" = none) is
+    # still supported, used whenever the primary has not been heard from
+    # within deskew_twist_timeout.
+    deskew_twist_topic: /localization/ins_odom
+    deskew_twist_fallback_topic: ""
     deskew_twist_timeout: 0.5
     # Per-point time on RoboSense clouds: auto = sweep-geometry model (steady
     # clockwise spin from the lidar +x; seam and period read from the frame's
@@ -550,12 +548,18 @@ yolov8_bbox_node:
     # launch file overrides this with the resolved install-share path; this
     # default serves direct `ros2 run` from a sourced workspace.
     #
-    # models/cone_pose_8kpt/weights/best.pt is the pose variant of the same
-    # five classes in the same order — swap model_path to it and set
-    # publish_keypoints: true to get the silhouette keypoints back. Nothing on
-    # the /perception/cones path reads them (BoundingBox.msg carries no
-    # keypoint field), so the detect weight loses only the debug topic.
-    model_path: models/cone_detect_yolo26n/weights/best.pt
+    # cone_detect_yolo26n_3cls = the final fine-tune (2026-08-13,
+    # finetune_nano_3cls from the FSOCO teacher; classes BLUE/YELLOW/ORANGE,
+    # val mAP50 0.965 / mAP50-95 0.847). It has NO big-orange class: big
+    # orange cones come out as plain orange.
+    # models/cone_detect_yolo26n/weights/best.pt is the previous 5-class detect
+    # weight (BLUE/ORANGE_BIG/ORANGE/UNDEFINED/YELLOW), and
+    # models/cone_pose_8kpt/weights/best.pt its pose variant — swap model_path
+    # to the latter and set publish_keypoints: true to get the silhouette
+    # keypoints back. Nothing on the /perception/cones path reads them
+    # (BoundingBox.msg carries no keypoint field), so the detect weight loses
+    # only the debug topic.
+    model_path: models/cone_detect_yolo26n_3cls/weights/best.pt
     # TensorRT if available, else the portable .pt. When a .engine exported from
     # this .pt sits next to it (scripts/export_tensorrt_engine.py, ~20x faster),
     # the node loads the engine; with no engine it runs the .pt unchanged. Set
@@ -576,8 +580,13 @@ yolov8_bbox_node:
     # /clock is already bounded downstream by max_future_stamp_lead_sec (0.4 s),
     # far beyond the sim clock's lag.
     output_commit_settle_sec: 0.0
-    # Map this weight's class names to the EUFS cone color contract.
-    class_map: "blue:blue,yellow:yellow,orange:orange,orange_big:big_orange,undefined:unknown"
+    # Map this weight's class names to the EUFS cone color contract. The node
+    # REFUSES TO START if a mapped class is missing from the weight, so this
+    # must list exactly the classes the active weight has (3-class weight:
+    # BLUE/YELLOW/ORANGE, matched case-insensitively). Switching model_path
+    # back to the 5-class cone_detect_yolo26n / cone_pose_8kpt weights needs
+    # "blue:blue,yellow:yellow,orange:orange,orange_big:big_orange,undefined:unknown".
+    class_map: "blue:blue,yellow:yellow,orange:orange"
     unknown_color_policy: unknown
     publish_debug_image: false
     debug_image_topic: /yolo_bounding_boxes/debug_image

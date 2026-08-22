@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Publish a stopped car's INS solution, for bench and bag-replay testing.
 
-Companion to stationary_wheels.py for when no SBG Ellipse-D is on the desk --
-or, just as often, when a bag HAS SBG data that is unusable. The 0726 cone
+For when no SBG Ellipse-D is on the desk -- or, just as often, when a bag HAS
+SBG data that is unusable. The 0726 cone
 bag is exactly that case: 3643 ekf_nav messages, every one of them
 solution_mode 1 (VERTICAL_GYRO), i.e. the unit never got an absolute fix. The
 odometry bridge is right to refuse those ("waiting for absolute fix"), so it
@@ -20,8 +20,8 @@ of a car standing still with a good fix, which is what these bags are.
 
 Publishes the RAW receiver/IMU topics sbg_raw_ekf fuses (/sbg/imu_data at
 rate_hz, /sbg/gps_pos, /sbg/gps_vel, /sbg/gps_hdt at rate_hz/5) plus
-/sbg/ekf_nav, /sbg/ekf_euler and /sbg/ekf_rot_accel_body for wheel_odometry
-and the wheel synthesiser. Never run this alongside a real SBG: two publishers
+/sbg/ekf_nav, /sbg/ekf_euler and /sbg/ekf_rot_accel_body for anything that
+still reads the EKF logs. Never run this alongside a real SBG: two publishers
 on those topics interleave two different truths.
 """
 import math
@@ -81,8 +81,8 @@ class StationaryIns(Node):
     def _status(self):
         s = SbgEkfStatus()
         s.solution_mode = NAV_POSITION
-        # wheel_odometry / sbg_wheels read the mode and the valid flags. A
-        # stopped car with a fix has all of these.
+        # Consumers read the mode and the valid flags. A stopped car with a
+        # fix has all of these.
         s.attitude_valid = True
         s.heading_valid = True
         s.velocity_valid = True

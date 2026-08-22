@@ -19,7 +19,7 @@
 **실차는 한 줄**입니다:
 
 ```bash
-race trackdrive 10        # 센서+perception → vehicle state + ECU 브리지 → INS+SLAM+planning+control → 미션 ARM
+race trackdrive 10        # 센서+perception+vehicle state+ECU 브리지+INS+SLAM+planning+control 동시 기동 → 한 번 대기 → 미션 ARM
 race skidpad 2 | race acceleration | race autocross | race dlc | race inspection
 mission go | mission halt # AS 버튼 대용 (물리 버튼 드라이버가 붙기 전까지) — ON이면 SLAM 지도 초기화 후 ECU enable, OFF는 즉시 해제
 race status | race attach | race stop
@@ -289,7 +289,7 @@ mkdir -p "$DI"; printf 'Metadata-Version: 2.1\nName: opencv-python\nVersion: 4.1
 
 > 기본 `race`는 CUDA YOLO+LiDAR perception을 실행합니다. GraphSLAM이 `map` TF를 소유하므로 real perception의 cross-time 보정 프레임은 기본 `odom`입니다. Gazebo simulated `/perception/cones`만 쓰려면 `race sim` 또는 `perception_mode:=sim`을 명시합니다.
 >
-> **검출기는 YOLO26n-pose 콘 검출기로 저장소에 포함**되어 있습니다 (`hyu_perception/models/cone_pose_8kpt/weights/best.pt` — bbox+클래스+콘 키포인트 동시 출력; `fsoco_yolov8n`은 비교용 레거시). race/simfull 경유로 모델을 바꾸는 방법은 **가중치 파일 교체 또는 `perception.launch.py`의 기본값 수정** 두 가지뿐입니다 — `yolo_model_path:=<file>`은 simulation.launch.py가 선언하지 않는 인자라 조용히 무시되고, `perception.yaml`의 `model_path`는 launch가 항상 덮어써서(bare `ros2 run` 전용) 역시 조용히 무시됩니다.
+> **검출기는 YOLO26n 콘 검출기(3클래스 BLUE/YELLOW/ORANGE, 2026-08-13 최종 파인튜닝)로 저장소에 포함**되어 있습니다 (`hyu_perception/models/cone_detect_yolo26n_3cls/weights/best.pt`; 옆의 `best.engine`은 기기별 TensorRT FP16 — `scripts/export_tensorrt_engine.py`. 이전 5클래스 `cone_detect_yolo26n`, 키포인트 pose 변형 `cone_pose_8kpt`, `fsoco_yolov8n`은 비교용으로 유지). race/simfull 경유로 모델을 바꾸는 방법은 **가중치 파일 교체 또는 `perception.launch.py`의 기본값 수정** 두 가지뿐입니다 — `yolo_model_path:=<file>`은 simulation.launch.py가 선언하지 않는 인자라 조용히 무시되고, `perception.yaml`의 `model_path`는 launch가 항상 덮어써서(bare `ros2 run` 전용) 역시 조용히 무시됩니다.
 
 ### 3. 빌드
 
@@ -331,10 +331,10 @@ source ~/fsk/src/scripts/fsk-shellrc
 
 | 명령 | 단계 | 역할 |
 |---|---|---|
-| `race <mission> [laps] [step-1 args]` | ①②③ | **실차 원샷**: fsk → vehicle_state + ECU 브리지 → stack → mission ARM. `race stop`(전체 종료) / `race attach` / `race status` |
+| `race <mission> [laps] [step-1 args]` | ①②③ | **실차 원샷**: fsk + vehicle_state + ECU 브리지 + stack을 **동시에** 띄우고, 아밍에 필요한 세 가지(`/vehicle/set_mission`·`/graph_slam/reset`·`/planning/state`)만 한 번 기다린 뒤 mission ARM. 각 줄에 `[+N s]` 경과시간. `race stop`(전체 종료) / `race attach` / `race status` |
 | `sim [track] [sim\|real] [bg] [norviz]` | ① | sim + perception (tmux 세션 시작). `sim stop` / `sim attach` |
 | `fsk [bg] [rviz]` | ① | 실차 센서 + perception — sim 대신 |
-| `lidar` / `cam` / `sbg [odom]` | ①′ | **센서 드라이버 하나만** 현재 터미널에서 (Ctrl+C로 종료) — 벤치 점검용. `fsk`와 같은 `sensors.launch.py`라 토픽·TF 동일. `sbg odom`은 브리지·wheel_odometry까지, `gnss`는 SBG 대시보드. 런치 인자 통과: `cam tf:=false`, `sbg ntrip:=false` |
+| `lidar` / `cam` / `sbg [odom]` | ①′ | **센서 드라이버 하나만** 현재 터미널에서 (Ctrl+C로 종료) — 벤치 점검용. `fsk`와 같은 `sensors.launch.py`라 토픽·TF 동일. `sbg odom`은 sbg_raw_ekf(융합 오도메트리)까지, `gnss`는 SBG 대시보드. 런치 인자 통과: `cam tf:=false`, `sbg ntrip:=false` |
 | `stack [args]` | ② | INS + SLAM + planning + control, STANDBY |
 | `mission <이름> [laps]` | ③ | 미션 ARM — trackdrive/autocross/skidpad/acceleration/dlc/inspection · `go`/`halt`(AS 버튼 대용) · `stop`(EBS)/`reset`/`status` |
 | `sim perception [track]` | — | 인지 평가 모드 — planner 없이 sim+perception+SLAM+teleop, provenance별 채점 |

@@ -517,8 +517,8 @@ def _setup(context, *_args, **_kwargs):
         if gnss == 'on' or os.path.exists(port):
             # NOT namespaced. The driver publishes relative topics (sbg/ekf_nav,
             # imu/data, ...), so a 'sensors' namespace would put them on
-            # /sensors/sbg/* while hyu_localization's sbg_raw_ekf and
-            # wheel_odometry both subscribe /sbg/* -- the INS chain would sit
+            # /sensors/sbg/* while hyu_localization's sbg_raw_ekf
+            # subscribes /sbg/* -- the INS chain would sit
             # silent with the driver visibly running. docs/topic_contract.md
             # lists /sbg/* as the driver default; keep it that way.
             actions.append(Node(
@@ -532,13 +532,14 @@ def _setup(context, *_args, **_kwargs):
                 f'sbg_driver (force with gnss:=on)')))
 
     # --- odometry conditioning ------------------------------------------------
-    # Raw driver output -> odometry. These live here, not in step 2's INS
-    # pipeline, because every input they read is a step-1 topic:
-    #   wheel_odometry      /vehicle/wheel_speeds, /sbg/ekf_nav, /sbg/ekf_rot_accel_body
+    # Raw driver output -> odometry. Lives here, not in step 2's INS pipeline,
+    # because every input it reads is a step-1 topic:
     #   sbg_raw_ekf         /sbg/imu_data, /sbg/gps_pos, /sbg/gps_vel, /sbg/gps_hdt
-    # and because perception's LiDAR deskew subscribes /localization/wheel_odom.
+    #                       (+ /vehicle/wheel_speeds from the ECU bridge once fused)
+    # and because perception's LiDAR deskew subscribes /localization/ins_odom.
     # Started in step 2 it arrived a whole step late and perception ran the
-    # entire of step 1 with the scan uncorrected.
+    # entire of step 1 with the scan uncorrected. (wheel_odometry retired
+    # 2026-08-22: one fused odometry, no second wheel integrator.)
     # SBG IMU / antenna placement (vehicle_mount.yaml sbg:) -- the static TFs
     # and, more importantly, the primary antenna's position in base_footprint
     # that sbg_raw_ekf needs to publish the VEHICLE pose, not the antenna's.
@@ -553,10 +554,6 @@ def _setup(context, *_args, **_kwargs):
 
     if context.launch_configurations['odometry'].lower() not in ('false', '0'):
         use_sim_time = context.launch_configurations['use_sim_time'].lower() in ('true', '1')
-        actions.append(Node(
-            package='hyu_localization', executable='wheel_odometry',
-            name='wheel_odometry', output='screen',
-            parameters=[{'use_sim_time': use_sim_time}]))
         ekf_params = {'use_sim_time': use_sim_time,
                       'car_state_topic': context.launch_configurations['ins_odom_topic']}
         if antenna_xy is not None:
@@ -656,10 +653,10 @@ def generate_launch_description():
                               choices=['toggle', 'level'],
                               description='toggle = each press flips AS; level = switch position'),
         DeclareLaunchArgument('odometry', default_value='true',
-                              description='Start wheel_odometry and '
-                                          'sbg_raw_ekf. Step 2 must be '
-                                          'told odometry:=false when this is on, '
-                                          'or both run twice.'),
+                              description='Start sbg_raw_ekf (the fused '
+                                          'odometry, /localization/ins_odom). '
+                                          'Step 2 must be told odometry:=false '
+                                          'when this is on, or it runs twice.'),
         DeclareLaunchArgument('ins_odom_topic',
                               default_value='/localization/ins_odom',
                               description='must match ins_pipeline'),

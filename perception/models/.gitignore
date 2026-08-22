@@ -19,3 +19,8 @@
 # (5.1 MB). Same five classes in the same order as the pose weight, no
 # keypoints. Tracked for the same reason as above.
 !cone_detect_yolo26n/weights/best.pt
+
+# The final 3-class YOLO26n detect weight (5.4 MB, 2026-08-13 finetune_nano_3cls:
+# BLUE/YELLOW/ORANGE) -- the perception node's default model_path. Its
+# TensorRT .engine is machine-specific and stays untracked.
+!cone_detect_yolo26n_3cls/weights/best.pt

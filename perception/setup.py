@@ -34,14 +34,19 @@ setup(
             ],
         ),
         # The cone weights ship with the package so the node has no dependency
-        # on a path outside the workspace. The active one is the detect model;
-        # the pose variant stays installed so switching model_path back to it
-        # needs no rebuild.
+        # on a path outside the workspace. The active one is the 3-class
+        # detect model (cone_detect_yolo26n_3cls, 2026-08-13 finetune); the
+        # older 5-class detect and the pose variant stay installed so switching
+        # model_path back to them needs no rebuild.
         #
         # The .engine is machine-specific and untracked, so it is picked up by
         # glob rather than named: build it with scripts/export_tensorrt_engine.py
         # and it lands here on the next colcon build, which is what
         # prefer_engine looks for next to the .pt.
+        (
+            f"share/{package_name}/models/cone_detect_yolo26n_3cls/weights",
+            glob("models/cone_detect_yolo26n_3cls/weights/best.*"),
+        ),
         (
             f"share/{package_name}/models/cone_detect_yolo26n/weights",
             glob("models/cone_detect_yolo26n/weights/best.*"),

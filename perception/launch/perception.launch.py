@@ -128,7 +128,7 @@ def generate_launch_description() -> LaunchDescription:
         # this argument is passed as a parameter override, so it WINS over the
         # config and a stale default here silently loads the wrong weight.
         DeclareLaunchArgument("yolo_model_path",
-                              default_value="models/cone_detect_yolo26n/weights/best.pt"),
+                              default_value="models/cone_detect_yolo26n_3cls/weights/best.pt"),
         DeclareLaunchArgument("yolo_device", default_value=""),
         DeclareLaunchArgument("yolo_imgsz", default_value="640"),
         DeclareLaunchArgument("publish_yolo_debug_image", default_value="false"),

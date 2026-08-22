@@ -9,7 +9,7 @@ flowchart LR
     YOLO -->|"bbox + 색"| FUSE
     PC["📡 /velodyne_points"] --> FUSE["perception_node<br/>LiDAR 백본 + 비전 확장"]
     RIMG["📷 /zed/right (스테레오)"] -.-> FUSE
-    ODO["/localization/wheel_odom<br/>(stale이면 /localization/ins_odom)"] -.->|"de-skew용 twist"| FUSE
+    ODO["/localization/ins_odom<br/>(sbg_raw_ekf 융합 오도메트리)"] -.->|"de-skew용 twist"| FUSE
     FUSE ==>|"콘 = 색 + 위치 + 2×2 공분산"| OUT["/perception/cones"]
 
     style OUT fill:#4a2b57,stroke:#c77dde,color:#f7ecfc
@@ -22,7 +22,7 @@ flowchart LR
 | in | `/velodyne_points` | `PointCloud2` | **백본** — 이 토픽 1프레임당 출력 1프레임 |
 | in | `/zed/left/image_rect_color` | `Image` | YOLO 검출 (색 + 원거리 확장) |
 | in | `/zed/right/image_rect_color` | `Image` | ZNCC 스테레오 교차검증 |
-| in | `/localization/wheel_odom` → 신선하지 않으면 `/localization/ins_odom` | `CarState` | 점군 de-skew · 속도 비례 공분산. 실차엔 엔코더가 없어 wheel_odom이 침묵 → 브리지 출력(ins_odom)이 실제 소스 (`deskew_twist_fallback_topic`) |
+| in | `/localization/ins_odom` | `CarState` | 점군 de-skew · 속도 비례 공분산. sbg_raw_ekf의 융합 오도메트리(GNSS+IMU, 휠속도는 EKF 안에서 융합) — 엔코더 직접 의존 없음. `deskew_twist_fallback_topic`(기본 "")으로 보조 소스 지정 가능 |
 | out(debug) | `/perception/debug/cloud_kept` · `/perception/debug/cloud_removed` | `PointCloud2` | de-skew 후 base_footprint 기준으로 백본이 남긴 점(ROI∩비지면, intensity 유지)과 버린 점(지면·ROI 밖·차체). RViz 기본 설정은 kept=intensity 색, removed=회색; 구독자 있을 때만 생성 |
 | **out** | **`/perception/cones`** | `ConeArrayWithCovariance` | **유일한 계약** — base_footprint 기준 콘 목록 |
 
@@ -43,7 +43,7 @@ flowchart LR
 
 **융합** (`perception_node`) — 점군 1프레임마다:
 
-1. **De-skew** — 회전·주행 중 생긴 스캔 왜곡을 오도메트리 twist(wheel_odom → 없으면 ins_odom)로 되돌림. twist는 base 기준이므로 점군을 base 방향으로 돌려 보정 후 되돌림 — 라이다가 어떤 yaw/pitch/roll로 장착돼도 동일(2026-08-21 수정; 그 전엔 '센서 yaw≈0' 가정이라 −83° 장착 실차에서 병진 보정이 옆으로 갔음). 포인트 시각은 기본 `deskew_time_source: auto` = RS 드라이버 host 스탬프 대신 스위프 기하(라이다 +x에서 시계방향, 심·주기는 프레임 스탬프에서 추정)로 생성 — host 스탬프의 UDP 배칭 지터(~30 ms) 면역
+1. **De-skew** — 회전·주행 중 생긴 스캔 왜곡을 오도메트리 twist(`/localization/ins_odom`)로 되돌림. twist는 base 기준이므로 점군을 base 방향으로 돌려 보정 후 되돌림 — 라이다가 어떤 yaw/pitch/roll로 장착돼도 동일(2026-08-21 수정; 그 전엔 '센서 yaw≈0' 가정이라 −83° 장착 실차에서 병진 보정이 옆으로 갔음). 포인트 시각은 기본 `deskew_time_source: auto` = RS 드라이버 host 스탬프 대신 스위프 기하(라이다 +x에서 시계방향, 심·주기는 프레임 스탬프에서 추정)로 생성 — host 스탬프의 UDP 배칭 지터(~30 ms) 면역
 2. **ROI + 자차 마스크** → **지면 제거** — 기본 `ground_method: polar_grid`(극좌표 셀 1 m×5°마다 최저점을 국소 지면으로, 셀 바닥+5 cm+0.4 cm/m 위만 남김; 경사·굴곡·차체 롤에 강함. 08-01 실측: 남긴 점의 지면 비율 12–48 % → 0–3 %). `ransac`은 예전 단일 평면 방식(기울기 제한, 실패 시 고정 높이 컷)
 3. **DBSCAN 클러스터링** + 콘 모양(높이·폭) 필터 — 출발 게이트처럼 붙은 콘 쌍은 주성분축으로 분리
 4. **bbox 투영 매칭** — 클러스터를 bbox 시각으로 모션 보상한 뒤 픽셀로 투영해 짝짓기

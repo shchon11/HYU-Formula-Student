@@ -87,6 +87,17 @@ class VehicleState(Node):
         self._button_stale_warned = False
 
         self.ami = CanState.AMI_NOT_SELECTED
+        # BENCH ONLY: pre-select a mission so the AS button alone takes the
+        # state to AS_DRIVING (ECU comms test with 'bridge', no planning stack
+        # to call /vehicle/set_mission). Name as in CanState (TRACK_DRIVE,
+        # AUTOCROSS, SKIDPAD, ACCELERATION, ADS_INSPECTION, ...) or the AMI
+        # number. Default "" = unarmed, as the car must boot.
+        initial_mission = str(p("initial_mission", "").value).strip()
+        if initial_mission:
+            self.ami = self._parse_mission(initial_mission)
+            self.get_logger().warn(
+                f"BENCH: mission {AMI_NAMES[self.ami]} pre-selected (initial_mission) -- "
+                "the AS button alone now arms AS_DRIVING. Never use this on the car.")
         self.ebs = False
         self.finished = False
         self._last_as = None
@@ -187,6 +198,19 @@ class VehicleState(Node):
         res.success = True
         res.message = f"AS button {'ON' if self.button_on else 'OFF'}"
         return res
+
+    @staticmethod
+    def _parse_mission(text: str) -> int:
+        """CanState AMI name ('TRACK_DRIVE', 'trackdrive') or number -> AMI value."""
+        key = text.strip().upper().replace("-", "_")
+        if key.isdigit() and int(key) in AMI_NAMES:
+            return int(key)
+        for value, name in AMI_NAMES.items():
+            if key in (name, name.replace("_", "")) or key == f"AMI_{name}":
+                return value
+        raise ValueError(
+            f"initial_mission '{text}' unknown; use one of "
+            f"{', '.join(n for n in AMI_NAMES.values() if n != 'NOT_SELECTED')}")
 
     # --- output -------------------------------------------------------------
     def _as_state(self) -> int:

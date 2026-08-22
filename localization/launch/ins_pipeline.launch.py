@@ -34,8 +34,7 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
     # Deliberately NOT named car_state_topic: launch configurations are global
     # across includes, so a same-named argument here would silently override
-    # graph_slam.launch.py's car_state_topic default (the SLAM motion input,
-    # /localization/wheel_odom) with the bridge's pose-only INS odometry.
+    # graph_slam.launch.py's car_state_topic (the SLAM motion input).
     ins_odom_topic = LaunchConfiguration("ins_odom_topic")
 
     return LaunchDescription(
@@ -48,8 +47,8 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "slam_motion_topic",
                 default_value="/localization/ins_odom",
-                description="SLAM motion input (fused INS odometry; set to "
-                "/localization/wheel_odom for the legacy always-DR wiring).",
+                description="SLAM motion input (sbg_raw_ekf's fused "
+                "GNSS/IMU odometry).",
             ),
             DeclareLaunchArgument(
                 "ins_odom_topic",
@@ -84,10 +83,10 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "odometry",
                 default_value="true",
-                description="Start the odometry conditioning nodes "
-                            "(sbg_raw_ekf + wheel_odometry). Set false "
-                            "when step 1's sensor bringup already runs them, "
-                            "which is the vehicle and bag-replay case.",
+                description="Start the odometry conditioning node "
+                            "(sbg_raw_ekf). Set false when step 1's sensor "
+                            "bringup already runs it, which is the vehicle "
+                            "and bag-replay case.",
             ),
             DeclareLaunchArgument(
                 "slam",
@@ -144,7 +143,7 @@ def generate_launch_description():
             # Sensor conditioning, not SLAM: every input is a step-1 driver
             # topic (/sbg/imu_data, gps_pos, gps_vel, gps_hdt). On the car the
             # sensor bringup owns it so it is up in step 1, where perception's
-            # deskew can already see /localization/wheel_odom; the simulator
+            # deskew can already see /localization/ins_odom; the simulator
             # has no sensor bringup, so there it stays here with sim_ellipse_d.
             Node(
                 package="hyu_localization",
@@ -176,11 +175,9 @@ def generate_launch_description():
                     # honest per-mode sigmas). The always-DR wheel odometry carried a
                     # constant ~1.1 deg initial-heading error that fought the
                     # mm-grade GNSS anchors inside the graph (2026-07-18
-                    # error-budget decomposition); wheel odometry is a separate
-                    # GNSS-free source, and slam_motion_topic:=
-                    # /localization/wheel_odom restores the old wiring.
+                    # error-budget decomposition) and was retired 2026-08-22;
+                    # wheel speeds are fused inside the EKF instead.
                     "car_state_topic": LaunchConfiguration("slam_motion_topic"),
-                    "wheel_odometry": LaunchConfiguration("odometry"),
                     "gui": LaunchConfiguration("gui"),
                     "ate_monitor": LaunchConfiguration("ate_monitor"),
                 }.items(),

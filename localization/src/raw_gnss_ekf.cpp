@@ -178,6 +178,13 @@ bool RawGnssEkfCore::windowStill(double t) const
   if (!still) {
     return false;
   }
+  // Turning wheels are the one unambiguous "not still" (a smooth straight at
+  // constant speed can pass the IMU window). Veto only -- wheels never grant.
+  if ((t - last_wheel_t_) < p_.zupt_wheel_age &&
+    std::fabs(last_wheel_speed_) > p_.zupt_wheel_speed)
+  {
+    return false;
+  }
   if ((t - last_vel_t_) < p_.zupt_vel_age) {
     // A recent GPS velocity must agree (RTK ~0.1 m/s, SINGLE ~2 sigma).
     if (last_gps_speed_ > std::max(p_.zupt_gps_speed, 2.0 * last_vel_acc_)) {
@@ -319,6 +326,39 @@ void RawGnssEkfCore::gpsPos(const GpsPosMeas & m)
   }
 }
 
+void RawGnssEkfCore::wheel(const WheelMeas & m)
+{
+  // Remembered even before init: the ZUPT veto wants the latest wheel state.
+  last_wheel_t_ = m.t;
+  last_wheel_speed_ = m.v_fwd;
+  if (!inited_ || !std::isfinite(m.v_fwd)) {
+    return;
+  }
+  predict(m.t);
+  const double c = std::cos(x_[4]), s = std::sin(x_[4]);
+  const double vN = x_[2], vE = x_[3];
+  // Body-x speed of the ANTENNA point (the state's velocity) predicted from
+  // the centreline speed the rear axle reports: v_ant,x = v_centre,x -
+  // w_ned * r_y,right, i.e. h = vN c + vE s + (gz - b_gz) * lever.
+  const double lever = p_.wheel_lever_y_right;
+  const double hx = vN * c + vE * s + (gyro_z_ - x_[5]) * lever;
+  Eigen::Matrix<double, 1, NX> H = Eigen::Matrix<double, 1, NX>::Zero();  // Jacobian of h
+  H(0, 2) = c;
+  H(0, 3) = s;
+  H(0, 4) = -vN * s + vE * c;
+  H(0, 5) = -lever;
+  // update() forms nu = z - H x; h is nonlinear in psi, so hand it
+  // z' = z - h(x) + H x, which makes nu = z - h(x) exactly (EKF residual).
+  Eigen::Matrix<double, 1, 1> z;
+  z(0, 0) = m.v_fwd - hx + (H * x_)(0, 0);
+  const double ax_est = acc_x_ - x_[6];
+  const double extra = p_.wheel_sig_per_acc * std::fabs(ax_est);
+  const double sig = std::sqrt(p_.sig_wheel * p_.sig_wheel + extra * extra);
+  Eigen::Matrix<double, 1, 1> R;
+  R(0, 0) = sig * sig;
+  update<1>(z, H, R, p_.gate_wheel, WHEEL, false, p_.max_rej_wheel);
+}
+
 int RawGnssEkfCore::mode() const
 {
   if (!inited_) {
@@ -349,6 +389,7 @@ void RawGnssEkf::apply(const Event & e)
     case T_POS: core_.gpsPos(e.pos); break;
     case T_VEL: core_.gpsVel(e.vel); break;
     case T_HDT: core_.gpsHdt(e.hdt); break;
+    case T_WHEEL: core_.wheel(e.wheel); break;
     default: break;
   }
 }
@@ -392,22 +433,27 @@ void RawGnssEkf::push(Event && e)
 
 void RawGnssEkf::imu(const ImuSample & s)
 {
-  Event e{s.t, T_IMU, s, {}, {}, {}, core_};
+  Event e{s.t, T_IMU, s, {}, {}, {}, {}, core_};
   push(std::move(e));
 }
 void RawGnssEkf::gpsVel(const GpsVelMeas & m)
 {
-  Event e{m.t, T_VEL, {}, {}, m, {}, core_};
+  Event e{m.t, T_VEL, {}, {}, m, {}, {}, core_};
   push(std::move(e));
 }
 void RawGnssEkf::gpsHdt(const GpsHdtMeas & m)
 {
-  Event e{m.t, T_HDT, {}, {}, {}, m, core_};
+  Event e{m.t, T_HDT, {}, {}, {}, m, {}, core_};
   push(std::move(e));
 }
 void RawGnssEkf::gpsPos(const GpsPosMeas & m)
 {
-  Event e{m.t, T_POS, {}, m, {}, {}, core_};
+  Event e{m.t, T_POS, {}, m, {}, {}, {}, core_};
+  push(std::move(e));
+}
+void RawGnssEkf::wheel(const WheelMeas & m)
+{
+  Event e{m.t, T_WHEEL, {}, {}, {}, {}, m, core_};
   push(std::move(e));
 }
 

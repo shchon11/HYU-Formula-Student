@@ -18,8 +18,17 @@
 //              gps_vel (vN,vE)     R = acc^2 + floor^2
 //              gps_hdt psi = heading + hdt_offset (antenna order), R = acc^2
 //              gps_vel.course      only without HDT for crs_hdt_gap s, v>1 m/s
+//              wheel v_fwd         rear-axle mean speed from the ECU encoders
+//                                  (drive_udp_bridge, m/s): body-x speed of the
+//                                  antenna = vN cos psi + vE sin psi (+ w*lever
+//                                  if the antenna sits off the centreline),
+//                                  R = sig_wheel^2 + (wheel_sig_per_acc*|a_x|)^2
+//                                  so traction/braking slip is trusted less.
+//                                  OPTIONAL: with no wheel events the filter is
+//                                  exactly the IMU+GNSS one above.
 //   ZUPT/ZARU: IMU window still (gyro std/mean, accel std) + GPS speed ~0 ->
 //              v=(0,0) and gyro.z = b_gz observations every IMU sample.
+//              A fresh wheel speed above zupt_wheel_speed vetoes it.
 //   gating:    Mahalanobis chi^2; after max_rej consecutive rejects the next
 //              sample is taken with R*9 (soft re-acquire).
 //   mode:      200 OK / 201 NO_HDT (heading unobserved) / 202 COAST (no pos).
@@ -105,6 +114,15 @@ struct RawGnssEkfParams
   double mode_yaw_sig = deg2rad(3.0);
   // Initial yaw sigma without an HDT at init.
   double init_psi_sig_unknown = M_PI;
+  // Wheel-speed observation (rear-axle mean, m/s) -- optional input.
+  double sig_wheel = 0.08;            // base 1-sigma [m/s] (encoder quantisation + tyre)
+  double wheel_sig_per_acc = 0.02;    // [s]: extra sigma = this * |a_x| (traction/braking slip)
+  double gate_wheel = 12.0;           // Mahalanobis gate (1 dof)
+  int max_rej_wheel = 10;             // consecutive rejects before soft re-acquire
+  double wheel_lever_y_right = 0.0;   // antenna lateral offset from the centreline, NED body (+right) [m]
+  // A fresh (< zupt_wheel_age old) wheel speed above this vetoes the ZUPT.
+  double zupt_wheel_speed = 0.05;     // [m/s]
+  double zupt_wheel_age = 0.3;        // [s]
 };
 
 /// IMU sample in the NED body frame (x forward, y right, z down).
@@ -136,6 +154,13 @@ struct GpsPosMeas
   double N = 0.0, E = 0.0;
   double accN = 0.0, accE = 0.0;
 };
+/// Wheel-encoder speed: longitudinal speed of the vehicle centreline at the
+/// (unsteered) rear axle, m/s, signed (reverse < 0), already tyre-scaled.
+struct WheelMeas
+{
+  double t = 0.0;   // device time [s] (the node maps the ROS stamp)
+  double v_fwd = 0.0;
+};
 
 class RawGnssEkfCore
 {
@@ -143,7 +168,7 @@ public:
   static constexpr int NX = 8;
   using Vec = Eigen::Matrix<double, NX, 1>;
   using Mat = Eigen::Matrix<double, NX, NX>;
-  enum Kind {POS = 0, VEL, HDT, CRS, ZUPT, NKIND};
+  enum Kind {POS = 0, VEL, HDT, CRS, ZUPT, WHEEL, NKIND};
   enum Mode {NOT_STARTED = 0, OK = 200, NO_HDT = 201, COAST = 202};
 
   explicit RawGnssEkfCore(const RawGnssEkfParams & p = RawGnssEkfParams());
@@ -153,6 +178,7 @@ public:
   void gpsVel(const GpsVelMeas & m);
   void gpsHdt(const GpsHdtMeas & m);
   void gpsPos(const GpsPosMeas & m);
+  void wheel(const WheelMeas & m);
 
   const RawGnssEkfParams & params() const {return p_;}
   bool initialized() const {return inited_;}
@@ -169,6 +195,9 @@ public:
   double lastPosTime() const {return last_pos_t_;}
   double lastHdtTime() const {return last_hdt_t_;}
   double lastGpsSpeed() const {return last_gps_speed_;}
+  /// Latest wheel sample (device time / m/s); -1e9 before any.
+  double lastWheelTime() const {return last_wheel_t_;}
+  double lastWheelSpeed() const {return last_wheel_speed_;}
   /// Latest gyro.z input (NED body, CW positive) [rad/s].
   double gyroZ() const {return gyro_z_;}
   int mode() const;
@@ -195,6 +224,7 @@ private:
   double last_imu_t_ = -1e9;
   double last_pos_t_ = -1e9, last_hdt_t_ = -1e9;
   double last_gps_speed_ = 0.0, last_vel_t_ = -1e9, last_vel_acc_ = 1.0;
+  double last_wheel_t_ = -1e9, last_wheel_speed_ = 0.0;
   bool has_pending_vel_ = false, has_pending_psi_ = false;
   double pending_vN_ = 0.0, pending_vE_ = 0.0, pending_psi_ = 0.0, pending_psi_sig_ = 0.0;
   bool stationary_ = false;
@@ -218,6 +248,7 @@ public:
   void gpsVel(const GpsVelMeas & m);
   void gpsHdt(const GpsHdtMeas & m);
   void gpsPos(const GpsPosMeas & m);
+  void wheel(const WheelMeas & m);
 
   const RawGnssEkfCore & core() const {return core_;}
   struct Stats
@@ -231,7 +262,7 @@ public:
   double historySec() const {return history_sec_;}
 
 private:
-  enum Type {T_IMU = 0, T_POS = 1, T_VEL = 2, T_HDT = 3};  // = sort priority
+  enum Type {T_IMU = 0, T_POS = 1, T_VEL = 2, T_HDT = 3, T_WHEEL = 4};  // = sort priority
   struct Event
   {
     double t;
@@ -240,6 +271,7 @@ private:
     GpsPosMeas pos;
     GpsVelMeas vel;
     GpsHdtMeas hdt;
+    WheelMeas wheel;
     RawGnssEkfCore after;  // filter state once this event was applied
   };
   static bool before(double ta, int pa, double tb, int pb)

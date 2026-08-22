@@ -36,20 +36,12 @@
 #   ins:=auto        (default) sample the bag's gps_pos (ekf_nav on older bags
 #                    without it) and pick.
 #
-# gnss:=off below turns off the sbg_driver only. sbg_raw_ekf and wheel_odometry
-# come up with the 'odometry' arg regardless, so replayed /sbg/* is consumed
-# and /localization/ins_odom appears exactly as on the car.
-#
-# No encoder is fitted, so /vehicle/wheel_speeds is synthesised either way:
-# zeros in stationary mode, and in real mode back-computed from the replayed
-# INS by sbg_wheels.py (wheels:=off to leave the topic silent). Zeros on a
-# moving car are the worst of the three -- perception's LiDAR deskew reads
-# /localization/wheel_odom and would smear every sweep taken in a corner.
-#
-# What real-mode wheels cannot do: wheel_odometry fuses them with the same INS
-# they were derived from, so /localization/wheel_odom is no longer independent
-# of the INS. Good enough for deskew, useless for judging the dead-reckoning
-# fallback -- when the INS drops out here, its fallback drops out with it.
+# gnss:=off below turns off the sbg_driver only. sbg_raw_ekf comes up with the
+# 'odometry' arg regardless, so replayed /sbg/* is consumed and
+# /localization/ins_odom appears exactly as on the car. That single fused
+# odometry is what perception's LiDAR deskew and SLAM read; there is no
+# separate wheel odometry any more (retired 2026-08-22), and the old bags
+# carry no /vehicle/wheel_speeds -- nothing is synthesised for it.
 #
 # What is NOT replayed: the bag's own /perception/* topics. Perception runs
 # live here -- that is the point -- and two publishers on /perception/cones
@@ -78,7 +70,7 @@ case "${1:-start}" in
     exec tmux attach -t "$SESSION" ;;
 esac
 
-BAG=""; BG=0; RATE=1.0; LOOP=1; LOOP_SET=0; EXTRA=""; INS_MODE=auto; WHEELS=on
+BAG=""; BG=0; RATE=1.0; LOOP=1; LOOP_SET=0; EXTRA=""; INS_MODE=auto
 for tok in "$@"; do
   case "$tok" in
     bg|headless) BG=1 ;;
@@ -86,7 +78,6 @@ for tok in "$@"; do
     loop:=false|once) LOOP=0; LOOP_SET=1 ;;
     loop:=true)  LOOP=1; LOOP_SET=1 ;;
     ins:=*)      INS_MODE="${tok#ins:=}" ;;
-    wheels:=*)   WHEELS="${tok#wheels:=}" ;;
     *:=*)        EXTRA="$EXTRA $tok" ;;
     *)           [ -z "$BAG" ] && BAG="$tok" || EXTRA="$EXTRA $tok" ;;
   esac
@@ -218,9 +209,8 @@ echo "  topics: ${PLAY_TOPICS[*]}"
 echo "  camera optical frame: $CAM_FRAME"
 if [ "$INS_MODE" = real ]; then
   echo "  INS: real (recorded /sbg/*, sbg_raw_ekf live)"
-  echo "  wheels: $([ "$WHEELS" = off ] && echo 'off (topic silent)' || echo 'synthesised from the INS -- wheel_odom is not independent of it')"
 else
-  echo "  INS: stationary (synthesised fix, zero wheels -- car stays parked)"
+  echo "  INS: stationary (synthesised fix -- car stays parked)"
 fi
 
 tmux new-session -d -s "$SESSION" -n FSK
@@ -243,18 +233,15 @@ if [ -n "$CAM_COMPRESSED" ]; then
     "$SRC echo '[② DECOMPRESS $CAM_COMPRESSED -> raw]'; ros2 run image_transport republish compressed raw --ros-args -r in/compressed:=$CAM_COMPRESSED -r out:=/sensors/zed/left/color/rect/image" C-m
 fi
 
-# (3) TF from the active extrinsic (camera over ground + lidar), plus the stopped-car encoder.
-# Drivers off — the bag is the sensor.
+# (3) TF from the active extrinsic (camera over ground + lidar), plus the stopped-car INS
+# when the bag has no usable fix. Drivers off — the bag is the sensor.
 P_TF=$(tmux split-window -v -t "$P_BAG" -P -F '#{pane_id}')
 if [ "$INS_MODE" = stationary ]; then
-  TF_LABEL='[③ TF + stopped INS/encoder]'
-  TF_FAKES=" & sleep 3; ros2 run hyu_sensor_bringup stationary_ins.py --ros-args -p use_sim_time:=true & ros2 run hyu_sensor_bringup stationary_wheels.py --ros-args -p use_sim_time:=true"
-elif [ "$WHEELS" = off ]; then
-  TF_LABEL='[③ TF + recorded INS, no encoder]'
-  TF_FAKES=""
+  TF_LABEL='[③ TF + stopped INS]'
+  TF_FAKES=" & sleep 3; ros2 run hyu_sensor_bringup stationary_ins.py --ros-args -p use_sim_time:=true"
 else
-  TF_LABEL='[③ TF + recorded INS + encoder from INS]'
-  TF_FAKES=" & sleep 3; ros2 run hyu_sensor_bringup sbg_wheels.py --ros-args -p use_sim_time:=true"
+  TF_LABEL='[③ TF + recorded INS]'
+  TF_FAKES=""
 fi
 tmux send-keys -t "$P_TF" \
   "$SRC echo '$TF_LABEL'; ros2 launch hyu_sensor_bringup sensors.launch.py lidar:=off camera:=off gnss:=off use_sim_time:=true camera_frame:=$CAM_FRAME$TF_FAKES" C-m

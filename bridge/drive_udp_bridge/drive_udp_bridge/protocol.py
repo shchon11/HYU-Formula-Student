@@ -13,6 +13,8 @@ from typing import Callable, Optional, Tuple
 
 PACKET_FORMAT = '<ffBB'
 PACKET_SIZE = struct.calcsize(PACKET_FORMAT)
+ENCODER_FEEDBACK_FORMAT = '<IIII'
+ENCODER_FEEDBACK_SIZE = struct.calcsize(ENCODER_FEEDBACK_FORMAT)
 FLOAT32_MAX = 3.4028234663852886e38
 SAFE_COMMAND = (0.0, 0.0, 0)
 
@@ -41,6 +43,33 @@ def pack_command(
         steering_angle,
         enable,
         autonomous_enable,
+    )
+
+
+@dataclass(frozen=True)
+class EncoderFeedback:
+    """One provisional ECU cumulative wheel-encoder datagram."""
+
+    front_left_count: int
+    front_right_count: int
+    rear_left_count: int
+    rear_right_count: int
+
+
+def unpack_encoder_feedback(packet: bytes) -> EncoderFeedback:
+    """Decode one 16-byte little-endian cumulative encoder datagram."""
+    if len(packet) != ENCODER_FEEDBACK_SIZE:
+        raise ValueError(
+            'encoder feedback packet must be exactly '
+            f'{ENCODER_FEEDBACK_SIZE} bytes, got {len(packet)}'
+        )
+
+    values = struct.unpack(ENCODER_FEEDBACK_FORMAT, packet)
+    return EncoderFeedback(
+        front_left_count=int(values[0]),
+        front_right_count=int(values[1]),
+        rear_left_count=int(values[2]),
+        rear_right_count=int(values[3]),
     )
 
 

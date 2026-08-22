@@ -52,7 +52,7 @@ class TeleopNode(Node):
         super().__init__('hyu_teleop')
 
         self.declare_parameter('cmd_topic', '/vehicle/cmd')
-        self.declare_parameter('car_state_topic', '/localization/wheel_odom')
+        self.declare_parameter('car_state_topic', '/localization/ins_odom')
         self.declare_parameter('rate_hz', 50.0)
         self.declare_parameter('max_steering', 0.52)      # rad, vehicle lock
         self.declare_parameter('max_speed', 8.0)          # m/s speed cap

@@ -22,7 +22,7 @@ import argparse
 import sys
 from pathlib import Path
 
-DEFAULT_MODEL = "models/cone_detect_yolo26n/weights/best.pt"  # the perception.yaml model
+DEFAULT_MODEL = "models/cone_detect_yolo26n_3cls/weights/best.pt"  # the perception.yaml model
 
 
 def main() -> int:

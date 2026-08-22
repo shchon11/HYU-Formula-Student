@@ -18,7 +18,8 @@ setup(
             ['resource/' + package_name],
         ),
         ('share/' + package_name, ['package.xml', 'README.md']),
-        ('share/' + package_name + '/config', ['config/drive_udp_bridge.yaml']),
+        ('share/' + package_name + '/config',
+         ['config/drive_udp_bridge.yaml', 'config/plotjuggler_drive.xml']),
         ('share/' + package_name + '/launch', ['launch/drive_udp_bridge.launch.py']),
     ],
     install_requires=['setuptools'],
@@ -27,12 +28,13 @@ setup(
     maintainer='simseunghwan',
     maintainer_email='simseunghwan@example.com',
     description=(
-        'Send Ackermann speed and steering commands to a Speedgoat ECU over UDP.'
+        'Exchange drive commands and per-wheel encoder speeds with a Speedgoat ECU over UDP.'
     ),
     license='MIT',
     entry_points={
         'console_scripts': [
             'drive_udp_bridge = drive_udp_bridge.drive_udp_bridge_node:main',
+            'cmd_pattern = drive_udp_bridge.cmd_pattern:main',
         ],
     },
 )

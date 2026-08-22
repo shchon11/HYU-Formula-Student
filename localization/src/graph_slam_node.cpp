@@ -108,7 +108,7 @@ GraphSlamNode::GraphSlamNode()
   lap_return_criteria_satisfied_(false)
 {
   car_state_topic_ =
-    declare_parameter<std::string>("car_state_topic", "/localization/wheel_odom");
+    declare_parameter<std::string>("car_state_topic", "/localization/ins_odom");
   cones_topic_ = declare_parameter<std::string>("cones_topic", "/perception/cones");
   map_topic_ = declare_parameter<std::string>("map_topic", "/localization/cone_map");
   slam_odom_topic_ =

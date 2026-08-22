@@ -31,12 +31,14 @@
 #ifndef HYU_LOCALIZATION__SBG_RAW_EKF_NODE_HPP_
 #define HYU_LOCALIZATION__SBG_RAW_EKF_NODE_HPP_
 
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <string>
 
 #include "diagnostic_msgs/msg/diagnostic_array.hpp"
 #include "hyu_msgs/msg/car_state.hpp"
+#include "hyu_msgs/msg/wheel_speeds_stamped.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sbg_driver/msg/sbg_gps_hdt.hpp"
@@ -64,6 +66,7 @@ private:
   void onGpsPos(const sbg_driver::msg::SbgGpsPos::SharedPtr msg);
   void onGpsVel(const sbg_driver::msg::SbgGpsVel::SharedPtr msg);
   void onGpsHdt(const sbg_driver::msg::SbgGpsHdt::SharedPtr msg);
+  void onWheelSpeeds(const hyu_msgs::msg::WheelSpeedsStamped::SharedPtr msg);
   void publishCarState(const builtin_interfaces::msg::Time & stamp);
   void publishGnssOdom(const builtin_interfaces::msg::Time & fallback_stamp, const GpsPosMeas & m);
   void onStatusTimer();
@@ -89,6 +92,12 @@ private:
   bool publish_overlay_ = true;
   double antenna_offset_x_ = 1.25;  // primary antenna in base_footprint [m], x fwd
   double antenna_offset_y_ = 0.0;   // ... y left
+  // Wheel speeds (drive_udp_bridge, m/s) -- optional velocity aiding.
+  std::string wheel_speeds_topic_;
+  bool use_wheel_speeds_ = true;
+  std::string wheel_source_ = "rear";   // rear | all
+  double wheel_scale_ = 1.0;            // effective-radius correction (RTK parity)
+  double wheel_timeout_ = 0.3;          // [s] older samples are not fused
   double odom_sigma_ok_ = 0.05;
   double odom_sigma_degraded_ = 0.20;
   double blind_gap_sec_ = 0.5;
@@ -114,6 +123,10 @@ private:
   int last_fix_sats_ = -1;
   bool last_fix_valid_ = false;
   double last_fix_dev_t_ = -1e9;
+  // Latest wheel sample for the health report.
+  double last_wheel_ros_t_ = -std::numeric_limits<double>::infinity();
+  double last_wheel_mps_ = 0.0;
+  std::uint64_t wheel_dropped_ = 0;  // stale / non-finite / before the clock offset
 
   rclcpp::Publisher<hyu_msgs::msg::CarState>::SharedPtr car_state_pub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr gnss_odom_pub_;
@@ -125,6 +138,7 @@ private:
   rclcpp::Subscription<sbg_driver::msg::SbgGpsPos>::SharedPtr gps_pos_sub_;
   rclcpp::Subscription<sbg_driver::msg::SbgGpsVel>::SharedPtr gps_vel_sub_;
   rclcpp::Subscription<sbg_driver::msg::SbgGpsHdt>::SharedPtr gps_hdt_sub_;
+  rclcpp::Subscription<hyu_msgs::msg::WheelSpeedsStamped>::SharedPtr wheel_sub_;
   rclcpp::TimerBase::SharedPtr status_timer_;
 };
 

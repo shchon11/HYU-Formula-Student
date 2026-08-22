@@ -248,12 +248,12 @@ class PerceptionNode(Node):
                 Image, self.left_image_topic, self._left_image_callback, qos)
             self.create_subscription(
                 Image, self.right_image_topic, self._right_image_callback, qos)
-        # Ego twist for de-skew and the speed-proportional covariance term.
-        # Two sources, freshest-preferred: the primary (wheel odometry) when
-        # it is flowing, else the fallback (the SBG bridge's fused odometry,
-        # which carries a body twist through every one of its rungs). The car
-        # has no wheel encoder wired today, so without the fallback the
-        # primary is silent and every cloud goes out skewed.
+        # Ego twist for de-skew and the speed-proportional covariance term:
+        # sbg_raw_ekf's fused odometry (/localization/ins_odom), which carries
+        # a body twist through every one of its rungs. An optional fallback
+        # topic is used whenever the primary has not been heard from within
+        # deskew_twist_timeout; the default config has none (the old
+        # wheel_odometry primary was retired 2026-08-22).
         self._twist = None
         self._twist_primary = None
         self._twist_fallback = None
@@ -334,11 +334,11 @@ class PerceptionNode(Node):
         self.declare_parameter("publish_segmented_cloud", True)
         self.declare_parameter("deskew_enabled", True)
         self.declare_parameter(
-            "deskew_twist_topic", "/localization/wheel_odom")
+            "deskew_twist_topic", "/localization/ins_odom")
         # Second twist source, used whenever the primary has not been heard
         # from within deskew_twist_timeout. "" disables it.
         self.declare_parameter(
-            "deskew_twist_fallback_topic", "/localization/ins_odom")
+            "deskew_twist_fallback_topic", "")
         self.declare_parameter("deskew_twist_timeout", 0.5)
         # Per-point time for the de-skew on RoboSense clouds (the sim's 'time'
         # field is exact by construction and is always used as is):

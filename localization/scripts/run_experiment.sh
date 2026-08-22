@@ -66,7 +66,6 @@ kill_harness() {
     pkill -9 -f "scripts/drive_track.py" 2>/dev/null
     pkill -9 -f "sim_ellipse_d" 2>/dev/null
     pkill -9 -f "sbg_raw_ekf" 2>/dev/null
-    pkill -9 -f "hyu_localization/wheel_odometry" 2>/dev/null
     pkill -9 -x gzserver 2>/dev/null
     pkill -9 -f spawner.py 2>/dev/null
     # Leftover sim launch trees keep latching stale /robot_description,
@@ -123,9 +122,9 @@ done
 sleep 3
 echo "simulator up"
 
-# Real sensor chain: sim INS + SBG bridge (anchor) + wheel odometry (motion).
-SLAM_INPUT=/localization/wheel_odom
-RAW_TOPIC=/localization/wheel_odom
+# Real sensor chain: sim INS + sbg_raw_ekf (fused odometry = SLAM motion input).
+SLAM_INPUT=/localization/ins_odom
+RAW_TOPIC=/localization/ins_odom
 
 # ros2 launch rejects name:= with an empty value as malformed, so the
 # schedule argument is only passed when it has content.
@@ -138,13 +137,6 @@ echo "== starting INS pipeline (sim Ellipse-D + SBG bridge, gnss=$GNSS_MODE) =="
 ros2 launch hyu_localization ins_pipeline.launch.py \
     "${INS_ARGS[@]}" \
     > "$LOG_DIR/ins.log" 2>&1 &
-PIDS+=($!)
-
-echo "== starting wheel odometry =="
-ros2 run hyu_localization wheel_odometry --ros-args \
-    -p use_sim_time:=true \
-    -p rear_axle_to_base_m:="${VY_ARM:-0.79}" \
-    > "$LOG_DIR/wheel_odom.log" 2>&1 &
 PIDS+=($!)
 
 GNSS_PARAMS=()

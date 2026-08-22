@@ -9,9 +9,12 @@ from drive_udp_bridge.protocol import (
     AutonomousStateWatchdog,
     CommandSnapshot,
     CommandWatchdog,
+    ENCODER_FEEDBACK_FORMAT,
+    ENCODER_FEEDBACK_SIZE,
     pack_command,
     PACKET_FORMAT,
     PACKET_SIZE,
+    unpack_encoder_feedback,
 )
 import pytest
 
@@ -44,6 +47,24 @@ def test_packet_rejects_values_that_are_not_finite_float32(bad_value):
         pack_command(bad_value, 0.0, 1, 1)
     with pytest.raises(ValueError, match='float32'):
         pack_command(0.0, bad_value, 1, 1)
+
+
+def test_encoder_feedback_layout_and_field_order():
+    packet = struct.pack('<IIII', 10, 20, 30, 40)
+
+    feedback = unpack_encoder_feedback(packet)
+
+    assert ENCODER_FEEDBACK_FORMAT == '<IIII'
+    assert ENCODER_FEEDBACK_SIZE == 16
+    assert feedback.front_left_count == 10
+    assert feedback.front_right_count == 20
+    assert feedback.rear_left_count == 30
+    assert feedback.rear_right_count == 40
+
+
+def test_encoder_feedback_rejects_wrong_size():
+    with pytest.raises(ValueError, match='exactly 16 bytes'):
+        unpack_encoder_feedback(b'bad')
 
 
 def test_watchdog_starts_disabled_then_enables_only_while_fresh():

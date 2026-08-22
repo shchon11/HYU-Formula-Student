@@ -443,10 +443,11 @@ def _car_state(t, vx):
 
 
 class DeskewTwistSourceTest(unittest.TestCase):
-    """Two twist sources, freshest-preferred: the primary (wheel odometry)
-    while it is flowing, the fallback (SBG bridge ins_odom) whenever the
-    primary has not been heard from within deskew_twist_timeout. On the car
-    there is no encoder, so the fallback is the only twist there is."""
+    """Two twist sources, freshest-preferred: the primary while it is flowing,
+    the fallback whenever the primary has not been heard from within
+    deskew_twist_timeout. The shipped config uses a single source
+    (/localization/ins_odom, no fallback); the pair below exercises the
+    mechanism with explicit topic names."""
 
     def _twist_node(self):
         node = _node(deskew_twist_timeout=0.5,

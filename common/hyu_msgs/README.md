@@ -33,8 +33,8 @@ A collection of all ROS messages and services used by EUFS.
 | SystemState.msg             | overall mission status of the car. Used in the `ros_can` package                                                                                                                                        |
 | StereoImage.msg             | Contains color and depth image                                                                                                                                                                          |
 | WheelOdometryErr.msg        | Error of Wheel Odometry based on euclidean distance. Used by localization's `wheel_odometery_evaluator` script                                                                                          |
-| WheelSpeeds.msg             | output of the wheel odometry. Used in the `ros_can` package                                                                                                                                             |
-| WheelSpeedsStamped.msg      | same as the above but with std_msgs/Header                                                                                                                                                              |
+| WheelSpeeds.msg             | per-wheel linear speeds (lf, rf, lb, rb) in m/s. On the car published by `drive_udp_bridge` from the ECU's cumulative encoder counts; no steering field                                                  |
+| WheelSpeedsStamped.msg      | same as the above but with std_msgs/Header (`/vehicle/wheel_speeds`)                                                                                                                                    |
 | Waypoint.msg                | suggested control outputs at each point of path produced by planning nodes                                                                                                                              |
 | WaypointArrayStamped.msg    | array of Waypoint.msg with a header                                                                                                                                                                     |
 

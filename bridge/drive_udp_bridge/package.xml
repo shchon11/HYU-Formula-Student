@@ -3,7 +3,7 @@
 <package format="3">
   <name>drive_udp_bridge</name>
   <version>0.1.0</version>
-  <description>Send Ackermann speed and steering commands to a Speedgoat ECU over UDP.</description>
+  <description>Exchange drive commands and per-wheel encoder speeds with a Speedgoat ECU over UDP.</description>
   <maintainer email="simseunghwan@example.com">simseunghwan</maintainer>
   <license>MIT</license>
 
@@ -11,6 +11,9 @@
 
   <exec_depend>ackermann_msgs</exec_depend>
   <exec_depend>hyu_msgs</exec_depend>
+  <!-- bench:=true rig only: AS button driver + /vehicle/as_state provider -->
+  <exec_depend>hyu_sensor_bringup</exec_depend>
+  <exec_depend>hyu_planning_bringup</exec_depend>
   <exec_depend>std_srvs</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>

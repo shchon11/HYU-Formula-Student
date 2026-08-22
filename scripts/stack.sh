@@ -64,10 +64,15 @@ fsk_setenv FSK_INS_PANE "$P_INS"
 
 # ③ Planning graph in the STANDBY profile. mission.sh finds this pane via
 # FSK_PLAN_PANE and respawns it in-place for mission-specific profiles.
+# Sim gates on the race_car node (the sim clock and the car plugin's
+# /vehicle/* services come with it). The vehicle/bag flow launches at once:
+# nothing in the planning graph needs TF or cones to START — the nodes idle
+# on "no input" until perception and odometry arrive — so gating on
+# /perception/cones only serialised bringup behind the YOLO/ZED start-up.
 P_PLAN=$(tmux split-window -h -t "$FIRST_PANE" -P -F '#{pane_id}')
-if [ "$ENV_KIND" = "sim" ]; then PLAN_WAIT="$WAIT_CAR"; else PLAN_WAIT="$WAIT_CONES"; fi
+if [ "$ENV_KIND" = "sim" ]; then PLAN_WAIT="echo 'waiting for the sim car…'; $WAIT_CAR; "; else PLAN_WAIT=""; fi
 tmux send-keys -t "$P_PLAN" \
-  "$SRC echo '[③ PLANNING: slam+global+local+SM+selector+MAP-PP+DSSI — STANDBY, waiting for mission] waiting for inputs…'; $PLAN_WAIT; $(fsk_plan_cmd "$FSK_STANDBY_PROFILE")" C-m
+  "$SRC echo '[③ PLANNING: slam+global+local+SM+selector+MAP-PP+DSSI — STANDBY, waiting for mission]'; ${PLAN_WAIT}$(fsk_plan_cmd "$FSK_STANDBY_PROFILE")" C-m
 
 # ④ Monitor.
 P_MON=$(tmux split-window -v -t "$P_PLAN" -P -F '#{pane_id}')

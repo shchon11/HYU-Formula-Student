@@ -149,10 +149,6 @@ install(PROGRAMS scripts/ate_monitor.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME ate_monitor)
 
-install(PROGRAMS scripts/wheel_odometry.py
-  DESTINATION lib/${PROJECT_NAME}
-  RENAME wheel_odometry)
-
 install(PROGRAMS scripts/status_monitor.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME status_monitor)
@@ -166,14 +162,6 @@ install(DIRECTORY include/
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   find_package(ament_lint_auto REQUIRED)
-
-  # The python nodes under scripts/ had no test runner at all, so the INS
-  # coupling in wheel_odometry (body-frame sign conventions, slip direction)
-  # was unguarded. Mirrors eufs_sensors' pytest wiring.
-  find_package(ament_cmake_pytest REQUIRED)
-  ament_add_pytest_test(wheel_odometry_tests test/test_wheel_odometry.py
-    TIMEOUT 120
-  )
 
   ament_add_gtest(raw_gnss_ekf_test
     test/raw_gnss_ekf_test.cpp)

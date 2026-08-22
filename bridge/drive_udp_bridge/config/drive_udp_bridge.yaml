@@ -15,6 +15,44 @@ drive_udp_bridge:
     command_timeout_sec: 0.2
     auto_state_timeout_sec: 0.5
 
+    # ECU -> AGX cumulative wheel-encoder feedback (<IIII, 16 bytes: FL FR RL
+    # RR uint32 counts). OUR side of the contract: the ECU model must send its
+    # feedback datagrams to <AGX address on the Speedgoat subnet>:feedback_port
+    # -- i.e. the AGX's 192.168.9.x address, UDP 5001. 0.0.0.0 binds every
+    # local interface, so the AGX address itself never has to be repeated here.
+    # Feedback actually turns on only once encoder_counts_per_revolution below
+    # is filled; until then the node starts normally (commands unaffected) and
+    # logs that wheel-speed publication is off.
+    feedback_bind_ip: 0.0.0.0
+    feedback_port: 5001
+    feedback_poll_rate_hz: 200.0
+    feedback_timeout_sec: 0.2
+    # Source address feedback must come from. "" = ecu_ip; "0.0.0.0" = any
+    # (bench, when a PC plays the ECU).
+    feedback_source_ip: ""
+
+    # THE one value we cannot choose: how many counts the ECU packet advances
+    # per complete TIRE revolution. Ingredients are on the datasheets (encoder
+    # pulses/rev, x4 if the ECU counts quadrature edges, x motor->wheel gear
+    # ratio), but the final number depends on what the Speedgoat model
+    # actually accumulates (motor shaft vs wheel side, already divided by the
+    # ratio or not) -- confirm with the ECU team, or measure: roll the car
+    # exactly one tire turn and read the count delta (README has a one-liner).
+    # 0 = not known yet -> feedback off, node still starts.
+    # The tire diameter comes from 2 * 0.2286 m UNLOADED_RADIUS in the Hoosier
+    # PAC02 .tir file. Speed resolution per count is pi * tire_diameter_m /
+    # counts / dt -- with 0.4572 m, 1000 counts/rev and a 10 ms ECU period one
+    # count is 0.14 m/s.
+    encoder_counts_per_revolution: 0
+    tire_diameter_m: 0.4572
+
+    # Reject an encoder jump above this absolute per-wheel speed. Set 0.0 to
+    # disable the validation gate until the real vehicle limit is confirmed.
+    max_wheel_speed_mps: 50.0
+
+    wheel_speeds_topic: /vehicle/wheel_speeds
+    wheel_speeds_frame_id: base_footprint
+
     # OFF->ON edge of the autonomous switch (/vehicle/as_state -> AS_DRIVING):
     # reset the SLAM map first, raise the autonomous-enable byte only after the
     # service answered success (retried every map_reset_timeout_sec while the

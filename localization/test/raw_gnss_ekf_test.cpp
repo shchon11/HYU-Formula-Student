@@ -340,3 +340,207 @@ int main(int argc, char ** argv)
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }
+
+// ---------------------------------------------------------------------------
+// Wheel-speed aiding (optional input from the ECU encoder bridge).
+
+namespace
+{
+
+using hyu_localization::WheelMeas;
+
+/// Feed a scenario into a core, optionally injecting a wheel sample right
+/// after every IMU sample (the bridge publishes at the ECU rate, ~IMU rate)
+/// and optionally dropping the gps_vel epochs from t >= vel_gap_from.
+void runWithWheels(
+  RawGnssEkfCore & f, const Scenario & sc, bool wheels, double wheel_bias,
+  double vel_gap_from, std::vector<double> * speed_err = nullptr, double err_from = 0.0)
+{
+  std::size_t ti = 0;
+  for (const Meas & m : sc.events) {
+    if (m.type == 2 && m.t >= vel_gap_from) {
+      continue;
+    }
+    feed(f, m);
+    if (m.type == 0) {
+      const Truth & tr = sc.truth[ti++];
+      if (wheels) {
+        WheelMeas w;
+        w.t = m.t;
+        w.v_fwd = std::hypot(tr.vN, tr.vE) + wheel_bias;
+        f.wheel(w);
+      }
+      if (speed_err && f.initialized() && tr.t >= err_from) {
+        const double v_est = std::hypot(f.x()[2], f.x()[3]);
+        speed_err->push_back(v_est - std::hypot(tr.vN, tr.vE));
+      }
+    }
+  }
+}
+
+double rms(const std::vector<double> & v)
+{
+  double s = 0.0;
+  for (double e : v) {s += e * e;}
+  return v.empty() ? 0.0 : std::sqrt(s / static_cast<double>(v.size()));
+}
+
+}  // namespace
+
+TEST(RawGnssEkfWheel, NoWheelEventsLeaveTheFilterBitIdentical)
+{
+  // The whole hand-over logic is "a wheel sample came or it did not": with
+  // none, the filter must be the IMU+GNSS one, state for state.
+  const Scenario sc = makeCircle(30.0, 20.0, 5.0, 0.01, 0.15, -0.10);
+  RawGnssEkfCore plain, wheel_capable;
+  for (const Meas & m : sc.events) {
+    feed(plain, m);
+    feed(wheel_capable, m);
+  }
+  ASSERT_TRUE(plain.initialized());
+  for (int i = 0; i < RawGnssEkfCore::NX; ++i) {
+    EXPECT_EQ(plain.x()[i], wheel_capable.x()[i]) << "state " << i;
+  }
+  EXPECT_EQ(plain.accepted(), wheel_capable.accepted());
+  EXPECT_EQ(wheel_capable.accepted()[RawGnssEkfCore::WHEEL], 0);
+}
+
+TEST(RawGnssEkfWheel, WheelsHoldTheSpeedThroughAGpsVelOutage)
+{
+  // gps_vel stops at 20 s (pos + hdt keep coming): without wheels the speed
+  // rides on IMU integration between position fixes, with wheels it is
+  // observed at the IMU rate. Wheels must cut the speed error clearly and
+  // be accepted, not gated.
+  const Scenario sc = makeCircle(60.0, 20.0, 5.0, 0.01, 0.15, -0.10);
+  RawGnssEkfCore without, with;
+  std::vector<double> e_without, e_with;
+  runWithWheels(without, sc, false, 0.0, 20.0, &e_without, 25.0);
+  runWithWheels(with, sc, true, 0.0, 20.0, &e_with, 25.0);
+  ASSERT_GT(e_with.size(), 100u);
+  EXPECT_LT(rms(e_with), 0.05);
+  EXPECT_LT(rms(e_with), 0.5 * rms(e_without) + 1e-9);
+  EXPECT_GT(with.accepted()[RawGnssEkfCore::WHEEL], 800);
+  EXPECT_LT(with.rejected()[RawGnssEkfCore::WHEEL], with.accepted()[RawGnssEkfCore::WHEEL] / 20);
+  EXPECT_EQ(with.mode(), RawGnssEkfCore::OK);
+}
+
+TEST(RawGnssEkfWheel, FreshMovingWheelsVetoTheZupt)
+{
+  // IMU says still (standstill scenario), GPS speed 0 -- but the wheels read
+  // 3 m/s: the filter must NOT declare a ZUPT (wheels only veto).
+  const Scenario sc = makeCircle(20.0, 20.0, 0.0, 0.005, 0.02, -0.01, false);
+  RawGnssEkfCore f;
+  int zupt_before_wheels = -1;
+  for (const Meas & m : sc.events) {
+    feed(f, m);
+    if (m.type == 0 && m.t >= 10.0) {
+      if (zupt_before_wheels < 0) {
+        zupt_before_wheels = f.accepted()[RawGnssEkfCore::ZUPT];
+      }
+      WheelMeas w;
+      w.t = m.t;
+      w.v_fwd = 3.0;
+      f.wheel(w);
+    }
+  }
+  ASSERT_TRUE(f.initialized());
+  EXPECT_GT(zupt_before_wheels, 50);  // it was zupting before the wheels spoke
+  EXPECT_FALSE(f.stationary());
+  // Every IMU sample after 10 s was vetoed: the ZUPT count froze (the one
+  // sample at exactly 10.0 s was judged before its wheel arrived).
+  EXPECT_LE(f.accepted()[RawGnssEkfCore::ZUPT] - zupt_before_wheels, 1);
+}
+
+TEST(RawGnssEkfWheel, StaleWheelsDoNotVetoTheZupt)
+{
+  // A wheel sample older than zupt_wheel_age is no evidence either way.
+  const Scenario sc = makeCircle(20.0, 20.0, 0.0, 0.005, 0.02, -0.01, false);
+  RawGnssEkfCore f;
+  for (const Meas & m : sc.events) {
+    feed(f, m);
+    if (m.type == 0 && std::fabs(m.t - 10.0) < 1e-6) {
+      WheelMeas w;
+      w.t = m.t;
+      w.v_fwd = 3.0;  // one stray sample, then silence
+      f.wheel(w);
+    }
+  }
+  EXPECT_TRUE(f.stationary());
+}
+
+TEST(RawGnssEkfWheel, WildSampleIsGatedAndSoftReacquired)
+{
+  const Scenario sc = makeCircle(30.0, 20.0, 5.0, 0.01, 0.15, -0.10);
+  RawGnssEkfCore f;
+  runWithWheels(f, sc, true, 0.0, 1e9);
+  ASSERT_TRUE(f.initialized());
+  const int acc0 = f.accepted()[RawGnssEkfCore::WHEEL];
+  const int rej0 = f.rejected()[RawGnssEkfCore::WHEEL];
+  const double v0 = std::hypot(f.x()[2], f.x()[3]);
+  WheelMeas wild;
+  wild.t = f.time() + 0.04;
+  wild.v_fwd = 40.0;  // 35 m/s off: far outside the gate
+  f.wheel(wild);
+  EXPECT_EQ(f.rejected()[RawGnssEkfCore::WHEEL], rej0 + 1);
+  EXPECT_EQ(f.accepted()[RawGnssEkfCore::WHEEL], acc0);
+  EXPECT_NEAR(std::hypot(f.x()[2], f.x()[3]), v0, 0.05);
+  // After max_rej_wheel consecutive rejects the next one is taken with R*9
+  // (soft re-acquire), exactly like the GNSS channels.
+  for (int i = 0; i < f.params().max_rej_wheel; ++i) {
+    wild.t += 0.04;
+    f.wheel(wild);
+  }
+  EXPECT_EQ(f.accepted()[RawGnssEkfCore::WHEEL], acc0 + 1);
+}
+
+TEST(RawGnssEkfWheel, LateWheelEventsReplayToTheSortedResult)
+{
+  const Scenario sc = makeCircle(30.0, 20.0, 5.0, 0.01, 0.15, -0.10);
+  RawGnssEkfCore sorted;
+  RawGnssEkf live(RawGnssEkfParams(), 1.0);
+  // Live: wheel samples reach the node 60 ms after the IMU frame of the same
+  // time (ECU -> UDP -> bridge), i.e. after one or two more IMU samples.
+  const double lag = 0.06;
+  std::vector<WheelMeas> pending;
+  std::size_t ti = 0;
+  // The wrapper orders equal-time events IMU < POS < VEL < HDT < WHEEL, so
+  // the sorted reference applies a wheel sample after the epochs of its time.
+  WheelMeas sorted_pending;
+  bool has_sorted_pending = false;
+  for (const Meas & m : sc.events) {
+    if (has_sorted_pending && m.t > sorted_pending.t) {
+      sorted.wheel(sorted_pending);
+      has_sorted_pending = false;
+    }
+    feed(sorted, m);
+    if (m.type == 0) {
+      const Truth & tr = sc.truth[ti++];
+      WheelMeas w;
+      w.t = m.t;
+      w.v_fwd = std::hypot(tr.vN, tr.vE);
+      sorted_pending = w;
+      has_sorted_pending = true;
+      std::vector<WheelMeas> keep;
+      for (const WheelMeas & p : pending) {
+        if (p.t + lag <= m.t) {live.wheel(p);} else {keep.push_back(p);}
+      }
+      pending.swap(keep);
+      feed(live, m);
+      pending.push_back(w);
+    } else {
+      feed(live, m);
+    }
+  }
+  for (const WheelMeas & p : pending) {
+    live.wheel(p);
+  }
+  if (has_sorted_pending) {
+    sorted.wheel(sorted_pending);
+  }
+  ASSERT_TRUE(live.core().initialized());
+  EXPECT_GT(live.stats().replays, 100u);
+  for (int i = 0; i < RawGnssEkfCore::NX; ++i) {
+    EXPECT_NEAR(live.core().x()[i], sorted.x()[i], 1e-9) << "state " << i;
+  }
+  EXPECT_EQ(live.core().accepted(), sorted.accepted());
+}
