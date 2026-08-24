@@ -415,5 +415,52 @@ TEST(MapController, StopRequestStillBrakesInMapMode)
   expectExactBrake(computeCommand(stopped, mapConfig(), &table));
 }
 
+// --- Rear-axle control point ---
+
+TEST(PurePursuitController, ControlPointMovesAlongTheHeadingByTheAxleOffset)
+{
+  ControllerConfig config;
+  config.rear_axle_from_base_m = 0.91;
+  const EgoState base{1.0, 2.0, M_PI / 2.0, 3.0};
+  const EgoState axle = controlPoint(base, config);
+  EXPECT_NEAR(axle.x_m, 1.0, 1.0e-12);
+  EXPECT_NEAR(axle.y_m, 2.91, 1.0e-12);
+  EXPECT_DOUBLE_EQ(axle.yaw_rad, base.yaw_rad);
+  EXPECT_DOUBLE_EQ(axle.longitudinal_speed_mps, base.longitudinal_speed_mps);
+
+  config.rear_axle_from_base_m = 0.0;
+  const EgoState same = controlPoint(base, config);
+  EXPECT_DOUBLE_EQ(same.x_m, base.x_m);
+  EXPECT_DOUBLE_EQ(same.y_m, base.y_m);
+}
+
+TEST(PurePursuitController, RearAxleOffsetSteersTheAxleNotTheBase)
+{
+  // Straight path along +x (y = 0). The base pose sits ON the line but yawed
+  // 0.2 rad left, so the axle 0.91 m ahead along the heading is LEFT of the
+  // line (y = +0.18). Both see a right-hand correction; the axle, displaced
+  // off the line, needs the larger one (geometric: base -0.156, axle -0.253).
+  auto input = readyInput({
+    PathPoint{0.0, 0.0, 3.0, 3.0}, PathPoint{2.0, 0.0, 3.0, 3.0},
+    PathPoint{4.0, 0.0, 3.0, 3.0}, PathPoint{6.0, 0.0, 3.0, 3.0},
+    PathPoint{8.0, 0.0, 3.0, 3.0}});
+  input.ego = EgoState{0.0, 0.0, 0.2, 3.0};
+  ControllerConfig base_config;  // rear_axle_from_base_m = 0: steer the pose as-is
+  ControllerConfig axle_config;
+  axle_config.rear_axle_from_base_m = 0.91;
+  const double base_steer = computeCommand(input, base_config).steering_angle_rad;
+  const double axle_steer = computeCommand(input, axle_config).steering_angle_rad;
+  EXPECT_NEAR(base_steer, -0.156, 0.01);
+  EXPECT_NEAR(axle_steer, -0.253, 0.01);
+  EXPECT_LT(axle_steer, base_steer);
+}
+
+TEST(PurePursuitController, NonFiniteRearAxleOffsetBrakes)
+{
+  ControllerConfig config;
+  config.rear_axle_from_base_m = std::numeric_limits<double>::quiet_NaN();
+  expectExactBrake(computeCommand(readyInput(straightPath()), config));
+}
+
 }
 }

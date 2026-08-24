@@ -264,7 +264,7 @@ perception_node:
     # the map has to survive. 12 gives the 10 m zone a 2 m on-ramp so a cone
     # is already tracked when it matters. LiDAR clusters are NOT capped: a
     # far cluster is accurate when it exists at all.
-    monocular_max_depth_m: 12.0
+    monocular_max_depth_m: 8.0    # 2026-08-23 zncc_bag_check: ZNCC 신뢰구간 4-8m, >8m는 -18~-25% (신뢰영역만)
     # D = c * h_n^e, RE-FITTED against ground truth with
     # `fit_mono_depth_curve.py --live` (n=1571): residual 8.20 % mean, 4.69 %
     # median.
@@ -287,6 +287,14 @@ perception_node:
     # ground truth: use Tier-1 LiDAR depth as the reference.
     monocular_depth_coefficient: 0.2913
     monocular_depth_exponent: -0.9814
+    # 2026-08-23: the curve above is the SIMULATOR's camera (fy 448). On the
+    # car (fy 677) it read 0.667x the LiDAR depth, so the ZNCC search window
+    # missed the true disparity on 55 % of boxes and the 12 m cap sat at
+    # ~18 m. With this true the prior is the pinhole relation D = fy*H/h
+    # read from CameraInfo -- which is exactly what the sim re-fit landed on
+    # -- so it follows whichever camera is plugged in. The curve stays for
+    # the fallback (false) and for fit_mono_depth_curve.py.
+    monocular_prior_from_intrinsics: true
     # Cone-derived constants, and identical between sim and the real car: our
     # cone is 450 mm, NOT the 325 mm FS-AI spec. Do not "correct" these.
     standard_cone_height_m: 0.450
@@ -319,8 +327,35 @@ perception_node:
     # vision-only cone is dropped. Colour still comes from the bboxes, so the
     # LiDAR cones keep their blue/yellow/orange labels; what is lost is the
     # cones the LiDAR never saw (last measured: 79 of 111 ZNCC-confirmed).
-    zncc_enabled: false
+    #
+    # BACK ON 2026-08-23. The "poor quality" that switched it off was not the
+    # matcher: replayed on the 0801 bags the correlation peak sat exactly on
+    # the cone, but the ZED's rectified pair itself carried a +3.3 px (centre)
+    # to +5 px (edge) disparity bias -- a +0.28 deg residual yaw of the right
+    # camera, factory calibration of S/N 14352 with self-calibration skipped
+    # on every start ("low texture") -- so every vision cone came out 13-30 %
+    # too close. See stereo_right_yaw_deg below; with it subtracted the same
+    # boxes read |err|<10 % for 67 % (97 % at 4-6 m) instead of 3 %.
+    zncc_enabled: true
     stereo_baseline_m: 0.12
+    # Residual yaw of the RIGHT camera vs the SDK's rectification, degrees.
+    # Adds fx*yaw*(1+x^2) px to every observed disparity (x = (u-cx)/fx);
+    # subtracted before triangulating. MEASURED 2026-08-23 three ways and
+    # they agree: ChArUco stereo pairs of 0801 (stereoCalibrate, K fixed:
+    # -0.254 deg; 0726 session -0.294), and LiDAR-referenced cone boxes in
+    # two driving bags (0.283 / 0.288 deg, residual MAD 0.2 px). Rows are
+    # aligned (vertical residual -0.08 px), so yaw is the whole defect. The
+    # simulator's pair is perfect (0); the online estimate below takes over
+    # there within a few frames, so the car value is safe to ship here.
+    # Re-measure after any ZED recalibration: scripts/stereo_yaw_from_charuco.py
+    # (captures) or scripts/zncc_bag_check.py (a driving bag).
+    stereo_right_yaw_deg: 0.28
+    # Learn the yaw on the car from every cluster+detection box (a box with
+    # a LiDAR depth): running median of the last 300 samples replaces the
+    # constant once min_samples have arrived. Exact-stamp pairs only, 2 m to
+    # monocular_max_depth_m. Logged every latency period as "right yaw".
+    stereo_yaw_online_enabled: true
+    stereo_yaw_online_min_samples: 30
     zncc_min_score: 0.5
     # Window around the prior. The prior is centred on the fitted curve's depth
     # (d = fx*B/D), NOT on the box height: a box-derived prior (d = h*B/H) is

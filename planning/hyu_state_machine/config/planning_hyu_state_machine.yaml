@@ -19,7 +19,13 @@ planning_hyu_state_machine_node:
     # trigger GLOBAL_FINAL_STOP on a different lap than the last one.
 
     frenet_odom_timeout_sec: 0.5
-    global_path_valid_timeout_sec: 0.5
+    # Must outlast one global-planner raceline rebuild: the planner's validity
+    # heartbeat shares the thread with the rebuild (measured up to ~0.7 s on
+    # the Jetson), and at 0.5 s every legitimate rebuild bounced GLOBAL ->
+    # LOCAL for ~0.8 s (dwell re-entry). The planner also refreshes validity
+    # right before rebuilding, so 1.0 s covers a rebuild without masking a
+    # genuinely dead planner for long.
+    global_path_valid_timeout_sec: 1.0
     global_handoff_timeout_sec: 0.5
     global_entry_dwell_sec: 0.5
     cone_map_timeout_sec: 1.0

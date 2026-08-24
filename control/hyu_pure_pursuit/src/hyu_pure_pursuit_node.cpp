@@ -75,6 +75,10 @@ public:
       declare_parameter("map_lookahead_max_m", config_.map_lookahead_max_m);
     config_.map_speed_source =
       parseMapSpeedSource(declare_parameter<std::string>("map_speed_source", "planned"));
+    // Rear axle along body x of the incoming pose (base_footprint); the
+    // controller steers that point. See ControllerConfig::rear_axle_from_base_m.
+    config_.rear_axle_from_base_m =
+      declare_parameter("rear_axle_from_base_m", config_.rear_axle_from_base_m);
 
     if (config_.steering_mode == SteeringMode::MAP) {
       lut_ = buildLookupTable();

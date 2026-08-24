@@ -153,6 +153,14 @@ install(PROGRAMS scripts/status_monitor.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME status_monitor)
 
+install(PROGRAMS scripts/slam_bag_consistency.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME slam_bag_consistency)
+
+install(PROGRAMS scripts/fake_orange_gate.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME fake_orange_gate)
+
 install(DIRECTORY config launch map
   DESTINATION share/${PROJECT_NAME})
 

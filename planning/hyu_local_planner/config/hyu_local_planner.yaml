@@ -32,7 +32,7 @@ hyu_local_planner_node:
     two_sided_horizon_m: 20.0
     fallback_horizon_m: 8.0
     fallback_offset_m: 1.5
-    two_sided_speed_mps: 6.0
+    two_sided_speed_mps: 5.0
     fallback_speed_mps: 4.5
     # Corner speed = min(per-path speed, sqrt(max_lateral_accel / |kappa|)).
     # This bounds GRIP; it does not bound the STEERING range. On the tightest
@@ -51,6 +51,12 @@ hyu_local_planner_node:
     use_unknown_cones: true
     unknown_absorb_lateral_m: 0.75
     unknown_geom_deadband_m: 0.75
+    # Unknown cones beyond this range (m from the ego) that no labelled boundary
+    # line explains are dropped instead of split by ego side: far out, the ego's
+    # left/right no longer follows the track and a split outside-of-bend cone
+    # fabricated boundaries that hooked the path at the map frontier. Orange
+    # gate cones are not limited.
+    unknown_geom_max_range_m: 6.0
     # Fold the orange/big-orange start-finish cones into the boundaries through
     # the same conservative classification. Without this a lap-close frame that
     # sees only the orange gate has zero boundary cones -> invalid -> brake at
@@ -70,3 +76,13 @@ hyu_local_planner_node:
     live_cone_max_age_sec: 0.4
     live_merge_radius_m: 1.0
     live_extension_as_unknown: false
+    # Map-first reconciliation of the extension. The path is planned from the
+    # map alone AND from map+live cones; the live result is used only where it
+    # keeps every map-only waypoint within live_extension_max_deviation_m and
+    # its tail past the map frontier turns less than live_extension_max_turn_rad
+    # over live_extension_turn_window_m of arc -- a live outlier can then add
+    # an honest continuation but never a right-angle hook or a link back along
+    # the driven corridor. Anything else falls back to the map-only path.
+    live_extension_max_deviation_m: 0.5
+    live_extension_max_turn_rad: 1.4
+    live_extension_turn_window_m: 1.0

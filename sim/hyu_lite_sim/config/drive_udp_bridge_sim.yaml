@@ -1,0 +1,40 @@
+# drive_udp_bridge parameters for the LITE SIMULATOR: everything on loopback.
+#
+# The real yaml points at the Speedgoat (192.168.9.1:5000) and binds the
+# feedback socket on the car's 192.168.9.2. This file keeps both ends on
+# 127.0.0.1 so a simulator run can never reach the ECU even with the car's
+# Ethernet plugged in: commands go to the fake ECU in hyu_lite_sim
+# (udp_listen_port 15000), its RPM feedback comes back on 15001.
+drive_udp_bridge:
+  ros__parameters:
+    command_topic: /vehicle/cmd
+    auto_state_topic: /vehicle/as_state
+
+    ecu_ip: "127.0.0.1"
+    ecu_port: 15000
+    local_bind_ip: 127.0.0.1
+    local_bind_port: 0
+
+    send_rate_hz: 100.0
+    command_timeout_sec: 0.2
+    auto_state_timeout_sec: 0.5
+
+    steering_calibration_csv: steering_kinematics.csv
+    max_steering_wheel_angle_deg: 90.0
+
+    feedback_bind_ip: 127.0.0.1
+    feedback_port: 15001
+    feedback_poll_rate_hz: 200.0
+    feedback_timeout_sec: 0.2
+    feedback_source_ip: "0.0.0.0"
+    feedback_value_type: float32
+    rpm_gear_ratio: 1.0
+    tire_diameter_m: 0.4572
+    max_wheel_speed_mps: 50.0
+    wheel_speeds_topic: /vehicle/wheel_speeds
+    wheel_speeds_frame_id: base_footprint
+
+    # As on the car: OFF->ON edge resets the SLAM map, then enables.
+    map_reset_service: /graph_slam/reset
+    map_reset_timeout_sec: 5.0
+    require_map_reset: true

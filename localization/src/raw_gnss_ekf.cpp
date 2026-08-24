@@ -28,12 +28,13 @@ RawGnssEkfCore::RawGnssEkfCore(const RawGnssEkfParams & p)
 }
 
 void RawGnssEkfCore::init(
-  double t, double pN, double pE, double vN, double vE, double psi, double psi_sig)
+  double t, double pN, double pE, double vN, double vE, double psi, double psi_sig,
+  double pos_sig)
 {
   x_ << pN, pE, vN, vE, psi, 0.0, 0.0, 0.0;
   P_.setZero();
-  P_(0, 0) = 1.0;
-  P_(1, 1) = 1.0;
+  P_(0, 0) = pos_sig * pos_sig;
+  P_(1, 1) = pos_sig * pos_sig;
   P_(2, 2) = 0.5 * 0.5;
   P_(3, 3) = 0.5 * 0.5;
   P_(4, 4) = psi_sig * psi_sig;
@@ -42,6 +43,21 @@ void RawGnssEkfCore::init(
   P_(7, 7) = 1.5 * 1.5;
   t_ = t;
   inited_ = true;
+}
+
+void RawGnssEkfCore::initAtOrigin(double t, double pos_sig)
+{
+  const double vN = has_pending_vel_ ? pending_vN_ : 0.0;
+  const double vE = has_pending_vel_ ? pending_vE_ : 0.0;
+  if (has_pending_psi_) {
+    init(t, 0.0, 0.0, vN, vE, pending_psi_,
+         std::max(pending_psi_sig_, p_.hdt_init_min_sig), pos_sig);
+    last_hdt_t_ = t;
+  } else {
+    init(t, 0.0, 0.0, vN, vE, 0.0, p_.init_psi_sig_unknown, pos_sig);
+  }
+  // Deliberately NOT setting last_pos_t_: there is no position fix yet, so the
+  // mode logic keeps reporting COAST/degraded until GNSS returns.
 }
 
 void RawGnssEkfCore::predict(double t_to)
@@ -455,6 +471,16 @@ void RawGnssEkf::wheel(const WheelMeas & m)
 {
   Event e{m.t, T_WHEEL, {}, {}, {}, {}, m, core_};
   push(std::move(e));
+}
+
+void RawGnssEkf::initAtOrigin(double t, double pos_sig)
+{
+  // Cold start: seed the live core at the datum origin, resync the OOSM
+  // checkpoint, and drop any buffered events (there is no prior state to
+  // rewind to before the very first init).
+  core_.initAtOrigin(t, pos_sig);
+  checkpoint_ = core_;
+  events_.clear();
 }
 
 }  // namespace hyu_localization

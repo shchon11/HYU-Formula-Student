@@ -45,12 +45,18 @@ hyu_local_planner_node:
     # 12 m/s: a moderate bump that still stops inside the braking zone under
     # 3 m/s^2 braking (ceiling ~13.2 m/s; see the controller yaml budget). At
     # 12 m/s the car stops near x=+45, ~5 m short of the x=+50 box.
-    two_sided_speed_mps: 12.0
+    two_sided_speed_mps: 5.0   # capped to the global 5 m/s profile limit (2026-08-23)
     fallback_speed_mps: 4.0
     # Unknown-colour cone handling; see hyu_local_planner.yaml.
     use_unknown_cones: true
     unknown_absorb_lateral_m: 0.75
     unknown_geom_deadband_m: 0.75
+    # Unknown cones beyond this range (m from the ego) that no labelled boundary
+    # line explains are dropped instead of split by ego side: far out, the ego's
+    # left/right no longer follows the track and a split outside-of-bend cone
+    # fabricated boundaries that hooked the path at the map frontier. Orange
+    # gate cones are not limited.
+    unknown_geom_max_range_m: 6.0
     # Straight-corridor mode. Fits a line through the cones behind AND ahead of
     # the ego and drives it straight, bounded straight_extension_cap_m past the
     # last cone. Kills the mid-run brake pulses (car outrunning the frontier)

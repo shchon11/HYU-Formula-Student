@@ -80,7 +80,7 @@ FALLBACK 이라 찍힌다. ZED wrapper의 자체 TF 발행은 꺼둔다(같은 �
 | `/localization/ins_odom` | hyu_msgs/CarState | sbg_raw_ekf (raw `/sbg/imu_data`·`gps_pos`·`gps_vel`·`gps_hdt`만 구독, 장치 EKF 미사용) | graph_slam 모션 입력 (기본 `slam_motion_topic`). ENU, **base_footprint의 포즈**(안테나 해를 `antenna_offset_x/y`로 이동), IMU마다 25 Hz, body twist 포함. pose.covariance[0/7]=max(모드 티어 0.05/0.20, EKF σ)², [35]=EKF yaw 분산; σ≥`odom_invalid_sigma`(10 m)는 "포즈 무효 선언"(IMU 공백 뒤 첫 메시지) | Reliable |
 | `/sbg_bridge/status` | diagnostic_msgs/DiagnosticArray | sbg_raw_ekf | **실차에서는 없음** (sim rqt GUI만). `mode` 200/201/202, `motion_source` 키 = raw_ekf/zupt/raw_ekf_no_hdt/coast/fault/none, ERROR 레벨 = IMU 끊김 또는 5 s 이상 coast. 주행 억제/EBS 게이트가 이걸 읽어야 하지만 아직 소비자 없음 | Reliable |
 | `/localization/drift_odom` | hyu_msgs/CarState | drift_odom(평가 도구) | evaluate_slam | 도구 |
-| `/localization/debug/{markers,path,status_overlay,gnss_overlay}` | Marker/Path/Overlay | hyu_localization·sbg_raw_ekf | RViz/HUD | 디버그 |
+| `/localization/debug/{markers,path,status_overlay,gnss_overlay}` | Marker/Path/Overlay | hyu_localization·sbg_raw_ekf | RViz/HUD (gnss_overlay는 더 이상 RViz 프리셋에 없음 — GNSS 상세는 `/sensors/hud`) | 디버그 |
 
 TF: `map→odom`, `odom→base_footprint`는 hyu_localization이 발행.
 센서 마운트 TF는 robot_state_publisher(URDF).
@@ -125,6 +125,14 @@ TF: `map→odom`, `odom→base_footprint`는 hyu_localization이 발행.
 
 `/ground_truth/*` (GT odom/state/cones — 평가 전용, 스택 소비 금지),
 `/velodyne_points_ideal`, gazebo 내부 토픽.
+
+**경량 시뮬레이터(`hyu_lite_sim`, Gazebo 없음 — Jetson용)**: 실차와 같은 토픽 계약으로
+`/sbg/{imu_data,gps_pos,gps_vel,gps_hdt}`(raw, NED), `/perception/cones`(base_footprint, 트랙 콘 +
+코스 밖 고정물 → unknown_color), ECU는 `drive_udp_bridge`의 루프백 UDP 상대(명령 `<ffBB` 수신, 바퀴별
+RPM 피드백 송신 → `/vehicle/wheel_speeds`)로 에뮬레이션한다. 추가 토픽: `/ground_truth/{state,track,clutter,cones}`,
+`/sim/debug/{world,car,live_cones}`, `/sim/status`; 서비스 `/vehicle/reset_vehicle_pos`(텔레포트),
+`/sim/reset_clutter`. GT 프레임은 `odom`(EKF에 같은 datum을 줘서 sim 월드 == odom). 자세한 것은
+`src/sim/hyu_lite_sim/README.md`.
 
 ## QoS 정책
 

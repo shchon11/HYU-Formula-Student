@@ -97,11 +97,30 @@ SbgRawEkfNode::SbgRawEkfNode()
   // phase centre to the ground point below the ZED stereo centre).
   antenna_offset_x_ = declare_parameter<double>("antenna_offset_x", 1.25);
   antenna_offset_y_ = declare_parameter<double>("antenna_offset_y", 0.0);
+  allow_gnss_denied_init_ = declare_parameter<bool>("allow_gnss_denied_init", false);
+  reacq_min_gap_s_ = declare_parameter<double>("reacquisition_min_gap_s", 3.0);
+  reacq_jump_m_ = declare_parameter<double>("reacquisition_jump_m", 0.5);
+  reacq_jump_yaw_rad_ = deg2rad(declare_parameter<double>("reacquisition_jump_yaw_deg", 10.0));
+  wheel_scale_online_ = declare_parameter<bool>("wheel_scale_online", true);
+  wheel_scale_tau_s_ = declare_parameter<double>("wheel_scale_tau_s", 45.0);
+  wheel_scale_min_speed_ = declare_parameter<double>("wheel_scale_min_speed", 2.0);
+  wheel_scale_max_yaw_rate_ = declare_parameter<double>("wheel_scale_max_yaw_rate", 0.25);
+  wheel_scale_bound_ = declare_parameter<double>("wheel_scale_bound", 0.05);
+  wheel_scale_max_accel_ = declare_parameter<double>("wheel_scale_max_accel", 0.3);
+  wheel_scale_min_samples_ = static_cast<std::uint64_t>(declare_parameter<int>("wheel_scale_min_samples", 20));
+  gnss_denied_init_sec_ = declare_parameter<double>("gnss_denied_init_sec", 2.0);
+  gnss_denied_init_pos_sig_ = declare_parameter<double>("gnss_denied_init_pos_sig", 100.0);
 
   // --- output trust ----------------------------------------------------------
   // Relative-odometry sigma floors by mode for the CarState covariance. The
   // EKF's own position sigma is max'ed in, so coasting widens honestly.
-  odom_sigma_ok_ = declare_parameter<double>("odom_sigma_ok", 0.05);
+  // 2026-08-24: OK floor 0.05 -> 0.02. The 5 cm "reality tax" for unmodelled
+  // bias cost graph_slam 4-5x its pose accuracy (relative odometry chain
+  // freedom ~ sqrt(N) * floor: KASE lap p95 1.2 m vs EKF 0.2 m). The biggest
+  // unmodelled bias (wheel scale, 2 % -> 0.2 m) is now estimated online and
+  // GNSS re-acquisition snaps are flagged with kHugeSigma, so the honest floor
+  // is the EKF's own ~1-2 cm plus a small margin.
+  odom_sigma_ok_ = declare_parameter<double>("odom_sigma_ok", 0.02);
   odom_sigma_degraded_ = declare_parameter<double>("odom_sigma_degraded", 0.20);
   // IMU gap beyond which the next message is published with a huge sigma.
   blind_gap_sec_ = declare_parameter<double>("blind_gap_sec", 0.5);
@@ -151,6 +170,8 @@ SbgRawEkfNode::SbgRawEkfNode()
   wheel_speeds_topic_ = declare_parameter<std::string>("wheel_speeds_topic", "/vehicle/wheel_speeds");
   wheel_source_ = declare_parameter<std::string>("wheel_source", "rear");  // rear | all
   wheel_scale_ = declare_parameter<double>("wheel_scale", 1.0);
+  wheel_scale_est_ = wheel_scale_;
+  wheel_scale_acc_ = wheel_scale_;
   wheel_timeout_ = declare_parameter<double>("wheel_timeout", 0.3);
   p.sig_wheel = declare_parameter<double>("wheel_sigma", p.sig_wheel);
   p.wheel_sig_per_acc = declare_parameter<double>("wheel_sigma_per_acc", p.wheel_sig_per_acc);
@@ -289,13 +310,35 @@ void SbgRawEkfNode::onImu(const sbg_driver::msg::SbgImuData::SharedPtr msg)
   have_last_imu_ = true;
   last_imu_dev_t_ = t;
   last_imu_ros_t_ = hdr_t;
+  if (!have_first_imu_) {
+    have_first_imu_ = true;
+    first_imu_ros_t_ = hdr_t;
+  }
 
   ekf_->imu(sbg_raw::imuSample(*msg, t, enu_wire_));
   if (!ekf_->core().initialized()) {
-    RCLCPP_WARN_THROTTLE(
-      get_logger(), *get_clock(), 5000,
-      "waiting for the first valid gps_pos (last fix type %s)", fixName(last_fix_type_));
-    return;
+    // GNSS-denied cold start: after waiting gnss_denied_init_sec for a fix,
+    // start at the datum origin and dead-reckon on IMU(+wheel). Needs a datum
+    // (proj_ valid, i.e. datum_latitude/longitude set) so the frame stays
+    // consistent with the GNSS that later returns.
+    if (allow_gnss_denied_init_ && proj_.valid() &&
+      (hdr_t - first_imu_ros_t_) > gnss_denied_init_sec_)
+    {
+      ekf_->initAtOrigin(t, gnss_denied_init_pos_sig_);
+      if (!denied_init_announced_) {
+        denied_init_announced_ = true;
+        RCLCPP_WARN(
+          get_logger(),
+          "GNSS-denied init: no valid gps_pos after %.1f s -- starting at the datum "
+          "origin, dead-reckoning on IMU%s; GNSS corrects the position when it returns.",
+          gnss_denied_init_sec_, use_wheel_speeds_ ? "+wheel" : "");
+      }
+    } else {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "waiting for the first valid gps_pos (last fix type %s)", fixName(last_fix_type_));
+      return;
+    }
   }
   if (!announced_init_) {
     announced_init_ = true;
@@ -324,6 +367,29 @@ void SbgRawEkfNode::onGpsPos(const sbg_driver::msg::SbgGpsPos::SharedPtr msg)
   const double t = dev_clock_.toSeconds(msg->time_stamp);
   last_fix_dev_t_ = t;
   const GpsPosMeas m = sbg_raw::gpsPosMeas(*msg, t, proj_, enu_wire_);
+  // Re-acquisition: a big correction after a position gap is a frame snap,
+  // not motion -- flag the next odometry sample as invalid for SLAM.
+  {
+    const RawGnssEkfCore & c = ekf_->core();
+    // Only a RE-acquisition counts: the filter must have had a position before
+    // (lastPosTime set) and still claim to know where it is (sigma below the
+    // SLAM "pose invalid" level) -- a first fix after a GNSS-denied start is
+    // initialisation, already published with a huge sigma, not a jump.
+    const double prev_sig = std::max(c.posSigmaN(), c.posSigmaE());
+    if (c.initialized() && c.lastPosTime() > 0.0 && prev_sig < 10.0 &&
+      (c.time() - c.lastPosTime()) > reacq_min_gap_s_)
+    {
+      const double d = std::hypot(m.N - c.x()[0], m.E - c.x()[1]);
+      if (d > reacq_jump_m_) {
+        pose_jump_ = true;
+        RCLCPP_WARN(
+          get_logger(),
+          "GNSS re-acquired after %.1f s with a %.2f m position jump: flagging the next odometry "
+          "sample invalid (huge sigma) so SLAM re-anchors instead of trusting the snap",
+          c.time() - c.lastPosTime(), d);
+      }
+    }
+  }
   ekf_->gpsPos(m);
   publishGnssOdom(msg->header.stamp, m);
 }
@@ -334,7 +400,58 @@ void SbgRawEkfNode::onGpsVel(const sbg_driver::msg::SbgGpsVel::SharedPtr msg)
     return;
   }
   const double t = dev_clock_.toSeconds(msg->time_stamp);
-  ekf_->gpsVel(sbg_raw::gpsVelMeas(*msg, t, enu_wire_));
+  const GpsVelMeas v = sbg_raw::gpsVelMeas(*msg, t, enu_wire_);
+  ekf_->gpsVel(v);
+  // Online wheel scale (effective rolling radius): |Doppler speed| / raw wheel
+  // speed, independent of the filter state. Only while RTK-grade (float or
+  // fixed), fast and straight, with a fresh wheel sample; EMA with
+  // wheel_scale_tau_s, capped at +-wheel_scale_bound. Frozen otherwise, so a
+  // coast dead-reckons on the last learned scale.
+  if (wheel_scale_online_ && use_wheel_speeds_ && last_fix_type_ >= 6 && off_init_) {
+    const RawGnssEkfCore & c = ekf_->core();
+    const double gps_speed = std::hypot(v.vN, v.vE);
+    const double wheel_age = now().seconds() - last_wheel_ros_t_;
+    const double yaw_rate = std::fabs(c.gyroZ() - c.x()[5]);
+    // The Doppler epoch is ~100 ms older than the wheel sample; while
+    // accelerating that lag alone is a percent-level ratio error, so only
+    // near-constant-speed samples count (|a_x| small).
+    const double ax = std::fabs(c.accX() - c.x()[6]);
+    if (gps_speed > wheel_scale_min_speed_ && wheel_age < 0.2 && last_wheel_raw_mps_ > 0.5 &&
+      yaw_rate < wheel_scale_max_yaw_rate_ && ax < wheel_scale_max_accel_)
+    {
+      // Doppler speed is the ANTENNA's; in a turn it exceeds the rear-axle
+      // centre speed by the lever term (w * antenna_x) -- compensate it.
+      const double lever_v = yaw_rate * antenna_offset_x_;
+      const double wheel_at_antenna = std::sqrt(
+        last_wheel_raw_mps_ * last_wheel_raw_mps_ + lever_v * lever_v);
+      const double ratio = gps_speed / wheel_at_antenna;
+      // A single sample outside the physically plausible radius band is a
+      // timing/slip artefact, not a scale -- discard, never clamp into the estimate.
+      if (std::isfinite(ratio) && std::fabs(ratio - 1.0) < wheel_scale_bound_ + 0.03) {
+        const double dt = 0.2;   // receiver epoch period
+        // Running mean for the first samples, capped so no single sample moves
+        // the estimate more than 10 %; then an EMA with wheel_scale_tau_s.
+        const double alpha = std::min(
+          0.1, std::max(dt / std::max(1.0, wheel_scale_tau_s_),
+                        1.0 / static_cast<double>(wheel_scale_samples_ + 1)));
+        ++wheel_scale_samples_;
+        wheel_scale_acc_ += alpha * (ratio - wheel_scale_acc_);
+        wheel_scale_acc_ = std::clamp(wheel_scale_acc_, 1.0 - wheel_scale_bound_, 1.0 + wheel_scale_bound_);
+        // Apply only once the estimate is based on enough samples.
+        const double before = wheel_scale_est_;
+        if (wheel_scale_samples_ >= wheel_scale_min_samples_) {
+          wheel_scale_est_ = wheel_scale_acc_;
+        }
+        if (std::fabs(wheel_scale_est_ - before) > 0.002 || wheel_scale_samples_ == wheel_scale_min_samples_) {
+          RCLCPP_INFO_THROTTLE(
+            get_logger(), *get_clock(), 2000,
+            "wheel scale estimate %.4f (applied %.4f, n=%lu, gps %.2f / wheel %.2f m/s)",
+            wheel_scale_acc_, wheel_scale_est_, static_cast<unsigned long>(wheel_scale_samples_),
+            gps_speed, last_wheel_raw_mps_);
+        }
+      }
+    }
+  }
 }
 
 void SbgRawEkfNode::onGpsHdt(const sbg_driver::msg::SbgGpsHdt::SharedPtr msg)
@@ -343,7 +460,27 @@ void SbgRawEkfNode::onGpsHdt(const sbg_driver::msg::SbgGpsHdt::SharedPtr msg)
     return;
   }
   const double t = dev_clock_.toSeconds(msg->time_stamp);
-  ekf_->gpsHdt(sbg_raw::gpsHdtMeas(*msg, t, enu_wire_));
+  const GpsHdtMeas h = sbg_raw::gpsHdtMeas(*msg, t, enu_wire_);
+  {
+    const RawGnssEkfCore & c = ekf_->core();
+    // Same rule for heading: only after a previous HDT and with an established
+    // yaw (sigma < ~30 deg); the first heading after an unknown-yaw init is a
+    // legitimate correction, not a jump.
+    if (c.initialized() && c.lastHdtTime() > 0.0 && c.yawSigma() < 0.5 &&
+      (c.time() - c.lastHdtTime()) > reacq_min_gap_s_)
+    {
+      const double psi_meas = h.heading - c.params().hdt_offset;
+      const double dpsi = std::fabs(wrapAngle(psi_meas - c.yaw()));
+      if (dpsi > reacq_jump_yaw_rad_) {
+        pose_jump_ = true;
+        RCLCPP_WARN(
+          get_logger(),
+          "heading re-acquired after %.1f s with a %.1f deg jump: flagging the next odometry "
+          "sample invalid for SLAM", c.time() - c.lastHdtTime(), rad2deg(dpsi));
+      }
+    }
+  }
+  ekf_->gpsHdt(h);
 }
 
 void SbgRawEkfNode::onWheelSpeeds(const hyu_msgs::msg::WheelSpeedsStamped::SharedPtr msg)
@@ -355,7 +492,8 @@ void SbgRawEkfNode::onWheelSpeeds(const hyu_msgs::msg::WheelSpeedsStamped::Share
   } else {
     v = 0.5 * (w.lb_speed + w.rb_speed);  // unsteered rear axle
   }
-  v *= wheel_scale_;
+  last_wheel_raw_mps_ = v;            // before the scale, for the online estimate
+  v *= wheel_scale_est_;
   const double t_ros = rclcpp::Time(msg->header.stamp).seconds();
   if (!std::isfinite(v) || !std::isfinite(t_ros)) {
     ++wheel_dropped_;
@@ -413,9 +551,10 @@ void SbgRawEkfNode::publishCarState(const builtin_interfaces::msg::Time & stamp)
   s.pose.pose.orientation.z = std::sin(0.5 * yaw_enu);
   s.pose.pose.orientation.w = std::cos(0.5 * yaw_enu);
   double sig_t, sig_y;
-  if (blind_gap_) {
+  if (blind_gap_ || pose_jump_) {
     sig_t = sig_y = kHugeSigma;
     blind_gap_ = false;
+    pose_jump_ = false;
   } else {
     const double tier = mode == RawGnssEkfCore::OK ? odom_sigma_ok_ : odom_sigma_degraded_;
     sig_t = std::max(tier, std::max(c.posSigmaN(), c.posSigmaE()));
@@ -556,6 +695,8 @@ void SbgRawEkfNode::onStatusTimer()
       wheel = wheel_age > wheel_timeout_ ? "stale" : "fresh";
     }
     kv("wheel", wheel);
+    kv("wheel_scale", fmt("%.4f", wheel_scale_est_));
+    kv("wheel_scale_n", std::to_string(wheel_scale_samples_));
     kv("wheel_age", std::isfinite(wheel_age) ? fmt("%.2f", wheel_age) : "-");
     kv("wheel_mps", std::isfinite(last_wheel_ros_t_) ? fmt("%.2f", last_wheel_mps_) : "-");
     kv(

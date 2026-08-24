@@ -115,7 +115,10 @@ class VehicleState(Node):
         self.create_service(SetCanState, "/vehicle/set_mission", self._srv_set_mission)
         self.create_service(Trigger, "/vehicle/reset", self._srv_reset)
         self.create_service(Trigger, "/vehicle/ebs", self._srv_ebs)
-        self.create_service(Trigger, "/vehicle/reset_vehicle_pos", self._srv_reset_pos)
+        # The simulator (hyu_lite_sim) owns the teleport service when it runs
+        # alongside this node; on the car there is nothing to teleport.
+        if bool(p("serve_reset_vehicle_pos", True).value):
+            self.create_service(Trigger, "/vehicle/reset_vehicle_pos", self._srv_reset_pos)
         self.create_service(SetBool, "/vehicle/set_as_button", self._srv_set_button)
         self.create_timer(1.0 / max(1.0, rate), self._tick)
         self.get_logger().info(

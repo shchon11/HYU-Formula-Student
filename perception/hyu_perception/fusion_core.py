@@ -10,7 +10,7 @@ a number nobody stands behind".
 
 from dataclasses import dataclass
 import math
-from typing import Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -424,6 +424,128 @@ def zncc_disparity(
         prior_px=prior,
         ratio=disparity / prior if prior > 0.0 else float("nan"),
     )
+
+
+def yaw_disparity_bias_px(
+    u_px: float,
+    fx_px: float,
+    cx_px: float,
+    yaw_rad: float,
+) -> Optional[float]:
+    """Disparity a residual yaw of the RIGHT camera adds at image column ``u``.
+
+    A rectified pair should put a point at infinity at disparity 0. If the
+    right camera is rotated by a small ``yaw_rad`` about its vertical axis
+    relative to the rectification the SDK applied, every right-image column
+    shifts by ``fx * yaw * (1 + x^2)`` with ``x = (u - cx) / fx`` -- the same
+    3.3 px at the centre becomes ~5-6 px at the edges of a 1280-wide frame.
+    The observed disparity is then ``fx*B/D + bias``, so the bias must be
+    subtracted before triangulating.
+
+    MEASURED 2026-08-23 on the car's ZED (S/N 14352): +0.28 deg, from ChArUco
+    stereo pairs (stereoCalibrate, K fixed: -0.25/-0.29 deg over two sessions)
+    and independently from 2 x 2,500 LiDAR-referenced cone boxes (0.283 /
+    0.288 deg, residual MAD 0.2 px). Rows are aligned (vertical residual
+    -0.08 px), so yaw is the whole defect. Positive = observed disparity too
+    large = cones published too close.
+    """
+    values = (u_px, fx_px, cx_px, yaw_rad)
+    if not all(_finite(value) for value in values):
+        return None
+    if fx_px <= 0.0:
+        return None
+    x = (float(u_px) - float(cx_px)) / float(fx_px)
+    return float(fx_px) * float(yaw_rad) * (1.0 + x * x)
+
+
+def yaw_from_disparity_bias(
+    bias_px: float,
+    u_px: float,
+    fx_px: float,
+    cx_px: float,
+) -> Optional[float]:
+    """Inverse of :func:`yaw_disparity_bias_px`: the yaw one observed bias implies."""
+    values = (bias_px, u_px, fx_px, cx_px)
+    if not all(_finite(value) for value in values):
+        return None
+    if fx_px <= 0.0:
+        return None
+    x = (float(u_px) - float(cx_px)) / float(fx_px)
+    return float(bias_px) / (float(fx_px) * (1.0 + x * x))
+
+
+def analytic_monocular_depth(
+    bbox_height_px: float,
+    fy_px: float,
+    cone_height_m: float,
+) -> Optional[float]:
+    """Pinhole depth of a cone from its box height: ``D = fy * H / h``.
+
+    The fitted curve (``monocular_depth_from_bbox``) is a property of ONE
+    camera: re-fitting it on the simulator landed on exactly this pinhole
+    relation (c = fy*H/H_img, e = -1), and carrying the simulator's fit
+    (fy 448) to the car (fy 677) put the ZNCC search window 33 % too close --
+    measured prior/LiDAR 0.667 on 2026-08-23. Reading fy from CameraInfo
+    makes the prior follow the camera.
+    """
+    values = (bbox_height_px, fy_px, cone_height_m)
+    if not all(_finite(value) for value in values):
+        return None
+    if bbox_height_px <= 0.0 or fy_px <= 0.0 or cone_height_m <= 0.0:
+        return None
+    depth = float(fy_px) * float(cone_height_m) / float(bbox_height_px)
+    return depth if _positive_finite(depth) else None
+
+
+class StereoYawEstimator:
+    """Running robust estimate of the right camera's residual yaw.
+
+    Fed with LiDAR-matched boxes (a box whose depth the LiDAR measured), each
+    sample is the yaw that explains ``d_observed - fx*B/z_lidar`` at that
+    box's column. The estimate is the median of the last ``window`` samples
+    once at least ``min_samples`` have arrived, else the configured prior. A
+    median rather than a mean because a few boxes every frame sit on the
+    wrong thing (a cone behind, the ground) and a mean would chase them.
+    """
+
+    def __init__(self, prior_rad: float, min_samples: int = 30,
+                 window: int = 300, max_abs_rad: float = math.radians(1.5)):
+        self.prior_rad = float(prior_rad)
+        self.min_samples = max(1, int(min_samples))
+        self.window = max(self.min_samples, int(window))
+        self.max_abs_rad = float(max_abs_rad)
+        self._samples: List[float] = []
+
+    def add(self, observed_disparity_px: float, lidar_depth_m: float,
+            u_px: float, fx_px: float, cx_px: float, baseline_m: float) -> bool:
+        """Record one LiDAR-referenced box. Returns False if it was rejected."""
+        values = (observed_disparity_px, lidar_depth_m, u_px, fx_px, cx_px,
+                  baseline_m)
+        if not all(_finite(value) for value in values):
+            return False
+        if lidar_depth_m <= 0.0 or fx_px <= 0.0 or baseline_m <= 0.0:
+            return False
+        bias = float(observed_disparity_px) - float(fx_px) * float(baseline_m) / float(lidar_depth_m)
+        yaw = yaw_from_disparity_bias(bias, u_px, fx_px, cx_px)
+        if yaw is None or abs(yaw) > self.max_abs_rad:
+            return False
+        self._samples.append(yaw)
+        if len(self._samples) > self.window:
+            del self._samples[:len(self._samples) - self.window]
+        return True
+
+    @property
+    def count(self) -> int:
+        return len(self._samples)
+
+    @property
+    def converged(self) -> bool:
+        return len(self._samples) >= self.min_samples
+
+    def yaw_rad(self) -> float:
+        if not self.converged:
+            return self.prior_rad
+        return float(np.median(self._samples))
 
 
 def camera_point_from_depth(

@@ -193,6 +193,20 @@ void PlanningStateMachineNode::onFrenetOdom(const nav_msgs::msg::Odometry::Share
   last_frenet_odom_time_ = receive_time;
   has_frenet_odom_ = true;
 
+  // Final-lap finish arming (see the member comment): armed only once the
+  // car is clear of the path-end zone while the final-lap window is open,
+  // disarmed outside the window. The seam wrap lands within a sample of the
+  // gate crossing, so this costs nothing on a normal finish.
+  if (lap_count_ >= final_lap_start_count_) {
+    if (global_path_readiness_.pathLength() - current_s_ >
+      final_path_end_threshold_ + 3.0)
+    {
+      final_path_end_armed_ = true;
+    }
+  } else {
+    final_path_end_armed_ = false;
+  }
+
   // Frenet seam-wrap is an INDEPENDENT fallback estimator that counts even
   // while the orange gate is valid — so a gate that mislocates or misses a
   // crossing can never wedge the lap count (the published count is the max of
@@ -481,6 +495,12 @@ std::string PlanningStateMachineNode::stopRequestReason() const
       now(), global_path_valid_timeout_sec_, global_requires_graph_slam_localization_,
       has_frenet_odom_, current_s_, final_path_end_threshold_))
   {
+    // Same-tick race guard: lap_count bumped at the gate but current_s has
+    // not wrapped yet -- without the arming this stopped the car at the
+    // START of the final lap.
+    if (!final_path_end_armed_) {
+      return "final_path_end_await_seam_wrap";
+    }
     return "final_path_end_reached";
   }
   if (isStoplineDetected()) {

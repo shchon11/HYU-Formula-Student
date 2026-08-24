@@ -58,7 +58,7 @@ planner_node:
     default_speed_mps: 4.0
     # Curvature+friction speed profile (corner slowdown). Set
     # max_lateral_accel_mps2 to the grip you trust.
-    max_speed_mps: 15.0
+    max_speed_mps: 5.0
     min_speed_mps: 3.0
     max_lateral_accel_mps2: 6.0
     max_accel_mps2: 3.0
@@ -103,11 +103,11 @@ planner_node:
     raceline_speed_weight_exponent: 2.0
     # Cap for the WEIGHT profile only (published speeds are unaffected). Match
     # the controller actually driving the line: MAP/pure-pursuit follows the
-    # published profile (its max_speed_mps is 15), so no extra cap -> 15.0.
+    # published profile (its max_speed_mps is 5), so no extra cap -> 5.0.
     # When running the TMPC stack instead, drop this to lock-step with
     # wpnt_publisher tmpc_performance_speed_cap_mps (7.5): shaping the line
     # for speeds the tube MPC refuses to drive wastes track width.
-    raceline_speed_cap_mps: 15.0
+    raceline_speed_cap_mps: 5.0
     # Longitudinal limits for the WEIGHT profile only (<= 0 inherits
     # max_accel/max_decel above). accel 5.0 was chosen deliberately
     # conservative (2026-07-22): above the plant's +3 cap that max_accel

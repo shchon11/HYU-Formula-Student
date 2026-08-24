@@ -195,11 +195,17 @@ std::uint64_t coneMapSignature(const hyu_msgs::msg::ConeArrayWithCovariance & ma
           static_cast<std::int64_t>(std::llround(cone.point.y * 1000.0))));
       }
     };
+  // Only the classes the centerline build actually reads (blue/yellow
+  // boundaries + the orange gate anchor). unknown_color cones are ignored by
+  // the build, and the frozen-map repair path admits them (clutter, colour
+  // dropouts) all race long -- hashing them rebuilt the raceline on every
+  // admission, and each rebuild's compute starved the validity heartbeat
+  // past the state machine's staleness window: GLOBAL fell back to LOCAL
+  // for ~0.8 s at every repair (measured 2026-08-24, lite small_track).
   mix_cones(map.blue_cones);
   mix_cones(map.yellow_cones);
   mix_cones(map.orange_cones);
   mix_cones(map.big_orange_cones);
-  mix_cones(map.unknown_color_cones);
   return hash;
 }
 
@@ -283,6 +289,14 @@ void PlannerNode::onHeartbeat()
     return;
   }
 
+  // A rebuild is about to run with a still-valid held path: refresh the
+  // validity heartbeat FIRST. The rebuild below can take long enough on the
+  // Jetson that publishing only afterwards starved the state machine's
+  // validity-freshness window and dropped GLOBAL mid-corner.
+  if (path_valid_) {
+    publishValidity(true);
+  }
+  const rclcpp::Time rebuild_start = now();
   std::vector<PlannerWaypoint> waypoints;
   if (!buildCenterlineFromSlamMap(*latest_cone_map_, latest_ego_odom_, centerlineConfig(), waypoints, reason)) {
     if (canHoldLastValidPath()) {
@@ -301,8 +315,9 @@ void PlannerNode::onHeartbeat()
     published_cone_map_version_ = cone_map_version_;
     RCLCPP_INFO(
       get_logger(),
-      "Published %zu SLAM-map global waypoint(s), frame=%s",
-      waypoint_msg.waypoints.size(), waypoint_msg.header.frame_id.c_str());
+      "Published %zu SLAM-map global waypoint(s), frame=%s (rebuild %.0f ms)",
+      waypoint_msg.waypoints.size(), waypoint_msg.header.frame_id.c_str(),
+      (now() - rebuild_start).seconds() * 1000.0);
   }
 
   path_valid_ = true;

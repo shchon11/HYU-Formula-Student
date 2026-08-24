@@ -135,10 +135,188 @@ TEST(LiveExtension, PathExtendsPastTheMapFrontier)
       LiveExtensionConfig{as_unknown, 1.0});
     const BuildResult grown = buildLocalPath(extended, config);
     ASSERT_TRUE(grown.valid) << grown.reason << " as_unknown=" << as_unknown;
+    // Coloured live cones extend to the last pair outright; as unknown they
+    // are absorbed one by one onto the boundary lines growing out of the map
+    // (nearest first), which on this straight reaches the last pair too.
     EXPECT_GT(grown.waypoints.back().s, base.waypoints.back().s + 5.0)
       << "extension should add several metres of path, as_unknown=" << as_unknown;
     EXPECT_GT(grown.waypoints.back().x, 13.0) << "as_unknown=" << as_unknown;
   }
+}
+
+// ---- Map-first reconciliation (reconcileLiveExtension) -------------------
+// The SLAM map is the trusted source; live cones may only APPEND path past
+// the frontier. These pin the three outcomes: accepted extension, rejected
+// (map-only kept) when the mapped part moves, and tail truncation at a kink.
+
+ConeSet straightCorridorMap(double last_x)
+{
+  ConeSet cones;
+  for (double x = 0.0; x <= last_x + 1.0e-9; x += 2.0) {
+    cones.blue.push_back({x, 1.5});
+    cones.yellow.push_back({x, -1.5});
+  }
+  return cones;
+}
+
+PlannerConfig slamConfig()
+{
+  PlannerConfig config;
+  config.allow_partial_boundary = true;
+  return config;
+}
+
+TEST(LiveExtensionReconcile, HonestContinuationIsAcceptedWhole)
+{
+  const PlannerConfig config = slamConfig();
+  const ConeSet map_only = straightCorridorMap(8.0);
+  ConeSet extended = map_only;
+  for (double x = 10.0; x <= 16.0; x += 2.0) {
+    extended.blue.push_back({x, 1.5});
+    extended.yellow.push_back({x, -1.5});
+  }
+  std::string note;
+  const BuildResult base = buildLocalPath(map_only, config);
+  const BuildResult result = planWithLiveExtension(map_only, &extended, config, &note);
+  ASSERT_TRUE(base.valid);
+  ASSERT_TRUE(result.valid) << result.reason;
+  EXPECT_GT(result.waypoints.back().s, base.waypoints.back().s + 5.0) << note;
+  EXPECT_GT(result.waypoints.back().x, 13.0) << note;
+}
+
+TEST(LiveExtensionReconcile, WithoutLiveConesEqualsMapOnlyPath)
+{
+  const PlannerConfig config = slamConfig();
+  const ConeSet map_only = straightCorridorMap(8.0);
+  const BuildResult base = buildLocalPath(map_only, config);
+  const BuildResult result = planWithLiveExtension(map_only, nullptr, config);
+  ASSERT_TRUE(base.valid);
+  ASSERT_EQ(result.waypoints.size(), base.waypoints.size());
+  for (std::size_t i = 0; i < base.waypoints.size(); ++i) {
+    EXPECT_DOUBLE_EQ(result.waypoints[i].x, base.waypoints[i].x);
+    EXPECT_DOUBLE_EQ(result.waypoints[i].y, base.waypoints[i].y);
+  }
+}
+
+// Build a straight +x path of `straight_m`, optionally followed by a
+// right-angle hook (+y) of `hook_m`, resampled at 0.5 m like finishPath.
+BuildResult straightThenHook(double straight_m, double hook_m)
+{
+  BuildResult result;
+  result.evaluated = true;
+  result.valid = true;
+  result.kind = PathKind::kTwoSided;
+  double s = 0.0;
+  for (double x = 0.0; x <= straight_m + 1.0e-9; x += 0.5, s += 0.5) {
+    result.waypoints.push_back({x, 0.0, s, 0.0, 0.0, 3.0});
+  }
+  for (double y = 0.5; y <= hook_m + 1.0e-9; y += 0.5) {
+    s += 0.5;
+    result.waypoints.push_back({straight_m, y, s, 1.5707963, 0.0, 3.0});
+  }
+  return result;
+}
+
+TEST(LiveExtensionReconcile, RightAngleHookPastTheFrontierIsCutOff)
+{
+  const PlannerConfig config = slamConfig();
+  const BuildResult map_only = straightThenHook(8.0, 0.0);
+  // Honest 3 m continuation, then a right-angle hook: keep the 3 m, drop the hook.
+  std::string note;
+  const BuildResult result =
+    reconcileLiveExtension(map_only, straightThenHook(11.0, 5.0), config, &note);
+  ASSERT_TRUE(result.valid) << result.reason;
+  EXPECT_NEAR(result.waypoints.back().s, 11.0, 0.5 + 1.0e-9) << note;
+  for (const auto & waypoint : result.waypoints) {
+    EXPECT_NEAR(waypoint.y, 0.0, 1.0e-9) << note;  // the hook never survives
+  }
+  // Hook right at the frontier: nothing useful is appended -> map-only kept.
+  const BuildResult at_frontier =
+    reconcileLiveExtension(map_only, straightThenHook(8.0, 5.0), config, &note);
+  ASSERT_TRUE(at_frontier.valid);
+  EXPECT_EQ(at_frontier.waypoints.size(), map_only.waypoints.size()) << note;
+}
+
+TEST(LiveExtensionReconcile, ExtensionThatMovesTheMappedPathIsRejected)
+{
+  PlannerConfig config = slamConfig();
+  const ConeSet map_only = straightCorridorMap(8.0);
+  // Hand-built results instead of cones: an "extended" path that is longer
+  // but offset 1 m laterally over the mapped part.
+  const BuildResult base = buildLocalPath(map_only, config);
+  ASSERT_TRUE(base.valid);
+  BuildResult shifted = base;
+  for (auto & waypoint : shifted.waypoints) {
+    waypoint.y += 1.0;
+  }
+  // ... and carried 6 m further.
+  const double s0 = shifted.waypoints.back().s;
+  const double x0 = shifted.waypoints.back().x;
+  for (double d = 0.5; d <= 6.0; d += 0.5) {
+    PathWaypoint waypoint = shifted.waypoints.back();
+    waypoint.x = x0 + d;
+    waypoint.s = s0 + d;
+    shifted.waypoints.push_back(waypoint);
+  }
+  std::string note;
+  const BuildResult result = reconcileLiveExtension(base, shifted, config, &note);
+  ASSERT_TRUE(result.valid);
+  EXPECT_EQ(result.waypoints.size(), base.waypoints.size()) << note;
+  EXPECT_NE(note.find("deviates"), std::string::npos) << note;
+}
+
+TEST(LiveExtensionReconcile, NoMapPathKeepsLivePathOnlyUpToItsFirstKink)
+{
+  const PlannerConfig config = slamConfig();
+  BuildResult no_map;
+  no_map.evaluated = true;
+  no_map.valid = false;
+  // A live-only path: straight for 4 m, then a 150 deg hook back.
+  BuildResult live;
+  live.evaluated = true;
+  live.valid = true;
+  live.kind = PathKind::kTwoSided;
+  double x = 0.0, y = 0.0, s = 0.0;
+  for (int i = 0; i < 9; ++i) {  // 0 .. 4 m straight
+    live.waypoints.push_back({x, y, s, 0.0, 0.0, 3.0});
+    x += 0.5; s += 0.5;
+  }
+  const double psi = 2.6;  // ~150 deg
+  for (int i = 0; i < 6; ++i) {
+    x += 0.5 * std::cos(psi); y += 0.5 * std::sin(psi); s += 0.5;
+    live.waypoints.push_back({x, y, s, psi, 0.0, 3.0});
+  }
+  std::string note;
+  const BuildResult result = reconcileLiveExtension(no_map, live, config, &note);
+  ASSERT_TRUE(result.valid) << result.reason;
+  EXPECT_GE(result.waypoints.size(), 5U);
+  for (const auto & waypoint : result.waypoints) {
+    EXPECT_LT(std::abs(waypoint.psi), 1.0) << note;  // the hook never survives
+  }
+  EXPECT_LE(result.waypoints.back().s, 4.5 + 1.0e-9) << note;
+}
+
+TEST(LiveExtensionReconcile, NoMapPathAndImmediateKinkIsInvalid)
+{
+  const PlannerConfig config = slamConfig();
+  BuildResult no_map;
+  no_map.evaluated = true;
+  BuildResult live;
+  live.evaluated = true;
+  live.valid = true;
+  live.kind = PathKind::kTwoSided;
+  live.waypoints = {
+    {0.0, 0.0, 0.0, 0.0, 0.0, 3.0},
+    {0.5, 0.0, 0.5, 0.0, 0.0, 3.0},
+    {0.5, 0.5, 1.0, 1.57, 3.14, 3.0},  // right-angle hook after one step
+    {0.5, 1.0, 1.5, 1.57, 0.0, 3.0},
+    {0.5, 1.5, 2.0, 1.57, 0.0, 3.0},
+    {0.5, 2.0, 2.5, 1.57, 0.0, 3.0},
+  };
+  std::string note;
+  const BuildResult result = reconcileLiveExtension(no_map, live, config, &note);
+  EXPECT_FALSE(result.valid);
+  EXPECT_NE(result.reason.find("live_extension_rejected"), std::string::npos) << result.reason;
 }
 
 // Node-level wiring: with use_live_cone_extension the planner's published

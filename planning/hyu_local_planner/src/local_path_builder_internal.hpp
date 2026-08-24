@@ -39,6 +39,14 @@ std::vector<Point2> boundaryMidpoints(
 void classifyUnknownCones(
   std::vector<Point2> & blue, std::vector<Point2> & yellow,
   const std::vector<Point2> & unknown, const PlannerConfig & config);
+// One classification pass over two colourless sources against a single
+// snapshot of the labelled sets: `unknown` (colour drop-outs; their ego-side
+// split is limited to config.unknown_geom_max_range_m) and `markers`
+// (orange / big-orange gate cones; trusted boundary markers, unlimited split).
+void classifyColorlessCones(
+  std::vector<Point2> & blue, std::vector<Point2> & yellow,
+  const std::vector<Point2> & unknown, const std::vector<Point2> & markers,
+  const PlannerConfig & config);
 TraversalResult forwardTraversalWithReason(
   const std::vector<Point2> & points, const PlannerConfig & config);
 std::vector<Point2> forwardTraversal(const std::vector<Point2> & points, const PlannerConfig & config);

@@ -60,6 +60,19 @@ struct ControllerConfig
   double map_lookahead_min_m{1.5};
   double map_lookahead_max_m{8.0};
   MapSpeedSource map_speed_source{MapSpeedSource::PLANNED};
+
+  // Where the REAR AXLE sits along the body x axis of the pose the controller
+  // receives (base_footprint), metres, +x forward. Pure pursuit -- both laws
+  // -- is a rear-axle steering law: the control point is assumed to move
+  // along the heading. base_footprint is the ground point under the ZED
+  // since 2026-08-17 and sits BEHIND the axle on the car (0.91 m; the camera
+  // is on the main hoop), so steering that point turns in late: at turn-in a
+  // point behind the axle first swings to the OUTSIDE (lateral velocity
+  // -d*yaw_rate), the controller sees its error grow and reacts a beat
+  // late -- the "one tempo late, would have hit the outside" lap. 0 = the
+  // pose already is the rear axle (EUFS Gazebo publishes ~the CoG; its
+  // launch passes 0 to keep the tuned behaviour).
+  double rear_axle_from_base_m{0.0};
 };
 
 struct PathPoint
@@ -129,6 +142,10 @@ bool hasExpectedOdometryFrameIds(
 
 std::optional<std::size_t> findNearestWaypoint(
   const std::vector<PathPoint> & path, const EgoState & ego);
+
+// The rear-axle control point for a base_footprint pose: the pose moved
+// rear_axle_from_base_m along its own heading (speed and yaw unchanged).
+EgoState controlPoint(const EgoState & base, const ControllerConfig & config);
 
 std::optional<TargetPoint> selectTarget(
   const std::vector<PathPoint> & path, const EgoState & ego, double lookahead_m);

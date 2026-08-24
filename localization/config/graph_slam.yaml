@@ -40,8 +40,13 @@ graph_slam:
     # Distance-proportional EDGE sigma floor: reported covariance is
     # per-sample; a keyframe edge integrates many samples + correlated slip.
     # Too stiff a chain stops loop closures from bending drift out.
-    odom_edge_sigma_per_meter: 0.08
-    odom_edge_yaw_sigma_per_meter: 0.008
+    # 2026-08-24: 0.08 -> 0.02. With the RTK+wheel EKF (per-sample sigma
+    # ~1-2 cm, wheel scale estimated online) 8 cm/m made a 300 m lap's chain
+    # ~1.2 m loose -- the observed SLAM ego p95 on KASE -- while the EKF was
+    # at 0.2 m. The chain still bends for loop closure through the huge-sigma
+    # samples the EKF publishes on GNSS re-acquisition.
+    odom_edge_sigma_per_meter: 0.02
+    odom_edge_yaw_sigma_per_meter: 0.004
 
     # ==== CSM registration (THE correction mechanism) =====================
     # Correlative matching of the submap constellation against the cone map
@@ -114,7 +119,11 @@ graph_slam:
     track_promote_hold_radius: 2.0    # drift-twin hold near stale confirmed landmarks
     track_promote_hold_stale_travel: 5.0
     track_promote_hold_drift_stale: 60.0
-    track_kill_consecutive_misses: 6  # YOLO flicker headroom (3 starved promotion)
+    # Metres driven while a track was expected visible but unseen (was 6
+    # keyframe-misses ~= 3 m; count budgets silently rescale with cadence).
+    # YOLO flicker headroom — 1.5 m starved promotion. Standstill flicker
+    # burns nothing (no travel).
+    track_kill_blind_travel_m: 3.0
     track_kill_unpromoted_travel: 25.0
     # Visibility model for track miss-counting (frontend): misses only count
     # where the track SHOULD be visible.
@@ -144,24 +153,27 @@ graph_slam:
     landmark_update_gain: 0.3         # gentle warm start; the optimizer is the fuser
     landmark_update_process_variance: 0.01
     # Registered-but-unobserved reaper: a landmark WELL inside the
-    # conservative envelope below that keeps missing (counted once per
-    # keyframe) is a ghost. Orange-class gate cones are never reaped. A
-    # 6-miss budget once ate occluded real cones — keep this generous.
-    # Scale intuition: keyframes are ~0.5 m apart, so N misses ~= N/2 m of
-    # continuous blindness while the cone sits inside the envelope
-    # (5 misses ~= 2.5 m ~= 0.25 s at race pace).
+    # conservative envelope below that keeps missing is a ghost.
+    # Orange-class gate cones are never reaped. The budget is METRES of
+    # travel while the cone sat unseen inside the envelope — never a frame
+    # or keyframe count, which rescales silently when the processing
+    # cadence changes (2026-08-24: keyframe 0.25 m halved the old 5-miss
+    # budget to 1.25 m and reaped real cones). 2.5 m ~= 0.25 s at race
+    # pace; a tight budget once ate occluded real cones — keep generous.
     landmark_delete_enable: true
-    landmark_delete_misses: 5
+    landmark_delete_blind_travel_m: 2.5
     landmark_delete_max_range: 10.0
     landmark_delete_fov: 1.5
     # Frozen-map repair: after the freeze the map stays writable, but only
     # under much stricter admission — it is the trusted reference. A track
     # needs this many hits to join (joins FIXED, like the loaded map;
-    # mapping needs only promote_min_hits=3), and deletion needs this many
-    # consecutive expected-visible misses (~20 m of continuous blindness vs
-    # the mapping reaper's 2.5 m). 0 disables the respective path.
+    # mapping needs only promote_min_hits=3); deletion needs this much
+    # continuous expected-visible blind travel (vs the mapping reaper's
+    # 2.5 m — the old 5-miss count was ~2.5 m in practice while its comment
+    # promised 20 m; the budget now matches the documented intent).
+    # 0 disables the respective path.
     loc_map_repair_min_hits: 5
-    loc_map_repair_delete_misses: 5
+    loc_map_repair_delete_blind_travel_m: 20.0
 
     # ==== Lap lifecycle (freeze -> localization) ==========================
     # Freeze requires: lap-return geometry (radius+yaw after min travel from

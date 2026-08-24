@@ -40,6 +40,10 @@ OFF→ON마다 브리지가 먼저 `/graph_slam/reset`으로 지도를 비운 �
 sim                       # sim: small_track + YOLO+LiDAR perception (기본)
 sim small_track sim       # sim: Gazebo ground-truth 콘 (YOLO 없음 — 가볍고 빠름)
 sim skidpad real          # 트랙만 여기서 고름 (eufs_tracks/csv/ 이름). 미션은 ③에서
+sim small_track lite      # Gazebo 없는 경량 시뮬(hyu_lite_sim): Jetson에서 도는 시뮬. 차량+ECU(실 bridge
+                          #   루프백 UDP, 바퀴별 RPM)+raw SBG+perception 에뮬, 코스 밖 클러터=unknown 콘.
+                          #   eufs가 안 빌드된 곳에선 'sim small_track'만 쳐도 lite. 옵션: clutter:=N seed:=N
+                          #   ecu:=udp|ros button:=auto|manual fix:=.. (src/sim/hyu_lite_sim/README.md)
 fsk                       # 실차: 센서 드라이버 + perception (RViz는 'fsk rviz'로 opt-in)
 
 # ② 스택 — INS + SLAM + planning + control, STANDBY로 대기
@@ -526,7 +530,9 @@ ros2 launch hyu_localization ins_pipeline.launch.py slam:=false
 | `/planning/local_path_reason`, `/planning/global_path_reason` | `String` | 경로 invalid **이유** (valid면 빈 문자열) |
 | `/planning/lap_count` | `Int32` | 완료 랩 수 (orange 게이트 통과 기준) |
 | `/planning/lap_time_last`, `/planning/lap_time_best` | `Float64` | 직전/최고 랩타임 (초) |
-| `/planning/stack_hud` (+`_banner`) | `OverlayText` | RViz 스택 HUD 보드/배너 (stack_hud 노드) |
+| `/planning/stack_hud` | `OverlayText` | RViz HUD 플래닝 보드(좌상, stack_hud) — perception 상태로그·SLAM·SELECTOR(LOCAL/GLOBAL 색)·미션 |
+| `/sensors/hud` | `OverlayText` | RViz HUD 센서 보드(우상, sensor_hud) — 카메라/라이다/IMU/GPS/HDT/EKF/휠/ECU 패킷 Hz·상태 |
+| `/planning/control_plot` | `OverlayText` | RViz 하단 컨트롤 스파크라인(control_plot) — 실속도/목표속도/조향 실시간 |
 | `/vehicle/cmd` | `AckermannDriveStamped` | 컨트롤러 출력 (유일 writer) |
 
 </details>

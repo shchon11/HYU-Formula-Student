@@ -28,6 +28,25 @@ the lap. The path is valid and continues past the finish (it is a closed loop an
 the publisher wraps around it), so there is always something to follow while the
 speed comes off.
 
+## Control point
+
+Both steering laws are rear-axle laws: the point they steer is assumed to move
+along the heading. The pose on `/localization/ego_odom` is `base_footprint` --
+since 2026-08-17 the ground point under the ZED stereo centre, which on the car
+sits ~0.91 m BEHIND the rear axle (camera on the main hoop). The controller
+therefore moves the pose `rear_axle_from_base_m` along its own heading before
+every computation (`controlPoint`). Steering `base_footprint` itself turns in a
+beat late: at turn-in a point behind the axle first swings to the outside
+(lateral velocity `-d * yaw_rate`), so the error it reports grows before it
+shrinks. The value is car geometry and lives in
+`hyu_sensor_bringup/config/vehicle_mount.yaml` (`vehicle.rear_axle_from_base_m`,
+tape it on the car) -- `local_global_planning.launch.py` reads it and passes it
+in, together with `max_steering_rad` (`vehicle.max_steering_rad`: the steering
+wheel's +-90 deg hardware lock is +-0.335 rad at the bicycle front angle through
+the bridge's kinematics table; the MAP table's `lut_steer_max_rad` follows it).
+The EUFS Gazebo flow passes 0 and 0.52 instead (its `base_footprint` is ~the CoG,
+its actuator locks at 0.52, and the tune predates these parameters).
+
 ## Steering modes
 
 `steering_mode` selects the lateral law. Longitudinal control (target speed from

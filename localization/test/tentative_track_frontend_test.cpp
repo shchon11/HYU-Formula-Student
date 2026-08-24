@@ -93,6 +93,37 @@ TEST(TentativeTrackFrontend, SingleBlipNeverReachesTheMapAndDies)
   EXPECT_TRUE(frontend.tracks().empty());
 }
 
+TEST(TentativeTrackFrontend, BlindTravelKillIsCadenceInvariant)
+{
+  // The kill budget is metres of expected-visible blind travel: the SAME
+  // distance kills the track whether frames arrive every 0.5 m or every
+  // 0.1 m. (The old per-frame miss count halved its meaning whenever the
+  // cadence doubled — 2026-08-24, dense-keyframe experiment.)
+  for (const double step : {0.5, 0.1}) {
+    TentativeTrackFrontend frontend{FrontendParams{}};  // kill at 1.5 m
+    const std::vector<FrontendConfirmedLandmark> no_landmarks;
+    frontend.processFrame(
+      {makeObservation(5.0, 1.0)}, no_landmarks, 0.0, kAlwaysVisible);
+    double traveled = 0.0;
+    int frames_to_kill = 0;
+    while (frontend.tracks().size() == 1U && frames_to_kill < 100) {
+      traveled += step;
+      ++frames_to_kill;
+      frontend.processFrame({}, no_landmarks, traveled, kAlwaysVisible);
+    }
+    EXPECT_TRUE(frontend.tracks().empty());
+    EXPECT_NEAR(traveled, 1.5 + step, step + 1e-9);  // dies at ~1.5 m either way
+  }
+  // A stationary car burns no blind travel: flicker at standstill never kills.
+  TentativeTrackFrontend frontend{FrontendParams{}};
+  const std::vector<FrontendConfirmedLandmark> no_landmarks;
+  frontend.processFrame({makeObservation(5.0, 1.0)}, no_landmarks, 0.0, kAlwaysVisible);
+  for (int i = 0; i < 20; ++i) {
+    frontend.processFrame({}, no_landmarks, 0.0, kAlwaysVisible);
+  }
+  EXPECT_EQ(frontend.tracks().size(), 1U);
+}
+
 TEST(TentativeTrackFrontend, ObservationNearConfirmedLandmarkMatchesIt)
 {
   TentativeTrackFrontend frontend{FrontendParams{}};
@@ -296,6 +327,90 @@ TEST(TentativeTrackFrontend, ColorMajorityVoteSurvivesMislabels)
   }
   ASSERT_EQ(result.promotions.size(), 1U);
   EXPECT_EQ(result.promotions.front().color, kBlue);
+}
+
+TEST(TentativeTrackFrontend, CallerHoldKeepsTheTrackAccumulatingUntilReleased)
+{
+  // Seam-pending scenario: the caller holds promotions near the start-area
+  // map. The track must NOT be torn down: it keeps collecting hits and colour
+  // votes (a cone is first seen far and colourless, coloured only up close)
+  // and promotes with the whole history once the hold lifts. While held it is
+  // exempt from the unpromoted-travel kill.
+  FrontendParams params;
+  params.kill_unpromoted_travel_m = 2.0;  // would kill the held track without the exemption
+  TentativeTrackFrontend frontend{params};
+  const std::vector<FrontendConfirmedLandmark> no_landmarks;
+  bool hold = true;
+  const auto holder = [&hold](const Eigen::Vector2d &) {return hold;};
+
+  FrontendFrameResult result;
+  std::size_t held = 0U;
+  const std::uint8_t colors[] = {
+    kUnknown, kUnknown, kUnknown, kBlue, kBlue, kBlue, kBlue, kBlue};
+  for (int frame = 0; frame < 8; ++frame) {
+    result = frontend.processFrame(
+      {makeObservation(5.0, 1.0, 0.1, colors[frame], frame)},
+      no_landmarks, 0.5 * frame, kAlwaysVisible, holder);
+    held += result.caller_held_promotions;
+    EXPECT_TRUE(result.promotions.empty());
+  }
+  EXPECT_GT(held, 0U);
+  ASSERT_EQ(frontend.tracks().size(), 1U);
+  EXPECT_EQ(frontend.tracks().front().hits, 8);  // 3.5 m of travel > 2.0 kill: exempt
+  // While held, the converged track is visible as a preview (the map
+  // publication shows it to the planner) with its accumulated colour.
+  const auto previews = frontend.promotablePreviews();
+  ASSERT_EQ(previews.size(), 1U);
+  EXPECT_EQ(previews.front().color, kBlue);
+  EXPECT_NEAR(previews.front().position.x(), 5.0, 0.2);
+
+  hold = false;
+  result = frontend.processFrame(
+    {makeObservation(5.0, 1.0, 0.1, kBlue, 8)}, no_landmarks, 4.0, kAlwaysVisible, holder);
+  ASSERT_EQ(result.promotions.size(), 1U);
+  EXPECT_EQ(result.promotions.front().color, kBlue);
+  EXPECT_EQ(result.promotions.front().hits, 9);
+  EXPECT_EQ(result.promotions.front().observations.size(), 9U);
+  EXPECT_TRUE(frontend.tracks().empty());
+}
+
+TEST(TentativeTrackFrontend, DrainPromotableHandsOverConvergedTracksIgnoringHolds)
+{
+  // Right before a frontend reset (large correction / map freeze) the caller
+  // drains the converged tracks: held ones included -- by the stale-landmark
+  // drift-twin hold or by the caller -- while unconverged tracks stay.
+  TentativeTrackFrontend frontend{FrontendParams{}};
+  // A lap-old landmark 3.5 m from the first track (3, 1): outside the
+  // association gate, inside the inflated drift-twin hold radius
+  // (2 + 3*sqrt(1.0) = 5 m). The second track (4, -2) is 6.6 m from it (no
+  // hold) and is held by the caller instead (y < 0). Ranges are kept short
+  // so the heading-lever floor leaves both promotable after 3 hits.
+  const std::vector<FrontendConfirmedLandmark> landmarks = {
+    makeLandmark(3.0, 4.5, 0.1, 0.0)};
+  const auto hold_second = [](const Eigen::Vector2d & p) {return p.y() < 0.0;};
+  FrontendFrameResult result;
+  for (int frame = 0; frame < 3; ++frame) {
+    result = frontend.processFrame(
+      {makeObservation(3.0, 1.0, 0.1, kBlue, frame),
+        makeObservation(4.0, -2.0, 0.1, kYellow, frame)},
+      landmarks, 100.0 + 0.5 * frame, kAlwaysVisible, hold_second);
+  }
+  EXPECT_TRUE(result.promotions.empty());
+  EXPECT_EQ(result.held_promotions, 2U);
+  EXPECT_EQ(result.caller_held_promotions, 1U);
+  result = frontend.processFrame(
+    {makeObservation(6.0, -1.0, 0.1, kBlue, 3)}, landmarks, 101.5,
+    kAlwaysVisible, hold_second);
+  ASSERT_EQ(frontend.tracks().size(), 3U);
+
+  const auto drained = frontend.drainPromotable();
+  ASSERT_EQ(drained.size(), 2U);
+  EXPECT_EQ(drained[0].color, kBlue);
+  EXPECT_EQ(drained[0].hits, 3);
+  EXPECT_EQ(drained[0].observations.size(), 3U);
+  EXPECT_EQ(drained[1].color, kYellow);
+  ASSERT_EQ(frontend.tracks().size(), 1U);
+  EXPECT_EQ(frontend.tracks().front().hits, 1);
 }
 
 }  // namespace

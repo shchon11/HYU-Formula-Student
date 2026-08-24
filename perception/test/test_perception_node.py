@@ -669,3 +669,122 @@ class AzimuthTimeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StereoYawCorrectionTest(unittest.TestCase):
+    """The ZNCC tier subtracts the right camera's residual yaw bias and learns
+    that yaw from LiDAR-matched boxes; the search prior follows CameraInfo."""
+
+    FX, CX = 676.951, 653.366
+    K = np.array([[676.951, 0.0, 653.366], [0.0, 676.951, 407.603], [0.0, 0.0, 1.0]])
+
+    def _stereo_node(self, yaw_deg=0.28, online=True, min_samples=3):
+        from hyu_perception.fusion_core import StereoYawEstimator
+        node = _node(monocular_enabled=True, zncc_enabled=True,
+                     stereo_right_yaw_deg=yaw_deg,
+                     stereo_yaw_online_enabled=online,
+                     stereo_yaw_online_min_samples=min_samples,
+                     monocular_prior_from_intrinsics=True,
+                     monocular_min_bbox_height_px=16.0,
+                     monocular_min_depth_m=0.5, monocular_max_depth_m=12.0,
+                     monocular_depth_coefficient=0.2913,
+                     monocular_depth_exponent=-0.9814,
+                     standard_cone_height_m=0.45, big_cone_height_m=0.5255,
+                     stereo_baseline_m=0.12, zncc_min_score=0.5,
+                     zncc_search_low_ratio=0.70, zncc_search_high_ratio=1.45,
+                     projection_model="pinhole")
+        node._yaw_estimator = StereoYawEstimator(math.radians(yaw_deg),
+                                                 min_samples=min_samples)
+        node._gray_cache = {}
+        node._zncc_stats = [0, 0]
+        node._pair_stats = [0, 0]
+        return node
+
+    def test_prior_from_intrinsics_reads_fy_not_the_simulator_curve(self):
+        node = self._stereo_node()
+        # A 0.45 m cone at 8 m on THIS camera is fy*0.45/8 = 38.1 px tall.
+        det = Detection("blue", 0.9, 600.0, 400.0, 620.0, 400.0 + self.FX * 0.45 / 8.0)
+        depth = node._monocular_depth(det, None, 0.45, self.K)
+        self.assertAlmostEqual(depth, 8.0, places=6)
+        # The curve path (fitted on fy 448) would have read it ~33 % short.
+        node.monocular_prior_from_intrinsics = False
+
+        class _Info:
+            height = 720
+        self.assertLess(node._monocular_depth(det, _Info(), 0.45, self.K), 6.0)
+
+    def test_yaw_in_use_is_the_config_until_the_estimator_converges(self):
+        node = self._stereo_node(yaw_deg=0.28, min_samples=2)
+        self.assertAlmostEqual(math.degrees(node._stereo_yaw_rad()), 0.28)
+        # Two LiDAR-referenced samples at yaw 0.10 deg take over.
+        from hyu_perception.fusion_core import yaw_disparity_bias_px
+        for _ in range(2):
+            observed = self.FX * 0.12 / 6.0 + yaw_disparity_bias_px(
+                300.0, self.FX, self.CX, math.radians(0.10))
+            node._yaw_estimator.add(observed, 6.0, 300.0, self.FX, self.CX, 0.12)
+        self.assertAlmostEqual(math.degrees(node._stereo_yaw_rad()), 0.10, places=6)
+        node.stereo_yaw_online_enabled = False
+        self.assertAlmostEqual(math.degrees(node._stereo_yaw_rad()), 0.28)
+
+    @staticmethod
+    def _pair(true_disparity, bias, box):
+        """A textured cone patch seen at true_disparity + bias in the right image."""
+        rng = np.random.default_rng(7)
+        h, w = 720, 1280
+        left = rng.normal(120, 12, (h, w)); right = rng.normal(120, 12, (h, w))
+        x0, y0, x1, y1 = box
+        patch = rng.normal(200, 30, (y1 - y0, x1 - x0))
+        left[y0:y1, x0:x1] = patch
+        shift = int(round(true_disparity + bias))
+        right[y0:y1, x0 - shift:x1 - shift] = patch
+        return left, right
+
+    def test_feed_yaw_estimator_learns_the_bias_from_matched_clusters(self):
+        from hyu_perception.fusion_core import yaw_disparity_bias_px
+        node = self._stereo_node(yaw_deg=0.0, min_samples=3)
+        truth_yaw = math.radians(0.30)
+        depth = 6.0
+        boxes = [(100, 380, 140, 440), (620, 390, 660, 450), (1100, 385, 1140, 445)]
+        scenes = []
+        # One cluster per box, 3 points each at optical depth 6 m; the stub
+        # stamps make the pair "exact".
+        class _Stamp:
+            sec, nanosec = 5, 0
+        class _Hdr:
+            stamp = _Stamp()
+        class _Img:
+            header = _Hdr()
+        grays = {}
+        points_camera = []; clusters = []; matched = {}
+        for i, box in enumerate(boxes):
+            u = 0.5 * (box[0] + box[2])
+            points_camera.extend([[0.0, 0.0, depth]] * 3)
+            clusters.append(np.arange(3 * i, 3 * i + 3))
+            matched[i] = Detection("blue", 0.9, *map(float, box))
+        # Build ONE stereo pair carrying all three boxes at their own bias.
+        rng = np.random.default_rng(11)
+        left = rng.normal(120, 12, (720, 1280)); right = rng.normal(120, 12, (720, 1280))
+        for box in boxes:
+            u = 0.5 * (box[0] + box[2])
+            d_true = self.FX * 0.12 / depth
+            bias = yaw_disparity_bias_px(u, self.FX, self.CX, truth_yaw)
+            x0, y0, x1, y1 = box
+            patch = rng.normal(200, 30, (y1 - y0, x1 - x0))
+            left[y0:y1, x0:x1] = patch
+            shift = int(round(d_true + bias))
+            right[y0:y1, x0 - shift:x1 - shift] = patch
+        left_img, right_img = _Img(), _Img()
+        node._to_gray = lambda img: left if img is left_img else right
+        scene = Scene(points_base=np.zeros((9, 3)), pixels=np.zeros((9, 2)),
+                      cluster_indices=clusters,
+                      points_camera=np.asarray(points_camera, dtype=np.float64))
+        node._feed_yaw_estimator(matched, scene, self.K, left_img, right_img, _Stamp())
+        self.assertTrue(node._yaw_estimator.converged)
+        # Integer-rounded shifts cost up to 0.5 px per box: ~0.04 deg.
+        self.assertAlmostEqual(math.degrees(node._stereo_yaw_rad()), 0.30, delta=0.06)
+        # A fallback pair (different stamp) teaches nothing.
+        class _Other:
+            sec, nanosec = 6, 0
+        before = node._yaw_estimator.count
+        node._feed_yaw_estimator(matched, scene, self.K, left_img, right_img, _Other())
+        self.assertEqual(node._yaw_estimator.count, before)

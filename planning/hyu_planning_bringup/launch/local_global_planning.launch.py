@@ -1,11 +1,39 @@
+import os
+
+import yaml
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription, LogInfo
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node, SetRemap
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
+
+
+def _vehicle_geometry():
+    """The car's geometry from hyu_sensor_bringup/config/vehicle_mount.yaml `vehicle:`.
+
+    One place for the numbers the controller must agree with the hardware on
+    (rear axle position in base_footprint, steering lock). Returns
+    (block, path); an empty block when the sensors package is not built here
+    (a pure sim box) -- the launch-argument defaults below then fall back to
+    the 2026-08-23 car values, and the Gazebo flow overrides them anyway.
+    """
+    try:
+        path = os.path.join(
+            get_package_share_directory("hyu_sensor_bringup"), "config", "vehicle_mount.yaml")
+        with open(path) as stream:
+            block = (yaml.safe_load(stream) or {}).get("vehicle") or {}
+        return block, path
+    except Exception:  # noqa: BLE001 - missing package/file: fall back, say so at launch
+        return {}, ""
+
+
+_VEHICLE, _VEHICLE_SOURCE = _vehicle_geometry()
+_DEFAULT_REAR_AXLE_FROM_BASE_M = float(_VEHICLE.get("rear_axle_from_base_m", 0.91))
+_DEFAULT_MAX_STEERING_RAD = float(_VEHICLE.get("max_steering_rad", 0.335))
 
 
 ARGUMENTS = (
@@ -76,10 +104,27 @@ ARGUMENTS = (
     ("enable_controller", "true", "Start the Pure Pursuit controller."),
     (
         "controller_max_speed_mps",
-        "15.0",
-        "Pure Pursuit speed cap override (trackdrive yaml default 10.0). The TMPC "
+        "5.0",
+        "Pure Pursuit speed cap override (trackdrive yaml default 5.0; global 5 m/s profile cap 2026-08-23). The TMPC "
         "hybrid launch lowers it to the TMPC reference cap so takeover/fallback "
         "hand the tube MPC a state inside its feasible envelope.",
+    ),
+    (
+        "controller_rear_axle_from_base_m",
+        f"{_DEFAULT_REAR_AXLE_FROM_BASE_M}",
+        "Rear axle along body x of the pose Pure Pursuit receives (base_footprint), m. "
+        "Default = vehicle_mount.yaml vehicle.rear_axle_from_base_m (hyu_sensor_bringup): the "
+        "car's base_footprint (ground under the ZED, 2026-08-17) is ~0.91 m behind the axle and "
+        "the controller steers the axle. EUFS Gazebo publishes ~the CoG, so its flow passes 0.0 "
+        "(fsk-session.sh) to keep the tuned behaviour.",
+    ),
+    (
+        "controller_max_steering_rad",
+        f"{_DEFAULT_MAX_STEERING_RAD}",
+        "Steering lock Pure Pursuit (and its MAP steering table) plans on, bicycle front angle, rad. "
+        "Default = vehicle_mount.yaml vehicle.max_steering_rad: the steering wheel's +-90 deg "
+        "hardware limit through the bridge's kinematics table is +-0.335 rad. EUFS Gazebo's actuator "
+        "locks at 0.52 and its flow passes that (fsk-session.sh).",
     ),
     ("cmd_topic", "/vehicle/cmd", "Command topic monitored by the HUD."),
     (
@@ -89,7 +134,8 @@ ARGUMENTS = (
     ),
     ("enable_hud", "true", "Start the RViz stack HUD overlay aggregator."),
     ("hud_topic", "/planning/stack_hud", "Stack HUD board overlay."),
-    ("hud_banner_topic", "/planning/stack_hud_banner", "Stack HUD banner overlay."),
+    ("sensor_hud_topic", "/sensors/hud", "Sensor HUD overlay (sensor_hud.py, top-right)."),
+    ("control_plot_topic", "/planning/control_plot", "Control sparklines overlay (control_plot.py, bottom)."),
     # Skidpad mission: the director gates the SLAM cone map by mission phase
     # (entry -> right circle xN -> left circle xN -> exit -> stop) and the
     # unchanged local planner drives that feed. The global planner is not
@@ -165,6 +211,17 @@ def generate_launch_description() -> LaunchDescription:
             description=description,
         )
         for name, package, filename, description in PARAMETER_FILES
+    )
+    arguments.append(
+        LogInfo(
+            msg=(
+                "[planning] vehicle geometry "
+                + (f"from {_VEHICLE_SOURCE}" if _VEHICLE_SOURCE else
+                   "FALLBACK (hyu_sensor_bringup/config/vehicle_mount.yaml not found)")
+                + f": rear axle {_DEFAULT_REAR_AXLE_FROM_BASE_M} m ahead of base_footprint, "
+                + f"steering lock {_DEFAULT_MAX_STEERING_RAD} rad (launch args override)"
+            )
+        )
     )
     configuration_names = [name for name, _, _ in ARGUMENTS]
     configuration_names.extend(
@@ -432,6 +489,12 @@ def generate_launch_description() -> LaunchDescription:
                 "use_sim_time": values["use_sim_time"],
                 "max_speed_mps": ParameterValue(
                     values["controller_max_speed_mps"], value_type=float),
+                "rear_axle_from_base_m": ParameterValue(
+                    values["controller_rear_axle_from_base_m"], value_type=float),
+                # Steering lock from vehicle_mount.yaml; the MAP lookup table
+                # (lut_steer_max_rad) follows max_steering_rad in the node.
+                "max_steering_rad": ParameterValue(
+                    values["controller_max_steering_rad"], value_type=float),
             },
         ],
         remappings=controller_remappings,
@@ -455,7 +518,7 @@ def generate_launch_description() -> LaunchDescription:
         parameters=[
             {
                 "hud_topic": values["hud_topic"],
-                "banner_topic": values["hud_banner_topic"],
+                "bbox_topic": "/perception/bounding_boxes",
                 "cones_topic": values["cones_topic"],
                 "cone_map_topic": values["cone_map_topic"],
                 "slam_status_topic": values["graph_slam_status_topic"],
@@ -475,6 +538,32 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
+    # The other two HUD panels: sensors (top-right) and the control
+    # sparklines (bottom). Same wall-clock freshness policy as stack_hud.
+    sensor_hud = Node(
+        package="hyu_planning_bringup",
+        executable="sensor_hud.py",
+        name="sensor_hud",
+        output="screen",
+        condition=IfCondition(values["enable_hud"]),
+        parameters=[{
+            "hud_topic": values["sensor_hud_topic"],
+            "cmd_topic": values["cmd_topic"],
+        }],
+    )
+    control_plot = Node(
+        package="hyu_planning_bringup",
+        executable="control_plot.py",
+        name="control_plot",
+        output="screen",
+        condition=IfCondition(values["enable_hud"]),
+        parameters=[{
+            "plot_topic": values["control_plot_topic"],
+            "cmd_topic": values["cmd_topic"],
+            "ego_odom_topic": values["ego_odom_topic"],
+        }],
+    )
+
     return LaunchDescription([
         *arguments,
         graph_slam,
@@ -486,4 +575,6 @@ def generate_launch_description() -> LaunchDescription:
         controller,
         dssi_state,
         stack_hud,
+        sensor_hud,
+        control_plot,
     ])

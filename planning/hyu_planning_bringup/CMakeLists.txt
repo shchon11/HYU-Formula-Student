@@ -6,6 +6,8 @@ find_package(ament_cmake REQUIRED)
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 install(PROGRAMS
   scripts/stack_hud.py
+  scripts/sensor_hud.py
+  scripts/control_plot.py
   scripts/skidpad_director.py
   scripts/dssi_state.py
   scripts/inspection_mission.py

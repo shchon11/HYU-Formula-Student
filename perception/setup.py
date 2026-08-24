@@ -61,6 +61,8 @@ setup(
                 "scripts/measure_sim_rates.py",
                 "scripts/evaluate_perception_tiers.py",
                 "scripts/fit_mono_depth_curve.py",
+                "scripts/zncc_bag_check.py",
+                "scripts/stereo_yaw_from_charuco.py",
             ],
         ),
     ],
@@ -68,6 +70,8 @@ setup(
         "scripts/measure_sim_rates.py",
         "scripts/evaluate_perception_tiers.py",
         "scripts/fit_mono_depth_curve.py",
+        "scripts/zncc_bag_check.py",
+        "scripts/stereo_yaw_from_charuco.py",
     ],
     install_requires=[
         "setuptools",

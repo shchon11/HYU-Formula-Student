@@ -49,7 +49,8 @@ bool isValidConfig(const ControllerConfig & config)
          std::isfinite(config.max_acceleration_mps2) &&
          config.min_acceleration_mps2 <= config.max_acceleration_mps2 &&
          std::isfinite(config.brake_acceleration_mps2) &&
-         config.brake_acceleration_mps2 < 0.0;
+         config.brake_acceleration_mps2 < 0.0 &&
+         std::isfinite(config.rear_axle_from_base_m);
   if (!base_valid) {
     return false;
   }
@@ -158,6 +159,17 @@ std::optional<std::size_t> findNearestWaypoint(
   return nearest_index;
 }
 
+EgoState controlPoint(const EgoState & base, const ControllerConfig & config)
+{
+  EgoState axle = base;
+  const double d = config.rear_axle_from_base_m;
+  if (std::isfinite(d) && d != 0.0 && std::isfinite(base.yaw_rad)) {
+    axle.x_m = base.x_m + d * std::cos(base.yaw_rad);
+    axle.y_m = base.y_m + d * std::sin(base.yaw_rad);
+  }
+  return axle;
+}
+
 std::optional<TargetPoint> selectTarget(
   const std::vector<PathPoint> & path, const EgoState & ego, double lookahead_m)
 {
@@ -219,7 +231,10 @@ ControlDecision computeControl(
     return ControlDecision{brakeCommand(config), std::nullopt};
   }
 
-  const EgoState & ego = input.ego.value();
+  // Steer the REAR AXLE, not the reported base_footprint (see
+  // ControllerConfig::rear_axle_from_base_m): every distance, lateral offset
+  // and heading below is taken from the control point.
+  const EgoState ego = controlPoint(input.ego.value(), config);
   const bool map_mode = config.steering_mode == SteeringMode::MAP;
   // MAP steering is only as safe as its lookup table; fail to braking without one.
   if (map_mode && (lut == nullptr || !lut->valid())) {

@@ -7,10 +7,12 @@ hyu_pure_pursuit_node:
     steering_mode: geometric
     wheelbase_m: 1.58
     lookahead_m: 6.0
-    max_steering_rad: 0.52
+    # Standalone fallback -- the launch passes vehicle_mount.yaml's lock (wheel
+    # +-90 deg = bicycle +-0.335 rad); rear_axle_from_base_m comes from there too.
+    max_steering_rad: 0.335
     command_rate_hz: 20.0
     input_timeout_sec: 0.5
-    max_speed_mps: 10.0
+    max_speed_mps: 5.0
     longitudinal_kp: 1.2
     min_acceleration_mps2: -8.0
     max_acceleration_mps2: 2.5

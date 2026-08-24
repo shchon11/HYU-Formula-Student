@@ -7,8 +7,11 @@
 # name, the environment line every pane starts with, the wait snippets,
 # and the tmux-environment variables that carry state between the steps:
 #
-#   FSK_ENV       sim | vehicle          (who ran step 1)
-#   FSK_TRACK     gazebo track name      (sim only; mission sanity check)
+#   FSK_ENV       sim | litesim | vehicle  (who ran step 1: Gazebo/eufs, the
+#                                          Gazebo-free hyu_lite_sim, the car/bag)
+#   FSK_TRACK     track name             (sim/litesim only; mission sanity check)
+#   FSK_DATUM_LAT/LON, FSK_ANT_X/Y  litesim: what sbg_raw_ekf must be given so its
+#                                  frame coincides with the simulator's world
 #   FSK_USE_SIM_TIME true|false          (single clock-domain switch)
 #   FSK_PLAN_PANE tmux pane id of the planning launch (step 2 sets it)
 #   FSK_STACK_EXTRA user extra planning args from step 2
@@ -77,7 +80,7 @@ fsk_session_exists() { tmux has-session -t "$SESSION" 2>/dev/null; }
 
 fsk_require_session() {
   if ! fsk_session_exists; then
-    echo "fsk: no '$SESSION' session — run step 1 first: 'sim <track>' (sim), 'fsk' (vehicle), or 'race <mission>' for the whole vehicle pipeline." >&2
+    echo "fsk: no '$SESSION' session — run step 1 first: 'sim <track>' (sim; 'sim <track> lite' = no Gazebo), 'fsk' (vehicle), or 'race <mission>' for the whole vehicle pipeline." >&2
     exit 1
   fi
 }
@@ -115,6 +118,11 @@ fsk_plan_cmd() {
     # Sim-load-tolerant input gates (sim time stalls under load spikes); the
     # vehicle keeps the tighter yaml defaults.
     gates=" local_max_stamp_skew_sec:=2.0 local_max_input_age_sec:=3.0 local_max_start_distance_m:=8.0"
+    # EUFS publishes base_footprint ~at the CoG, not 0.91 m behind the rear
+    # axle like the car/lite sim, and its actuator locks at 0.52 rad (the car:
+    # 0.335, wheel +-90 deg): keep Pure Pursuit on the pose as-is and the
+    # EUFS lock instead of vehicle_mount.yaml's car geometry.
+    gates="$gates controller_rear_axle_from_base_m:=0.0 controller_max_steering_rad:=0.52"
   fi
   echo "ros2 launch hyu_planning_bringup local_global_planning.launch.py use_sim_time:=${use_sim_time:-true} graph_slam_ate_monitor:=true${gates}${SLAM_MOTION_TOPIC:+ car_state_topic:=$SLAM_MOTION_TOPIC}${GRAPH_SLAM_PARAMS_FILE:+ graph_slam_params_file:=$GRAPH_SLAM_PARAMS_FILE}${extra:+ $extra} $profile"
 }
@@ -136,9 +144,22 @@ fsk_ins_cmd() {
   # LiDAR deskew reads /localization/ins_odom and would otherwise sit
   # uncorrected for the whole of step 1. The simulator has no sensor bringup,
   # so there it stays here alongside sim_ellipse_d.
-  local sim_ins=false odometry=false
-  if [ "$(fsk_getenv FSK_ENV)" = "sim" ]; then sim_ins=true; odometry=true; fi
-  echo "ros2 launch hyu_localization ins_pipeline.launch.py slam:=false sim_ins:=$sim_ins odometry:=$odometry use_sim_time:=${use_sim_time:-true}${INS_MODE_SCHED:+ mode_schedule:=$INS_MODE_SCHED}${INS_CORR_SCHED:+ correction_schedule:=$INS_CORR_SCHED}"
+  # litesim (hyu_lite_sim, no Gazebo): the simulator emits the raw SBG topics
+  # itself, so only sbg_raw_ekf is needed here -- and it IS started here
+  # rather than in step 1 so that 'mission reset' (teleport) restarts it. It
+  # gets the simulator's datum and antenna position so its frame is the
+  # simulator's world frame (ground truth == odom).
+  local sim_ins=false odometry=false extra=""
+  case "$(fsk_getenv FSK_ENV)" in
+    sim) sim_ins=true; odometry=true ;;
+    litesim)
+      odometry=true; use_sim_time=false
+      local lat lon ax ay
+      lat="$(fsk_getenv FSK_DATUM_LAT)"; lon="$(fsk_getenv FSK_DATUM_LON)"
+      ax="$(fsk_getenv FSK_ANT_X)"; ay="$(fsk_getenv FSK_ANT_Y)"
+      extra="${lat:+ datum_latitude:=$lat}${lon:+ datum_longitude:=$lon}${ax:+ antenna_offset_x:=$ax}${ay:+ antenna_offset_y:=$ay} allow_gnss_denied_init:=true" ;;
+  esac
+  echo "ros2 launch hyu_localization ins_pipeline.launch.py slam:=false sim_ins:=$sim_ins odometry:=$odometry use_sim_time:=${use_sim_time:-true}${extra}${INS_MODE_SCHED:+ mode_schedule:=$INS_MODE_SCHED}${INS_CORR_SCHED:+ correction_schedule:=$INS_CORR_SCHED}"
 }
 
 # Attach if stdout is a real terminal, else leave the session detached

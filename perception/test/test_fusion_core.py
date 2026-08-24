@@ -4,14 +4,18 @@ import unittest
 import numpy as np
 
 from hyu_perception.fusion_core import (
-    remove_ground_polar_grid,
+    StereoYawEstimator,
+    analytic_monocular_depth,
     bbox_height_disparity_prior,
     bearing_aligned_covariance,
     camera_point_from_depth,
     monocular_depth_from_bbox,
     monocular_relative_depth_sigma,
+    remove_ground_polar_grid,
     remove_ground_ransac,
     stereo_relative_depth_sigma,
+    yaw_disparity_bias_px,
+    yaw_from_disparity_bias,
     zncc_disparity,
 )
 
@@ -334,3 +338,75 @@ class PolarGridGroundTest(unittest.TestCase):
         one = remove_ground_polar_grid(np.array([[3.0, 0.0, 0.2]]))
         self.assertEqual(one.shape, (1,))
         self.assertFalse(one[0])  # alone in its cell it IS the floor
+
+
+class StereoYawBiasTest(unittest.TestCase):
+    """The car's ZED pair is not perfectly rectified: a residual yaw of the
+    right camera adds a disparity that grows toward the image edges. These pin
+    the model and the estimator that learns it from LiDAR-matched boxes."""
+
+    FX, CX, B = 676.951, 653.366, 0.12
+
+    def test_bias_is_fx_yaw_at_the_centre_and_grows_with_x_squared(self):
+        yaw = math.radians(0.28)
+        centre = yaw_disparity_bias_px(self.CX, self.FX, self.CX, yaw)
+        self.assertAlmostEqual(centre, self.FX * yaw, places=9)      # ~3.3 px
+        edge = yaw_disparity_bias_px(self.CX + 0.9 * self.FX, self.FX, self.CX, yaw)
+        self.assertAlmostEqual(edge / centre, 1.81, places=9)
+        # Symmetric: a column left of centre sees the same as its mirror.
+        self.assertAlmostEqual(
+            yaw_disparity_bias_px(self.CX - 300, self.FX, self.CX, yaw),
+            yaw_disparity_bias_px(self.CX + 300, self.FX, self.CX, yaw), places=12)
+        self.assertEqual(yaw_disparity_bias_px(self.CX, self.FX, self.CX, 0.0), 0.0)
+
+    def test_yaw_from_bias_inverts_the_model(self):
+        for u in (40.0, self.CX, 1200.0):
+            bias = yaw_disparity_bias_px(u, self.FX, self.CX, math.radians(0.3))
+            self.assertAlmostEqual(
+                math.degrees(yaw_from_disparity_bias(bias, u, self.FX, self.CX)),
+                0.3, places=9)
+        self.assertIsNone(yaw_disparity_bias_px(self.CX, 0.0, self.CX, 0.1))
+        self.assertIsNone(yaw_from_disparity_bias(float("nan"), 1.0, self.FX, self.CX))
+
+    def test_analytic_depth_is_the_pinhole_relation(self):
+        # A 0.45 m cone 10 m away is fy*0.45/10 px tall; read back, 10 m.
+        fy = 676.951
+        self.assertAlmostEqual(
+            analytic_monocular_depth(fy * 0.45 / 10.0, fy, 0.45), 10.0, places=9)
+        self.assertIsNone(analytic_monocular_depth(0.0, fy, 0.45))
+        self.assertIsNone(analytic_monocular_depth(20.0, -1.0, 0.45))
+
+    def test_estimator_recovers_the_yaw_from_biased_boxes(self):
+        truth = math.radians(0.28)
+        est = StereoYawEstimator(prior_rad=0.0, min_samples=10, window=50)
+        rng = np.random.default_rng(1)
+        # Boxes at 3-10 m all over the image, observed with the true bias
+        # plus 0.2 px of correlation noise.
+        for _ in range(40):
+            depth = rng.uniform(3.0, 10.0); u = rng.uniform(60, 1220)
+            observed = (self.FX * self.B / depth
+                        + yaw_disparity_bias_px(u, self.FX, self.CX, truth)
+                        + rng.normal(0.0, 0.2))
+            self.assertTrue(est.add(observed, depth, u, self.FX, self.CX, self.B))
+        self.assertTrue(est.converged)
+        self.assertAlmostEqual(math.degrees(est.yaw_rad()), 0.28, delta=0.03)
+
+    def test_estimator_holds_the_prior_until_enough_samples_and_ignores_outliers(self):
+        prior = math.radians(0.28)
+        est = StereoYawEstimator(prior_rad=prior, min_samples=5)
+        self.assertAlmostEqual(est.yaw_rad(), prior)
+        # Four clean samples at yaw 0: still the prior.
+        for _ in range(4):
+            est.add(self.FX * self.B / 5.0, 5.0, self.CX, self.FX, self.CX, self.B)
+        self.assertAlmostEqual(est.yaw_rad(), prior)
+        # A box that correlated on the cone behind (25 px off, ~2 deg) is refused.
+        self.assertFalse(est.add(self.FX * self.B / 5.0 + 25.0, 5.0, self.CX,
+                                 self.FX, self.CX, self.B))
+        # The fifth clean sample converges it onto the data: 0.
+        est.add(self.FX * self.B / 5.0, 5.0, self.CX, self.FX, self.CX, self.B)
+        self.assertTrue(est.converged)
+        self.assertAlmostEqual(est.yaw_rad(), 0.0, places=12)
+        # One outlier inside the clamp moves a median of clean samples nowhere.
+        est.add(self.FX * self.B / 5.0 + 8.0, 5.0, self.CX, self.FX, self.CX, self.B)
+        self.assertAlmostEqual(est.yaw_rad(), 0.0, places=12)
+        self.assertIsNone(yaw_from_disparity_bias(1.0, 1.0, float("inf"), self.CX))

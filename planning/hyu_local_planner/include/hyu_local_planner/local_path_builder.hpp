@@ -72,6 +72,16 @@ struct PlannerConfig
   // unknown cone: split by ego-frame side. |y| below this dead-band is too
   // central to call, so the cone is dropped.
   double unknown_geom_deadband_m{0.75};
+  // The ego-side split is only meaningful where "left/right of the car" is
+  // "left/right of the track", i.e. near the car. Unknown cones further away
+  // than this (range from the ego) that no labelled boundary line explains
+  // are dropped instead of split: on a curve, a far uncoloured cone on the
+  // outside of the bend sits on the ego's LEFT while the track's right wall
+  // owns it, and splitting it fabricated a boundary that bent the path into
+  // right-angle hooks and links back along the driven corridor at the map
+  // frontier (0801 replay). Orange/big-orange gate cones are trusted markers
+  // and keep the unlimited split (lap-close frames see only the gate).
+  double unknown_geom_max_range_m{6.0};
   // Let orange/big-orange cones inform the boundaries outside the
   // straight-corridor mission (which has its own fold-in). They take the same
   // conservative route as unknown cones: absorbed onto a labelled boundary
@@ -107,6 +117,23 @@ struct PlannerConfig
   bool stop_at_path_end{false};
   double end_stop_decel_mps2{2.0};
   double end_stop_margin_m{1.0};
+  // Live-cone extension reconciliation (slam_map mode, see
+  // planWithLiveExtension). The SLAM map is the trusted source; live
+  // perception cones may only APPEND path beyond the map frontier. A path
+  // built from map+live cones is accepted only where it agrees with the
+  // map-only path, and its tail past the map frontier is cut at the first
+  // kink -- a sharp heading change over a short arc -- which live outliers
+  // produce (right-angle hooks, links back along the driven corridor) and
+  // real track geometry does not.
+  // Max distance from any map-only waypoint to the extended path. Beyond it
+  // the extension has moved the mapped part of the path: keep map-only.
+  double live_extension_max_deviation_m{0.5};
+  // Max heading change over live_extension_turn_window_m of arc in the
+  // appended tail (and across the junction). Real cone-spaced corners stay
+  // under ~1 rad per metre of chain; a spurious hook is a 90-180 deg turn
+  // within one waypoint step.
+  double live_extension_max_turn_rad{1.4};
+  double live_extension_turn_window_m{1.0};
 };
 
 enum class PathKind
@@ -178,5 +205,29 @@ BuildResult buildHeldStraightPath(
 
 BuildResult buildLocalPath(const ConeSet & cones, const PlannerConfig & config = PlannerConfig{});
 bool pathSelfIntersects(const std::vector<Point2> & points);
+
+// Reconcile a path built from the SLAM map alone with one built from the
+// map plus live perception cones. The map-only path is the reference and
+// is returned unchanged whenever the extended path is invalid, adds no
+// length, or deviates from it by more than live_extension_max_deviation_m
+// anywhere along the map-only path. Otherwise the extended path is taken
+// and its tail past the map-only length is truncated at the first kink
+// (heading change > live_extension_max_turn_rad within
+// live_extension_turn_window_m of arc). With no valid map-only path the
+// extended path stands on its own, kink-truncated from the start; if fewer
+// than five waypoints survive the result is invalid
+// ("live_extension_rejected: ..."). `note` (optional) receives a short
+// human-readable account of the decision for diagnostics.
+BuildResult reconcileLiveExtension(
+  const BuildResult & map_only, const BuildResult & extended,
+  const PlannerConfig & config, std::string * note = nullptr);
+
+// slam_map-mode planning step shared by the node and offline tools: plan
+// from the map-derived cones, and when `extended` (map + live cones, same
+// ego frame) is given, plan from it too and reconcile the two. Without
+// `extended` this is exactly buildLocalPath(map_only_cones).
+BuildResult planWithLiveExtension(
+  const ConeSet & map_only_cones, const ConeSet * extended,
+  const PlannerConfig & config, std::string * note = nullptr);
 
 }

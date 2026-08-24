@@ -74,6 +74,8 @@ except ImportError:  # pragma: no cover - exercised only on older distros
 import tf2_ros
 
 from hyu_perception.fusion_core import (
+    StereoYawEstimator,
+    analytic_monocular_depth,
     bearing_aligned_covariance,
     camera_point_from_depth,
     monocular_depth_from_bbox,
@@ -81,6 +83,7 @@ from hyu_perception.fusion_core import (
     remove_ground_polar_grid,
     remove_ground_ransac,
     stereo_relative_depth_sigma,
+    yaw_disparity_bias_px,
     zncc_disparity,
 )
 from hyu_perception.ros_image_utils import image_message_to_numpy
@@ -146,6 +149,10 @@ class Scene:
     points_base: np.ndarray
     pixels: np.ndarray           # (N, 2); NaN where the point is behind the camera
     cluster_indices: List[np.ndarray]
+    # Same points in the camera frame at the image stamp, index-aligned with
+    # ``pixels``. The stereo yaw estimator reads a matched cluster's optical
+    # depth from here. Optional so tests can build a Scene without it.
+    points_camera: Optional[np.ndarray] = None
 
 
 @dataclass
@@ -193,6 +200,12 @@ class PerceptionNode(Node):
         self._last_latency_log_ns: Optional[int] = None
         self._warned: Dict[str, float] = {}
         self._zncc_stats = [0, 0]            # [attempted, confirmed]
+        self._pair_stats = [0, 0]            # [exact-stamp pairs, fallback pairs]
+        # Residual yaw of the right camera, learnt online from LiDAR-matched
+        # boxes and seeded with the configured value. See _stereo_cone.
+        self._yaw_estimator = StereoYawEstimator(
+            math.radians(self.stereo_right_yaw_deg),
+            min_samples=self.stereo_yaw_online_min_samples)
 
         self.tf_buffer = tf2_ros.Buffer()
         # NOT spin_thread=True. On Humble that flag does the opposite of what
@@ -434,6 +447,23 @@ class PerceptionNode(Node):
         # short past 6 m, so the true disparity sits ABOVE a box-derived prior.
         self.declare_parameter("zncc_search_low_ratio", 0.70)
         self.declare_parameter("zncc_search_high_ratio", 1.45)
+        # Residual yaw of the RIGHT camera relative to the rectification the
+        # SDK applied, in degrees. It adds fx*yaw*(1+x^2) px to every
+        # observed disparity and is subtracted before triangulating. 0 = a
+        # perfect pair (the simulator). MEASURED 2026-08-23 on the car's ZED
+        # S/N 14352: +0.28 deg (see fusion_core.yaw_disparity_bias_px).
+        self.declare_parameter("stereo_right_yaw_deg", 0.0)
+        # Learn the yaw online from boxes the LiDAR measured (cluster +
+        # detection): once min_samples have arrived the running median
+        # replaces the configured value, so a drifting camera calibration --
+        # or the wrong constant for this camera -- corrects itself.
+        self.declare_parameter("stereo_yaw_online_enabled", True)
+        self.declare_parameter("stereo_yaw_online_min_samples", 30)
+        # Size the ZNCC search window from the pinhole relation D = fy*H/h
+        # with fy from CameraInfo, instead of the fitted curve below, which
+        # is a property of ONE camera (the simulator's fit carried to the car
+        # put the window 33 % too close).
+        self.declare_parameter("monocular_prior_from_intrinsics", True)
         # zncc_replaces_depth and zncc_reject_unconfirmed are GONE. Both existed
         # to choose between publishing a stereo depth and publishing the
         # monocular curve's depth, and the curve's depth is no longer publishable
@@ -490,13 +520,15 @@ class PerceptionNode(Node):
         for name in ("deskew_enabled", "publish_segmented_cloud",
                      "publish_debug", "ground_ransac_enabled", "self_mask_enabled",
                      "pair_split_enabled",
-                     "sparse_enabled", "monocular_enabled", "zncc_enabled"):
+                     "sparse_enabled", "monocular_enabled", "zncc_enabled",
+                     "stereo_yaw_online_enabled",
+                     "monocular_prior_from_intrinsics"):
             setattr(self, name, bool(g(name)))
         for name in ("sync_queue_size", "ground_ransac_max_iterations",
                      "ground_ransac_min_inliers", "ground_ransac_seed",
                      "cluster_min_points", "min_cluster_support_px",
                      "sparse_near_min_points", "sparse_mid_min_points",
-                     "sparse_far_min_points"):
+                     "sparse_far_min_points", "stereo_yaw_online_min_samples"):
             setattr(self, name, int(g(name)))
         for name in (
             "latency_log_period_sec", "max_cluster_age_sec", "max_image_age_sec",
@@ -523,6 +555,7 @@ class PerceptionNode(Node):
             "standard_cone_height_m", "big_cone_height_m",
             "vision_dedup_radius_m", "stereo_baseline_m", "zncc_min_score",
             "zncc_search_low_ratio", "zncc_search_high_ratio", "sigma_d_px",
+            "stereo_right_yaw_deg",
             "lidar_variance_x", "lidar_variance_y", "lidar_only_variance_x",
             "lidar_only_variance_y", "cluster_range_bias_m",
             "sparse_sigma_lat_m", "sparse_sigma_lon_m",
@@ -559,6 +592,13 @@ class PerceptionNode(Node):
         if not 0.0 < self.zncc_search_low_ratio < self.zncc_search_high_ratio:
             raise ValueError(
                 "zncc search ratios must satisfy 0 < low < high")
+        if not abs(self.stereo_right_yaw_deg) <= 3.0:
+            raise ValueError(
+                "stereo_right_yaw_deg is a small residual of the SDK's "
+                "rectification (|yaw| <= 3 deg); anything larger means the "
+                "pair is not rectified at all")
+        if self.stereo_yaw_online_min_samples < 1:
+            raise ValueError("stereo_yaw_online_min_samples must be >= 1")
         if self.sparse_near_range_m >= self.sparse_far_range_m:
             raise ValueError("sparse_near_range_m must be below sparse_far_range_m")
         # A zero pixel sigma claims a perfect measurement, which would hand SLAM
@@ -1298,12 +1338,12 @@ class PerceptionNode(Node):
                 f"{getattr(self, '_last_tf_error', 'n/a')}; "
                 f"keeping the LiDAR backbone uncoloured")
             return None
+        points_camera = self._transform_points(frame.points_lidar, to_camera)
         return Scene(
             points_base=self._transform_points(frame.points_lidar, to_base),
-            pixels=self._project(
-                self._transform_points(frame.points_lidar, to_camera),
-                camera_matrix),
+            pixels=self._project(points_camera, camera_matrix),
             cluster_indices=frame.cluster_indices,
+            points_camera=points_camera,
         )
 
     # ----------------------------------------------------------------- cones
@@ -1327,6 +1367,12 @@ class PerceptionNode(Node):
         claimed: set = set()
 
         matched = self._match(detections, scene)
+        if (matched and self.monocular_enabled and self.zncc_enabled
+                and self.stereo_yaw_online_enabled):
+            # Every cluster the camera also saw is a box with a LiDAR depth:
+            # free stereo ground truth, and the yaw estimate feeds on it.
+            self._feed_yaw_estimator(matched, scene, camera_matrix, left,
+                                     right, stamp)
         if scene is not None:
             for index, indices in enumerate(scene.cluster_indices):
                 centroid = scene.points_base[indices].mean(axis=0)
@@ -1509,7 +1555,8 @@ class PerceptionNode(Node):
         cone_height = self._cone_height_m(detection.color)
         if cone_height is None:
             return None                       # unknown class: no scale to use
-        depth = self._monocular_depth(detection, camera_info, cone_height)
+        depth = self._monocular_depth(detection, camera_info, cone_height,
+                                      camera_matrix)
         if depth is None:
             return None
         base = self._back_project(detection, depth, camera_matrix, stamp)
@@ -1531,13 +1578,28 @@ class PerceptionNode(Node):
         detection: Detection,
         camera_info: CameraInfo,
         cone_height_m: float,
+        camera_matrix: Optional[np.ndarray] = None,
     ) -> Optional[float]:
         """``D = c*h_n^e``, with ``c`` rescaled for a non-standard cone.
 
         ``c`` is the only part of the curve carrying the cone's size, so a big
         orange cone rescales it and keeps the exponent, which is a property of
         the detector rather than of the cone.
+
+        With ``monocular_prior_from_intrinsics`` the curve is replaced by the
+        pinhole relation ``D = fy*H/h`` read from CameraInfo, so the prior
+        follows whichever camera is plugged in (the simulator's fit is 33 %
+        short on the car). Either way this depth only sizes the ZNCC search
+        window; it is never published.
         """
+        if (getattr(self, "monocular_prior_from_intrinsics", False)
+                and camera_matrix is not None):
+            depth = analytic_monocular_depth(
+                detection.height_px, float(camera_matrix[1, 1]), cone_height_m)
+            if depth is None or not (
+                    self.monocular_min_depth_m <= depth <= self.monocular_max_depth_m):
+                return None
+            return depth
         coefficient = self.monocular_depth_coefficient * (
             cone_height_m / self.standard_cone_height_m)
         depth = monocular_depth_from_bbox(
@@ -1620,6 +1682,8 @@ class PerceptionNode(Node):
         # let two images 2x max_image_age_sec apart both pass.
         pair_gap = abs(self._stamp_sec(left.header.stamp)
                        - self._stamp_sec(right.header.stamp))
+        exact = self._stamp_ns(left.header.stamp) == self._stamp_ns(stamp)
+        self._pair_stats[0 if exact else 1] += 1
         if pair_gap > self.max_pair_skew_sec:
             self._warn_throttled(
                 "pair_skew",
@@ -1641,11 +1705,21 @@ class PerceptionNode(Node):
         # assumption -- which is why the curve may pick the window without its
         # depth reaching /perception/cones.
         prior = fx * self.stereo_baseline_m / max(candidate.range_m, 1.0e-3)
+        # The pair is not perfectly rectified: a residual yaw of the right
+        # camera adds fx*yaw*(1+x^2) px to EVERY observed disparity (measured
+        # +3.3 px at the centre, ~5 px at the edges, on the car's ZED). The
+        # search window is centred on where the peak will actually be, and
+        # the bias is taken back out before triangulating -- without it every
+        # vision cone came out 13-30 % too close (2026-08-23).
+        bias = yaw_disparity_bias_px(
+            detection.center[0], fx, float(camera_matrix[0, 2]),
+            self._stereo_yaw_rad()) or 0.0
+        expected = prior + bias
         match = zncc_disparity(
             left_gray, right_gray,
             (detection.xmin, detection.ymin, detection.xmax, detection.ymax),
-            prior * self.zncc_search_low_ratio,
-            prior * self.zncc_search_high_ratio,
+            expected * self.zncc_search_low_ratio,
+            expected * self.zncc_search_high_ratio,
             min_score=self.zncc_min_score,
         )
         self._zncc_stats[0] += 1
@@ -1653,7 +1727,10 @@ class PerceptionNode(Node):
             return None
         self._zncc_stats[1] += 1
 
-        depth = fx * self.stereo_baseline_m / match.disparity_px
+        disparity = match.disparity_px - bias
+        if disparity <= 0.0:
+            return None
+        depth = fx * self.stereo_baseline_m / disparity
         if not (self.monocular_min_depth_m <= depth <= self.monocular_max_depth_m):
             return None
         base = self._back_project(detection, depth, camera_matrix, stamp)
@@ -1672,6 +1749,78 @@ class PerceptionNode(Node):
             sigma_u_px=self.monocular_sigma_u_px,
             fx_px=fx,
         )
+
+    def _stereo_yaw_rad(self) -> float:
+        """The right camera's residual yaw in use: online median, else config."""
+        estimator = getattr(self, "_yaw_estimator", None)
+        if estimator is not None and getattr(self, "stereo_yaw_online_enabled", False):
+            return estimator.yaw_rad()
+        return math.radians(getattr(self, "stereo_right_yaw_deg", 0.0))
+
+    def _optical_depth(self, points_camera: np.ndarray) -> Optional[float]:
+        """Mean depth along the optical axis, honouring the projection model."""
+        if points_camera is None or points_camera.shape[0] == 0:
+            return None
+        axis = 0 if self.projection_model == "eufs_bbox" else 2
+        depth = float(np.mean(points_camera[:, axis]))
+        return depth if math.isfinite(depth) and depth > 0.0 else None
+
+    def _feed_yaw_estimator(
+        self,
+        matched: Dict[int, Detection],
+        scene: Scene,
+        camera_matrix: np.ndarray,
+        left: Optional[Image],
+        right: Optional[Image],
+        stamp,
+    ) -> None:
+        """Learn the stereo yaw from boxes whose depth the LiDAR measured.
+
+        Each matched cluster is a box with a trusted depth, so its observed
+        disparity minus fx*B/z is the pair's bias at that column, and the
+        estimator turns that into a yaw. Only an EXACT pair (same stamp as
+        the bbox image) qualifies: on a fallback pair the box sits on a
+        different frame and the difference would be ego motion, not yaw.
+        Costs one small ZNCC per matched cluster; the greys are cached.
+        """
+        if left is None or right is None or scene.points_camera is None:
+            return
+        if (self._stamp_ns(left.header.stamp) != self._stamp_ns(stamp)
+                or self._stamp_ns(right.header.stamp) != self._stamp_ns(stamp)):
+            return
+        fx, cx = float(camera_matrix[0, 0]), float(camera_matrix[0, 2])
+        if not (math.isfinite(fx) and fx > 0.0):
+            return
+        left_gray = right_gray = None
+        yaw_now = self._stereo_yaw_rad()
+        for index, detection in matched.items():
+            if detection.height_px < self.monocular_min_bbox_height_px:
+                continue
+            depth = self._optical_depth(
+                scene.points_camera[scene.cluster_indices[index]])
+            # Nearer than 2 m the LiDAR centroid (near face) and the box
+            # (whole cone) disagree by a visible fraction of the disparity.
+            if depth is None or not (2.0 <= depth <= self.monocular_max_depth_m):
+                continue
+            if left_gray is None:
+                left_gray, right_gray = self._to_gray(left), self._to_gray(right)
+                if left_gray is None or right_gray is None:
+                    return
+            expected = fx * self.stereo_baseline_m / depth
+            centre = expected + (yaw_disparity_bias_px(
+                detection.center[0], fx, cx, yaw_now) or 0.0)
+            # +-10 px around where the current estimate says the peak is:
+            # wide enough to find the truth when the estimate is still the
+            # wrong constant, narrow enough to skip the cone behind.
+            match = zncc_disparity(
+                left_gray, right_gray,
+                (detection.xmin, detection.ymin, detection.xmax, detection.ymax),
+                max(0.0, centre - 10.0), centre + 10.0,
+                min_score=self.zncc_min_score)
+            if match is None:
+                continue
+            self._yaw_estimator.add(match.disparity_px, depth, detection.center[0],
+                                    fx, cx, self.stereo_baseline_m)
 
     def _to_gray(self, image: Image) -> Optional[np.ndarray]:
         """Grey the image once per cloud, not once per detection.
@@ -1888,9 +2037,17 @@ class PerceptionNode(Node):
         if not samples:
             return
         attempted, confirmed = self._zncc_stats
-        zncc = (f"  zncc {confirmed}/{attempted} confirmed"
-                if attempted else "")
+        exact, fallback = self._pair_stats
+        zncc = ""
+        if attempted:
+            estimator = self._yaw_estimator
+            source = (f"online n={estimator.count}" if estimator.converged
+                      else f"prior, {estimator.count} samples")
+            zncc = (f"  zncc {confirmed}/{attempted} confirmed, pairs exact "
+                    f"{exact} / fallback {fallback}, right yaw "
+                    f"{math.degrees(self._stereo_yaw_rad()):+.2f} deg ({source})")
         self._zncc_stats = [0, 0]
+        self._pair_stats = [0, 0]
         self.get_logger().info(
             f"{self.output_cones_topic} latency (now - cloud stamp): "
             f"mean {1000 * sum(samples) / len(samples):.0f} ms  "

@@ -93,7 +93,9 @@ race perception      # 평가 모드 — provenance별 recall·위치오차·공
 | `cluster_eps` / `cluster_min_points` | 0.35 / 3 | DBSCAN 민감도 |
 | `sparse_max_range_m` · `monocular_max_depth_m` | 12.0 | 비전 계열 사거리 캡 |
 | `zncc_min_score` | 0.5 | 스테레오 검증 문턱 — 내리면 비전 콘↑, 유령 콘 위험↑ |
-| `monocular_depth_coefficient/exponent` | 실측 fit | bbox 높이→깊이 곡선 — **카메라가 바뀌면 `fit_mono_depth_curve.py`로 재적합** |
+| `stereo_right_yaw_deg` | 0.28 | ZED 정류 쌍의 우측 카메라 잔여 yaw — 디스패리티에 fx·θ·(1+x²) px가 더해지므로 차감. **실차 S/N 14352 실측(08-23)**; `stereo_yaw_online_enabled`면 LiDAR 매칭 콘으로 온라인 갱신(로그 "right yaw"). 재측정: `scripts/stereo_yaw_from_charuco.py`, `scripts/zncc_bag_check.py` |
+| `monocular_prior_from_intrinsics` | true | ZNCC 탐색창 prior를 CameraInfo fy로(D = fy·H/h). false면 아래 곡선 |
+| `monocular_depth_coefficient/exponent` | 실측 fit(sim) | bbox 높이→깊이 곡선(prior 폴백) — 카메라가 바뀌면 `fit_mono_depth_curve.py`로 재적합 |
 | `projection_model` | `pinhole` | 실카메라/sim ZED는 `pinhole`, sim 합성 bbox만 `eufs_bbox` — 틀리면 조용히 매칭 실패 |
 
 ## 더 읽을거리

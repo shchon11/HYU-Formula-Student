@@ -92,6 +92,8 @@ Gazebo·ROS 그래프 없이 **실제 local planner + 실제 컨트롤러 + 실�
 | 파라미터 | 파일 | 뜻 |
 |---|---|---|
 | `map_lookahead_max_m` | `hyu_pure_pursuit.yaml` | **코너 커팅 노브** — `/planning/cte_rmse` 보며 조정 |
+| `rear_axle_from_base_m` | `hyu_sensor_bringup/config/vehicle_mount.yaml` `vehicle:` (0.91) → 런치가 전달 | ego_odom(base_footprint = ZED 아래 지면) 기준 **뒷차축 위치** [m]. PP는 뒷차축을 조향하므로 이 값으로 포즈를 옮긴 뒤 계산 — base가 차축 뒤에 있는 채로 그대로 조향하면 한 템포 늦게 턴인함. 실차는 줄자로 재측정해 mount yaml 갱신, EUFS Gazebo는 `fsk-session.sh`가 0.0으로 넘김 |
+| `max_steering_rad` | `vehicle_mount.yaml` `vehicle:` (0.335) → 런치가 전달; PP yaml 값은 단독 실행 폴백 | **조향 하드웨어 한계**(자전거각): 스티어링 휠 ±90° = 브리지 기구학 테이블 기준 ±0.335 rad(최소 회전반경 4.5 m). MAP 조향 테이블(`lut_steer_max_rad`)도 이 값을 따름. EUFS는 0.52 |
 | `max_speed_mps` | 미션별 yaml | 속도 상한 (planner 목표속도와 함께 걸림) |
 | `lookahead_m` | skidpad/accel yaml | geometric 모드 고정 lookahead |
 | `min/brake_acceleration_mps2` | 미션별 yaml | 제동 성능 — accel 미션은 braking zone 예산과 연동 |

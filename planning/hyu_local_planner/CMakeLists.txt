@@ -20,6 +20,7 @@ add_library(hyu_local_planner_core
   src/local_path_geometry.cpp
   src/local_path_intersections.cpp
   src/local_path_builder.cpp
+  src/local_path_live_extension.cpp
   src/local_path_sampling.cpp
 )
 target_compile_features(hyu_local_planner_core PUBLIC cxx_std_17)

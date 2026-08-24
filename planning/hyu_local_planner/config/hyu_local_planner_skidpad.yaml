@@ -50,6 +50,12 @@ hyu_local_planner_node:
     use_unknown_cones: true
     unknown_absorb_lateral_m: 0.6
     unknown_geom_deadband_m: 0.75
+    # Unknown cones beyond this range (m from the ego) that no labelled boundary
+    # line explains are dropped instead of split by ego side: far out, the ego's
+    # left/right no longer follows the track and a split outside-of-bend cone
+    # fabricated boundaries that hooked the path at the map frontier. Orange
+    # gate cones are not limited.
+    unknown_geom_max_range_m: 6.0
     # TEMP DEBUG: print a per-frame [localdiag] line (mode, ROI cone counts,
     # path radius, failure reason). Set false once the left-circle path is fixed.
     log_planner_diagnostics: true

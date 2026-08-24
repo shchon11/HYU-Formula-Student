@@ -272,6 +272,13 @@ private:
   // Ego samples slower than this never reach the gate tracker: standstill
   // SLAM pose snaps must not arm the gate or count crossings.
   double min_lap_count_speed_mps_{0.3};
+  // Final-lap finish arming: the gate crossing that opens the final-lap
+  // window and the frenet seam wrap race each other by a sample; one state
+  // tick with lap_count already bumped but current_s still ~= path length
+  // finished the mission a whole lap early (2026-08-24 lite). The finish may
+  // only fire after the car has demonstrably LEFT the path-end zone on the
+  // final lap.
+  bool final_path_end_armed_{false};
   double final_path_end_threshold_{2.0};
   double stop_zone_s_margin_{0.0};
   double max_abs_d_for_global_{2.0};

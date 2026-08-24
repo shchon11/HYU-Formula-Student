@@ -3,7 +3,7 @@
 #
 #   stack [use_sim_time:=true|false] [extra planning launch args...]
 #
-# Adds onto the step-1 tmux session ('race <track> sim' or 'fsk'):
+# Adds onto the step-1 tmux session ('sim <track> [lite]', 'fsk' or 'bagplay'):
 #   ② INS pipeline (sim Ellipse-D + SBG bridge / vehicle INS chain)
 #   ③ planning graph: graph_slam + global/local planner + state machine +
 #     path selector + Pure Pursuit (MAP steering) + DSSI + HUD
@@ -56,6 +56,11 @@ P_INS=$(tmux split-window -v -t "$FIRST_PANE" -P -F '#{pane_id}')
 if [ "$ENV_KIND" = "sim" ]; then
   tmux send-keys -t "$P_INS" \
     "$SRC echo '[② INS: sim Ellipse-D + SBG bridge (GNSS anchor + HUD)] waiting for ground truth…'; $WAIT_GT; $(fsk_ins_cmd)" C-m
+elif [ "$ENV_KIND" = "litesim" ]; then
+  # hyu_lite_sim emits the raw SBG topics itself; only sbg_raw_ekf runs here,
+  # datum-locked to the simulator (its odom frame == the sim world frame).
+  tmux send-keys -t "$P_INS" \
+    "$SRC echo '[② INS: sbg_raw_ekf on the lite-sim SBG (datum-locked: odom == sim world)]'; $(fsk_ins_cmd)" C-m
 else
   tmux send-keys -t "$P_INS" \
     "$SRC echo '[② INS pipeline (vehicle)]'; $(fsk_ins_cmd)" C-m

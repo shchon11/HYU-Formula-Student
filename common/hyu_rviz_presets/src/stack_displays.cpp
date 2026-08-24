@@ -77,9 +77,8 @@ void SlamStack::populate()
     "rviz_default_plugins/MarkerArray", "SLAM Map (cones + graph)",
     "/localization/debug/markers");
 
-  rviz_common::Display * path = addTopicDisplay(
-    "rviz_default_plugins/Path", "SLAM Path", "/localization/debug/path", "Best Effort");
-  path->subProp("Color")->setValue(QColor(25, 255, 240));
+  // The SLAM trajectory (/localization/debug/path, pose_graph marker) is
+  // deliberately NOT shown: it cluttered the view next to the planner paths.
 
   rviz_common::Display * odom = addTopicDisplay(
     "rviz_default_plugins/Odometry", "Ego Odometry", "/localization/ego_odom",
@@ -93,7 +92,7 @@ void PlanningStack::populate()
   setName("FSK Planning");
 
   rviz_common::Display * raceline = addTopicDisplay(
-    "rviz_default_plugins/Path", "Global Raceline", "/global_waypoints/path",
+    "rviz_default_plugins/Path", "Global Raceline", "/planning/global_waypoints/path",
     "Reliable", "Transient Local");
   raceline->subProp("Color")->setValue(QColor(0, 220, 60));
   raceline->subProp("Line Style")->setValue("Billboards");
@@ -118,16 +117,18 @@ void PlanningStack::populate()
 void HudStack::populate()
 {
   setName("FSK HUD");
-  // Stack HUD board + banner subsume the old CTE/SLAM-status boxes; those
-  // topics still publish for anyone who adds the displays manually.
+  // Three panels (2026-08-23 redesign): the planning board (top-left,
+  // stack_hud.py), the sensor board (top-right, sensor_hud.py) and the
+  // control sparklines (bottom, control_plot.py). The old banner and the
+  // GNSS-only overlay are gone; GNSS detail lives on the sensor board.
   addTopicDisplay(
     "rviz_2d_overlay_plugins/TextOverlay", "Stack HUD", "/planning/stack_hud",
     "Reliable", "Transient Local");
   addTopicDisplay(
-    "rviz_2d_overlay_plugins/TextOverlay", "Stack Banner",
-    "/planning/stack_hud_banner", "Reliable", "Transient Local");
+    "rviz_2d_overlay_plugins/TextOverlay", "Sensor HUD", "/sensors/hud",
+    "Reliable", "Transient Local");
   addTopicDisplay(
-    "rviz_2d_overlay_plugins/TextOverlay", "GNSS HUD", "/localization/debug/gnss_overlay",
+    "rviz_2d_overlay_plugins/TextOverlay", "Control Plot", "/planning/control_plot",
     "Reliable", "Transient Local");
 }
 

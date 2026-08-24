@@ -21,13 +21,50 @@ odometry is the only state-estimation source, in sim and on the car alike.
         mode_schedule:="30:3,45:4" correction_schedule:="60:single,70:rtk_fixed"
 """
 
+import math
+
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
+
+
+def _sbg_raw_ekf(context):
+    """sbg_raw_ekf with only the overrides that were actually given.
+
+    datum/antenna arguments default to "" so that the node keeps its own
+    defaults (first-fix datum, 1.25/0.0 antenna) unless a caller states a
+    value; a NaN written through a launch parameter would not round-trip.
+    """
+    lc = context.launch_configurations
+    if lc["odometry"].strip().lower() in ("false", "0"):
+        return []
+    params = {
+        "use_sim_time": lc["use_sim_time"].strip().lower() in ("true", "1"),
+        "car_state_topic": lc["ins_odom_topic"],
+    }
+    for name in ("datum_latitude", "datum_longitude", "antenna_offset_x", "antenna_offset_y"):
+        text = lc[name].strip()
+        if not text:
+            continue
+        value = float(text)
+        if math.isfinite(value):
+            params[name] = value
+    denied = lc["allow_gnss_denied_init"].strip().lower()
+    if denied in ("true", "1"):
+        params["allow_gnss_denied_init"] = True
+    return [
+        Node(
+            package="hyu_localization",
+            executable="sbg_raw_ekf",
+            name="sbg_raw_ekf",
+            output="screen",
+            parameters=[params],
+        )
+    ]
 
 
 def generate_launch_description():
@@ -88,6 +125,36 @@ def generate_launch_description():
                             "bringup already runs it, which is the vehicle "
                             "and bag-replay case.",
             ),
+            # Optional sbg_raw_ekf overrides (the simulator flow passes these so
+            # the EKF frame coincides with the simulator's world frame): a
+            # fixed datum instead of the first fix, and the primary antenna
+            # position in base_footprint. Empty = the node's own defaults.
+            DeclareLaunchArgument(
+                "datum_latitude",
+                default_value="",
+                description="sbg_raw_ekf datum_latitude (deg); empty = first valid fix.",
+            ),
+            DeclareLaunchArgument(
+                "allow_gnss_denied_init",
+                default_value="false",
+                description="Start the EKF at the datum origin (IMU+wheel dead-reckon) "
+                            "if no GNSS fix arrives; GNSS corrects on return. Needs a datum.",
+            ),
+            DeclareLaunchArgument(
+                "datum_longitude",
+                default_value="",
+                description="sbg_raw_ekf datum_longitude (deg); empty = first valid fix.",
+            ),
+            DeclareLaunchArgument(
+                "antenna_offset_x",
+                default_value="",
+                description="sbg_raw_ekf antenna_offset_x (m, base_footprint); empty = node default.",
+            ),
+            DeclareLaunchArgument(
+                "antenna_offset_y",
+                default_value="",
+                description="sbg_raw_ekf antenna_offset_y (m, base_footprint); empty = node default.",
+            ),
             DeclareLaunchArgument(
                 "slam",
                 default_value="true",
@@ -145,19 +212,7 @@ def generate_launch_description():
             # sensor bringup owns it so it is up in step 1, where perception's
             # deskew can already see /localization/ins_odom; the simulator
             # has no sensor bringup, so there it stays here with sim_ellipse_d.
-            Node(
-                package="hyu_localization",
-                executable="sbg_raw_ekf",
-                name="sbg_raw_ekf",
-                output="screen",
-                condition=IfCondition(LaunchConfiguration("odometry")),
-                parameters=[
-                    {
-                        "use_sim_time": use_sim_time,
-                        "car_state_topic": ins_odom_topic,
-                    }
-                ],
-            ),
+            OpaqueFunction(function=_sbg_raw_ekf),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     PathJoinSubstitution(

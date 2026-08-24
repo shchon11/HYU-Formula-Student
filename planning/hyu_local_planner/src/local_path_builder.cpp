@@ -34,9 +34,13 @@ bool validConfig(const PlannerConfig & config)
     config.fallback_speed_mps,
     config.unknown_absorb_lateral_m,
     config.unknown_geom_deadband_m,
+    config.unknown_geom_max_range_m,
     config.straight_extension_cap_m,
     config.end_stop_decel_mps2,
     config.end_stop_margin_m,
+    config.live_extension_max_deviation_m,
+    config.live_extension_max_turn_rad,
+    config.live_extension_turn_window_m,
   };
   for (const double value : values) {
     if (!std::isfinite(value)) {
@@ -54,8 +58,12 @@ bool validConfig(const PlannerConfig & config)
          config.two_sided_horizon_m > 0.0 && config.fallback_horizon_m > 0.0 &&
          config.fallback_offset_m > 0.0 && config.two_sided_speed_mps > 0.0 &&
          config.fallback_speed_mps > 0.0 && config.unknown_absorb_lateral_m >= 0.0 &&
-         config.unknown_geom_deadband_m >= 0.0 && config.straight_extension_cap_m >= 0.0 &&
-         config.end_stop_decel_mps2 > 0.0 && config.end_stop_margin_m >= 0.0;
+         config.unknown_geom_deadband_m >= 0.0 && config.unknown_geom_max_range_m >= 0.0 &&
+         config.straight_extension_cap_m >= 0.0 &&
+         config.end_stop_decel_mps2 > 0.0 && config.end_stop_margin_m >= 0.0 &&
+         config.live_extension_max_deviation_m >= 0.0 &&
+         config.live_extension_max_turn_rad > 0.0 &&
+         config.live_extension_turn_window_m > 0.0;
 }
 
 std::string traversalFailureReason(internal::TraversalFailure failure)
@@ -277,21 +285,21 @@ BuildResult buildLocalPath(const ConeSet & cones, const PlannerConfig & config)
   // frame that sees only the orange gate still yields boundary cones instead
   // of "roi_no_boundary_cones" -> brake. The straight-corridor mission keeps
   // its own fold-in below.
-  std::vector<Point2> colorless;
+  std::vector<Point2> unknown;
+  std::vector<Point2> markers;  // orange / big-orange gate cones
   if (config.use_unknown_cones && !cones.unknown.empty()) {
-    const auto unknown = internal::cropToRoi(cones.unknown, config);
-    colorless.insert(colorless.end(), unknown.begin(), unknown.end());
+    unknown = internal::cropToRoi(cones.unknown, config);
     had_boundary_input = had_boundary_input || !unknown.empty();
   }
   if (fold_orange_cones) {
     for (const std::vector<Point2> * source : {&cones.orange, &cones.big_orange}) {
       const auto cropped = internal::cropToRoi(*source, config);
-      colorless.insert(colorless.end(), cropped.begin(), cropped.end());
+      markers.insert(markers.end(), cropped.begin(), cropped.end());
       had_boundary_input = had_boundary_input || !cropped.empty();
     }
   }
-  if (!colorless.empty()) {
-    internal::classifyUnknownCones(blue, yellow, colorless, config);
+  if (!unknown.empty() || !markers.empty()) {
+    internal::classifyColorlessCones(blue, yellow, unknown, markers, config);
   }
   // Straight-corridor missions fold in the big-orange start/finish gates. On an
   // acceleration track the gates sit ON the corridor line (y = +/- half width),

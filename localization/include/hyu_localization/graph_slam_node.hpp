@@ -85,7 +85,9 @@ private:
     g2o::VertexPointXY * vertex;
     Eigen::Matrix2d covariance;
     std::size_t observations;
-    int consecutive_misses;
+    // Metres of travel with this landmark expected visible but unobserved,
+    // since it was last seen (reaper budget; see landmark_delete_blind_travel_m_).
+    double blind_travel_m;
     // traveled_distance_ value when this landmark was last associated; drift
     // (and therefore the association gate inflation) grows with distance
     // driven, independent of keyframe density.
@@ -209,14 +211,25 @@ private:
     ConeColor color,
     bool as_map_repair = false);
 
-  // Register a confirmed frontend promotion: twin-suppress, create the
-  // landmark, replay its observation history against the keyframes.
-  // recompute_position re-derives the position from the earliest surviving
-  // keyframe (used when flushing promotions deferred across a seam
-  // correction — the stored map position predates the correction).
-  bool registerPromotion(
-    const FrontendPromotion & promotion, bool recompute_position);
-  // Promotions held while the seam was pending (registration near the
+  // Register a confirmed frontend promotion: re-anchor its position on the
+  // keyframes as they stand now (inverse-covariance fusion of the surviving
+  // sightings), twin-suppress, create the landmark, replay its observation
+  // history against the keyframes.
+  bool registerPromotion(const FrontendPromotion & promotion);
+  // Seam armed but not yet registered: past lap_return_min_travel_m from
+  // the captured origin with no CSM loop apply yet. While true, promotions
+  // near the start-area map are held in the frontend (promotion_hold).
+  bool seamPending() const;
+  // Inside the seam search window of a landmark founded in the first 30 m
+  // after the lap origin (the region a drifted pose re-observes as false
+  // new cones until the seam registers).
+  bool nearStartAreaMap(const Eigen::Vector2d & position) const;
+  // Right before a frontend reset (large seam/optimizer correction): pull
+  // the converged tracks out as promotions into deferred_promotions_ so
+  // they re-anchor on the corrected keyframes at the flush instead of
+  // dying with the reset. Mapping phase only.
+  void drainFrontendIntoDeferred(const char * reason);
+  // Promotions parked across a seam/correction (registration near the
   // start-area map is deferred, not dropped: dropping them permanently
   // ate cones when the map froze on the first lap return).
   void flushDeferredPromotions(const char * reason);
@@ -261,6 +274,10 @@ private:
     const g2o::SE2 & estimate,
     const g2o::SE2 & raw_odom);
   void publishMap(const rclcpp::Time & stamp);
+  static void appendConeByColor(
+    hyu_msgs::msg::ConeArrayWithCovariance & msg,
+    const hyu_msgs::msg::ConeWithCovariance & cone,
+    ConeColor color);
   void publishPath(const rclcpp::Time & stamp);
   void publishOdometry(const rclcpp::Time & stamp, const g2o::SE2 & estimate);
   void publishMarkers(const rclcpp::Time & stamp);
@@ -412,7 +429,12 @@ private:
   double csm_loop_min_response_{0.60};
   double csm_apply_cooldown_m_{2.0};
   bool landmark_delete_enable_{true};
-  int landmark_delete_misses_{20};
+  // Reaper budgets are METRES of travel while the landmark sat inside the
+  // conservative visibility envelope without being observed — never frame
+  // or keyframe counts, which silently rescale with the processing cadence
+  // (2026-08-24: halving keyframe_distance halved the old count budgets and
+  // reaped real cones).
+  double landmark_delete_blind_travel_m_{2.5};
   double landmark_delete_max_range_{10.0};
   double landmark_delete_fov_{1.5};
   // Frozen-map repair: the map stays writable in localization mode, but
@@ -420,7 +442,11 @@ private:
   // trusted reference, so changing it needs overwhelming evidence.
   // 0 disables the respective path.
   int loc_map_repair_min_hits_{8};
-  int loc_map_repair_delete_misses_{40};
+  double loc_map_repair_delete_blind_travel_m_{20.0};
+  // traveled_distance_ at the previous reaper pass (-1 before the first):
+  // each pass charges the travel since the last one to every in-envelope
+  // miss, so the budget burns per metre at any frame/keyframe cadence.
+  double last_reap_traveled_m_{-1.0};
   // The orange gate's own response at the matched pose (loop mode): the
   // seam certificate. Corridors may alias; the gate may not.
   // 0.8, not 0.5: a pair-interleaved gate fit (observed pair overlaid on

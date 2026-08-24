@@ -4,6 +4,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <optional>
+#include <string>
 #include <stdexcept>
 #include <utility>
 
@@ -72,6 +74,8 @@ LocalPlannerNode::LocalPlannerNode(const rclcpp::NodeOptions & options)
     declare_parameter<double>("unknown_absorb_lateral_m", 0.75);
   planner_config_.unknown_geom_deadband_m =
     declare_parameter<double>("unknown_geom_deadband_m", 0.75);
+  planner_config_.unknown_geom_max_range_m =
+    declare_parameter<double>("unknown_geom_max_range_m", 6.0);
   planner_config_.use_orange_cones = declare_parameter<bool>("use_orange_cones", false);
   use_live_cone_extension_ =
     declare_parameter<bool>("use_live_cone_extension", false);
@@ -80,6 +84,16 @@ LocalPlannerNode::LocalPlannerNode(const rclcpp::NodeOptions & options)
     declare_parameter<double>("live_merge_radius_m", 1.0);
   live_extension_config_.as_unknown =
     declare_parameter<bool>("live_extension_as_unknown", true);
+  // Map-first reconciliation of the live extension (see
+  // PlannerConfig::live_extension_*): live cones may only append path
+  // beyond the map frontier, never reshape the mapped part, and the
+  // appended tail is cut at the first kink.
+  planner_config_.live_extension_max_deviation_m =
+    declare_parameter<double>("live_extension_max_deviation_m", 0.5);
+  planner_config_.live_extension_max_turn_rad =
+    declare_parameter<double>("live_extension_max_turn_rad", 1.4);
+  planner_config_.live_extension_turn_window_m =
+    declare_parameter<double>("live_extension_turn_window_m", 1.0);
   if (!std::isfinite(live_cone_max_age_sec_) || live_cone_max_age_sec_ <= 0.0 ||
     !std::isfinite(live_extension_config_.merge_radius_m) ||
     live_extension_config_.merge_radius_m < 0.0)
@@ -227,20 +241,39 @@ void LocalPlannerNode::processSlamMap(const SlamMapInput & input)
     return;
   }
 
-  auto cone_set = slamConeSet(*input.map, odom_metadata);
+  const auto map_cone_set = slamConeSet(*input.map, odom_metadata);
+  // Live-cone extension: the map-only cone set stays the trusted reference;
+  // the extended set is planned alongside it and reconciled (map first, live
+  // cones only append past the frontier, kinked tails cut). See
+  // planWithLiveExtension / reconcileLiveExtension.
+  std::optional<ConeSet> extended_cone_set;
   if (use_live_cone_extension_ && input.live_cones && input.live_odom_valid) {
     const double live_age = std::chrono::duration<double>(
       std::chrono::steady_clock::now() - input.live_cones_receive_time).count();
     if (live_age <= live_cone_max_age_sec_) {
+      ConeSet extended = map_cone_set;
       extendConeSetWithLiveCones(
-        cone_set, *input.live_cones, input.live_odom, odom_metadata,
+        extended, *input.live_cones, input.live_odom, odom_metadata,
         live_extension_config_);
+      const auto count = [](const ConeSet & set) {
+          return set.blue.size() + set.yellow.size() + set.orange.size() +
+                 set.big_orange.size() + set.unknown.size();
+        };
+      if (count(extended) > count(map_cone_set)) {
+        extended_cone_set = std::move(extended);
+      }
     }
   }
   const auto config = configForOdom(*input.odom);
-  auto result = buildLocalPath(cone_set, config);
+  std::string live_note;
+  auto result = planWithLiveExtension(
+    map_cone_set, extended_cone_set ? &*extended_cone_set : nullptr, config, &live_note);
+  if (extended_cone_set && log_diagnostics_) {
+    RCLCPP_INFO_THROTTLE(
+      get_logger(), *get_clock(), 1000, "[localdiag] live extension: %s", live_note.c_str());
+  }
   applyStraightLatch(result, *input.odom, config);
-  logPlannerDiagnostics(cone_set, result);
+  logPlannerDiagnostics(extended_cone_set ? *extended_cone_set : map_cone_set, result);
   if (result.valid) {
     output_->publishPath(result, *input.odom, input.odom->header.stamp, input.odom_receive_time);
   } else {

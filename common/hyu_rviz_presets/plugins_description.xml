@@ -24,7 +24,7 @@
          type="hyu_rviz_presets::HudStack"
          base_class_type="rviz_common::Display">
     <description>
-      One-click group: Path CTE / SLAM status / GNSS text HUD overlays (non-overlapping stack).
+      One-click group: planning board + sensor board + control sparklines (text HUD overlays).
     </description>
   </class>
   <class name="hyu_rviz_presets/FullStack"

@@ -13,10 +13,20 @@ hyu_pure_pursuit_node:
 
     # --- Shared limits / longitudinal control (identical to geometric mode) ---
     wheelbase_m: 1.58
-    max_steering_rad: 0.52
+    # rear_axle_from_base_m (where the rear axle sits along body x of the
+    # incoming base_footprint pose -- pure pursuit steers the AXLE) and
+    # max_steering_rad are CAR GEOMETRY, owned by
+    # hyu_sensor_bringup/config/vehicle_mount.yaml (vehicle:) and passed in by
+    # local_global_planning.launch.py. Not set here on purpose: the node's
+    # rear_axle_from_base_m default (0 = steer the pose as-is) only applies to
+    # a bare standalone launch. max_steering_rad below is the standalone
+    # fallback: the steering wheel's +-90 deg hardware lock through the
+    # bridge's kinematics table is +-0.335 rad (drive_udp_bridge README) --
+    # the MAP table (lut_steer_max_rad) follows it.
+    max_steering_rad: 0.335
     command_rate_hz: 20.0
     input_timeout_sec: 0.5
-    max_speed_mps: 15.0
+    max_speed_mps: 5.0
     longitudinal_kp: 1.2
     min_acceleration_mps2: -8.0
     max_acceleration_mps2: 2.5
@@ -69,7 +79,8 @@ hyu_pure_pursuit_node:
 
     # --- Lookup table grid (integrated once at node startup) ---
     lut_steer_fine_end_rad: 0.1
-    lut_steer_max_rad: 0.52
+    # lut_steer_max_rad defaults to max_steering_rad (the hardware lock) -- do
+    # not pin it here.
     lut_n_steer_fine: 30
     lut_n_steer_coarse: 30
     lut_vel_min_mps: 0.5

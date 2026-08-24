@@ -200,12 +200,19 @@ public:
   double lastWheelSpeed() const {return last_wheel_speed_;}
   /// Latest gyro.z input (NED body, CW positive) [rad/s].
   double gyroZ() const {return gyro_z_;}
+  /// Latest body-x specific force input [m/s^2] (bias not removed).
+  double accX() const {return acc_x_;}
   int mode() const;
   const std::array<int, NKIND> & accepted() const {return n_acc_;}
   const std::array<int, NKIND> & rejected() const {return n_rej_;}
+  // GNSS-denied cold start: init at the datum origin with a large position
+  // sigma (pending HDT heading if any), no position fix recorded.
+  void initAtOrigin(double t, double pos_sig = 100.0);
 
 private:
-  void init(double t, double pN, double pE, double vN, double vE, double psi, double psi_sig);
+  void init(double t, double pN, double pE, double vN, double vE, double psi, double psi_sig,
+            double pos_sig = 1.0);
+
   void predict(double t_to);
   template<int M>
   bool update(
@@ -249,6 +256,7 @@ public:
   void gpsHdt(const GpsHdtMeas & m);
   void gpsPos(const GpsPosMeas & m);
   void wheel(const WheelMeas & m);
+  void initAtOrigin(double t, double pos_sig = 100.0);
 
   const RawGnssEkfCore & core() const {return core_;}
   struct Stats

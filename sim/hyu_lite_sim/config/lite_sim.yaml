@@ -1,0 +1,126 @@
+# hyu_lite_sim defaults. Every number here is a ROS parameter of the race_car
+# node (launch: params_file:=...). Values are fitted to the 2026-08-01 car:
+# the 17:22:34 bag for the SBG, perception.yaml / the evaluations for the
+# cone model, drive_udp_bridge.yaml for the tyre, hyu_pure_pursuit.yaml for
+# the wheelbase. See sbg_emu.py / perception_emu.py / vehicle.py for what
+# each knob does.
+race_car:
+  ros__parameters:
+    # ---- world ----------------------------------------------------------------
+    # track / datum / clutter_* / antenna_offset_* come from the launch arguments.
+    world_frame: odom              # == sbg_raw_ekf frame when it gets the same datum
+    base_frame: base_footprint
+    physics_rate_hz: 100.0
+    ground_truth_rate_hz: 25.0
+    publish_ground_truth: true
+    noise_seed: 0                  # 0 = different noise every run; >0 = repeatable
+
+    # ---- ECU (Speedgoat) ----------------------------------------------------------
+    udp_listen_ip: 127.0.0.1       # where the bridge's '<ffBB' command datagrams arrive
+    udp_listen_port: 15000
+    udp_feedback_ip: 127.0.0.1     # where the four-wheel RPM feedback goes (bridge feedback_port)
+    udp_feedback_port: 15001
+    feedback_rate_hz: 100.0
+    rpm_noise: 0.8                 # encoder RPM noise, 1 sigma (1 RPM = 0.024 m/s)
+    rpm_quant: 0.0                 # RPM quantisation step (0 = none; try 0.5 if the ECU sends ints)
+    # 휠 반경 바이어스(마모/공기압): 매 런 랜덤(node 레벨). common=전체(공기압), random=바퀴별(마모)
+    wheel_radius_bias_pct: 2.0     # 기본 ON: 전체 반경 바이어스 ~U(-2,2)% (공기압)
+    wheel_radius_random_pct: 1.0   # 기본 ON: 바퀴별 반경 편차 ~U(-1,1)% (마모)
+    steering_table: bridge         # bridge = drive_udp_bridge's steering_kinematics.csv | linear | <csv path>
+    steering_linear_ratio: 0.2     # only for steering_table: linear
+    cmd_timeout_s: 0.25            # ECU fails closed when command datagrams stop
+
+    # ---- sensor placement in base_footprint (ground point under the ZED) -----------
+    imu_offset_x: 1.07             # vehicle_mount.yaml sbg.imu_from_camera
+    imu_offset_y: -0.06
+
+    vehicle:
+      wheelbase_m: 1.58
+      track_width_m: 1.20
+      rear_axle_x_m: 0.91          # rear axle ahead of base_footprint (camera under the hoop); the launch
+                                   # applies vehicle_mount.yaml vehicle.rear_axle_from_base_m over this
+      # Physical lock: steering wheel +-90 deg = bicycle +-0.335 rad through the
+      # bridge's kinematics table (vehicle_mount.yaml vehicle.max_steering_rad,
+      # which the launch applies over this when the sensors package is built).
+      max_steer_rad: 0.335
+      steer_rate_rad_s: 2.0
+      steer_tau_s: 0.12
+      accel_max_mps2: 3.0
+      brake_max_mps2: 6.0
+      speed_kp: 2.0
+      speed_tau_s: 0.25
+      drag_per_mps: 0.05
+      max_speed_mps: 20.0
+      tire_diameter_m: 0.4572
+      wheel_scale: [1.000, 0.997, 1.002, 0.999]   # FL FR RL RR effective radius vs nominal
+      allow_reverse: true
+
+    sbg:
+      imu_rate_hz: 25.0
+      gps_rate_hz: 5.0
+      receiver_latency_s: 0.105
+      device_ts0_us: 3320000000    # uint32 us counter start (wraps after ~16 min, as the device would at 71 min)
+      frame_id: imu_link_ned
+      imu_pitch_deg: -7.45         # mount tilt -> accel.x -1.27 at rest, as the car reads
+      imu_roll_deg: 0.22
+      imu_tilt_random_deg: 0.0     # >0: 매 런 pitch,roll ~U(-x,x) (마운트 무관 EKF 흡수 스트레스테스트)
+      accel_noise: [0.035, 0.020, 0.012]
+      gyro_noise: [0.0005, 0.0005, 0.0009]
+      gyro_bias: [0.00045, -0.00085, 0.00038]
+      gyro_bias_random_dps: 0.0    # >0: 매 런 turn-on 자이로 바이어스 ~U(-x,x) deg/s (EKF b_gz/ZARU 시험)
+      gyro_bias_walk_dps_per_sqrt_s: 0.0  # >0: 주행중 드리프트(bias instability)
+      accel_bias: [0.0, 0.0, 0.0]
+      accel_vib_per_mps: 0.012
+      gyro_vib_per_mps: 0.0004
+      temp_c: 41.7
+      fix: rtk_fixed               # rtk_fixed | rtk_float | dgps | single | outage
+      fix_schedule: ""             # e.g. "90:rtk_float,100:rtk_fixed,150:outage,153:rtk_fixed"
+      # --- 보수적 GNSS 열화 (수신기는 정확도를 낙관 보고 -> EKF 과신 유도) ---
+      pos_bias_walk_scale: 1.0     # 모드별 상관 바이어스 증폭(>1 = 더 가혹)
+      pos_jump_prob: 0.01          # 기본 ON: 에폭당 멀티패스 점프(~20s마다)
+      pos_jump_m: 1.5              # 멀티패스 점프 크기(1σ, m) — 보고 정확도엔 안 뜸
+      hdt_dropout_degraded: 0.5    # rtk_fixed 아닐 때 HDT 추가 드롭 확률
+      altitude_m: 31.49
+      undulation_m: 18.586
+      sv_tracked: 40
+      vel_noise: 0.019
+      vel_accuracy_still: 0.10
+      vel_accuracy_moving: 0.067
+      course_acc_moving_deg: 1.8
+      course_acc_still_deg: 162.0
+      hdt_offset_deg: 180.0        # secondary antenna behind the primary (EKF hdt_offset_deg 180)
+      hdt_noise_deg: 0.33
+      hdt_accuracy_deg: 0.38
+      hdt_dropout_prob: 0.039
+      hdt_baseline_m: 1.509
+      hdt_pitch_deg: 2.64
+      hdt_pitch_noise_deg: 0.85
+      hdt_sv_tracked: 42
+      hdt_sv_used: 32
+
+    perception:
+      rate_hz: 10.0                # LiDAR-locked fusion rate
+      latency_s: 0.08              # cloud stamp -> /perception/cones on the wire
+      min_range_m: 1.5             # roi_min_x 1.4
+      max_range_m: 20.0
+      lidar_fov_deg: 180.0         # nose RS-16 forward wedge
+      camera_fov_deg: 100.0        # colour needs the camera
+      near_range_m: 10.0          # RS16 물리: <=10m 2+빔 견고, 11-20m 1빔(감소), >22m 한계
+      p_detect_far: 0.15          # 20m 단일빔(프레임 불안정) 물리 모델
+      colour_min_range_m: 2.0        # <2m 카메라가 콘 못 담음(실측 4%)
+      colour_max_range_m: 8.0        # 2026-08-23 실측: ZNCC 신뢰<=8m(zncc_bag_check), 색콘도 여기 집중
+      sparse_range_m: 12.0         # >12m LiDAR sparse tier (실측 cov ~1.07)
+      p_colour_near: 0.85          # 30Hz 실측(fresh bbox 프레임): 2-8m ~84% 평탄
+      p_colour_far: 0.83
+      colour_confusion: 0.01
+      sigma_lat_m: 0.03
+      sigma_lon_m: 0.04
+      sigma_per_mps: 0.015         # deskew residual
+      outlier_prob: 0.004
+      outlier_m: 0.6
+      var_coloured: 0.07           # perception.yaml lidar_variance_x/y (variance!)
+      var_unknown: 0.23            # lidar_only_variance_x/y
+      var_far_lat: 0.90          # 실측 원거리(>12m) cov0 ~1.07 (구 0.26^2 은 과소)
+      var_far_lon: 1.20          # 실측 원거리 종방향 공분산 (>12m sparse)
+      false_positives_per_frame: 0.25
+      clutter_colour_prob: 0.0     # chance a clutter return is (wrongly) coloured blue/yellow

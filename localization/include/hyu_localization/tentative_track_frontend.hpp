@@ -111,11 +111,15 @@ struct FrontendParams
   // real cones of the next leg.
   double promote_hold_drift_stale_m{60.0};
 
-  // Track death: consecutive expected-visible frames without a hit (cheap to
-  // be aggressive — a killed track re-founds on the next sighting and never
-  // touched the map), plus an age cap so unpromotable tracks cannot linger
-  // as silent observation absorbers.
-  int kill_consecutive_misses{3};
+  // Track death: DISTANCE driven while the track was expected visible but
+  // not hit (cheap to be aggressive — a killed track re-founds on the next
+  // sighting and never touched the map), plus an age cap so unpromotable
+  // tracks cannot linger as silent observation absorbers. Metres, not frame
+  // or keyframe counts: a count budget silently rescales whenever the
+  // processing cadence changes (2026-08-24: halving keyframe_distance
+  // halved every count budget and ate real cones). A stationary car burns
+  // no blind travel — flicker at standstill cannot kill a track.
+  double kill_blind_travel_m{1.5};
   double kill_unpromoted_travel_m{25.0};
 
   // Replay buffer cap per track (hits keep counting past it).
@@ -169,6 +173,16 @@ struct FrontendConfirmedMatch
   std::size_t landmark_index{0U};
 };
 
+// Read-only view of a converged (promotable) track, for consumers that want
+// to SEE the cone before the graph admits it (map publication): position,
+// fused covariance and the current majority colour.
+struct FrontendTrackPreview
+{
+  Eigen::Vector2d position{Eigen::Vector2d::Zero()};
+  Eigen::Matrix2d covariance{Eigen::Matrix2d::Identity()};
+  std::uint8_t color{static_cast<std::uint8_t>(kFrontendColorCount - 1U)};
+};
+
 struct FrontendFrameResult
 {
   std::vector<FrontendConfirmedMatch> confirmed_matches;
@@ -177,7 +191,10 @@ struct FrontendFrameResult
   std::size_t new_tracks{0U};
   std::size_t updated_tracks{0U};
   std::size_t killed_tracks{0U};
+  // Promotable tracks kept back this frame (any hold); caller_held_promotions
+  // is the subset held by the caller's promotion_hold predicate.
   std::size_t held_promotions{0U};
+  std::size_t caller_held_promotions{0U};
 };
 
 struct TentativeTrack
@@ -186,7 +203,9 @@ struct TentativeTrack
   Eigen::Matrix2d covariance{Eigen::Matrix2d::Identity()};
   std::array<std::uint16_t, kFrontendColorCount> color_votes{};
   int hits{0};
-  int consecutive_misses{0};
+  // Metres driven while this track was expected visible but not hit,
+  // since its last hit (see FrontendParams::kill_blind_travel_m).
+  double blind_travel_m{0.0};
   double first_seen_traveled_m{0.0};
   double last_seen_traveled_m{0.0};
   // Smallest heading-lever sigma over all hits. The lever error is
@@ -223,19 +242,83 @@ public:
 
   const std::vector<TentativeTrack> & tracks() const {return tracks_;}
 
-  void reset() {tracks_.clear();}
+  void reset()
+  {
+    tracks_.clear();
+    last_processed_traveled_m_ = -1.0;
+  }
+
+  // Read-only previews of every track that already satisfies the promotion
+  // criteria (converged real cones -- typically the ones a hold is keeping
+  // out of the graph). Lets the map publication show them to the planner
+  // while the seam is pending: with these cones missing the local planner
+  // went blind over the last stretch of lap 1 (2026-08-24 user-observed
+  // wobble + crash). Graph admission is unaffected.
+  std::vector<FrontendTrackPreview> promotablePreviews() const
+  {
+    std::vector<FrontendTrackPreview> previews;
+    for (const TentativeTrack & track : tracks_) {
+      if (isPromotable(track)) {
+        previews.push_back(
+          FrontendTrackPreview{
+            track.position, track.covariance, majorityColor(track.color_votes)});
+      }
+    }
+    return previews;
+  }
+
+  // Pull every track that already satisfies the promotion criteria (hits and
+  // converged sigma) out of the frontend as promotions, IGNORING both holds
+  // (the stale-landmark drift-twin hold and the caller's promotion_hold).
+  // For the moments the caller is about to reset() the frontend -- a large
+  // pose correction, or the map freeze -- so that converged real cones that
+  // were merely waiting are handed over with their full replay history
+  // instead of dying with the tracks. The caller's twin suppression is the
+  // remaining guard against drift twins. Non-promotable tracks stay.
+  std::vector<FrontendPromotion> drainPromotable()
+  {
+    std::vector<FrontendPromotion> promotions;
+    std::vector<TentativeTrack> survivors;
+    survivors.reserve(tracks_.size());
+    for (TentativeTrack & track : tracks_) {
+      if (isPromotable(track)) {
+        promotions.push_back(makePromotion(track));
+      } else {
+        survivors.push_back(std::move(track));
+      }
+    }
+    tracks_ = std::move(survivors);
+    return promotions;
+  }
 
   // One perception frame. expected_visible reports whether a map point
   // should currently be observable (range/FOV from the live pose); tracks
   // outside it neither miss nor die, so occlusion and FOV exits do not eat
   // the miss budget (the 2026-07-17 reaper lesson).
+  //
+  // promotion_hold (optional) lets the caller HOLD a promotable track by
+  // position: the track survives and keeps accumulating hits, colour votes
+  // and replay history, and is promoted on the first frame the predicate
+  // releases it. This is how registration near the start-area map waits
+  // for the lap seam without the track being torn down and re-founded
+  // (the old node-side deferral removed the track here, so every later
+  // sighting founded a fresh copy; at the flush the EARLIEST copy -- far,
+  // colourless -- won and the later colour votes were discarded as twins).
+  // A track held this way is exempt from kill_unpromoted_travel_m: it is a
+  // converged real cone that is waiting on the caller, not a stray.
   FrontendFrameResult processFrame(
     const std::vector<FrontendObservation> & observations,
     const std::vector<FrontendConfirmedLandmark> & confirmed,
     double traveled_m,
-    const std::function<bool(const Eigen::Vector2d &)> & expected_visible)
+    const std::function<bool(const Eigen::Vector2d &)> & expected_visible,
+    const std::function<bool(const Eigen::Vector2d &)> & promotion_hold = {})
   {
     FrontendFrameResult result;
+    // Travel since the previous processed frame: the unit blind-travel
+    // accounting is charged in, whatever the frame/keyframe cadence.
+    const double travel_delta = last_processed_traveled_m_ >= 0.0 ?
+      std::max(0.0, traveled_m - last_processed_traveled_m_) : 0.0;
+    last_processed_traveled_m_ = traveled_m;
 
     // --- Confirmed-landmark candidates + per-observation ambiguity -------
     struct Candidate
@@ -420,33 +503,24 @@ public:
 
       if (!track_hit[k]) {
         if (expected_visible && expected_visible(track.position)) {
-          ++track.consecutive_misses;
+          track.blind_travel_m += travel_delta;
         }
-        if (track.consecutive_misses >= params_.kill_consecutive_misses) {
+        if (track.blind_travel_m >= params_.kill_blind_travel_m) {
           ++result.killed_tracks;
           continue;
         }
       }
-      if (traveled_m - track.first_seen_traveled_m > params_.kill_unpromoted_travel_m) {
-        ++result.killed_tracks;
-        continue;
-      }
-
-      // Promotion sigma: fused covariance PLUS the correlated lever floor
-      // (composed in quadrature; the fused part already contains per-frame
-      // lever terms, so this is deliberately conservative).
-      const double fused_sigma = frontend_detail::maxAxisSigma(track.covariance);
-      const double lever_floor =
-        track.min_lever_sigma_m == std::numeric_limits<double>::max() ?
-        0.0 : track.min_lever_sigma_m;
-      const double promotion_sigma =
-        std::sqrt(fused_sigma * fused_sigma + lever_floor * lever_floor);
-      const bool promotable =
-        (track.hits >= params_.promote_min_hits &&
-        promotion_sigma <= params_.promote_max_position_sigma_m) ||
-        (track.hits >= params_.promote_far_min_hits &&
-        promotion_sigma <= params_.promote_far_max_sigma_m);
-      if (promotable) {
+      const bool promotable = isPromotable(track);
+      // The caller's hold: a converged real cone waiting on the caller (seam
+      // pending). It must not age out while it waits, and it promotes on the
+      // very frame the hold lifts -- the travel kill below only sees tracks
+      // that are still waiting or never converged.
+      const bool caller_held =
+        promotable && promotion_hold && promotion_hold(track.position);
+      if (caller_held) {
+        ++result.held_promotions;
+        ++result.caller_held_promotions;
+      } else if (promotable) {
         bool held = false;
         for (const FrontendConfirmedLandmark & landmark : confirmed) {
           const double stale_travel = traveled_m - landmark.last_seen_traveled_m;
@@ -475,16 +549,18 @@ public:
         if (held) {
           ++result.held_promotions;
         } else {
-          FrontendPromotion promotion;
-          promotion.position = track.position;
-          promotion.covariance = track.covariance;
-          promotion.hits = track.hits;
-          promotion.color_votes = track.color_votes;
-          promotion.color = majorityColor(track.color_votes);
-          promotion.observations = std::move(track.pending);
-          result.promotions.push_back(std::move(promotion));
+          result.promotions.push_back(makePromotion(track));
           continue;
         }
+      }
+      // Unconverged (or stale-twin-held) for too much travel: a stray. A
+      // caller-held track is a converged real cone waiting on the caller and
+      // is exempt.
+      if (!caller_held &&
+        traveled_m - track.first_seen_traveled_m > params_.kill_unpromoted_travel_m)
+      {
+        ++result.killed_tracks;
+        continue;
       }
 
       survivors.push_back(std::move(track));
@@ -495,6 +571,38 @@ public:
   }
 
 private:
+  // Promotion criteria: enough hits AND a converged position. Promotion
+  // sigma is the fused covariance PLUS the correlated lever floor (composed
+  // in quadrature; the fused part already contains per-frame lever terms,
+  // so this is deliberately conservative). The far tier admits a cone only
+  // ever seen at range with its honest, wider sigma after more hits.
+  bool isPromotable(const TentativeTrack & track) const
+  {
+    const double fused_sigma = frontend_detail::maxAxisSigma(track.covariance);
+    const double lever_floor =
+      track.min_lever_sigma_m == std::numeric_limits<double>::max() ?
+      0.0 : track.min_lever_sigma_m;
+    const double promotion_sigma =
+      std::sqrt(fused_sigma * fused_sigma + lever_floor * lever_floor);
+    return (track.hits >= params_.promote_min_hits &&
+           promotion_sigma <= params_.promote_max_position_sigma_m) ||
+           (track.hits >= params_.promote_far_min_hits &&
+           promotion_sigma <= params_.promote_far_max_sigma_m);
+  }
+
+  // Hand a track over as a promotion (moves its replay history out).
+  static FrontendPromotion makePromotion(TentativeTrack & track)
+  {
+    FrontendPromotion promotion;
+    promotion.position = track.position;
+    promotion.covariance = track.covariance;
+    promotion.hits = track.hits;
+    promotion.color_votes = track.color_votes;
+    promotion.color = majorityColor(track.color_votes);
+    promotion.observations = std::move(track.pending);
+    return promotion;
+  }
+
   Eigen::Matrix2d leveredCovariance(const FrontendObservation & observation) const
   {
     const double lever_sigma = params_.heading_lever_sigma_rad * observation.range_m;
@@ -538,7 +646,7 @@ private:
       track.covariance = (0.5 * (updated + updated.transpose())).eval();
     }
     ++track.hits;
-    track.consecutive_misses = 0;
+    track.blind_travel_m = 0.0;
     track.last_seen_traveled_m = traveled_m;
     track.min_lever_sigma_m = std::min(
       track.min_lever_sigma_m,
@@ -590,6 +698,8 @@ private:
 
   FrontendParams params_;
   std::vector<TentativeTrack> tracks_;
+  // traveled_m of the previous processFrame call (-1 before the first).
+  double last_processed_traveled_m_{-1.0};
 };
 
 }  // namespace hyu_localization

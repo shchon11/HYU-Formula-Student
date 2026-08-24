@@ -61,3 +61,24 @@ sbg:
   # 2026-08-01 flash: primary [0.18, 0, 0], secondary [-1.07, 0, 0.13].
   lever_arm_primary: [0.18, 0.0, 0.0]
   lever_arm_secondary: [-1.07, 0.0, 0.13]
+
+# Car geometry the planning/control stack reads at launch
+# (hyu_planning_bringup local_global_planning.launch.py -> Pure Pursuit; the
+# lite simulator's plant follows it too). This is THE place for these numbers.
+vehicle:
+  # Rear axle line along body x of base_footprint, metres, +x forward.
+  # base_footprint is the ground point under the ZED stereo centre (above);
+  # the camera is on the main hoop, BEHIND the rear axle, so the axle is
+  # ahead of base. Pure pursuit steers the axle: steering base_footprint
+  # itself turned in one tempo late (2026-08-23 lite-sim A/B). 0.91 is the
+  # 2026-07-26 estimate (old base = axle -> LiDAR 0.81 m, LiDAR -> camera
+  # 1.7 m) -- TAPE IT: stereo centre's ground point to the rear axle line.
+  rear_axle_from_base_m: 0.91
+  wheelbase_m: 1.58
+  # Steering HARDWARE limit as the bicycle-model front angle [rad]: the
+  # steering wheel locks at +-90 deg, which through the bridge's
+  # steering_kinematics.csv is +-0.335 rad (drive_udp_bridge README;
+  # minimum turning radius L/tan = 4.5 m). Confirmed 2026-08-23. Every
+  # commanded angle beyond it is clipped by the bridge, so the controller
+  # and its steering table must not plan on more.
+  max_steering_rad: 0.335

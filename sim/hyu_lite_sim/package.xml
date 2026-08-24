@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>hyu_lite_sim</name>
+  <version>0.1.0</version>
+  <description>Lightweight (no Gazebo) vehicle + sensor simulator for the FSK
+    stack: a bicycle-model car, an emulated SBG Ellipse-D (raw imu_data /
+    gps_pos / gps_vel / gps_hdt), an emulated ECU (UDP command in, per-wheel
+    RPM feedback out, through the real drive_udp_bridge) and an emulated
+    perception output (/perception/cones) from a track csv plus off-track
+    clutter that shows up as unknown-colour cones. Runs on the Jetson.</description>
+  <maintainer email="shchon724@gmail.com">shchon11</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>ackermann_msgs</depend>
+  <depend>hyu_msgs</depend>
+  <depend>sbg_driver</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
+  <exec_depend>drive_udp_bridge</exec_depend>
+  <exec_depend>hyu_planning_bringup</exec_depend>
+  <exec_depend>hyu_localization</exec_depend>
+  <exec_depend>eufs_tracks</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

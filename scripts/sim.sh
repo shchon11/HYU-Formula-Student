@@ -4,8 +4,15 @@
 #
 #   sim [track] [sim|real] [bg] [norviz] [use_sim_time:=true|false] [extra sim args...]
 #                                          # start (default: small_track real)
+#   sim [track] lite [bg] [rviz] [clutter:=N] [seed:=N] [clutter_file:=..]
+#                    [ecu:=udp|ros] [button:=auto|manual] [fix:=..] [extra launch args]
+#                                          # the Gazebo-FREE simulator (hyu_lite_sim):
+#                                          # bicycle car + emulated ECU/SBG/perception,
+#                                          # off-track clutter as unknown cones. This is
+#                                          # what runs on the Jetson (no arm64 Gazebo);
+#                                          # chosen automatically when eufs is not built.
 #   sim perception [track] [extra args]    # sim+perception+SLAM+teleop only,
-#                                          # for per-tier evaluation vs GT cones
+#                                          # for per-tier evaluation vs GT cones (Gazebo)
 #   sim stop                               # tear down the WHOLE session (all steps)
 #   sim attach                             # re-attach
 #
@@ -25,8 +32,25 @@
 #   sim | real   perception mode. 'real' (default) = YOLO+LiDAR fusion on the
 #                simulated sensors; 'sim' = lightweight Gazebo ground-truth
 #                cones straight onto /perception/cones, no YOLO.
+#   lite|gazebo  backend. 'gazebo' = eufs (x86 workstation); 'lite' =
+#                hyu_lite_sim, no Gazebo, no perception/YOLO -- cones are
+#                emulated from the track csv plus CLUTTER (poles, bushes,
+#                fences... that show up as unknown-colour cones, as on the
+#                real course). Default: gazebo if eufs_launcher is built, else lite.
 #   bg           do not attach the tmux session (background/headless run).
-#   norviz       start without RViz.
+#   norviz/rviz  RViz off/on (gazebo default on, lite default off).
+#
+# lite backend knobs (all optional):
+#   clutter:=N        off-track objects (default 60)      seed:=N   their placement seed
+#   clutter_file:=f   load a clutter yaml (ros2 run hyu_lite_sim clutter_tool ...)
+#   ecu:=udp|ros      udp (default) = through the REAL drive_udp_bridge on loopback
+#                     ports, RPM feedback -> /vehicle/wheel_speeds; ros = /vehicle/cmd direct
+#   button:=auto|manual  auto (default) latches the AS button ON: 'mission <name>'
+#                     drives at once; manual = arm, then 'mission go' as on the car
+#   fix:=SCHED        receiver fix schedule, e.g. fix:=90:rtk_float,100:rtk_fixed,150:outage,153:rtk_fixed
+#   datum_lat:= datum_lon:= antenna_x:= antenna_y:=   world datum / antenna position (also
+#                     handed to sbg_raw_ekf in step 2 so ground truth == odom frame)
+#   anything else name:=value goes to lite_sim.launch.py as is.
 
 set -o pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,14 +75,30 @@ HAS_MOTION_COMP_ARG=0
 EVAL_MODE=0
 USE_SIM_TIME="true"
 BG=0
-RVIZ="true"
+RVIZ=""
+BACKEND="auto"
+LITE_ARGS=""
+LITE_DATUM_LAT=""; LITE_DATUM_LON=""; LITE_ANT_X=""; LITE_ANT_Y=""; LITE_BUTTON="auto"; LITE_ECU="udp"
 for tok in "$@"; do
   case "$tok" in
     perception) EVAL_MODE=1 ;;
     bg|headless) BG=1 ;;
     norviz) RVIZ="false" ;;
+    rviz) RVIZ="true" ;;
     rviz:=*) RVIZ="${tok#rviz:=}" ;;
     use_sim_time:=*) USE_SIM_TIME="${tok#use_sim_time:=}" ;;
+    lite|gazebo) BACKEND="$tok" ;;
+    # lite-backend knobs (harmless to parse in gazebo mode; ignored there)
+    clutter:=*)      LITE_ARGS="$LITE_ARGS clutter_count:=${tok#clutter:=}" ;;
+    seed:=*)         LITE_ARGS="$LITE_ARGS clutter_seed:=${tok#seed:=}" ;;
+    clutter_file:=*) LITE_ARGS="$LITE_ARGS clutter_file:=${tok#clutter_file:=}" ;;
+    ecu:=*)          LITE_ECU="${tok#ecu:=}" ;;
+    button:=*)       LITE_BUTTON="${tok#button:=}" ;;
+    fix:=*)          LITE_ARGS="$LITE_ARGS fix_schedule:=${tok#fix:=}" ;;
+    datum_lat:=*)    LITE_DATUM_LAT="${tok#datum_lat:=}" ;;
+    datum_lon:=*)    LITE_DATUM_LON="${tok#datum_lon:=}" ;;
+    antenna_x:=*)    LITE_ANT_X="${tok#antenna_x:=}" ;;
+    antenna_y:=*)    LITE_ANT_Y="${tok#antenna_y:=}" ;;
     sim|real) PMODE="$tok" ;;
     tmpc)
       echo "sim: the TMPC hybrid stack is retired from this flow — the MAP controller drives. Ignoring 'tmpc'." >&2 ;;
@@ -81,6 +121,74 @@ done
 case "$TRACK" in
   accel) TRACK="acceleration" ;;
 esac
+
+# Backend: Gazebo (eufs) where it is built, else the Gazebo-free lite sim.
+# eufs cannot be built on the Jetson (no arm64 gazebo), so there this is
+# always 'lite' unless forced.
+if [ "$BACKEND" = "auto" ]; then
+  if [ -d "$EUFS_MASTER/install/eufs_launcher" ]; then BACKEND="gazebo"; else BACKEND="lite"; fi
+fi
+if [ "$BACKEND" = "lite" ]; then
+  [ -d "$EUFS_MASTER/install/hyu_lite_sim" ] || {
+    echo "sim: lite backend requested but hyu_lite_sim is not built (colcon build --symlink-install --base-paths src --packages-select hyu_lite_sim)." >&2; exit 1; }
+  fsk_require_built
+  fsk_session_exists && { echo "sim: already running — 'sim stop' first, or 'sim attach'."; exit 1; }
+  if [ "$EVAL_MODE" -eq 1 ]; then
+    echo "sim: 'sim perception' (per-tier perception evaluation) needs the Gazebo backend — the lite sim has no camera/LiDAR, its cones are emulated." >&2
+    exit 1
+  fi
+  [ "$PMODE" = "sim" ] && echo "sim: note — the lite backend always emulates perception ('sim'/'real' only select YOLO in the Gazebo flow)."
+  RVIZ="${RVIZ:-false}"
+  case "$LITE_BUTTON" in
+    auto|on|true)    AUTO_BUTTON=true ;;
+    manual|off|false) AUTO_BUTTON=false ;;
+    *) echo "sim: button:= must be auto or manual (got '$LITE_BUTTON')" >&2; exit 1 ;;
+  esac
+  # Everything that is NOT a lite knob is passed through to the launch.
+  for tok in $FILTERED; do
+    case "$tok" in
+      perception_*) ;;   # gazebo perception args have no meaning here
+      *:=*) LITE_ARGS="$LITE_ARGS $tok" ;;
+    esac
+  done
+  LAUNCH="ros2 launch hyu_lite_sim lite_sim.launch.py track:=$TRACK rviz:=$RVIZ ecu:=$LITE_ECU auto_button:=$AUTO_BUTTON"
+  LAUNCH="$LAUNCH${LITE_DATUM_LAT:+ datum_latitude:=$LITE_DATUM_LAT}${LITE_DATUM_LON:+ datum_longitude:=$LITE_DATUM_LON}"
+  LAUNCH="$LAUNCH${LITE_ANT_X:+ antenna_offset_x:=$LITE_ANT_X}${LITE_ANT_Y:+ antenna_offset_y:=$LITE_ANT_Y}$LITE_ARGS"
+
+  echo "sim: STEP 1 — LITE simulator (no Gazebo) on track '$TRACK', ecu $LITE_ECU, AS button $LITE_BUTTON…"
+  tmux new-session -d -s "$SESSION" -n FSK
+  P_SIM=$(tmux list-panes -t "$SESSION" -F '#{pane_id}' | head -1)
+  tmux send-keys -t "$P_SIM" \
+    "$SRC echo \"[① LITE SIM: car + ECU($LITE_ECU) + SBG + perception emulation | vehicle_state | bridge(loopback)] step 2: 'stack'  step 3: 'mission <name> [laps]'\"; $LAUNCH" C-m
+  # A one-line-per-second status of the simulated car for the pane layout.
+  P_ST=$(tmux split-window -v -t "$P_SIM" -P -F '#{pane_id}')
+  tmux send-keys -t "$P_ST" \
+    "$SRC echo '[② SIM STATUS] ecu rx/enable, command, speed, pose, fix'; until ros2 topic list --no-daemon 2>/dev/null | grep -q /sim/status; do sleep 2; done; ros2 topic echo /sim/status | grep --line-buffered '^data:' | sed -u 's/^data: //'" C-m
+  tmux select-layout -t "$SESSION" tiled
+  tmux select-pane   -t "$P_SIM"
+  tmux set-option    -t "$SESSION" mouse on
+  fsk_setenv FSK_ENV litesim
+  fsk_setenv FSK_TRACK "$TRACK"
+  fsk_setenv FSK_USE_SIM_TIME false
+  fsk_setenv FSK_RVIZ "$RVIZ"
+  fsk_setenv FSK_DATUM_LAT "$LITE_DATUM_LAT"
+  fsk_setenv FSK_DATUM_LON "$LITE_DATUM_LON"
+  fsk_setenv FSK_ANT_X "$LITE_ANT_X"
+  fsk_setenv FSK_ANT_Y "$LITE_ANT_Y"
+  cat <<EOF
+sim: step 1 up (LITE backend, track '$TRACK', ecu $LITE_ECU, rviz $RVIZ).
+  next:  step 2 → 'stack'                 (sbg_raw_ekf + SLAM + planning + control, standby)
+         step 3 → 'mission trackdrive 10' | 'mission autocross' | 'mission skidpad 2' | 'mission acceleration'
+  $( [ "$AUTO_BUTTON" = true ] && echo "AS button is latched ON: arming a mission drives at once (the bridge resets the map first)." \
+                                 || echo "AS button OFF: after arming, 'mission go' releases the car (as on the vehicle)." )
+  ground truth: /ground_truth/{state,track,clutter,cones}  markers: /sim/debug/{world,car,live_cones}  (frame odom == sim world)
+  attach → 'sim attach'   |   stop everything → 'sim stop'
+EOF
+  [ "$BG" -eq 1 ] && { fsk_attach_or_report bg; exit 0; }
+  fsk_attach_or_report
+  exit 0
+fi
+RVIZ="${RVIZ:-true}"
 
 # Only what simulation.launch.py actually declares may be passed. ros2 launch
 # does NOT reject an undeclared argument -- it accepts it silently and the

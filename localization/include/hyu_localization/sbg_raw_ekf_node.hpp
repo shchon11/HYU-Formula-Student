@@ -116,8 +116,36 @@ private:
   double last_imu_dev_t_ = 0.0;
   double last_imu_ros_t_ = 0.0;
   bool blind_gap_ = false;
+  // Re-acquisition jump (권고 2): the first odometry sample after a large
+  // GNSS/HDT correction that follows a gap is published with kHugeSigma so
+  // graph_slam treats the snap as "pose unknown" (a free edge, re-anchored by
+  // cone observations) instead of a trusted 5 cm motion.
+  bool pose_jump_ = false;
+  double reacq_min_gap_s_ = 3.0;       // a gap shorter than this is a gating streak, not an outage
+  double reacq_jump_m_ = 0.5;          // position innovation that flags a jump
+  double reacq_jump_yaw_rad_ = 0.1745; // heading innovation (10 deg) that flags a jump
+  // Online wheel-scale estimate (권고 1): |gps_vel| / raw wheel speed, EMA while
+  // RTK-grade, fast, straight. Applied to every wheel sample; frozen in coast.
+  bool wheel_scale_online_ = true;
+  double wheel_scale_tau_s_ = 45.0;
+  double wheel_scale_min_speed_ = 2.0;
+  double wheel_scale_max_yaw_rate_ = 0.25;   // [rad/s] lever-compensated, so mild turns count
+  double wheel_scale_bound_ = 0.05;          // |scale - 1| cap
+  double wheel_scale_max_accel_ = 0.3;       // [m/s^2] Doppler lag makes accelerating samples biased
+  std::uint64_t wheel_scale_min_samples_ = 20;  // apply only after this many samples
+  double wheel_scale_acc_ = 1.0;             // running estimate (applied once n >= min_samples)
+  double wheel_scale_est_ = 1.0;             // starts at wheel_scale_
+  double last_wheel_raw_mps_ = 0.0;          // before scale, for the ratio
+  std::uint64_t wheel_scale_samples_ = 0;
   double last_pub_t_ = -std::numeric_limits<double>::infinity();
   bool announced_init_ = false;
+  // GNSS-denied cold start.
+  bool allow_gnss_denied_init_ = false;
+  double gnss_denied_init_sec_ = 2.0;
+  double gnss_denied_init_pos_sig_ = 100.0;
+  bool have_first_imu_ = false;
+  double first_imu_ros_t_ = 0.0;
+  bool denied_init_announced_ = false;
   // Latest raw fix for the HUD / health.
   int last_fix_type_ = -1;
   int last_fix_sats_ = -1;

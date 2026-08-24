@@ -54,7 +54,10 @@ class TeleopNode(Node):
         self.declare_parameter('cmd_topic', '/vehicle/cmd')
         self.declare_parameter('car_state_topic', '/localization/ins_odom')
         self.declare_parameter('rate_hz', 50.0)
-        self.declare_parameter('max_steering', 0.52)      # rad, vehicle lock
+        # rad, bicycle front angle: the car's steering wheel locks at +-90 deg =
+        # +-0.335 rad through the bridge's kinematics table (vehicle_mount.yaml
+        # vehicle.max_steering_rad). EUFS Gazebo's actuator locks at 0.52.
+        self.declare_parameter('max_steering', 0.335)
         self.declare_parameter('max_speed', 8.0)          # m/s speed cap
         self.declare_parameter('max_accel', 3.0)          # m/s^2 command limit
         self.declare_parameter('max_brake', 8.0)          # m/s^2 command limit
